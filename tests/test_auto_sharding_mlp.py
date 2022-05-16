@@ -12,9 +12,7 @@ from flax.training.train_state import TrainState
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 import optax
 
-from alpa import parallelize, LocalPhysicalDeviceMesh, ShardParallel
-from alpa.global_env import global_config
-from alpa.shard_parallel.auto_sharding import AutoShardingOption
+from alpa import parallelize, ShardParallel, LocalPhysicalDeviceMesh, AutoShardingOption
 from alpa.util import map_to_shape, count_communication_primitives
 
 
@@ -194,10 +192,8 @@ class AutoShardingMLPTest(unittest.TestCase):
                 x = nn.Dense(features=output_dim, use_bias=use_bias)(x)
                 return x
 
-        shard_option = ShardParallel(devices=device_mesh)
-        shard_option.as_option = self.as_option
-
-        @parallelize(option=shard_option)
+        @parallelize(method=ShardParallel(devices=device_mesh,
+                                          auto_sharding_option=self.as_option))
         def train_step(state, batch):
 
             def loss_func(params):
@@ -411,7 +407,7 @@ class AutoShardingMLPTest(unittest.TestCase):
         model = Model()
         rngkey = jax.random.PRNGKey(0)
 
-        @parallelize(option=ShardParallel(devices=self.physical_mesh))
+        @parallelize(method=ShardParallel(devices=self.physical_mesh))
         def init_weight(rngkey):
             params = model.init(rngkey, x, True)
             tx = optax.adam(learning_rate=1e-2)

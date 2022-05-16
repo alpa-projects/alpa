@@ -10,8 +10,7 @@ from flax.training.train_state import TrainState
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 import optax
 
-from alpa import parallelize, LocalPhysicalDeviceMesh, ShardParallel
-from alpa.shard_parallel.auto_sharding import AutoShardingOption
+from alpa import parallelize, LocalPhysicalDeviceMesh, ShardParallel, AutoShardingOption
 from alpa.util import map_to_shape, count_communication_primitives
 
 
@@ -27,9 +26,8 @@ class AutoShardingMixedTest(unittest.TestCase):
     def test_dot_all_to_all(self):
         device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 0.1])
 
-        shard_option = ShardParallel(devices=device_mesh)
-        shard_option.as_option.allow_mixed_mesh_shape = True
-        shard_option.as_option.allow_all_gather = False
+        as_option = AutoShardingOption(allow_mixed_mesh_shape=True,
+                                       allow_all_gather=False)
 
         use_bias = False
         B = 256
@@ -65,7 +63,8 @@ class AutoShardingMixedTest(unittest.TestCase):
                 x = nn.Dense(features=M, use_bias=use_bias)(x)
                 return x
 
-        @parallelize(option=shard_option)
+        @parallelize(method=ShardParallel(devices=device_mesh,
+                                          auto_sharding_option=as_option))
         def train_step(state, batch):
 
             def loss_func(params):

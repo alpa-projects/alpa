@@ -36,7 +36,7 @@ class HloCostModelTest(unittest.TestCase):
                 x = nn.Dense(features=output_dim, use_bias=use_bias)(x)
                 return x
 
-        @parallelize(option=ShardParallel(devices=device_mesh))
+        @parallelize(method=ShardParallel(devices=device_mesh))
         def train_step(state, batch):
 
             def loss_func(params):

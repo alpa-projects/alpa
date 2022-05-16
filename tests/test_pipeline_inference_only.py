@@ -14,7 +14,7 @@ class PipelineInferenceTest(unittest.TestCase):
 
     def run_mlp_inference(self,
                           manual_pipeline_layer=True):
-        option = PipeshardParallel(num_micro_batches=4,
+        method = PipeshardParallel(num_micro_batches=4,
                                    pipeline_schedule="inference")
 
         # Init model and optimizer
@@ -33,7 +33,7 @@ class PipelineInferenceTest(unittest.TestCase):
 
         # Compile
         serial_inference_step = get_mlp_inference_step(None, None)
-        parallel_inference_step = get_mlp_inference_step(option, manual_pipeline_layer)
+        parallel_inference_step = get_mlp_inference_step(method, manual_pipeline_layer)
         executable = parallel_inference_step.get_executable(state, batch)
 
         # Run correctnesss test

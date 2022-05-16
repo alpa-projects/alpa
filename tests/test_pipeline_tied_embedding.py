@@ -67,15 +67,15 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
                                   dynamic_scale=None)
 
         # Run and check results
-        p_train_step = parallelize(train_step, option=option)
+        p_train_step = parallelize(train_step, method=method)
         batch = {"x": x, "y": y}
         expected_new_state = train_step(state, batch)
         actual_new_state = p_train_step(state, batch)
         assert_allclose(actual_new_state.params, expected_new_state.params)
 
     def test_tied_embedding_pipeshard_parallel(self):
-        option = PipeshardParallel(num_micro_batches=2)
-        self.train_tied_embedding(option)
+        method = PipeshardParallel(num_micro_batches=2)
+        self.train_tied_embedding(method)
 
 
 def suite():

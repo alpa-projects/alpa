@@ -10,8 +10,7 @@ from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 import numpy as np
 import optax
 
-from alpa import parallelize, ShardParallel, LocalPhysicalDeviceMesh
-from alpa.shard_parallel.auto_sharding import AutoShardingOption
+from alpa import parallelize, ShardParallel, LocalPhysicalDeviceMesh, AutoShardingOption
 from alpa.util import map_to_shape, count_communication_primitives
 from alpa.model.moe import FlaxMoELayer, FlaxMoEForLMModule, MoEConfig, TrainState
 from alpa.model.model_util import optax_adafactor
@@ -33,10 +32,8 @@ class AutoShardingMoETest(unittest.TestCase):
 
     def run_moe_layer(self, batch_size, seq_len, hidden_size, num_heads, S, E,
                       deterministic, device_mesh):
-        shard_option = ShardParallel(devices=device_mesh)
-        shard_option.as_option = self.as_option
-
-        @parallelize(option=shard_option)
+        @parallelize(method=ShardParallel(devices=device_mesh,
+                                          auto_sharding_option=self.as_option))
         def train_step(optimizer, batch, deterministic, apply_fn):
 
             def loss_func(params):
@@ -92,10 +89,8 @@ class AutoShardingMoETest(unittest.TestCase):
 
     def run_moe_lm(self, batch_size, seq_len, num_layers, hidden_size,
                    num_heads, vocab_size, S, E, deterministic, device_mesh):
-        shard_option = ShardParallel(devices=device_mesh)
-        shard_option.as_option = self.as_option
-
-        @parallelize(option=shard_option)
+        @parallelize(method=ShardParallel(devices=device_mesh,
+                                          auto_sharding_option=self.as_option))
         def train_step(state, batch, deterministic, rng_key):
 
             def loss_func(params):

@@ -70,7 +70,7 @@ class InstallationTest(unittest.TestCase):
 
         # Parallel execution
         p_train_step = parallelize(train_step,
-                                   option=ShardParallel(num_micro_batches=2))
+                                   method=ShardParallel(num_micro_batches=2))
         actual_state = p_train_step(state, batch)
 
         # Check results
@@ -98,7 +98,7 @@ class InstallationTest(unittest.TestCase):
 
         # Parallel execution
         p_train_step = parallelize(
-            train_step, option=PipeshardParallel(num_micro_batches=2))
+            train_step, method=PipeshardParallel(num_micro_batches=2))
         actual_state = p_train_step(state, batch)
 
         # Check results

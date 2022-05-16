@@ -9,8 +9,9 @@ from jax.interpreters.pxla import Chunked, ShardedAxis, NoSharding, Replicated
 from flax import linen as nn
 from flax import optim
 
-from alpa import parallelize, ShardParallel, testing
+from alpa import parallelize, ShardParallel
 from alpa.util import count_communication_primitives
+from alpa.testing import assert_allclose
 
 from test_auto_sharding_mlp import assert_close
 
@@ -22,10 +23,10 @@ class AutoShardingBasicTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
         self.devices = jax.local_devices()[:4]
-        self.option = ShardParallel(devices=self.devices)
+        self.method = ShardParallel(devices=self.devices)
 
     def test_donate_buffer(self):
-        @parallelize(donate_argnums=(0,), option=self.option)
+        @parallelize(donate_argnums=(0,), method=self.method)
         def add_one(x):
             x = x + 1
             return x
@@ -60,10 +61,10 @@ class AutoShardingBasicTest(unittest.TestCase):
         # Check correctness
         expected = func(a, b)
         actual = p_func(a, b)
-        testing.assert_allclose(expected, actual)
+        assert_allclose(expected, actual)
 
     def test_one_by_one_mesh(self):
-        @parallelize(option=ShardParallel(devices=self.devices[0:1]))
+        @parallelize(method=ShardParallel(devices=self.devices[0:1]))
         def add_one(x):
             x = x + 1
             return x
@@ -71,7 +72,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         a = jnp.ones((128, 128))
         b = add_one(a)
 
-        testing.assert_allclose(b, a + 1)
+        assert_allclose(b, a + 1)
 
     def test_dropout(self):
 
@@ -93,7 +94,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         params = model.init(rngkey, x, True)
         optimizer = optim.GradientDescent(1e-2).create(params)
 
-        @parallelize(option=self.option)
+        @parallelize(method=self.method)
         def func(optimizer, x, y, rngs):
 
             def loss_func(params):
@@ -134,7 +135,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         params = model.init(rngkey, x)
         optimizer = optim.GradientDescent(1e-2).create(params)
 
-        @parallelize(option=self.option)
+        @parallelize(method=self.method)
         def func(optimizer, x, y):
 
             def loss_func(params):
@@ -158,7 +159,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         # TODO(lmzheng): Support the uneven partition of reshape.
         # But this seems too complicated.
 
-        @parallelize(option=self.option)
+        @parallelize(method=self.method)
         def split(a):
             b = a.reshape((8, 18))
             #b = a.reshape((9, 16))
@@ -172,7 +173,7 @@ class AutoShardingBasicTest(unittest.TestCase):
 
     def test_argmax(self):
 
-        @parallelize(option=self.option)
+        @parallelize(method=self.method)
         def split(a):
             b = jnp.argmax(a, axis=0)
             return b
@@ -187,7 +188,7 @@ class AutoShardingBasicTest(unittest.TestCase):
 
     def test_sort(self):
 
-        @parallelize(option=self.option)
+        @parallelize(method=self.method)
         def split(a):
             b = jnp.argsort(a)
             return b

@@ -9,9 +9,9 @@ import jax.numpy as jnp
 from jax.interpreters import pxla
 
 from alpa import init, MeshDriverDataLoader
-from alpa.device_mesh import (get_global_cluster, get_global_physical_mesh,
-                              set_global_physical_mesh)
-from alpa.testing import assert_allclose, data_loader_test_input_iter_func as input_iter_func
+from alpa.device_mesh import get_global_physical_mesh
+from alpa.testing import (assert_allclose,
+                          data_loader_test_input_iter_func as input_iter_func)
 
 
 class DataLoaderTest(unittest.TestCase):
@@ -41,7 +41,7 @@ class DataLoaderTest(unittest.TestCase):
             assert_allclose(actual_batch, expected_batch)
 
     def test_data_parallel(self):
-        num_devices = get_global_cluster().num_devices
+        num_devices = self.physical_mesh.num_devices
 
         sharding_specs = [
             pxla.ShardingSpec((pxla.Chunked((num_devices,)), pxla.NoSharding()),
@@ -52,7 +52,7 @@ class DataLoaderTest(unittest.TestCase):
         self.run_test(sharding_specs)
 
     def test_model_parallel(self):
-        num_devices = get_global_cluster().num_devices
+        num_devices = self.physical_mesh.num_devices
 
         sharding_specs = [
             pxla.ShardingSpec((pxla.NoSharding(), pxla.Chunked((num_devices,))),
@@ -64,7 +64,7 @@ class DataLoaderTest(unittest.TestCase):
 
     def test_data_model_parallel(self):
         dp = 2
-        mp = get_global_cluster().num_devices // dp
+        mp = self.physical_mesh.num_devices // dp
         sharding_specs = [
             pxla.ShardingSpec((pxla.Chunked((dp,)), pxla.Chunked((mp,))),
                               (pxla.ShardedAxis(0), pxla.ShardedAxis(1))),

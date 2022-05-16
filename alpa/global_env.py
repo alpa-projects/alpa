@@ -1,5 +1,6 @@
 """All global configurations for this project."""
 import copy
+import dataclasses
 from typing import Dict
 import os
 
@@ -62,22 +63,6 @@ class GlobalConfig:
         self.default_ray_namespace_prefix = "alpa-train"
         self.unittest_ray_namespace_prefix = "alpa-unittest"
 
-    def backup(self):
-        """Backup the configs."""
-        return copy.deepcopy(self.__dict__)
-
-    def restore(self, saved_dict: Dict):
-        """Restore the configs from a backup."""
-        self.__dict__ = saved_dict
-
-    def update_with_dict(self, value_dict: Dict):
-        """Update the config with values from a dictionary."""
-        for k, v in value_dict.items():
-            assert hasattr(self, k), k
-            setattr(self, k, v)
-
-
-global_config = GlobalConfig()
 
 # Other environment setup
 is_worker = os.environ.get("ALPA_IS_WORKER", "False") == "True"

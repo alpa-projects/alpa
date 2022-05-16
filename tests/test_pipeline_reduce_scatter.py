@@ -9,9 +9,8 @@ from alpa.util import count_communication_primitives
 class PipelineReduceScatterTest(PipelineBasicTest):
 
     def test_mlp_grad_acc_friendly(self):
-        as_option = AutoShardingOption()
-        as_option.force_data_parallel = True
-        as_option.prefer_reduce_scatter = True
+        as_option = AutoShardingOption(force_data_parallel=True,
+                                       prefer_reduce_scatter=True)
         hlo_text = self.run_mlp(as_option=as_option)
 
         # Check number of communication primitives

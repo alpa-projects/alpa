@@ -10,8 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-from alpa import parallelize, ShardParallel, LocalPhysicalDeviceMesh
-from alpa.shard_parallel.auto_sharding import AutoShardingOption
+from alpa import parallelize, ShardParallel, LocalPhysicalDeviceMesh, AutoShardingOption
 from alpa.util import map_to_shape, count_communication_primitives
 
 from test_auto_sharding_mlp import assert_close, assert_all_replicated, is_sharded
@@ -89,9 +88,6 @@ class AutoShardingConvTest(unittest.TestCase):
                          device_mesh,
                          use_bias=False,
                          is_depthwise=False):
-        shard_option = ShardParallel(devices=device_mesh)
-        shard_option.as_option = self.as_option
-
         if not is_depthwise:
 
             class Model(nn.Module):
@@ -140,7 +136,8 @@ class AutoShardingConvTest(unittest.TestCase):
             x = jnp.ones((batch_size, image_size, image_size, channel))
             y = jnp.ones((batch_size, image_size, image_size, channel))
 
-        @parallelize(option=shard_option)
+        @parallelize(method=ShardParallel(devices=device_mesh,
+                                          auto_sharding_option=self.as_option))
         def train_step(state, batch):
 
             def loss_func(params):

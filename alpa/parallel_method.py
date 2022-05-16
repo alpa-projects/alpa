@@ -1,13 +1,13 @@
-"""Options for parallelzing a function.
+"""Methods for parallelzing a function.
 
 Alpa classifies common parallel techniques into two categories:
 1. Shard parallelism or intra-operator parallelism. This includes data parallelism,
    operator parallelism (or tensor model parallelism), expert parallelism,
    zero optimizer and their combinations.
-2. Sipeline parallelism or inter-operator parallleism.
-Please see the paper (https://arxiv.org/abs/2201.12023) for more details.
+2. Pipeline parallelism or inter-operator parallleism.
+Please refer to the Alpa paper (https://arxiv.org/abs/2201.12023) for more details.
 
-Based on this, alpa provides two base parallel options:
+Based on this, alpa provides two base parallel methods:
 - ShardParallel: which only uses shard parallelsim.
 - PipeshardParallel: which combines pipeline parallelism and shard parallelism.
 """
@@ -31,8 +31,8 @@ from alpa.shard_parallel.auto_sharding import AutoShardingOption, LogicalDeviceM
 from alpa.shard_parallel.compile_executable import compile_shard_executable
 
 
-class ParallelOption(ABC):
-    """Options for parallelzing a function."""
+class ParallelMethod(ABC):
+    """Methods for parallelzing a function."""
 
     @abstractmethod
     def compile_executable(
@@ -49,26 +49,23 @@ class ParallelOption(ABC):
         raise NotImplementedError()
 
 
-class ShardParallel(ParallelOption):
-    """Use shard parallelism with options.
+class ShardParallel(ParallelMethod):
+    """Use shard parallelism.
 
     Args:
         devices: Specify the devices to use. If it is None, use all the devices
           in the cluster.
         num_micro_batches: The number of micro batches for gradient accumulation.
-        overwrite_auto_sharding_option: Overrite default auto sharding options.
-          see also AutoShardingOption for valid options.
+        auto_sharding_option: The options of the auto-sharding solver.
     """
 
     def __init__(self,
                  devices: Optional[Union[LogicalDeviceMesh, PhysicalDeviceMesh]] = None,
                  num_micro_batches: Optional[int] = None,
-                 overwrite_auto_sharding_option: Optional[Dict] = None):
+                 auto_sharding_option: Optional[AutoShardingOption] = None):
         self.devices = devices
         self.num_micro_batches = num_micro_batches
-        self.as_option = AutoShardingOption()
-        if overwrite_auto_sharding_option:
-            self.as_option = self.as_option.copy_and_update(overwrite_auto_sharding_option)
+        self.as_option = auto_sharding_option or AutoShardingOption()
 
     def compile_executable(
         self,
@@ -96,16 +93,14 @@ class ShardParallel(ParallelOption):
                                         self.as_option, *avals)
 
 
-class PipeshardParallel(ParallelOption):
-    """Use pipeshard parallelism with options.
-    This strategy combines pipeline parallelism and shard parallelism.
+class PipeshardParallel(ParallelMethod):
+    """Use pipeshard parallelism which combines pipeline parallelism and shard parallelism.
 
     Args:
         devices: Specify the devices to use. If it is None, use all the devices
           in the cluster.
         num_micro_batches: The number of micro batches for gradient accumulation.
-        overwrite_auto_sharding_option: Overrite default auto sharding options.
-          see also AutoShardingOption for valid options.
+        default_auto_sharding_option: The default options of the auto-sharding solver.
         pipeline_schedule: The pipieline schedules.
           Possible choices: {"1f1b", "gpipe", "inference"}
         stage_mode: How to construct stages.
@@ -125,7 +120,7 @@ class PipeshardParallel(ParallelOption):
     def __init__(self,
                  devices: Optional[VirtualPhysicalMesh] = None,
                  num_micro_batches: int = 1,
-                 overwrite_auto_sharding_option: Optional[Dict] = None,
+                 default_auto_sharding_option: Optional[AutoShardingOption] = None,
                  pipeline_schedule: str = "1f1b",
                  stage_mode: str = "uniform",
                  submesh_physical_shape_space: str = "power_of_two",
@@ -136,9 +131,7 @@ class PipeshardParallel(ParallelOption):
                  cached_compute_cost: Optional[str] = None):
         self.devices = devices
         self.num_micro_batches = num_micro_batches
-        self.as_option = AutoShardingOption()
-        if overwrite_auto_sharding_option:
-            self.as_option = self.as_option.copy_and_update(overwrite_auto_sharding_option)
+        self.as_option = default_auto_sharding_option or AutoShardingOption()
         self.pipeline_schedule = pipeline_schedule
         if stage_mode == "auto":
             self.stage_option = AutoStageOption(
@@ -181,7 +174,7 @@ class PipeshardParallel(ParallelOption):
 class ManualPipeshardParallel(PipeshardParallel):
     """Use pipeshard parallelism with manual assignment.
 
-    This option can be used to load the solution found by auto PipeshardParallel.
+    This method can be used to load the solution found by auto PipeshardParallel.
 
     Args:
         forward_stage_layer_ids: Layer IDs of each forward stage.
@@ -191,8 +184,7 @@ class ManualPipeshardParallel(PipeshardParallel):
         devices: Specify the devices to use. If it is None, use all the devices
           in the cluster.
         num_micro_batches: The number of micro batches for gradient accumulation.
-        overwrite_auto_sharding_option: Overrite default auto sharding options.
-          see also AutoShardingOption for valid options.
+        default_auto_sharding_option: The default options of the auto-sharding solver.
         pipeline_schedule: The pipieline schedules.
           Possible choices: {"1f1b", "gpipe", "inference"}
     """
@@ -204,14 +196,12 @@ class ManualPipeshardParallel(PipeshardParallel):
                  submesh_autosharding_option_dicts: Sequence[dict],
                  devices: Optional[VirtualPhysicalMesh] = None,
                  num_micro_batches: int = 1,
-                 overwrite_auto_sharding_option: Optional[Dict] = None,
+                 default_auto_sharding_option: Optional[AutoShardingOption] = None,
                  pipeline_schedule: str = "1f1b"):
         # pylint: disable=super-init-not-called
         self.devices = devices
         self.num_micro_batches = num_micro_batches
-        self.as_option = AutoShardingOption()
-        if overwrite_auto_sharding_option:
-            self.as_option = self.as_option.copy_and_update(overwrite_auto_sharding_option)
+        self.as_option = default_auto_sharding_option or AutoShardingOption()
         self.pipeline_schedule = pipeline_schedule
         self.stage_option = ManualStageOption(
             forward_stage_layer_ids,
@@ -221,7 +211,7 @@ class ManualPipeshardParallel(PipeshardParallel):
         )
 
 
-class LocalPipelineParallel(ParallelOption):
+class LocalPipelineParallel(ParallelMethod):
     """
     Run pipeline parallel on a single device.
     This is only used for debugging.

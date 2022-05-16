@@ -19,6 +19,7 @@ SPMD_PARTITIONED
 FULLY_OPTIMIZED
 """
 import copy
+import dataclasses
 import logging
 import multiprocessing
 import os
@@ -124,51 +125,33 @@ class LogicalDeviceMesh:
                  self.mesh_beta) == (other.flatten_ids, other.id_mesh.shape,
                                      other.mesh_alpha, other.mesh_beta))
 
-
+@dataclasses.dataclass
 class AutoShardingOption:
     """Options of the auto-sharding solver."""
-
-    def __init__(self):
-        # Whether to allow all-gather during re-sharding.
-        self.allow_all_gather = True
-        # Whether to allow all-to-all during re-sharding.
-        self.allow_all_to_all = True
-        # Whether to allow replicated parameters.
-        self.allow_replicated_parameters = True
-        # Whether to forcibly generate data-parallel.
-        self.force_data_parallel = False
-        # Forcibly map the batch dimension to a mesh dimension.
-        self.force_batch_dim_to_mesh_dim = None
-        # Whether to forcibly generate a strategy similar to ZeRO optimizer stage 3.
-        self.force_zero_stage_3 = False
-        # The threshold of all-gather combiner if force_zero_stage_3 is true.
-        self.force_zero_stage_3_all_gather_threshold = 1 << 25
-        # Prefer reduce-scatter over all-reduce.
-        self.prefer_reduce_scatter = False
-        # Allow mixed 1d mesh and 2d mesh shape.
-        self.allow_mixed_mesh_shape = False
-        # Allow replicated dot computation.
-        self.allow_recompute_heavy_op = False
-        # If it is not empty, forcibly use a simple heuristic instead of the ILP solver.
-        self.force_simple_heuristic = ""
-        # The threshold of all-reduce combiner in bytes.
-        self.all_reduce_threshold = 1 << 60
-
-    def copy_and_update(self, new_values: Dict):
-        """Make a deepcopy and update some keys with new values."""
-        ret = copy.copy(self)
-        for k, v in new_values.items():
-            assert hasattr(ret, k)
-            setattr(ret, k, v)
-        return ret
-
-    def backup(self):
-        """Backup the configs."""
-        return copy.deepcopy(self.__dict__)
-
-    def restore(self, saved_dict: Dict):
-        """Restore the configs from a backup."""
-        self.__dict__ = saved_dict
+    # Whether to allow all-gather during re-sharding.
+    allow_all_gather: bool = True
+    # Whether to allow all-to-all during re-sharding.
+    allow_all_to_all: bool = True
+    # Whether to allow replicated parameters.
+    allow_replicated_parameters: bool = True
+    # Whether to forcibly generate data-parallel.
+    force_data_parallel: bool = False
+    # Forcibly map the batch dimension to a mesh dimension.
+    force_batch_dim_to_mesh_dim: Optional[int] = None
+    # Whether to forcibly generate a strategy similar to ZeRO optimizer stage 3.
+    force_zero_stage_3: bool = False
+    # The threshold of all-gather combiner if force_zero_stage_3 is true.
+    force_zero_stage_3_all_gather_threshold: int = 1 << 25
+    # Prefer reduce-scatter over all-reduce.
+    prefer_reduce_scatter: bool = False
+    # Allow mixed 1d mesh and 2d mesh shape.
+    allow_mixed_mesh_shape: bool = False
+    # Allow replicated dot computation.
+    allow_recompute_heavy_op: bool = False
+    # If it is not empty, forcibly use a simple heuristic instead of the ILP solver.
+    force_simple_heuristic: str = ""
+    # The threshold of all-reduce combiner in bytes.
+    all_reduce_threshold: int = 1 << 60
 
 
 def run_auto_sharding_pass(

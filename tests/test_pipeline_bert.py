@@ -8,7 +8,7 @@ import ray
 
 from alpa import (init, parallelize, mark_pipeline, manual_layer_construction,
                   PipeshardParallel)
-from alpa.parallel_option import LocalPipelineParallel
+from alpa.parallel_method import LocalPipelineParallel
 from alpa.model.model_util import TrainState
 from alpa.model.bert_model import BertConfig
 from alpa.testing import BertLayerModel, assert_allclose
@@ -17,10 +17,9 @@ from alpa.testing import BertLayerModel, assert_allclose
 class PipelineBERTTest(unittest.TestCase):
 
     def setUp(self):
-        os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
         init(cluster="ray")
 
-    def train_2_layer_bert(self, option):
+    def train_2_layer_bert(self, method):
         def train_step(state, batch):
 
             def loss_func(params, x, y, attention_mask):
@@ -64,7 +63,7 @@ class PipelineBERTTest(unittest.TestCase):
         # Train step
         batch = {"x": x, "y": y, "attention_mask": attention_mask}
         gradients = train_step(state, batch)
-        p_train_step = parallelize(train_step, donate_argnums=(), option=option)
+        p_train_step = parallelize(train_step, donate_argnums=(), method=method)
         gradients_with_pipeline = p_train_step(state, batch)
 
         # Check results

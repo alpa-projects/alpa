@@ -8,7 +8,7 @@ import optax
 import ray
 
 import alpa
-from alpa import parallelize, ShardParallel, LocalPhysicalDeviceMesh
+from alpa import parallelize, LocalPhysicalDeviceMesh
 from alpa.model.bert_model import BertConfig, FlaxBertLayer, TrainState
 from alpa.testing import assert_allclose
 
@@ -99,7 +99,6 @@ class AutoShardingCorrectnessTest(unittest.TestCase):
                         actual_params.params,
                         rtol=5e-4,
                         atol=5e-4)
-        physical_mesh.shutdown()
 
 
 def suite():

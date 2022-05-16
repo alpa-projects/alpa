@@ -10,6 +10,7 @@ import alpa
 from alpa import (parallelize, global_config, get_global_cluster,
                   set_global_virtual_physical_mesh,
                   PipeshardParallel, ManualPipeshardParallel,
+                  AutoShardingOption,
                   mark_pipeline, manual_layer_construction,
                   automatic_layer_construction, automatic_remat)
 from alpa.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
@@ -95,14 +96,14 @@ def create_train_state_aval(rngkey, model, batch, dtype):
     return state
 
 
-def get_train_step(parallel_option,
+def get_train_step(parallel_method,
                    auto_layer,
                    num_manual_pipeline_stages,
                    num_auto_layers,
                    auto_remat_mode,
                    num_auto_remat_layers):
 
-    @parallelize(option=parallel_option)
+    @parallelize(method=parallel_method)
     def train_step(state, batch, rng_key):
 
         def loss_func(params):
@@ -167,12 +168,11 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
         auto_remat_mode = "coarse_grained" if use_remat else None
         num_auto_remat_layers = None
         add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
-        option = PipeshardParallel(
+        method = PipeshardParallel(
             stage_mode="auto",
             num_micro_batches=num_micro_batches,
-            overwrite_auto_sharding_option={
-               "prefer_reduce_scatter": prefer_reduce_scatter,
-            },
+            default_auto_sharding_option=AutoShardingOption(
+               prefer_reduce_scatter=prefer_reduce_scatter),
             **auto_stage_option)
     elif parallel_mode == "load_solution":
         prefer_reduce_scatter, use_remat, num_auto_layers, manual_stage_option = parallel_args
@@ -180,18 +180,17 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
         auto_remat_mode = "fine_grained" if use_remat else None
         num_auto_remat_layers = num_layers
         add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
-        option = ManualPipeshardParallel(
+        method = ManualPipeshardParallel(
             *manual_stage_option,
             num_micro_batches=num_micro_batches,
-            overwrite_auto_sharding_option={
-               "prefer_reduce_scatter": prefer_reduce_scatter,
-            })
+            default_auto_sharding_option=AutoShardingOption(
+                prefer_reduce_scatter=prefer_reduce_scatter))
     elif parallel_mode == "manual":
         (prefer_reduce_scatter, use_remat, (dp, op, pp),
             force_batch_dim_mapping) = parallel_args
-        as_option = {"prefer_reduce_scatter": prefer_reduce_scatter}
+        as_option = AutoShardingOption(prefer_reduce_scatter=prefer_reduce_scatter)
         if force_batch_dim_mapping:
-            as_option["force_batch_dim_to_mesh_dim"] = 0
+            as_option.force_batch_dim_to_mesh_dim = 0
         auto_layer = False
         num_auto_layers = auto_remat_mode = num_auto_remat_layers = None
         add_manual_layer_marker = True
@@ -208,13 +207,13 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
             physical_mesh_shape = (num_mesh_devices // num_devices_per_host,
                                    num_devices_per_host)
 
-        option = ManualPipeshardParallel(
+        method = ManualPipeshardParallel(
             num_micro_batches=num_micro_batches,
             forward_stage_layer_ids=[[i] for i in range(pp)],
             submesh_physical_shapes=[physical_mesh_shape] * pp,
             submesh_logical_shapes=[logical_mesh_shape] * pp,
             submesh_autosharding_option_dicts=[{}] * pp,
-            overwrite_auto_sharding_option=as_option)
+            default_auto_sharding_option=as_option)
     else:
         raise ValueError(f"Invalid model: {parallel_mode}")
 
@@ -266,7 +265,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(option, auto_layer, num_manual_pipeline_stages,
+    train_step = get_train_step(method, auto_layer, num_manual_pipeline_stages,
                                 num_auto_layers, auto_remat_mode,
                                 num_auto_remat_layers)
     executable = train_step.get_executable(state, batch, rngkey)

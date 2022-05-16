@@ -7,7 +7,7 @@ import ray
 
 import alpa
 from alpa import (parallelize, global_config, get_global_cluster,
-                  set_global_virtual_physical_mesh,
+                  set_global_virtual_physical_mesh, AutoShardingOption,
                   PipeshardParallel, ManualPipeshardParallel)
 from alpa.model.model_util import optax_adafactor
 from alpa.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
@@ -69,13 +69,13 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
         auto_remat_mode = "fine_grained" if use_remat else None
         num_auto_remat_layers = None
         add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
-        option = PipeshardParallel(
+        method = PipeshardParallel(
             stage_mode="auto",
             num_micro_batches=num_micro_batches,
-            overwrite_auto_sharding_option={
-               "prefer_reduce_scatter": prefer_reduce_scatter,
-               "allow_mixed_mesh_shape": True,
-            },
+            default_auto_sharding_option=AutoShardingOption(
+                prefer_reduce_scatter=prefer_reduce_scatter,
+                allow_mixed_mesh_shape=True,
+            ),
             **auto_stage_option)
     elif parallel_mode == "load_solution":
         prefer_reduce_scatter, use_remat, num_auto_layers, manual_stage_option = parallel_args
@@ -86,13 +86,14 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
         option = ManualPipeshardParallel(
             *manual_stage_option,
             num_micro_batches=num_micro_batches,
-            overwrite_auto_sharding_option={
-               "prefer_reduce_scatter": prefer_reduce_scatter,
-               "allow_mixed_mesh_shape": True,
-            })
+            default_auto_sharding_option=AutoShardingOption(
+                prefer_reduce_scatter=prefer_reduce_scatter,
+                allow_mixed_mesh_shape=True,
+            ))
     elif parallel_mode == "manual":
         (prefer_reduce_scatter, use_remat, (dp, op, pp),
          force_batch_dim_mapping) = parallel_args
+        as_option = AutoShardingOption(prefer_reduce_scatter=prefer_reduce_scatter)
         if force_batch_dim_mapping:
             as_option.force_batch_dim_to_mesh_dim = 0
         auto_layer = False
@@ -117,7 +118,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
             submesh_physical_shapes=[physical_mesh_shape] * pp,
             submesh_logical_shapes=[logical_mesh_shape] * pp,
             submesh_autosharding_option_dicts=[{}] * pp,
-            overwrite_auto_sharding_option=as_option)
+            default_auto_sharding_option=as_option)
     else:
         raise ValueError(f"Invalid model: {parallel_mode}")
 
@@ -152,7 +153,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(option, auto_layer, num_manual_pipeline_stages,
+    train_step = get_train_step(method, auto_layer, num_manual_pipeline_stages,
                                 num_auto_layers, auto_remat_mode,
                                 num_auto_remat_layers)
     executable = train_step.get_executable(state, batch, rngkey)

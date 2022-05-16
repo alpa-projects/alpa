@@ -12,7 +12,7 @@ from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 
 from alpa.device_mesh import (init_global_cluster,
                               shutdown_global_cluster)
-from alpa.parallel_option import ParallelOption, ShardParallel
+from alpa.parallel_method import ParallelMethod, ShardParallel
 from alpa.pipeline_parallel.primitive_def import mark_gradient
 from alpa.util import (auto_donate_argnums, auto_static_argnums,
                        abstractify_with_aval)
@@ -50,7 +50,7 @@ def parallelize(fun: Optional[Callable] = None,
                 static_argnums: Union[Sequence[int], str] = "auto",
                 donate_argnums: Union[Sequence[int], str] = "auto",
                 batch_argnums: Union[Sequence[int], str] = (1,),
-                option: Optional[ParallelOption] = None):
+                method: Optional[ParallelMethod] = None):
     """
     Parallelize a jax function.
 
@@ -64,14 +64,14 @@ def parallelize(fun: Optional[Callable] = None,
           This information is used to split the original data batch into micro batches
           to perform gradient accumulation or pipeline parallelism.
           Alpa assumes the 0-th dimension of the tensor is the batch dimension.
-        option: The options of parallel strategy.
+        method: The parallelization method.
     """
     def decorate_fun(fun):
         api._check_callable(fun)
-        nonlocal option
-        option = option or ShardParallel()
+        nonlocal method
+        method = method or ShardParallel()
         return ParallelizedFunc(fun, static_argnums, donate_argnums,
-                                batch_argnums, option)
+                                batch_argnums, method)
 
     if fun is None:
         return decorate_fun
@@ -86,31 +86,31 @@ class ParallelizedFunc:
                  static_argnums: Union[Sequence[int], str],
                  donate_argnums: Union[Sequence[int], str],
                  batch_argnums: Union[Sequence[int], str],
-                 option: ParallelOption):
+                 method: ParallelMethod):
         self.fun = fun
         self.static_argnums = static_argnums
         self.donate_argnums = donate_argnums
         self.batch_argnums = batch_argnums
-        self.option = option
+        self.method = method
 
     def __call__(self, *args):
         """Launch the computation on the driver."""
-        executable, _, out_tree_thunk, args_flat = self._decode_args(*args)
+        executable, _, out_tree, args_flat = self._decode_args_and_get_executable(*args)
         out = executable.launch_on_driver(*args_flat)
-        return tree_unflatten(out_tree_thunk(), out)
+        return tree_unflatten(out_tree(), out)
 
     def get_executable(self, *args):
         """Get the compiled exectuable."""
-        executable, _, _, _ = self._decode_args(*args)
+        executable, _, _, _ = self._decode_args_and_get_executable(*args)
         return executable
 
     def preshard_dynamic_args(self, *args):
         """Shard the dynamic arguments."""
-        executable, in_tree, _, args_flat = self._decode_args(*args)
+        executable, in_tree, _, args_flat = self._decode_args_and_get_executable(*args)
         sharded_args = executable.preshard_dynamic_args(*args_flat)
         return tree_unflatten(in_tree, sharded_args)
 
-    def _decode_args(self, *args):
+    def _decode_args_and_get_executable(self, *args):
         """Flatten PyTree arguments and get the executable."""
         static_argnums, donate_argnums, batch_argnums = (
             self.static_argnums, self.donate_argnums, self.batch_argnums)
@@ -161,7 +161,7 @@ class ParallelizedFunc:
         abstract_args = map(abstractify_with_aval, args_flat)
         executable = _compile_parallel_executable(
             f, in_tree, out_tree_hashable, static_argnums, donated_invars,
-            batch_invars, self.option, *abstract_args)
+            batch_invars, self.method, *abstract_args)
         return executable, in_tree, out_tree, args_flat
 
 
@@ -173,7 +173,7 @@ def _compile_parallel_executable(
     static_argnums: Sequence[int],
     donated_invars: Sequence[bool],
     batch_invars: Sequence[bool],
-    option: ParallelOption,
+    method: ParallelMethod,
     *avals: Sequence[AbstractValue],
 ):
     """Cached parallelized callable."""
@@ -183,7 +183,7 @@ def _compile_parallel_executable(
             store.reset()
 
     # Compile a callable
-    return option.compile_executable(fun, in_tree, out_tree_thunk,
+    return method.compile_executable(fun, in_tree, out_tree_thunk,
                                      static_argnums, donated_invars,
                                      batch_invars, *avals)
 

@@ -146,7 +146,7 @@ manual_pipeline_state = TrainState.create(apply_fn=manual_pipeline_model.apply,
 # Define the training step with manually parallelized pipeline stages.
 # We use the "alpa.PipeshardParallel" option to let alpa use both
 # pipeline parallelism and shard parallelism.
-@alpa.parallelize(option=alpa.PipeshardParallel(num_micro_batches=16))
+@alpa.parallelize(method=alpa.PipeshardParallel(num_micro_batches=16))
 def manual_pipeline_train_step(state, batch):
     # Indicate that we are manually assigning pipeline stages.
     @alpa.manual_layer_construction
@@ -197,10 +197,10 @@ alpa.init(cluster="ray")
 # modification required is the two decorators. The stage construction and
 # mesh slicing are performed within the `parallelize` decorator.
 
-option = alpa.PipeshardParallel(num_micro_batches=16, 
+method = alpa.PipeshardParallel(num_micro_batches=16,
                                 stage_mode="auto")
 
-@alpa.parallelize(option=option)
+@alpa.parallelize(method=method)
 def auto_pipeline_train_step(state, batch):
     # Indicate that we use automatic layer construction. The `layer_num` here
     # is a hyperparameter to control how many layers we get from the

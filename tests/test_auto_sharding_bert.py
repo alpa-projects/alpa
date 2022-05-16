@@ -7,10 +7,9 @@ import jax.numpy as jnp
 import numpy as np
 from flax import optim, linen as nn
 
-from alpa import parallelize, ShardParallel, LocalPhysicalDeviceMesh
+from alpa import parallelize, ShardParallel, LocalPhysicalDeviceMesh, AutoShardingOption
 from alpa.model.bert_model import (BertConfig, FlaxBertLayerCollection,
                                    FlaxBertForMaskedLMModule)
-from alpa.shard_parallel.auto_sharding import AutoShardingOption
 from alpa.util import count_communication_primitives
 from test_auto_sharding_mlp import (
     assert_all_replicated, assert_close, assert_column_partitioned,
@@ -32,10 +31,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
     def run_bert_layers(self, batch_size, seq_len, num_layers, hidden_size,
                         num_heads, deterministic, use_remat, device_mesh):
-        shard_option = ShardParallel(devices=device_mesh)
-        shard_option.as_option = self.as_option
-
-        @parallelize(option=shard_option)
+        @parallelize(method=ShardParallel(devices=device_mesh,
+                                          auto_sharding_option=self.as_option))
         def train_step(optimizer, batch, deterministic, apply_fn):
 
             def loss_func(params):
@@ -90,10 +87,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
     def run_bert_mlm(self, batch_size, seq_len, num_layers, hidden_size,
                      num_heads, vocab_size, deterministic, device_mesh):
-        shard_option = ShardParallel(devices=device_mesh)
-        shard_option.as_option = self.as_option
-
-        @parallelize(option=shard_option)
+        @parallelize(method=ShardParallel(devices=device_mesh,
+                                          auto_sharding_option=self.as_option))
         def train_step(optimizer, batch):
 
             def loss_func(params):
@@ -348,7 +343,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
         logical_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
 
-        @parallelize(option=ShardParallel(devices=logical_mesh))
+        @parallelize(method=ShardParallel(devices=logical_mesh))
         def func(optimizer, x, y):
 
             def loss_func(params):

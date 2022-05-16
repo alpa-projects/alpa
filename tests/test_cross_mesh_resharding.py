@@ -24,7 +24,7 @@ from alpa.pipeline_parallel.pipeshard_executable import (
     PipelineInstruction, PipeshardMeshWorkerExecuable)
 from alpa.pipeline_parallel.resharding_tensor import VirtualDistributedArray
 from alpa.testing import assert_allclose
-from alpa.util import get_ray_namespace_str, get_shard_shape
+from alpa.util import get_shard_shape
 from alpa.timer import timers
 
 
@@ -37,9 +37,8 @@ def test_resharding(var,
                     resharding_mode,
                     src_loads=None,
                     dst_loads=None):
-    backup = global_config.backup()
-    global_config.resharding_mode = resharding_mode
     global_config.use_scatter_gather = use_scatter_gather
+    global_config.resharding_mode = resharding_mode
 
     # Resharding task spec and send/recv strategy
     src_loads = src_loads or {src: 0 for src in src_mesh.device_strs}
@@ -172,8 +171,6 @@ def test_resharding(var,
     for worker in dst_mesh.workers:
         worker.delete_executable.remote(exec_uuids[worker])
 
-    # Restore backup
-    global_config.restore(backup)
 
 class ReshardingTest(unittest.TestCase):
 

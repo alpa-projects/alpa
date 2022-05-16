@@ -439,8 +439,7 @@ def compile_all(stages, num_micro_batches, default_as_option):
         compile_workers.submit(
             lambda w, v: w.compile_stage_for_profiling.remote(*v),
             (stage_id, stage_config.compile_config, logical_mesh,
-             default_as_option.copy_and_update(
-                 autosharding_option_dict), num_micro_batches))
+             default_as_option.replace(**autosharding_option_dict), num_micro_batches))
 
     compiled_outputs = [None] * len(stages)
     for _ in tqdm.tqdm(stages):

@@ -36,9 +36,9 @@ class SaveLoadTest(unittest.TestCase):
         state = create_train_state(rngkey, model, [x])
 
         # Compile
-        option = PipeshardParallel(num_micro_batches=2)
+        method = PipeshardParallel(num_micro_batches=2)
         serial_train_step = get_mlp_train_step(None, None, None, False)
-        parallel_train_step = get_mlp_train_step(option, True, False, False)
+        parallel_train_step = get_mlp_train_step(method, True, False, False)
         executable = parallel_train_step.get_executable(state, batch)
 
         serial_state = state

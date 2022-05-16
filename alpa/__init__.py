@@ -8,11 +8,12 @@ from alpa.device_mesh import (DeviceCluster, PhysicalDeviceMesh,
                               set_global_virtual_physical_mesh)
 from alpa.global_env import global_config
 from alpa.mesh_profiling import ProfilingResultDatabase
-from alpa.parallel_option import ShardParallel, PipeshardParallel, ManualPipeshardParallel
+from alpa.parallel_method import ShardParallel, PipeshardParallel, ManualPipeshardParallel
 from alpa.pipeline_parallel.primitive_def import mark_pipeline
 from alpa.pipeline_parallel.layer_construction import (
     manual_remat, automatic_remat, automatic_layer_construction,
     manual_layer_construction)
+from alpa.shard_parallel.auto_sharding import AutoShardingOption
 from alpa.serialization import save_checkpoint, restore_checkpoint
 from alpa.timer import timers
 

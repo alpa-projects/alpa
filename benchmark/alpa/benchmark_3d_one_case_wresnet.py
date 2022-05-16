@@ -78,7 +78,7 @@ def create_train_state(rngkey, model, input_images, learning_rate_fn):
 def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_auto_layers,
                    option):
 
-    @parallelize(option=option)
+    @parallelize(method=option)
     def train_step(state, batch):
 
         def loss_fn(params):

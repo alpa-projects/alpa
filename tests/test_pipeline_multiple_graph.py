@@ -20,7 +20,7 @@ class MultipleGraphRuntimeTest(unittest.TestCase):
                   stage_mode="uniform",
                   do_numerical_test=True):
 
-        def test_one_mlp(option, batch_size=64, hidden_dim=16):
+        def test_one_mlp(method, batch_size=64, hidden_dim=16):
             # Init model and optimizer
             input_dim = output_dim = hidden_dim
 
@@ -38,7 +38,7 @@ class MultipleGraphRuntimeTest(unittest.TestCase):
                                                    None,
                                                    None,
                                                    use_value_and_grad)
-            parallel_train_step = get_mlp_train_step(option,
+            parallel_train_step = get_mlp_train_step(method,
                                                      manual_pipeline_layer,
                                                      use_remat,
                                                      use_value_and_grad)
@@ -55,10 +55,10 @@ class MultipleGraphRuntimeTest(unittest.TestCase):
 
             return executable
 
-        option = PipeshardParallel(stage_mode=stage_mode,
+        method = PipeshardParallel(stage_mode=stage_mode,
                                    num_micro_batches=2)
-        executable = test_one_mlp(option)
-        executable_2 = test_one_mlp(option)
+        executable = test_one_mlp(method)
+        executable_2 = test_one_mlp(method)
 
         assert executable != executable_2
 

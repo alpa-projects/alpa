@@ -48,9 +48,7 @@ class GradAccumulationTest(unittest.TestCase):
         hidden_size = 16
         use_bias = True
 
-        shard_option = ShardParallel(devices=logical_mesh, num_micro_batches=num_micro_batches)
         self.as_option.allow_all_to_all = False
-        shard_option.as_option = self.as_option
 
         class Model(nn.Module):
 
@@ -86,7 +84,11 @@ class GradAccumulationTest(unittest.TestCase):
         optimizer_expected = train_step(optimizer, batch, model.apply)
 
         # Distributed execution
-        p_train_step= parallelize(train_step, option=shard_option)
+        p_train_step = parallelize(
+            train_step,
+            method=ShardParallel(devices=logical_mesh,
+                                 num_micro_batches=num_micro_batches,
+                                 auto_sharding_option=self.as_option))
         executable = p_train_step.get_executable(optimizer, batch, model.apply)
         optimizer_actual = p_train_step(optimizer, batch, model.apply)
 

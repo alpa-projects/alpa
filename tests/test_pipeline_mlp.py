@@ -8,7 +8,7 @@ import ray
 
 from alpa import (init, parallelize, mark_pipeline, manual_layer_construction,
                   PipeshardParallel)
-from alpa.parallel_option import LocalPipelineParallel
+from alpa.parallel_method import LocalPipelineParallel
 from alpa.model.model_util import TrainState
 from alpa.testing import MLPModel, assert_allclose
 
@@ -19,7 +19,7 @@ class PipelineMLPTest(unittest.TestCase):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
         init(cluster="ray")
 
-    def train_2_layer_mlp(self, option):
+    def train_2_layer_mlp(self, method):
 
         def train_step(state, batch):
 
@@ -53,7 +53,7 @@ class PipelineMLPTest(unittest.TestCase):
         # Train step
         batch = {"x": x, "y": y}
         gradients = train_step(state, batch)
-        p_train_step = parallelize(train_step, donate_argnums=(), option=option)
+        p_train_step = parallelize(train_step, donate_argnums=(), method=method)
         gradients_with_pipeline = p_train_step(state, batch)
 
         # Check results

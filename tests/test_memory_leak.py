@@ -20,7 +20,7 @@ class MemoryLeakTest(unittest.TestCase):
         shutdown()
 
     def test_shard_parallel(self):
-        @parallelize(option=ShardParallel(num_micro_batches=2))
+        @parallelize(method=ShardParallel(num_micro_batches=2))
         def train_step(state, batch):
 
             def loss_func(params):
@@ -47,7 +47,7 @@ class MemoryLeakTest(unittest.TestCase):
     def test_pipeline_parallel(self):
         layer_num = min(get_global_cluster().num_devices, 2)
 
-        @parallelize(option=PipeshardParallel(num_micro_batches=2))
+        @parallelize(method=PipeshardParallel(num_micro_batches=2))
         def train_step(state, batch):
 
             @automatic_layer_construction(layer_num=layer_num)

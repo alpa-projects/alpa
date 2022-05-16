@@ -5,7 +5,7 @@ Alpa Quickstart
 =========================
 
 Alpa is built on top of a tensor computation framework `Jax <https://jax.readthedocs.io/en/latest/index.html>`_ .
-Alpa can automatically parallelizes jax functions and runs them on a distributed cluster.
+Alpa can automatically parallelize jax functions and runs them on a distributed cluster.
 Alpa analyses the computational graph and generates a distributed execution plan 
 tailored for the computational graph and target cluster.
 The generated execution plan can combine state-of-the-art distributed training techniques

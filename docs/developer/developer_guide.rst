@@ -51,4 +51,4 @@ Unittest
 --------
 Every New feature should come with a unittest.
 
-`How to run unit test locally <https://github.com/alpa-projects/alpa/tree/main/alpa/tests/README.md>`_
+`How to run unit test locally <https://github.com/alpa-projects/alpa/tree/main/tests/README.md>`_

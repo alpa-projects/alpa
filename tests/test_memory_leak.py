@@ -67,7 +67,7 @@ class MemoryLeakTest(unittest.TestCase):
         del state
 
         # Assert all buffers are freed
-        for mesh in executable.physical_meshes:
+        for mesh in executable.mesh_group:
             for w in mesh.workers:
                 assert len(ray.get(w.get_live_buffer_uuids.remote())) == 0
 

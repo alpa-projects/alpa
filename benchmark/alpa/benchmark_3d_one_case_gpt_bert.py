@@ -297,7 +297,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
         executable.sync()
 
     latencies = executable.get_execution_time_costs(warmup=1)
-    max_mem_allocated = executable.physical_meshes.get_max_memory_allocated()
+    max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
 
     # Benchmark latency with driver overhead
     if False:

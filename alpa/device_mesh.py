@@ -1550,7 +1550,7 @@ class VirtualPhysicalMesh:
 
     A VirtualPhysicalMesh can also be sliced into multiple VirtualPhysicalMesh.
     After slicing, each sliced VirtualPhysicalMesh can be instantiated as a PhysicalDeviceMesh.
-    These sliced PhysicalDeviceMesh togather can form a PhysicalDeviceMeshGroup
+    These sliced PhysicalDeviceMesh together can form a PhysicalDeviceMeshGroup
     for pipeline parallelism.
     """
 
@@ -1814,7 +1814,7 @@ class PhysicalDeviceMeshGroup:
                     except ValueError:
                         pass
         # TODO(Hao): recycle the NCCLUniqueID named actor. Their name is MD5 hashed.
-        #            each of them will takes 1 CPU.
+        #            each of them will take 1 CPU.
         # recycle info actors
         for mesh in self.meshes:
             mesh.shutdown(forced=True)

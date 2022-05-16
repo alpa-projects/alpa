@@ -40,6 +40,7 @@ Check out the [Alpa Documentation](https://alpa-projects.github.io) site for ins
 More Information
 ----------------
 - [Alpa paper](https://arxiv.org/pdf/2201.12023.pdf) (OSDI'22)
+- [Blog](https://ai.googleblog.com/2022/05/alpa-automated-model-parallel-deep.html)
 
 
 Contributing

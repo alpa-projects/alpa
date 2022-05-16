@@ -66,12 +66,12 @@ num_layers = 10
 # Generate ground truth W and b
 rngkey = jax.random.PRNGKey(0)
 k1, k2 = random.split(rngkey)
-W = random.normal(k1, (dim, dim))
-b = random.normal(k2, (dim,))
+W = random.normal(k1, (dim, dim), jnp.float32)
+b = random.normal(k2, (dim,), jnp.float32)
 
 # Generate the training data
 ksample, knoise = random.split(k1)
-x = random.normal(ksample, (batch_size, dim))
+x = random.normal(ksample, (batch_size, dim), jnp.float32)
 y = (x @ W + b) + 0.1 * random.normal(knoise, (batch_size, dim))
 
 # Initialize a train state, which includes the model paramter and optimizer state.
@@ -111,7 +111,6 @@ expected_state = train_step(state, batch)
 # you. ``@alpa.parallelize`` finds the best parallelization strategy for the given jax
 # function and does the code tranformation. You only need to write the code as if you are
 # writing for a single device.
-
 
 # Define the training step. The body of this function is the same as the
 # ``train_step`` above. The only difference is to decorate it with

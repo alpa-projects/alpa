@@ -4,7 +4,8 @@ Developer Guide
 
 Code Organization
 =================
-The code in this repository is organized as follows:
+
+The code in alpa's repository is organized as follows:
   - `alpa <https://github.com/alpa-projects/alpa/tree/main/alpa>`__: the python source code of Alpa
   - `benchmark <https://github.com/alpa-projects/alpa/tree/main/benchmark>`__: benchmark scripts
   - `docs <https://github.com/alpa-projects/alpa/tree/main/docs>`__: documentation and tutorials
@@ -20,11 +21,9 @@ There are two additional repositories:
   functionality, but modify the building scripts to make building with tensorflow-alpa easier.
 
 
-
 Contribute to Alpa
 ==================
 Please submit a `pull request <https://github.com/alpa-projects/alpa/compare>`__ if you plan to contribute to Alpa.
-
 
 Formatting and Linting
 ----------------------
@@ -36,8 +35,7 @@ Install prospector and yapf via:
 
     pip install prospector yapf
 
-
-Use yapf to automatically format the code:
+Use yapf to format the code:
 
 .. code-block:: bash
 
@@ -48,3 +46,9 @@ Then use prospector to run linting for the folder ``alpa/``:
 .. code-block:: bash
 
     prospector alpa/
+
+Unittest
+--------
+Every New feature should come with a unittest.
+
+`How to run unit test locally <https://github.com/alpa-projects/alpa/tree/main/tests/README.md>`_

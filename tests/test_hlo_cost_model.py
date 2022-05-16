@@ -9,19 +9,14 @@ from flax.training.train_state import TrainState
 import optax
 import ray
 
-from alpa import (parallelize, set_parallelize_options, global_config,
-        LocalPhysicalDeviceMesh, DeviceCluster, ProfilingResultDatabase)
+from alpa import (init, parallelize, global_config, ShardParallel,
+                  LocalPhysicalDeviceMesh, ProfilingResultDatabase)
+from alpa.device_mesh import get_global_cluster
 from alpa.mesh_profiling import estimate_hlo_module_cost
 from alpa.util import map_to_shape
 
 
 class HloCostModelTest(unittest.TestCase):
-
-    def setUp(self):
-        ray.init(address='auto')
-
-    def tearDown(self):
-        ray.shutdown()
 
     def run_n_layer_mlp(self,
                         num_layers,
@@ -31,8 +26,6 @@ class HloCostModelTest(unittest.TestCase):
                         hidden_dim,
                         device_mesh,
                         use_bias=True):
-        set_parallelize_options(devices=device_mesh)
-
         class Model(nn.Module):
 
             @nn.compact
@@ -43,7 +36,7 @@ class HloCostModelTest(unittest.TestCase):
                 x = nn.Dense(features=output_dim, use_bias=use_bias)(x)
                 return x
 
-        @parallelize
+        @parallelize(method=ShardParallel(devices=device_mesh))
         def train_step(state, batch):
 
             def loss_func(params):
@@ -69,7 +62,8 @@ class HloCostModelTest(unittest.TestCase):
         return executable.compiled.hlo_modules()[0]
 
     def test_cluster_profling(self):
-        cluster = DeviceCluster()
+        init(cluster="ray")
+        cluster = get_global_cluster()
         global_config.overwrite_submesh_choices = [
             (1, 1),
             cluster.get_virtual_physical_mesh().shape,
@@ -92,10 +86,9 @@ class HloCostModelTest(unittest.TestCase):
         prof_database.load("tmp_prof_database.pkl")
 
         device_mesh = LocalPhysicalDeviceMesh()
-        logical_mesh = device_mesh.get_default_logical_mesh()
         hlo_module = self.run_n_layer_mlp(num_layers, batch_size, hidden_dim,
-                                          hidden_dim, hidden_dim, logical_mesh)
-        mesh_result = prof_database.query("p3.16", logical_mesh.shape)
+                                          hidden_dim, hidden_dim, device_mesh)
+        mesh_result = prof_database.query("p3.16", device_mesh.shape)
         cost = estimate_hlo_module_cost(hlo_module, mesh_result)
         # assert cost > 0
 

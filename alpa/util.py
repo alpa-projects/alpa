@@ -106,6 +106,15 @@ def tree_to_nparray(tree):
     return tree_map(convert_to_nparray, tree)
 
 
+def set_jax_env_on_driver(use_cpu_on_driver=True):
+    """Set jax environment flags for the driver process, so the driver
+    process can release GPU memory for the worker processes."""
+
+    # Use cpu backend
+    if use_cpu_on_driver:
+        jax.config.update("jax_platform_name", "cpu")
+
+
 ########################################
 ##### Data Structure Utilities
 ########################################

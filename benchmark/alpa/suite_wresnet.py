@@ -23,11 +23,10 @@ wresnet_specs = {
 prefer_reduce_scatter = True
 use_remat = True
 
-
-search_global_config_dict = {
-    "auto_stage_construction_imbalance_tolerance": 0.25,
-    "submesh_choices_mode": "small_power_of_two",
-    "logical_mesh_search_space": "single_node_model_parallel"
+auto_stage_option = {
+    "auto_stage_imbalance_tolerance": 0.25,
+    "submesh_physical_shape_space": "small_power_of_two",
+    "submesh_logical_shape_space": "single_node_model_parallel",
 }
 
 
@@ -35,21 +34,21 @@ def get_search_cases(model_name, max_global_batch_size,
                      num_micro_batches_list):
     return [(max_global_batch_size, *wresnet_specs[model_name],
              num_micro_batches, "search",
-             (prefer_reduce_scatter, use_remat, search_global_config_dict))
+             (prefer_reduce_scatter, use_remat, auto_stage_option))
             for num_micro_batches in num_micro_batches_list]
 
 
 def get_solution_case(model_name, max_global_batch_size,
                       num_micro_batches,
                       forward_stage_layer_ids,
-                      sub_physical_mesh_shapes, sub_logical_mesh_shapes,
+                      submesh_physical_shapes, submesh_logical_shapes,
                       submesh_autosharding_option_dicts):
     return [(max_global_batch_size, *wresnet_specs[model_name],
              num_micro_batches, "load_solution",
              (prefer_reduce_scatter, use_remat,
-              forward_stage_layer_ids,
-              sub_physical_mesh_shapes, sub_logical_mesh_shapes,
-              submesh_autosharding_option_dicts))]
+              (forward_stage_layer_ids,
+              submesh_physical_shapes, submesh_logical_shapes,
+              submesh_autosharding_option_dicts)))]
 
 # Performance test with shard parallel
 tmp_suite = { # key = the number of gpus, value = a list of cases

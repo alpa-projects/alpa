@@ -12,31 +12,29 @@ import jax
 import jax.numpy as jnp
 import ray
 
-from alpa import (parallelize, set_parallelize_options, grad, global_config,
-                  LocalPhysicalDeviceMesh, DeviceCluster)
+from alpa import (init, parallelize, grad,
+                  LocalPhysicalDeviceMesh, ShardParallel)
+from alpa.device_mesh import (get_global_cluster, get_global_physical_mesh,
+                              set_global_physical_mesh)
+from alpa.shard_parallel.auto_sharding import AutoShardingOption
 from alpa.util import count_communication_primitives
 from alpa.testing import assert_allclose
-
-as_option = global_config.default_autosharding_option
 
 
 class GradAccumulationTest(unittest.TestCase):
 
     def setUp(self):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
-        ray.init(address="auto", ignore_reinit_error=True)
+        self.as_option = AutoShardingOption()
 
-        self.as_option_backup = as_option.backup()
-
-    def tearDown(self):
-        as_option.restore(self.as_option_backup)
-        ray.shutdown()
-
-    def run_gradient_accumulation(self, use_ray, use_2d_mesh):
-        if use_ray:
-            device_cluster = DeviceCluster(use_cpu_on_driver=False)
-            physical_mesh = device_cluster.get_physical_mesh()
-            logical_mesh = physical_mesh.get_default_logical_mesh()
+    def run_gradient_accumulation(self, cluster, use_2d_mesh):
+        if cluster == "ray":
+            physical_mesh = get_global_physical_mesh()
+            if physical_mesh is None:
+                init(cluster="ray")
+                physical_mesh = get_global_cluster().get_physical_mesh()
+                set_global_physical_mesh(physical_mesh)
+            logical_mesh = physical_mesh.get_logical_mesh()
         else:
             physical_mesh = LocalPhysicalDeviceMesh(jax.local_devices()[:4])
             if use_2d_mesh:
@@ -45,15 +43,12 @@ class GradAccumulationTest(unittest.TestCase):
             else:
                 logical_mesh = physical_mesh.get_logical_mesh([1, 4], [1, 1],
                                                               [1, 1])
-
-        set_parallelize_options(logical_mesh)
-
-        as_option.allow_all_to_all = False
-
         batch_size = 256
         num_micro_batches = 2
         hidden_size = 16
         use_bias = True
+
+        self.as_option.allow_all_to_all = False
 
         class Model(nn.Module):
 
@@ -89,18 +84,20 @@ class GradAccumulationTest(unittest.TestCase):
         optimizer_expected = train_step(optimizer, batch, model.apply)
 
         # Distributed execution
-        global_config.num_micro_batches = num_micro_batches
-        train_step_parallel = parallelize(train_step)
-        executable = train_step_parallel.get_executable(optimizer, batch,
-                                                        model.apply)
-        optimizer_actual = train_step_parallel(optimizer, batch, model.apply)
+        p_train_step = parallelize(
+            train_step,
+            method=ShardParallel(devices=logical_mesh,
+                                 num_micro_batches=num_micro_batches,
+                                 auto_sharding_option=self.as_option))
+        executable = p_train_step.get_executable(optimizer, batch, model.apply)
+        optimizer_actual = p_train_step(optimizer, batch, model.apply)
 
         # Check results
         assert_allclose(optimizer_expected.target, optimizer_actual.target)
 
         # Check sharding strategy
         hlo_text = executable.get_hlo_text()
-        if as_option.prefer_reduce_scatter:
+        if self.as_option.prefer_reduce_scatter:
             _, accumulate_grad, apply_grad = hlo_text.split("HloModule")
 
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
@@ -125,20 +122,18 @@ class GradAccumulationTest(unittest.TestCase):
                 count_communication_primitives(apply_grad))
             assert n_total == 0
 
-        physical_mesh.shutdown()
-
     def test_gradient_accumulation_single_host(self):
-        self.run_gradient_accumulation(use_ray=False, use_2d_mesh=False)
+        self.run_gradient_accumulation("local", use_2d_mesh=False)
 
     def test_gradient_accumulation_multi_host(self):
-        self.run_gradient_accumulation(use_ray=True, use_2d_mesh=False)
+        self.run_gradient_accumulation("ray", use_2d_mesh=False)
 
     def test_gradient_accumulation_2d_mesh(self):
-        self.run_gradient_accumulation(use_ray=False, use_2d_mesh=True)
+        self.run_gradient_accumulation("local", use_2d_mesh=True)
 
     def test_gradient_accumulation_reduce_scatter(self):
-        as_option.prefer_reduce_scatter = True
-        self.run_gradient_accumulation(use_ray=False, use_2d_mesh=False)
+        self.as_option.prefer_reduce_scatter = True
+        self.run_gradient_accumulation("local", use_2d_mesh=False)
 
 
 def suite():

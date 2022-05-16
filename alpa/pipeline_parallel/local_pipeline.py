@@ -1,37 +1,22 @@
-"""Pipeline parallel on a single device."""
-from typing import Sequence, Mapping, Any, Dict, List
+"""Pipeline parallel on a single device. This is only used for debugging."""
+from typing import Sequence, Any, Dict
 
 import jax
 from jax import linear_util as lu
-from jax._src.util import safe_map
 from jax.core import Var, ClosedJaxpr, Literal, gensym
 from jax.interpreters import partial_eval as pe
 from jax.interpreters.xla import DeviceArray
 
-from alpa.device_mesh import PhysicalDeviceMesh
-from alpa.pipeline_parallel.base_runtime import BaseRuntime
 from alpa.pipeline_parallel.computation import (
-    PipelineComputation, XlaPipelineComputation, XlaShardedPipelineComputation,
+    PipelineComputation, XlaPipelineComputation,
     slice_closed_jaxpr_by_full_pipeline_marks,
     mark_missing_vars_in_backward_computation_pipeline_marks)
 
-# pylint: disable=redefined-builtin
-unsafe_map, map = map, safe_map  # type: ignore
-
 
 class LocalPipelineRunner:
-    """
-    Single-node local pipeline runner.
+    """Single-device local pipeline runner."""
 
-    Args:
-        name (str): pipeline runner name.
-        global_invals (List[DeviceArrays]): input device arrays to the stage.
-
-    Returns:
-        None
-    """
-
-    def __init__(self, name: str, global_invals: List[DeviceArray]):
+    def __init__(self, name: str, global_invals: Sequence[DeviceArray]):
         self.name = name
         self.env = {}
         self.global_invals = global_invals
@@ -61,43 +46,26 @@ class LocalPipelineRunner:
         del self.env[var]
 
 
-class LocalRuntime(BaseRuntime):
-    """A local pipeline parallel runtime running on a single GPU."""
+class LocalPipelineExecutable:
+    """A pipeline parallel executable running on a single local device.
+
+    Args:
+        stages (Sequence[PipelineComputation]): the pipeline stages to be
+            executed.
+        global_invars (Sequence[Var]): Global input variables.
+        global_outvars (Sequence[Var]): Global output variables.
+    """
 
     def __init__(self,
                  *,
-                 pipeline_stages: Sequence[PipelineComputation],
+                 stages: Sequence[PipelineComputation],
                  global_invars: Sequence[Var],
-                 global_outvars: Sequence[Var],
-                 physical_meshes: Sequence[PhysicalDeviceMesh] = None,
-                 get_hlo_texts=False):
-        """
-        Return a runtime that runs all pipeline stages on a single local device.
+                 global_outvars: Sequence[Var]):
+        self.stages = stages
+        self.global_invars = global_invars
+        self.global_outvars = global_outvars
 
-        Args:
-            pipeline_stages (Sequence[PipelineComputation]): the pipeline stages to be
-                executed.
-            global_invars (Sequence[Var]): Global input variables.
-            global_outvars (Sequence[Var]): Global output variables.
-            physical_meshes (Sequence[PhysicalDeviceMesh]): physical meshes for the runtime.
-            get_hlo_texts (bool): Whether to record hlo_texts. If True, input stages
-                should be XlaShardedComputation.
-        """
-        super().__init__(pipeline_stages=pipeline_stages,
-                         global_invars=global_invars,
-                         global_outvars=global_outvars,
-                         physical_meshes=physical_meshes)
-
-        if get_hlo_texts:
-            self.hlo_texts_after_spmd_partitioner = []
-            for stage in self.stages:
-                assert isinstance(stage, XlaShardedPipelineComputation)
-                compiled = stage.get_compiled(is_distributed=True)
-                hlo_module = compiled.hlo_modules()[0]
-                self.hlo_texts_after_spmd_partitioner.append(
-                    hlo_module.to_string())
-
-    def run(self, *args):
+    def launch_on_driver(self, *args):
         """Run function."""
         global_invals = dict(zip(self.global_invars, args))
         runners = {}
@@ -151,30 +119,9 @@ class LocalRuntime(BaseRuntime):
                     sender_runner.del_var(var)
         return global_outvals_list
 
-    def shutdown(self):
-        """Shutdown the pipeline runtime."""
-        return
 
-    def get_hlo_text(self, after_spmd_partitioner=True):
-        """Return the HLO text for all stages."""
-        if after_spmd_partitioner:
-            return self.hlo_texts_after_spmd_partitioner
-        else:
-            ret = []
-            for stage in self.stages:
-                assert isinstance(stage, XlaShardedPipelineComputation)
-                ret.append(stage.get_hlo_text())
-            return ret
-
-    def get_executable(self):
-        """Get the self as an executable."""
-        return self
-
-
-@lu.cache
-def local_pipeline_parallel_callable(fun: lu.WrappedFun,
-                                     devices: Mapping[str, Any], *avals):
-    """Pipeline parallel callable."""
+def compile_local_pipeline_executable(fun: lu.WrappedFun, *avals):
+    """Compile a local pipeline executable that only runs on a singel device."""
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
@@ -190,13 +137,7 @@ def local_pipeline_parallel_callable(fun: lu.WrappedFun,
         for stage in jax_pipeline_stages
     ]
 
-    local_runtime = LocalRuntime(pipeline_stages=xla_pipeline_stages,
-                                 global_invars=global_invars,
-                                 global_outvars=global_outvars)
-
-    def ret_func(*args, **kwargs):
-        return local_runtime.run(*args, **kwargs)
-
-    ret_func.get_executable = lambda: local_runtime
-
-    return ret_func
+    return LocalPipelineExecutable(
+        stages=xla_pipeline_stages,
+        global_invars=global_invars,
+        global_outvars=global_outvars)

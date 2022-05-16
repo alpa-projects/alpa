@@ -50,7 +50,7 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 # The unlisted files always appear after listed files.
 within_subsection_order = {
     "tutorials": [
-        "getting_started.py",
+        "quickstart.py",
         "pipeshard_parallelism.py",
         "alpa_vs_pmap.py",
         "advanced_api_usage.py",
@@ -93,7 +93,7 @@ sphinx_gallery_conf = {
     'gallery_dirs': ['tutorials'],
     'within_subsection_order': WithinSubsectionOrder,
     'backreferences_dir': 'gen_modules/backreferences',
-    "filename_pattern": os.environ.get("ALPA_TUTORIAL_EXEC_PATTERN", r"(?<!pipeshard_parallelism).py"),
+    "filename_pattern": os.environ.get("ALPA_TUTORIAL_EXEC_PATTERN", r".py"),
 }
 
 # configuration for intersphinx: refer to the Python standard library.
@@ -105,6 +105,10 @@ intersphinx_mapping = {
 
 # -- Monkey patch -------------------------------------------------
 
-# Fix a bug in sphinx_gallery
+# Fix bugs in sphinx_gallery
+import io
 from sphinx_gallery import gen_rst
-setattr(gen_rst._LoggingTee, "close", lambda x:x.restore_std())
+setattr(gen_rst._LoggingTee, "close", lambda x: x.restore_std())
+def raise_io_error(*args):
+    raise io.UnsupportedOperation()
+setattr(gen_rst._LoggingTee, "fileno", raise_io_error)

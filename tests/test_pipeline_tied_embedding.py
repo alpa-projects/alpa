@@ -5,10 +5,9 @@ from flax import linen as nn
 import jax
 import jax.numpy as jnp
 import optax
-import ray
 
-from alpa import (parallelize, set_parallelize_options, mark_pipeline,
-                  DeviceCluster, manual_layer_construction, grad)
+from alpa import (init, parallelize, mark_pipeline, manual_layer_construction,
+                  grad, PipeshardParallel)
 from alpa.model.model_util import TrainState
 from alpa.testing import assert_allclose
 from alpa.util import get_ray_namespace_str
@@ -17,26 +16,13 @@ from alpa.util import get_ray_namespace_str
 class PipelineTiedEmbeddingTest(unittest.TestCase):
 
     def setUp(self):
-        os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
-        assert len(jax.local_devices()) >= 4
+        init(cluster="ray")
 
-        ray.init(address="auto",
-                 namespace=get_ray_namespace_str(prefix="alpa-unittest"))
-        device_cluster = DeviceCluster()
-        self.devices = device_cluster.get_virtual_physical_mesh()
-
-    def tearDown(self):
-        ray.shutdown()
-
-    def train_tied_embedding(self, devices, strategy, num_micro_batches):
+    def train_tied_embedding(self, method):
         vocab_size = 256
         hidden_size = 16
         batch_size = 8
         seq_len = 8
-
-        set_parallelize_options(devices=devices,
-                                strategy=strategy,
-                                num_micro_batches=num_micro_batches)
 
         class Model(nn.Module):
             """Tied input and output embedding."""
@@ -81,16 +67,15 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
                                   dynamic_scale=None)
 
         # Run and check results
-        pipelined_train_step = parallelize(train_step)
+        p_train_step = parallelize(train_step, method=method)
         batch = {"x": x, "y": y}
         expected_new_state = train_step(state, batch)
-        actual_new_state = pipelined_train_step(state, batch)
+        actual_new_state = p_train_step(state, batch)
         assert_allclose(actual_new_state.params, expected_new_state.params)
 
-        pipelined_train_step.get_executable(state, batch).shutdown()
-
     def test_tied_embedding_pipeshard_parallel(self):
-        self.train_tied_embedding(self.devices, "pipeshard_parallel", 2)
+        method = PipeshardParallel(num_micro_batches=2)
+        self.train_tied_embedding(method)
 
 
 def suite():

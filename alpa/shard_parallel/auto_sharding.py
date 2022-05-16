@@ -18,6 +18,7 @@ SPMD_PARTITIONED
   V
 FULLY_OPTIMIZED
 """
+import dataclasses
 import logging
 import multiprocessing
 import os
@@ -31,7 +32,7 @@ from jax._src.lib import xla_client as xc, xla_extension as xe
 from jax.core import ShapedArray
 from jax.interpreters import pxla
 
-from alpa.global_env import global_config, AutoShardingOption
+from alpa.global_env import global_config
 from alpa.measure_record import (StrategyConfig)
 from alpa.timer import timers
 from alpa.util import check_arithmetic_sequence, get_compile_options, XlaPassContext
@@ -122,6 +123,35 @@ class LogicalDeviceMesh:
         return ((self.flatten_ids, self.id_mesh.shape, self.mesh_alpha,
                  self.mesh_beta) == (other.flatten_ids, other.id_mesh.shape,
                                      other.mesh_alpha, other.mesh_beta))
+
+
+@dataclasses.dataclass
+class AutoShardingOption:
+    """Options of the auto-sharding solver."""
+    # Whether to allow all-gather during re-sharding.
+    allow_all_gather: bool = True
+    # Whether to allow all-to-all during re-sharding.
+    allow_all_to_all: bool = True
+    # Whether to allow replicated parameters.
+    allow_replicated_parameters: bool = True
+    # Whether to forcibly generate data-parallel.
+    force_data_parallel: bool = False
+    # Forcibly map the batch dimension to a mesh dimension.
+    force_batch_dim_to_mesh_dim: Optional[int] = None
+    # Whether to forcibly generate a strategy similar to ZeRO optimizer stage 3.
+    force_zero_stage_3: bool = False
+    # The threshold of all-gather combiner if force_zero_stage_3 is true.
+    force_zero_stage_3_all_gather_threshold: int = 1 << 25
+    # Prefer reduce-scatter over all-reduce.
+    prefer_reduce_scatter: bool = False
+    # Allow mixed 1d mesh and 2d mesh shape.
+    allow_mixed_mesh_shape: bool = False
+    # Allow replicated dot computation.
+    allow_recompute_heavy_op: bool = False
+    # If it is not empty, forcibly use a simple heuristic instead of the ILP solver.
+    force_simple_heuristic: str = ""
+    # The threshold of all-reduce combiner in bytes.
+    all_reduce_threshold: int = 1 << 60
 
 
 def run_auto_sharding_pass(

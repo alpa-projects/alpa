@@ -11,7 +11,7 @@ To make the benchmark feasible in a short amount of time, this documentation pro
 ## Benchmark Pre-found Solutions
 
 ### Start a Ray Cluster
-Alpa uses Ray as the distributed compute framework.
+Alpa uses a distributed framework Ray to manage the cluster and distributed workers.
 Here, we provide instructions for manually launching a ray cluster.
 You can also refer to the Ray [documentation](https://docs.ray.io/en/latest/cluster/quickstart.html#) for more methods on launching and managing ray clusters. 
 

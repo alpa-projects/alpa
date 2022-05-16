@@ -8,10 +8,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-import ray
 
-from alpa import DeviceCluster, DistributedArray, set_parallelize_options, save_checkpoint, restore_checkpoint
-from alpa.global_env import set_parallelize_options, global_config
+from alpa import (init, shutdown, DistributedArray, PipeshardParallel,
+                  save_checkpoint, restore_checkpoint)
+from alpa.device_mesh import get_global_cluster
 from alpa.model.bert_model import BertConfig
 from alpa.model.model_util import TrainState
 from alpa.testing import (MLPModel, BertLayerModel, create_train_state,
@@ -21,10 +21,10 @@ from alpa.testing import (MLPModel, BertLayerModel, create_train_state,
 class DistSaveLoadTest(unittest.TestCase):
 
     def setUp(self):
-        ray.init(address="auto", ignore_reinit_error=True)
+        init(cluster="ray")
 
     def tearDown(self):
-        ray.shutdown()
+        shutdown()
 
     def check_dist_array_eq(self, x, y):
         if isinstance(x, DistributedArray):
@@ -37,8 +37,16 @@ class DistSaveLoadTest(unittest.TestCase):
                                                  batching=True))
         assert_allclose(x, y)
 
-    def test_distributed_array_save_load(self):
-        device_cluster = DeviceCluster()
+    def _get_efs_mount_point(self):
+        # Hacky function to get the EFS mount point
+        for line in subprocess.check_output("df -h", shell=True).decode().split('\n'):
+            cols = line.split(' ')
+            if "efs" in cols[0]:
+                return cols[-1]+"/"
+        return None
+
+    def _get_save_prefix(self):
+        device_cluster = get_global_cluster()
         if len(device_cluster.host_info) > 1:
             # Get EFS mount point for the multi-host test
             save_prefix = self._get_efs_mount_point()
@@ -47,6 +55,11 @@ class DistSaveLoadTest(unittest.TestCase):
         else:
             # Use tmp dir for the single-host test
             save_prefix = "/tmp/"
+        return save_prefix
+
+    def test_distributed_array_save_load(self):
+        device_cluster = get_global_cluster()
+        save_prefix = self._get_save_prefix()
 
         # Launch a device mesh contains four devices
         if device_cluster.num_devices < 4:
@@ -104,29 +117,8 @@ class DistSaveLoadTest(unittest.TestCase):
         # Cleanup
         physical_mesh.shutdown()
 
-    def _get_efs_mount_point(self):
-        # Hacky function to get the EFS mount point
-        for line in subprocess.check_output("df -h", shell=True).decode().split('\n'):
-            cols = line.split(' ')
-            if "efs" in cols[0]:
-                return cols[-1]+"/"
-        return None
-
     def test_distributed_mlp_save_load(self):
-        # Set pipeline parallel option
-        cluster = DeviceCluster()
-        virtual_mesh = cluster.get_virtual_physical_mesh()
-        set_parallelize_options(devices=virtual_mesh,
-                                strategy="pipeshard_parallel")
-
-        if len(cluster.host_info) > 1:
-            # Get EFS mount point for the multi-host test
-            save_prefix = self._get_efs_mount_point()
-            if save_prefix is None:
-                self.skipTest("The multi-host test requires a mounted EFS! ")
-        else:
-            # Use tmp dir for the single-host test
-            save_prefix = "/tmp/"
+        save_prefix = self._get_save_prefix()
 
         # Init model and optimizer
         batch_size = 64
@@ -138,15 +130,15 @@ class DistSaveLoadTest(unittest.TestCase):
 
         # Init batch args
         rngkey = jax.random.PRNGKey(0)
-        x = jax.random.normal(rngkey, (batch_size, input_dim))
-        y = jax.random.normal(rngkey, (batch_size, output_dim))
+        x = jax.random.normal(rngkey, (batch_size, input_dim), jnp.float32)
+        y = jax.random.normal(rngkey, (batch_size, output_dim), jnp.float32)
         batch = {'x': x, 'y': y}
         state = create_train_state(rngkey, model, [x])
 
         # Compile
-        global_config.num_micro_batches = 2
-        serial_train_step = get_mlp_train_step(False, None, None, False)
-        parallel_train_step = get_mlp_train_step(True, True, False, False)
+        method = PipeshardParallel(num_micro_batches=2)
+        serial_train_step = get_mlp_train_step(None, None, None, False)
+        parallel_train_step = get_mlp_train_step(method, True, False, False)
         executable = parallel_train_step.get_executable(state, batch)
 
         # Run before save
@@ -171,24 +163,8 @@ class DistSaveLoadTest(unittest.TestCase):
         # Check results
         assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)
 
-        # Cleanup
-        executable.shutdown()
-
     def test_distributed_bert_save_load(self):
-        # Set pipeline parallel option
-        cluster = DeviceCluster()
-        virtual_mesh = cluster.get_virtual_physical_mesh()
-        set_parallelize_options(devices=virtual_mesh,
-                                strategy="pipeshard_parallel")
-
-        if len(cluster.host_info) > 1:
-            # Get EFS mount point for the multi-host test
-            save_prefix = self._get_efs_mount_point()
-            if save_prefix is None:
-                self.skipTest("The multi-host test requires a mounted EFS! ")
-        else:
-            # Use tmp dir for the single-host test
-            save_prefix = "/tmp/"
+        save_prefix = self._get_save_prefix()
 
         # Config
         batch_size = 16
@@ -222,10 +198,10 @@ class DistSaveLoadTest(unittest.TestCase):
                                   dynamic_scale=None)
 
         # Compile
-        global_config.num_micro_batches = 2
-        serial_train_step = get_bert_layer_train_step(False, None, None,
+        method = PipeshardParallel(num_micro_batches=2)
+        serial_train_step = get_bert_layer_train_step(None, None, None,
                                                       n_layers, False)
-        parallel_train_step = get_bert_layer_train_step(True, True, False,
+        parallel_train_step = get_bert_layer_train_step(method, True, False,
                                                         n_layers, False)
         executable = parallel_train_step.get_executable(state, batch)
 
@@ -250,9 +226,6 @@ class DistSaveLoadTest(unittest.TestCase):
 
         # Check results
         assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)
-
-        # Cleanup
-        executable.shutdown()
 
 
 def suite():

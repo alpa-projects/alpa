@@ -7,7 +7,7 @@ from jax.core import ClosedJaxpr, Var, gensym
 import jax.numpy as jnp
 import ray
 
-from alpa import DeviceCluster
+from alpa import init
 from alpa.model.bert_model import BertConfig
 from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
                                                process_apply_gradient,
@@ -42,16 +42,7 @@ def _assert_avals_allmatch(aval_seq_a, aval_seq_b):
 class StageConstructUtilTest(unittest.TestCase):
 
     def setUp(self):
-        os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
-        assert len(jax.local_devices()) >= 4
-
-        ray.init(address="auto",
-                 namespace=get_ray_namespace_str(prefix="alpa-unittest"))
-        device_cluster = DeviceCluster()
-        self.devices = device_cluster.get_virtual_physical_mesh()
-
-    def tearDown(self):
-        ray.shutdown()
+        init(cluster="ray")
 
     def _create_n_layer_jaxpr_with_donation(self,
                                             n_layers=2,
@@ -77,12 +68,12 @@ class StageConstructUtilTest(unittest.TestCase):
         state = create_train_state(rngkey, model, [x, attention_mask])
 
         # Compile
-        train_step = get_bert_layer_train_step(False,
+        train_step = get_bert_layer_train_step(None,
                                                manual_pipeline_layer,
                                                use_remat,
                                                n_layers,
                                                False,
-                                               decorate=True)
+                                               decorate_loss=True)
         closed_jaxpr, output_tree = make_jaxpr(train_step,
                                                return_shape=True)(state, batch)
         num_params = len(closed_jaxpr.jaxpr.invars) - 3

@@ -1,27 +1,26 @@
 """Utilities for testing."""
-import time
 import unittest
 from collections.abc import Iterable
+from typing import Optional
 
 import jax
 import jax.numpy as jnp
 from jax.experimental.maps import FrozenDict as FrozenDictJax
 import numpy as np
 import optax
-import ray
 from flax import linen as nn
 from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 
 import alpa
-from alpa.api import parallelize
-from alpa.device_mesh import DeviceCluster
-from alpa.global_env import set_parallelize_options, global_config
+from alpa.api import init, shutdown, parallelize
 from alpa.model.bert_model import BertConfig, FlaxBertLayer
 from alpa.model.model_util import TrainState
+from alpa.parallel_method import PipeshardParallel
 from alpa.pipeline_parallel.layer_construction import (
     automatic_layer_construction, manual_layer_construction)
+from alpa.pipeline_parallel.stage_construction import UniformStageOption, StageOption
 from alpa.pipeline_parallel.primitive_def import mark_pipeline
-from alpa.util import get_ray_namespace_str
+from alpa.shard_parallel.auto_sharding import AutoShardingOption
 
 
 def assert_allclose(x, y, rtol=1e-4, atol=1e-4):
@@ -37,7 +36,7 @@ def assert_allclose(x, y, rtol=1e-4, atol=1e-4):
         for x_elt, y_elt in zip(x, y):
             assert_allclose(x_elt, y_elt, rtol, atol)
     elif hasattr(x, '__array__') or np.isscalar(x):
-        assert hasattr(y, '__array__') or np.isscalar(y)
+        assert hasattr(y, '__array__') or np.isscalar(y), f"{y}"
         x = np.asarray(x)
         y = np.asarray(y)
         np.testing.assert_allclose(x, y, rtol, atol)
@@ -122,7 +121,7 @@ def decorate_loss_fn(fn, manual_pipeline, use_remat, layer_num):
                                         layer_num=layer_num)
 
 
-def get_mlp_train_step(use_parallel,
+def get_mlp_train_step(parallel_method,
                        manual_pipeline_layer,
                        use_remat,
                        use_value_and_grad):
@@ -136,7 +135,7 @@ def get_mlp_train_step(use_parallel,
                 mark_pipeline(name='2', mark_type='end')
             return loss
 
-        if use_parallel:
+        if parallel_method:
             loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
                                          use_remat, 2)
             if use_value_and_grad:
@@ -154,18 +153,18 @@ def get_mlp_train_step(use_parallel,
         new_state = state.apply_gradients(grads=grads)
         return new_state, val
 
-    if use_parallel:
-        return parallelize(train_step)
+    if parallel_method:
+        return parallelize(train_step, method=parallel_method)
     else:
         return train_step
 
 
-def get_mlp_inference_step(use_parallel,
+def get_mlp_inference_step(parallel_method,
                            manual_pipeline_layer):
 
     def inference_step(state, batch):
 
-        def inference_func(params):
+        def forward(params):
             out = state.apply_fn(params, batch["x"])
             # TODO(zhuohan): Make inference_func work with outputs also
             loss = jnp.mean((out - batch["y"])**2)
@@ -173,26 +172,28 @@ def get_mlp_inference_step(use_parallel,
                 mark_pipeline(name='2', mark_type='end')
             return loss
 
-        if use_parallel:
-            inference_func = decorate_loss_fn(inference_func, manual_pipeline_layer,
-                                              False, 2)
-        out = inference_func(state.params)
+        if parallel_method:
+            forward = decorate_loss_fn(forward, manual_pipeline_layer,
+                                       False, 2)
+
+        out = forward(state.params)
         return out
 
-    if use_parallel:
-        return parallelize(inference_step, donate_argnums=())
+    if parallel_method:
+        return parallelize(inference_step, donate_argnums=(),
+                           method=parallel_method)
     else:
         return inference_step
 
 
-def get_bert_layer_train_step(use_parallel,
+def get_bert_layer_train_step(parallel_method,
                               manual_pipeline_layer,
                               use_remat,
                               num_layers,
                               use_value_and_grad,
-                              decorate=None):
-    if decorate is None:
-        decorate = use_parallel
+                              decorate_loss=None):
+    if decorate_loss is None:
+        decorate_loss = parallel_method is not None
 
     def train_step(state, batch):
 
@@ -203,7 +204,7 @@ def get_bert_layer_train_step(use_parallel,
                 mark_pipeline(name=str(num_layers - 1), mark_type='end')
             return loss
 
-        if decorate:
+        if decorate_loss:
             loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
                                          use_remat, num_layers)
             if use_value_and_grad:
@@ -221,8 +222,8 @@ def get_bert_layer_train_step(use_parallel,
         new_state = state.apply_gradients(grads=grads)
         return new_state, val
 
-    if use_parallel:
-        return parallelize(train_step)
+    if parallel_method:
+        return parallelize(train_step, method=parallel_method)
     else:
         return train_step
 
@@ -230,25 +231,22 @@ def get_bert_layer_train_step(use_parallel,
 class PipelineBasicTest(unittest.TestCase):
 
     def setUp(self):
-        ray.init(address="auto",
-                 namespace=get_ray_namespace_str(
-                     prefix=global_config.unittest_ray_namespace_prefix))
+        init(cluster="ray")
 
     # pylint: disable=no-self-use
     def tearDown(self):
-        ray.shutdown()
-        time.sleep(1)
+        shutdown()
 
     def run_mlp(self,
-                manual_pipeline_layer=True,
-                use_remat=False,
-                use_value_and_grad=False,
-                pipeline_stage_mode="uniform_stage",
-                do_numerical_test=True):
-        virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
-        set_parallelize_options(devices=virtual_mesh,
-                                strategy="pipeshard_parallel",
-                                pipeline_stage_mode=pipeline_stage_mode)
+                manual_pipeline_layer: bool = True,
+                use_remat: bool = False,
+                use_value_and_grad: bool = False,
+                stage_option: Optional[StageOption] = None,
+                as_option: Optional[AutoShardingOption] = None,
+                do_numerical_test: bool = True):
+        method = PipeshardParallel(num_micro_batches=4)
+        method.stage_option = stage_option or UniformStageOption()
+        method.as_option = as_option or AutoShardingOption()
 
         # Init model and optimizer
         batch_size = 64
@@ -259,18 +257,17 @@ class PipelineBasicTest(unittest.TestCase):
                          output_dim=output_dim,
                          manual_pipeline_layer=manual_pipeline_layer)
         rngkey = jax.random.PRNGKey(0)
-        x = jax.random.normal(rngkey, (batch_size, input_dim))
-        y = jax.random.normal(rngkey, (batch_size, output_dim))
+        x = jax.random.normal(rngkey, (batch_size, input_dim), jnp.float32)
+        y = jax.random.normal(rngkey, (batch_size, output_dim), jnp.float32)
         batch = {'x': x, 'y': y}
         state = create_train_state(rngkey, model, [x])
 
         # Compile
-        global_config.num_micro_batches = 4
-        serial_train_step = get_mlp_train_step(False,
+        serial_train_step = get_mlp_train_step(None,
                                                None,
                                                None,
                                                use_value_and_grad)
-        parallel_train_step = get_mlp_train_step(True,
+        parallel_train_step = get_mlp_train_step(method,
                                                  manual_pipeline_layer,
                                                  use_remat,
                                                  use_value_and_grad)
@@ -296,7 +293,6 @@ class PipelineBasicTest(unittest.TestCase):
                 assert_allclose(expected_val, actual_val, 1e-3, 1e-3)
 
         hlo_text = executable.get_hlo_text()
-        executable.shutdown()
         return hlo_text
 
     # pylint: disable=no-self-use
@@ -309,25 +305,12 @@ class PipelineBasicTest(unittest.TestCase):
                          use_remat=False,
                          use_value_and_grad=False,
                          manual_pipeline_layer=True,
-                         pipeline_stage_mode="uniform_stage",
-                         cache_compute_cost=None,
-                         forward_stage_layer_ids=None,
-                         submesh_shapes=None,
-                         overwrite_global_config_dict=None,
-                         virtual_mesh=None,
-                         do_numerical_test=True):
-        if virtual_mesh is None:
-            virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
-
-        set_parallelize_options(devices=virtual_mesh,
-                                strategy="pipeshard_parallel",
-                                pipeline_stage_mode=pipeline_stage_mode,
-                                cache_compute_cost=cache_compute_cost,
-                                forward_stage_layer_ids=forward_stage_layer_ids,
-                                sub_physical_mesh_shapes=submesh_shapes)
-
-        if overwrite_global_config_dict:
-            global_config.update_with_dict(overwrite_global_config_dict)
+                         stage_option: Optional[StageOption] = None,
+                         as_option: Optional[AutoShardingOption] = None,
+                         do_numerical_test: bool = True):
+        method = PipeshardParallel(num_micro_batches=2)
+        method.stage_option = stage_option or UniformStageOption()
+        method.as_option = as_option or AutoShardingOption()
 
         # Init model and optimizer
         rngkey = jax.random.PRNGKey(0)
@@ -346,14 +329,13 @@ class PipelineBasicTest(unittest.TestCase):
         state = create_train_state(rngkey, model, [x, attention_mask])
 
         # Compile
-        global_config.num_micro_batches = 2
-        serial_train_step = get_bert_layer_train_step(False,
+        serial_train_step = get_bert_layer_train_step(None,
                                                       None,
                                                       None,
                                                       n_layers,
                                                       use_value_and_grad)
         parallel_train_step = get_bert_layer_train_step(
-            True,
+            method,
             manual_pipeline_layer,
             use_remat,
             n_layers,
@@ -381,7 +363,6 @@ class PipelineBasicTest(unittest.TestCase):
                 assert_allclose(expected_val, actual_val, 1e-3, 1e-3)
 
         hlo_text = executable.get_hlo_text()
-        executable.shutdown()
         return hlo_text
 
 

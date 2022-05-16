@@ -10,38 +10,26 @@ from flax.training.train_state import TrainState
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 import optax
 
-from alpa import parallelize, set_parallelize_options, LocalPhysicalDeviceMesh
-from alpa.global_env import global_config
+from alpa import parallelize, LocalPhysicalDeviceMesh, ShardParallel, AutoShardingOption
 from alpa.util import map_to_shape, count_communication_primitives
-
-as_option = global_config.default_autosharding_option
 
 
 class AutoShardingMixedTest(unittest.TestCase):
 
     def setUp(self):
         assert len(jax.local_devices()) >= 4
-        self.devices = jax.local_devices()[:4]
-
-        self.as_option_backup = as_option.backup()
-
-    def tearDown(self):
-        as_option.restore(self.as_option_backup)
+        self.physical_mesh = LocalPhysicalDeviceMesh(jax.local_devices()[:4])
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
-        device_mesh = LocalPhysicalDeviceMesh(
-            devices=self.devices[:np.prod(shape)])
-        return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
+        return self.physical_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 
     def test_dot_all_to_all(self):
         device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 0.1])
-        set_parallelize_options(devices=device_mesh)
 
-        as_option.allow_mixed_mesh_shape = True
-        as_option.allow_all_gather = False
+        as_option = AutoShardingOption(allow_mixed_mesh_shape=True,
+                                       allow_all_gather=False)
 
         use_bias = False
-
         B = 256
         E = 4
         M = 16
@@ -75,7 +63,8 @@ class AutoShardingMixedTest(unittest.TestCase):
                 x = nn.Dense(features=M, use_bias=use_bias)(x)
                 return x
 
-        @parallelize
+        @parallelize(method=ShardParallel(devices=device_mesh,
+                                          auto_sharding_option=as_option))
         def train_step(state, batch):
 
             def loss_func(params):

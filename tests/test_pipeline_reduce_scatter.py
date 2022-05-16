@@ -1,18 +1,17 @@
 import unittest
 
+from alpa.shard_parallel.auto_sharding import AutoShardingOption
 from alpa.testing import PipelineBasicTest
-from alpa.global_env import global_config
 from alpa.util import count_communication_primitives
 
-as_option = global_config.default_autosharding_option
 
 
 class PipelineReduceScatterTest(PipelineBasicTest):
 
     def test_mlp_grad_acc_friendly(self):
-        as_option.force_data_parallel = True
-        as_option.prefer_reduce_scatter = True
-        hlo_text = self.run_mlp(do_numerical_test=True)
+        as_option = AutoShardingOption(force_data_parallel=True,
+                                       prefer_reduce_scatter=True)
+        hlo_text = self.run_mlp(as_option=as_option)
 
         # Check number of communication primitives
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
@@ -46,9 +45,10 @@ class PipelineReduceScatterTest(PipelineBasicTest):
         assert n_total == n_all_gather == 1
 
     def test_bert_grad_acc_friendly(self):
+        as_option = AutoShardingOption()
         as_option.force_data_parallel = True
         as_option.prefer_reduce_scatter = True
-        hlo_text = self.run_n_layer_bert(n_layers=2, do_numerical_test=True)
+        hlo_text = self.run_n_layer_bert(n_layers=2, as_option=as_option)
 
         # Check numbers of communication primitives
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (

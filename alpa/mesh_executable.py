@@ -1,17 +1,19 @@
-# pylint: disable=import-outside-toplevel
+# pylint: disable=arguments-differ
 """
 A mesh executable encapsulates all compiled binary and meta information of a distributed executable.
 
 A mesh executable contains one or several XLA executables.
 For each type of mesh executable, there is a driver part and a worker part.
+The driver part runs on the user script and the worker parts run on distributed workers.
+The driver part sends control commands to launch the worker parts on workers.
 """
+from abc import ABC, abstractmethod
 import logging
 from typing import Callable, Sequence, Optional
 import os
 
 import jax.numpy as jnp
 from jax._src.lib import xla_bridge as xb, xla_extension as xe
-from jax._src.util import partial
 from jax.core import ShapedArray
 from jax.interpreters import pxla
 from jax.tree_util import tree_flatten, tree_unflatten
@@ -39,22 +41,71 @@ mesh_executable_counter = 0
 remote_buffer_counter = 0
 
 
-def next_mesh_executable_uuid():
-    """Return the next uuid of a mesh executable."""
-    global mesh_executable_counter
-    mesh_executable_counter = (mesh_executable_counter + 1) % (1 << 60)
-    return mesh_executable_counter
+class MeshDriverExecutable(ABC):
+    """The base class of the driver part of a mesh executable."""
+
+    @abstractmethod
+    def launch_on_driver(self, *args, **kwargs):
+        """Launch the executable on the driver.
+
+        Args:
+            args: The original arguments of the parallelized function.
+            kwargs: The additional arguments to control execution options.
+        """
+        raise NotImplementedError()
+
+    def preshard_dynamic_args(self, *args):
+        """Pre-shard the input arguments."""
+        raise NotImplementedError()
+
+    def profile_with_dummy_inputs(self, **kwargs):
+        """Profile the execution time costs with dummy inputs.
+
+        Args:
+            kwargs: The additional arguments to control execution options.
+        """
+        raise NotImplementedError()
+
+    def get_execution_time_costs(self, warmup: int):
+        """Get the execution time costs with internal timers."""
+        raise NotImplementedError()
+
+    def get_hlo_text(self):
+        """Return the HLO IR in the text format."""
+        raise NotImplementedError()
+
+    def get_total_allocation_size(self):
+        """Get the total memory allocation size in bytes."""
+        raise NotImplementedError()
+
+    def sync(self):
+        """Sync all workers"""
+        self.physical_mesh.sync_workers()
+
+    def __del__(self):
+        if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
+            self.physical_mesh.delete_remote_executable(self.exec_uuid)
 
 
-def next_remote_buffer_uuid(number=1):
-    """Return the next uuid of a remote buffer."""
-    global remote_buffer_counter
-    if number == 1:
-        ret = remote_buffer_counter
-    else:
-        ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
-    remote_buffer_counter = (remote_buffer_counter + number) % (1 << 60)
-    return ret
+class MeshWorkerExecutable(ABC):
+    """The base class of the worker part of a mesh executable."""
+
+    @abstractmethod
+    def execute_on_worker(self, *arg, **kwargs):
+        """Run the executable on the worker."""
+        raise NotImplementedError()
+
+    def profile_with_dummy_inputs(self, backend, local_devices):
+        """Profile the execution time costs with dummy inputs."""
+        raise NotImplementedError()
+
+    def get_hlo_text(self):
+        """Return the HLO IR in the text format."""
+        raise NotImplementedError()
+
+    def get_total_allocation_size(self):
+        """Get the total memory allocation size in bytes."""
+        raise NotImplementedError()
 
 
 class RemoteBufferRef:
@@ -92,6 +143,24 @@ class RemoteBufferRef:
             self.device_mesh.delete_remote_buffers((self,))
 
 
+def next_mesh_executable_uuid():
+    """Return the next uuid of a mesh executable."""
+    global mesh_executable_counter
+    mesh_executable_counter = (mesh_executable_counter + 1) % (1 << 60)
+    return mesh_executable_counter
+
+
+def next_remote_buffer_uuid(number=1):
+    """Return the next uuid of a remote buffer."""
+    global remote_buffer_counter
+    if number == 1:
+        ret = remote_buffer_counter
+    else:
+        ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
+    remote_buffer_counter = (remote_buffer_counter + number) % (1 << 60)
+    return ret
+
+
 def create_remote_buffer_refs(device_mesh,
                               num_batches=1,
                               host_indices=None,
@@ -116,15 +185,7 @@ def create_remote_buffer_refs(device_mesh,
     return refs, uuids
 
 
-class MeshDriverExecutable:
-    """The base class of the driver part of a mesh executable."""
-
-
-class MeshWorkerExecutable:
-    """The base class of the worker part of a mesh executable."""
-
-
-def get_execution_timer_name(exec_uuid):
+def get_execution_timer_name(exec_uuid: int):
     """Return the name of the timer used for recording pure execution time."""
     return f"{exec_uuid}-execution"
 
@@ -148,7 +209,7 @@ def get_sync_func_worker(worker):
     return sync_func_worker
 
 
-def get_uuid_np_array(array):
+def get_uuid_np_array(array: Sequence[Sequence[int]]):
     """Convert a 2d array of RemoteBufferRef to a np array of UUID (int64)."""
     shape = (len(array), len(array[0]))
     ret = np.empty(shape, dtype=np.int64)
@@ -197,13 +258,13 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         # Send the executable to workers
         self.hlo_text = None
         self.exec_uuid = next_mesh_executable_uuid()
-        self.set_executable(physical_mesh, hlo_module, strategy_config)
+        self._set_executable(physical_mesh, hlo_module, strategy_config)
 
         # Set up timers
         self.timer_name = get_execution_timer_name(self.exec_uuid)
         self.sync_func = get_sync_func_driver(physical_mesh)
 
-    def set_executable(self, physical_mesh, hlo_module, strategy_config):
+    def _set_executable(self, physical_mesh, hlo_module, strategy_config):
         """Put the executable on workers."""
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
@@ -229,13 +290,6 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                     backend, hlo_module, strategy_config,
                     physical_mesh.num_devices)
             self.hlo_text = self.compiled.hlo_modules()[0].to_string()
-
-    def get_driver_callable(self):
-        """Get a callable that runs on the driver and handles arguments/outputs conversion."""
-        ret = partial(self.launch_on_driver)
-        ret.preshard_dynamic_args = partial(self.preshard_dynamic_args)
-        ret.get_executable = lambda: self
-        return ret
 
     def launch_on_driver(self, *args, **kwargs):
         """Launch the executable on the driver."""
@@ -324,7 +378,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         return tree_unflatten(self.out_tree_thunk(), out)
 
     def profile_with_dummy_inputs(self, **kwargs):
-        """Profile the time cost of this executable with dummy inputs."""
+        """Profile the execution time costs with dummy inputs."""
         if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
             tasks = []
             for worker in self.physical_mesh.workers:
@@ -366,13 +420,6 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             self.physical_mesh.workers[0].get_exec_hlo_text.remote(
                 self.exec_uuid))
         return self.hlo_text
-
-    def sync(self):
-        self.physical_mesh.sync_workers()
-
-    def __del__(self):
-        if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
-            self.physical_mesh.delete_remote_executable(self)
 
 
 def get_buffers(buffer_dict, uuids):
@@ -439,10 +486,8 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
         # Delete donated input buffers
         delete_donated_buffers(buffer_dict, input_uuids)
 
-    def profile_with_dummy_inputs(self, backend, local_devices, **kwargs):
+    def profile_with_dummy_inputs(self, backend, local_devices):
         """Profile the time cost of this executable with dummy inputs."""
-        if len(kwargs):
-            logger.warning(f"kwargs {(list(kwargs.keys()))} are ignored")
         return profile_xla_executable(self.compiled, backend, local_devices)
 
     def get_hlo_text(self):
@@ -615,13 +660,6 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         self.timer_name = get_execution_timer_name(self.exec_uuid)
         self.sync_func = get_sync_func_driver(physical_mesh)
 
-    def get_driver_callable(self):
-        """Get a callable that runs on the driver and handles arguments/outputs conversion."""
-        ret = partial(self.launch_on_driver)
-        ret.preshard_dynamic_args = partial(self.preshard_dynamic_args)
-        ret.get_executable = lambda: self
-        return ret
-
     def launch_on_driver(self, *args):
         """Launch the executable on the driver."""
         num_micro_batches = self.num_micro_batches
@@ -735,14 +773,6 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         # Wrap output buffers as ShardedArray
         return self.outs_handler(output_bufs)
 
-    def preshard_dynamic_args(self, *args):
-        """Pre-shard the input arguments."""
-        raise NotImplementedError
-
-    def profile_with_dummy_inputs(self, **kwargs):
-        """Profile the time cost of this executable with dummy inputs."""
-        raise NotImplementedError
-
     def get_execution_time_costs(self, warmup):
         """Return the pure execution time costs recorded by an internal timer."""
         return self.physical_mesh.get_remote_timer(
@@ -771,13 +801,6 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             self.physical_mesh.workers[0].get_exec_grad_sync_channel_ids.remote(
                 self.exec_uuid))
         return self.hlo_text
-
-    def sync(self):
-        self.physical_mesh.sync_workers()
-
-    def __del__(self):
-        if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
-            self.physical_mesh.delete_remote_executable(self)
 
 
 class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
@@ -881,10 +904,6 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
                 for j in range(len(next_batches_uuids[i])):
                     del buffer_dict[next_batches_uuids[i][j]]
 
-    def profile_with_dummy_inputs(self, backend, local_devices, **kwargs):
-        """Profile the time cost of this executable with dummy inputs."""
-        raise NotImplementedError
-
     def get_hlo_text(self):
         return (self.accumulate_grad.hlo_modules()[0].to_string() +
                 self.apply_grad.hlo_modules()[0].to_string())
@@ -919,7 +938,7 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
         super().__init__(physical_mesh, hlo_module, strategy_config, avals,
                          out_avals, donated_invars)
 
-    def set_executable(self, physical_mesh, hlo_module, strategy_config):
+    def _set_executable(self, physical_mesh, hlo_module, strategy_config):
         """Put the executable on workers."""
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
@@ -984,7 +1003,7 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
         return super().execute_on_worker(input_uuids, output_uuids,
                                          sync_before, sync_after)
 
-    def profile_with_dummy_inputs(self, backend, local_devices, skip_grad_sync=False):
+    def profile_with_dummy_inputs(self, backend, local_devices, skip_grad_sync):
         """Profile the time cost of this executable with dummy inputs."""
         os.environ[self.skip_allreduce_env_name] = (self.grad_sync_channel_ids
                                                     if skip_grad_sync else "")
@@ -1022,13 +1041,6 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
 
         self.timer_name = get_execution_timer_name(self.exec_uuid)
         self.sync_func = get_sync_func_driver(physical_mesh)
-
-    def get_driver_callable(self):
-        """Get a callable that runs on the driver and handles arguments/outputs conversion."""
-        ret = partial(self.launch_on_driver)
-        ret.preshard_dynamic_args = partial(self.preshard_dynamic_args)
-        ret.get_executable = lambda: self
-        return ret
 
     def launch_on_driver(self, *args):
         """Launch the executable on the driver."""
@@ -1070,10 +1082,6 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
             timers(self.timer_name).stop(self.sync_func)
 
         return self.outs_handler(output_bufs)
-
-    def __del__(self):
-        if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
-            self.physical_mesh.delete_remote_executable(self)
 
 
 class AllocZeroBufferWorkerExecutable(MeshWorkerExecutable):
@@ -1141,6 +1149,9 @@ class MemzeroWorkerExecutable(MeshWorkerExecutable):
         _ = self.memzero.execute_sharded_on_local_devices(input_bufs)
         timers(self.timer_name).stop(self.sync_func if sync_after else None)
 
+    def __del__(self):
+        self.memzero.delete()
+
 
 class ConcatMeshWorkerExecutable(MeshWorkerExecutable):
     # This is only a patch. It will be deprecated when we move concat into apply_grad
@@ -1179,3 +1190,6 @@ class ConcatMeshWorkerExecutable(MeshWorkerExecutable):
 
         for i in range(len(output_uuids)):
             set_buffers(buffer_dict, output_uuids[i], output_bufs[i])
+
+    def __del__(self):
+        self.concat.delete()

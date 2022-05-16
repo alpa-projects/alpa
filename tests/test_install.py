@@ -1,5 +1,4 @@
 """Some basic tests to test installation."""
-
 import os
 import unittest
 
@@ -11,8 +10,9 @@ import numpy as np
 import optax
 import ray
 
-from alpa import (parallelize, set_parallelize_options, grad, global_config,
-                  automatic_layer_construction, DeviceCluster)
+from alpa import (init, parallelize, grad, ShardParallel, automatic_layer_construction,
+                  PipeshardParallel)
+from alpa.device_mesh import get_global_cluster
 from alpa.testing import assert_allclose
 
 
@@ -69,23 +69,17 @@ class InstallationTest(unittest.TestCase):
         expected_state = train_step(state, batch)
 
         # Parallel execution
-        global_config.num_micro_batches = 2
-        parallel_train_step = parallelize(train_step)
-        actual_state = parallel_train_step(state, batch)
+        p_train_step = parallelize(train_step,
+                                   method=ShardParallel(num_micro_batches=2))
+        actual_state = p_train_step(state, batch)
 
         # Check results
         assert_allclose(expected_state.params, actual_state.params)
 
     def test_2_pipeline_parallel(self):
-        ray.init(address="auto")
+        init(cluster="ray")
 
-        device_mesh = DeviceCluster().get_virtual_physical_mesh()
-        set_parallelize_options(devices=device_mesh,
-                                strategy="pipeshard_parallel",
-                                pipeline_stage_mode="uniform_stage",
-                                num_micro_batches=2)
-
-        layer_num = min(device_mesh.num_devices, 2)
+        layer_num = min(get_global_cluster().num_devices, 2)
         state, batch = create_train_state_and_batch(256, 256)
 
         def train_step(state, batch):
@@ -103,8 +97,9 @@ class InstallationTest(unittest.TestCase):
         expected_state = train_step(state, batch)
 
         # Parallel execution
-        parallel_train_step = parallelize(train_step)
-        actual_state = parallel_train_step(state, batch)
+        p_train_step = parallelize(
+            train_step, method=PipeshardParallel(num_micro_batches=2))
+        actual_state = p_train_step(state, batch)
 
         # Check results
         assert_allclose(expected_state.params, actual_state.params)

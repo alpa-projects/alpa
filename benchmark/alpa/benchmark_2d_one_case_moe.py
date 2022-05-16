@@ -5,15 +5,13 @@ import numpy as np
 import ray
 
 import alpa
-from alpa import global_config, set_parallelize_options
+from alpa import global_config, ShardParallel
 from alpa.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
 from alpa.model.model_util import optax_adafactor
 from alpa.util import count_communication_primitives, print_used_time, compute_param_number, GB
 
 from benchmark.util import compute_moe_parameter_count
 from benchmark_2d_one_case_gpt_bert import get_train_step
-
-as_option = global_config.default_autosharding_option
 
 
 def create_train_state(rngkey, model, dtype, batch):
@@ -61,21 +59,21 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
         num_micro_batches = None
         grad_func = jax.grad
 
-    if force_batch_dim_mapping:
-        # Always map batch dim to mesh dim 0
+    as_option = AutoShardingOption()
+    if force_batch_dim_mapping: # Always map batch dim to mesh dim 0
         as_option.force_batch_dim_to_mesh_dim = 0
     as_option.prefer_reduce_scatter = prefer_reduce_scatter
     as_option.allow_mixed_mesh_shape = True
-
     if parallel_mode == "zero-3":
         as_option.force_zero_stage_3 = True
     elif parallel_mode in ["shard-largest"]:
         as_option.force_simple_heuristic = other
         global_config.remat_using_while = True
 
-
     logical_mesh = physical_mesh.get_logical_mesh([dp, op])
-    set_parallelize_options(devices=logical_mesh, num_micro_batches=num_micro_batches)
+    method = ShardParallel(devices=logical_mesh,
+                           num_micro_batches=num_micro_batches,
+                           auto_sharding_option=as_option)
 
     # Prepare input batch
     batch = {
@@ -106,7 +104,7 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(grad_func)
+    train_step = get_train_step(grad_func, method=method)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 

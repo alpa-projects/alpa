@@ -1,8 +1,9 @@
 """Functionalities about profiling the stages."""
-import gc
-import logging
 from abc import ABC, abstractmethod
 from collections import namedtuple
+import dataclasses
+import gc
+import logging
 from typing import Dict, Sequence
 
 import jax.numpy as jnp
@@ -221,12 +222,9 @@ class CompileWorker:
 class CompileWorkerPool(BaseWorkerPoolWrapper):
     """A pool of CompileWorker for distributed compilation."""
 
-    def __init__(self, num_cpus, num_gpus, debug_mode=False):
+    def __init__(self, num_cpus, debug_mode=False):
         super().__init__()
-        gpu_per_cpu = 1
-        while gpu_per_cpu * num_cpus > num_gpus:
-            gpu_per_cpu /= 2
-        worker_cls = ray.remote(num_cpus=1, num_gpus=gpu_per_cpu)(CompileWorker)
+        worker_cls = ray.remote(num_cpus=0)(CompileWorker)
         self.actors = [worker_cls.remote() for _ in range(num_cpus)]
         self.pool = ActorPool(self.actors)
         self.local_worker = CompileWorker() if debug_mode else None
@@ -297,7 +295,7 @@ class ProfileWorker:
         self.mesh.reset_memory_stats()
         peak_memory = executable.get_total_allocation_size()
         available_memory = self.mesh.get_available_memory()
-        cost = executable.profile_with_dummy_inputs()
+        cost = executable.profile_with_dummy_inputs(skip_grad_sync=True)
         del executable
 
         if np.mean(cost) == np.inf:
@@ -428,27 +426,22 @@ class HloCostModelProfileWorkerPool(BaseWorkerPoolWrapper):
         self.pool = ActorPool(self.actors)
 
 
-def compile_all(stages):
+def compile_all(stages, num_micro_batches, default_as_option):
     """
     Compile all input stages.
-
-    Args:
-        stages: List of info for compilation.
     """
     num_cpus = int(
         min(max(ray.available_resources()["CPU"] // 2, 1), len(stages)))
-    num_gpus = int(ray.available_resources()["GPU"])
-    default_autosharding_option = global_config.default_autosharding_option
 
-    compile_workers = CompileWorkerPool(num_cpus, num_gpus)
+    compile_workers = CompileWorkerPool(num_cpus)
     for stage_id, (_, stage_config, auto_sharding_config,
                    _) in enumerate(stages):
         logical_mesh, autosharding_option_dict = auto_sharding_config
         compile_workers.submit(
             lambda w, v: w.compile_stage_for_profiling.remote(*v),
             (stage_id, stage_config.compile_config, logical_mesh,
-             default_autosharding_option.deepcopy_and_update(
-                 autosharding_option_dict), global_config.num_micro_batches))
+             dataclasses.replace(default_as_option, **autosharding_option_dict),
+             num_micro_batches))
 
     compiled_outputs = [None] * len(stages)
     for _ in tqdm.tqdm(stages):
@@ -466,24 +459,25 @@ def compile_all(stages):
 
 
 def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
-                num_layers, num_auto_sharding_configs, mesh_cached_result):
+                num_layers, num_auto_sharding_configs,
+                num_micro_batches, auto_stage_option, mesh_cached_result):
     """Profile all compiled outputs on given meshes.
 
     This function launches a profile worker pool and submits given tasks.
     """
     compute_cost, max_n_succ_stages, is_profiled = mesh_cached_result
 
-    if global_config.use_hlo_cost_model:
+    if auto_stage_option.use_hlo_cost_model:
         num_cpus = int(
             min(max(ray.available_resources()["CPU"] // 2, 1), len(stages)))
         num_gpus = int(ray.available_resources()["GPU"])
         mesh_num_devices = meshes[0].num_devices
         prof_database = ProfilingResultDatabase()
-        prof_database.load(global_config.profiling_database_filename)
+        prof_database.load(auto_stage_option.profiling_database_filename)
         prof_result = prof_database.query("default", meshes[0].shape)
         profile_workers = HloCostModelProfileWorkerPool(
             num_cpus, num_gpus, prof_result, mesh_num_devices,
-            global_config.num_micro_batches)
+            num_micro_batches)
     else:
         profile_workers = ProfileWorkerPool(meshes)
 
@@ -528,7 +522,7 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
             return compute_cost, max_n_succ_stages, is_profiled
         ((start, end, config_idx), _, auto_sharding_config,
          _) = stages[stage_id]
-        logical_mesh, auto_sharding_global_config = auto_sharding_config
+        logical_mesh, auto_sharding_dict = auto_sharding_config
         (peak_memory, available_memory, intermediate_size,
          initial_size) = debug_info
         compute_cost[start, end, config_idx] = np.mean(cost)
@@ -541,7 +535,7 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
             f" peak={peak_memory / GB:.3f}GB,"
             f" intermediate={intermediate_size / GB:.3f}GB,"
             f" init={initial_size / GB:.3f}GB,"
-            f" as_config={(logical_mesh.shape, auto_sharding_global_config)}")
+            f" as_config={(logical_mesh.shape, auto_sharding_dict)}")
     profile_workers.shutdown()
     return compute_cost, max_n_succ_stages, is_profiled
 

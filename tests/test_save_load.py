@@ -9,9 +9,8 @@ import numpy as np
 import pickle
 import flax
 
-from alpa.util import get_ray_namespace_str, tree_to_nparray
-from alpa.device_mesh import DeviceCluster
-from alpa.global_env import set_parallelize_options, global_config
+from alpa import init, PipeshardParallel
+from alpa.util import tree_to_nparray
 from alpa.testing import (MLPModel, create_train_state, get_mlp_train_step,
                           assert_allclose)
 
@@ -19,20 +18,9 @@ from alpa.testing import (MLPModel, create_train_state, get_mlp_train_step,
 class SaveLoadTest(unittest.TestCase):
 
     def setUp(self):
-        ray.init(address="auto",
-                 namespace=get_ray_namespace_str(
-                     prefix=global_config.unittest_ray_namespace_prefix))
-
-    def tearDown(self):
-        ray.shutdown()
-        time.sleep(1)
+        init(cluster="ray")
 
     def test_mlp_state_load(self):
-        virtual_mesh = DeviceCluster().get_virtual_physical_mesh()
-        set_parallelize_options(devices=virtual_mesh,
-                                strategy="pipeshard_parallel",
-                                pipeline_stage_mode="uniform_stage")
-
         # Init model and optimizer
         batch_size = 64
         hidden_dim = 16
@@ -42,15 +30,15 @@ class SaveLoadTest(unittest.TestCase):
                          output_dim=output_dim,
                          manual_pipeline_layer=True)
         rngkey = jax.random.PRNGKey(0)
-        x = jax.random.normal(rngkey, (batch_size, input_dim))
-        y = jax.random.normal(rngkey, (batch_size, output_dim))
+        x = jax.random.normal(rngkey, (batch_size, input_dim), jnp.float32)
+        y = jax.random.normal(rngkey, (batch_size, output_dim), jnp.float32)
         batch = {'x': x, 'y': y}
         state = create_train_state(rngkey, model, [x])
 
         # Compile
-        global_config.num_micro_batches = 2
-        serial_train_step = get_mlp_train_step(False, None, None, False)
-        parallel_train_step = get_mlp_train_step(True, True, False, False)
+        method = PipeshardParallel(num_micro_batches=2)
+        serial_train_step = get_mlp_train_step(None, None, None, False)
+        parallel_train_step = get_mlp_train_step(method, True, False, False)
         executable = parallel_train_step.get_executable(state, batch)
 
         serial_state = state
@@ -87,8 +75,6 @@ class SaveLoadTest(unittest.TestCase):
                         1e-3)
         assert_allclose(serial_state.params, parallel_loaded_state.params, 1e-3,
                         1e-3)
-
-        executable.shutdown()
 
 
 def suite():

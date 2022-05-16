@@ -9,21 +9,22 @@ from jax.interpreters.pxla import (Chunked, NoSharding, Replicated, ShardedAxis,
                                    ShardingSpec, spec_to_indices)
 import jax.numpy as jnp
 import numpy as np
-import ray
 
-from alpa.device_mesh import DeviceCluster, DistributedArray, shard_arg_handlers
+from alpa import init
+from alpa.device_mesh import (DeviceCluster, DistributedArray,
+                              get_global_virtual_physical_mesh)
 from alpa.mesh_executable import (create_remote_buffer_refs, get_uuid_np_array,
                                   next_mesh_executable_uuid)
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTaskSpec, CrossMeshCommunicator,
     SymbolicReshardingTask, SymbolicBroadcastReshardingTask)
-from alpa.pipeline_parallel.decentralized_distributed_runtime import (
-    AllocateZeroWorkerExecutableConfig, DecentralizedDistributedRuntime,
-    PipelineInstruction, PipelineMeshWorkerExecutable)
+from alpa.pipeline_parallel.pipeshard_executable import (
+    AllocateZeroWorkerExecutableConfig, PipeshardDriverExecutable,
+    PipelineInstruction, PipeshardMeshWorkerExecuable)
 from alpa.pipeline_parallel.resharding_tensor import VirtualDistributedArray
 from alpa.testing import assert_allclose
-from alpa.util import get_ray_namespace_str, get_shard_shape
+from alpa.util import get_shard_shape
 from alpa.timer import timers
 
 
@@ -33,13 +34,12 @@ def test_resharding(var,
                     dst_mesh,
                     dst_sharding_spec,
                     use_scatter_gather,
+                    resharding_mode,
                     src_loads=None,
-                    dst_loads=None,
-                    resharding_mode="send_recv"):
-    backup_resharding_mode = global_config.resharding_mode
-    global_config.resharding_mode = resharding_mode
-    backup_scatter_gather = global_config.use_scatter_gather
+                    dst_loads=None):
     global_config.use_scatter_gather = use_scatter_gather
+    global_config.resharding_mode = resharding_mode
+
     # Resharding task spec and send/recv strategy
     src_loads = src_loads or {src: 0 for src in src_mesh.device_strs}
     dst_loads = dst_loads or {dst: 0 for dst in dst_mesh.device_strs}
@@ -64,6 +64,7 @@ def test_resharding(var,
         strategy = CrossMeshCommunicator._generate_broadcast_resharding_strategy_by_loads(
             task_spec, src_loads, dst_loads)
     task_spec.set_resharding_strategy(strategy)
+
     # Resharding task. Compile send/recv from strategy and allgather.
     collective_group = CollectiveGroup(task_spec.get_participant_device_strs(),
                                        src_mesh, dst_mesh)
@@ -77,6 +78,7 @@ def test_resharding(var,
     else:
         task = SymbolicBroadcastReshardingTask(task_spec, collective_group, 
                                                src_mesh, dst_mesh)
+
     # Compile pipeline instructions
     instruction_lists = {worker: [] for worker in src_mesh.workers}
     for worker in dst_mesh.workers:
@@ -102,42 +104,45 @@ def test_resharding(var,
                                         "sync_after": False
                                     },
                                     info="allocate zero for recv"))
-    # resharding task
+    # Create resharding task
     if resharding_mode == "send_recv":
-        DecentralizedDistributedRuntime._compile_resharding_task(
+        PipeshardDriverExecutable._compile_resharding_task(
             src_mesh, dst_mesh, src_uuids, task, dst_uuids, instruction_lists)
     else:
-        DecentralizedDistributedRuntime._compile_broadcast_resharding_task(
+        PipeshardDriverExecutable._compile_broadcast_resharding_task(
             src_mesh, dst_mesh, src_uuids, task, dst_uuids, instruction_lists)
 
     exec_uuids = {}
+
     # Compile Pipeline Executable
     for worker_idx, worker in enumerate(src_mesh.workers):
         exec_uuid = next_mesh_executable_uuid()
-        worker.put_executable.remote(exec_uuid, PipelineMeshWorkerExecutable,
+        worker.put_executable.remote(exec_uuid, PipeshardMeshWorkerExecuable,
                                      instruction_lists[worker],
                                      [src_uuids[worker_idx]], [], [], [], [],
                                      [False] * src_mesh.num_devices_per_host)
         exec_uuids[worker] = exec_uuid
     for worker_idx, worker in enumerate(dst_mesh.workers):
         exec_uuid = next_mesh_executable_uuid()
-        worker.put_executable.remote(exec_uuid, PipelineMeshWorkerExecutable,
+        worker.put_executable.remote(exec_uuid, PipeshardMeshWorkerExecuable,
                                      instruction_lists[worker], [],
                                      [dst_uuids[worker_idx]],
                                      executable_config_lists[worker], [], [],
                                      [False] * dst_mesh.num_devices_per_host)
         exec_uuids[worker] = exec_uuid
+
     # Prepare array and shard args
     test_array = np.arange(np.prod(var.aval.shape),
                            dtype=var.aval.dtype).reshape(var.aval.shape)
     indices = spec_to_indices(var.aval.shape, src_sharding_spec)
     test_array = xla.canonicalize_dtype(test_array)
-    input_refs = shard_arg_handlers[type(test_array)](test_array, src_mesh,
-                                                      indices)
+    input_refs = src_mesh.shard_args_to_bufs([indices], (False,), (False,),
+                                             None, [test_array])[0]
     input_refs = np.array(input_refs).reshape(src_mesh.shape)
     input_uuids = get_uuid_np_array(input_refs)
     output_refs, output_uuids = create_remote_buffer_refs(dst_mesh)
     output_uuids = output_uuids.reshape(dst_mesh.shape)
+
     # Run executables
     # for _ in range(3):
     # timers("overall_resharding_time").start()
@@ -151,32 +156,26 @@ def test_resharding(var,
                                     sync_for_timer=True)
     output_array = DistributedArray(dst_mesh, var.aval, dst_sharding_spec,
                                     output_refs)
+
     # dst_mesh.sync_workers()
     # timers("overall_resharding_time").stop()
     # timers("overall_resharding_time").log()
     # timers("overall_resharding_time").reset()
 
     # Check correctness
-    assert_allclose(test_array, output_array._value)
+    assert_allclose(test_array, output_array)
+
     # Delete executables
     for worker in src_mesh.workers:
         worker.delete_executable.remote(exec_uuids[worker])
     for worker in dst_mesh.workers:
         worker.delete_executable.remote(exec_uuids[worker])
-    # Restore backup
-    global_config.use_scatter_gather = backup_scatter_gather
-    global_config.resharding_mode = backup_resharding_mode
+
 
 class ReshardingTest(unittest.TestCase):
 
     def setUp(self):
-        ray.init(address="auto",
-                 namespace=get_ray_namespace_str(
-                     prefix=global_config.unittest_ray_namespace_prefix))
-
-    def tearDown(self):
-        ray.shutdown()
-        time.sleep(1)
+        init(cluster="ray")
 
     def run_resharding_task(self,
                             src_mesh_shape,
@@ -185,10 +184,9 @@ class ReshardingTest(unittest.TestCase):
                             dst_sharding_spec,
                             tensor_shape,
                             use_scatter_gather=True,
-                            tensor_dtype=None,
-                            resharding_mode="send_recv"):
-        device_cluster = DeviceCluster()
-        virtual_mesh = device_cluster.get_virtual_physical_mesh()
+                            resharding_mode="send_recv",
+                            tensor_dtype=None):
+        virtual_mesh = get_global_virtual_physical_mesh()
         src_num_host = src_mesh_shape[0]
         dst_num_host = dst_mesh_shape[0]
         src_mesh = virtual_mesh.slice_2d(range(src_num_host),
@@ -209,7 +207,7 @@ class ReshardingTest(unittest.TestCase):
         tensor_dtype = tensor_dtype or jnp.int32
         var = Var(0, "", ShapedArray(tensor_shape, tensor_dtype))
         test_resharding(var, src_mesh, src_sharding_spec, dst_mesh,
-                        dst_sharding_spec, use_scatter_gather,resharding_mode=resharding_mode)
+                        dst_sharding_spec, use_scatter_gather, resharding_mode)
         src_mesh.shutdown()
         dst_mesh.shutdown()
 
@@ -311,6 +309,7 @@ class ReshardingTest(unittest.TestCase):
         dst_spec = ShardingSpec([Chunked([2]), NoSharding(), Chunked([2])], [ShardedAxis(0), ShardedAxis(1)])
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
                                   tensor_shape, resharding_mode="broadcast")
+
 
 def suite():
     suite = unittest.TestSuite()

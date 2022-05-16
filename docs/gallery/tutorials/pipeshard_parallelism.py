@@ -1,17 +1,16 @@
 """
 Distributed Training with Both Shard and Pipeline Parallelism
-====================================================================
+=============================================================
 
 Alpa can automatically parallelizes jax functions with both shard
-parallelism, including data parallelism and operator parallelism (a.k.a.
-intra-operator parallelism), and pipeline parallelism (a.k.a. inter-operator
-parallelism). The :ref:`getting started guide <Getting Started with Alpa>`
-focuses on using Alpa for shard parallelism.
+parallelism (a.k.a. intra-operator parallelism) and pipeline parallelism
+(a.k.a. inter-operator parallelism). Shard parallelism includes
+data parallelism, operator parallelism, and their combinations.
+The :ref:`quick start <Alpa Quickstart>` focuses on using Alpa for shard parallelism.
 
-In this tutorial, we show how to use Alpa to parallelize an MLP model with
-both shard and pipeline parallelism. First, we show how to use Alpa
-to manually assign stages for pipeline parallelism. Then we show how
-to use Alpa to automate this process.
+In this tutorial, we show how to use Alpa with both shard and pipeline parallelism.
+First, we show how to use Alpa to manually assign stages for pipeline parallelism.
+Then we show how to use Alpa to automate this process.
 """
 
 ################################################################################
@@ -28,25 +27,20 @@ import jax
 import jax.numpy as jnp
 from jax import random
 import optax
-
-################################################################################
-# Besides alpa and jax related libraries, we also import `ray <https://docs.
-# ray.io/>`_ and start (or connect to) a ray cluster. We use ray to manage the
-# devices in the distributed cluster in alpa.
-
 import ray
 
+################################################################################
+# Connect to a Ray Cluster
+# -------------------------------------------
+# Alpa uses a distributed framework `ray <https://docs.ray.io/>`_ to manage
+# the cluster and disributed workers. We initialize ray and alpa.
+
 ray.init()
+alpa.init(cluster="ray")
 
 # Alternatively, you can use the following command to connect to an existing
 # ray cluster.
 # ray.init(address="auto")
-
-################################################################################
-# In alpa, the actual computation of a computational graph is executed on ray
-# actors. Therefore, we force the driver process to use the CPU to avoid it
-# from occupying the GPU memory.
-jax.config.update('jax_platform_name', 'cpu')
 
 ################################################################################
 # Train an MLP on a Single Device
@@ -77,13 +71,13 @@ batch_size = 2048
 # Generate ground truth W and b
 rngkey = jax.random.PRNGKey(0)
 k1, k2 = random.split(rngkey)
-W = random.normal(k1, (dim, dim))
-b = random.normal(k2, (dim,))
+W = random.normal(k1, (dim, dim), jnp.float32)
+b = random.normal(k2, (dim,), jnp.float32)
 
 # Generate the training data
 ksample, knoise = random.split(k1)
-x = random.normal(ksample, (batch_size, dim))
-y = (x @ W + b) + 0.1 * random.normal(knoise, (batch_size, dim))
+x = random.normal(ksample, (batch_size, dim), jnp.float32)
+y = (x @ W + b) + 0.1 * random.normal(knoise, (batch_size, dim), jnp.float32)
 
 # Initialize a train state, which includes the model paramter and optimizer
 # state.
@@ -107,7 +101,7 @@ batch = {"x": x, "y": y}
 expected_state = train_step(state, batch)
 
 ################################################################################
-# Manual Pipeline Parallelism with Alpa
+# Pipeline Parallelism with Manual Assignment
 # -------------------------------------------
 # To manually assign stages for pipeline parallelism, we can use the
 # ``alpa.mark_pipeline`` function to mark the start and end of each pipeline
@@ -115,18 +109,6 @@ expected_state = train_step(state, batch)
 # that we are manually assigning stages. Note that each the pipeline stage is
 # also automatically parallelized by the shard parallel pass.
 
-# Set the number of microbatches for pipeline parallelism.
-num_micro_batches = 16
-
-# Initialize the alpa device cluster.
-device_cluster = alpa.DeviceCluster()
-devices = device_cluster.get_virtual_physical_mesh()
-
-# Set the parallel strategy to "pipeshard_parallel" to enable both pipeline and
-# shard parallelism.
-alpa.set_parallelize_options(
-    devices=devices, strategy="pipeshard_parallel",
-    num_micro_batches=num_micro_batches)
 
 # Define the manually parallelized model with pipeline markers.
 class ManualPipelineMLPModel(nn.Module):
@@ -156,7 +138,9 @@ manual_pipeline_state = TrainState.create(apply_fn=manual_pipeline_model.apply,
                                           params=copy.deepcopy(params), tx=tx)
 
 # Define the training step with manually parallelized pipeline stages.
-@alpa.parallelize
+# We use the "alpa.PipeshardParallel" option to let alpa use both
+# pipeline parallelism and shard parallelism.
+@alpa.parallelize(method=alpa.PipeshardParallel(num_micro_batches=16))
 def manual_pipeline_train_step(state, batch):
     # Indicate that we are manually assigning pipeline stages.
     @alpa.manual_layer_construction
@@ -181,12 +165,10 @@ manual_pipeline_actual_state = manual_pipeline_train_step(manual_pipeline_state,
 assert_allclose(expected_state.params, manual_pipeline_actual_state.params,
                 atol=5e-3)
 
-# Terminate the alpa device cluster.
-manual_pipeline_train_step.get_executable(manual_pipeline_state,
-                                          batch).shutdown()
+alpa.shutdown()
 
 ################################################################################
-# Automatic Pipeline Parallelism with Alpa
+# Pipeline Parallelism with Automatic Assignment
 # ----------------------------------------------
 # Alpa also supports automatically partitioning the model into multiple
 # pipeline stages and assign each pipeline stage a device mesh such that
@@ -194,7 +176,7 @@ manual_pipeline_train_step.get_executable(manual_pipeline_state,
 # partitioning algorithm consists of the following steps:
 #
 # 1. **Layer Construction:** In this step, the operators in the model are
-#    clustered into ``layers'' based on a graph clustering algorithm. The
+#    clustered into "layers" based on a graph clustering algorithm. The
 #    user needs to specify the total number of layers (i.e. clusters) as
 #    a hyperparameter.
 # 2. **Stage Construction and Mesh Slicing:** In this step, we partition
@@ -202,21 +184,14 @@ manual_pipeline_train_step.get_executable(manual_pipeline_state,
 #    layers to submeshes to form pipeline stages to minimize the total
 #    pipeline execution latency.
 
-
-# Create a new cluster class for automatic pipeline parallelism.
-device_cluster = alpa.DeviceCluster()
-devices = device_cluster.get_virtual_physical_mesh()
-# Set pipeline stage mode to "auto_stage" to enable automatic
-# parallelism with automatic stage slicing and mesh assignment.
-alpa.set_parallelize_options(
-    devices=devices, strategy="pipeshard_parallel",
-    pipeline_stage_mode="auto_stage", num_micro_batches=num_micro_batches)
+alpa.init(cluster="ray")
 
 # Define training step with automatic pipeline-operator parallelism. Note that
 # we reuse the same model and state as the single device case. The only
 # modification required is the two decorators. The stage construction and
 # mesh slicing are performed within the `parallelize` decorator.
-@alpa.parallelize
+
+@alpa.parallelize(method=alpa.PipeshardParallel(num_micro_batches=16, stage_mode="auto"))
 def auto_pipeline_train_step(state, batch):
     # Indicate that we use automatic layer construction. The `layer_num` here
     # is a hyperparameter to control how many layers we get from the
@@ -233,8 +208,11 @@ def auto_pipeline_train_step(state, batch):
     new_state = state.apply_gradients(grads=grads)
     return new_state
 
+# In the first call, alpa triggers the compilation.
+# The compilation first profiles several costs and solves an optimization
+# problem to get the optimal pipeline assignments.
 auto_pipeline_actual_state = auto_pipeline_train_step(state, batch)
 assert_allclose(expected_state.params, auto_pipeline_actual_state.params,
                 atol=5e-3)
 
-auto_pipeline_train_step.get_executable(state, batch).shutdown()
+alpa.shutdown()

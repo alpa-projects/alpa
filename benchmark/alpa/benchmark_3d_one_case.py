@@ -5,7 +5,7 @@ import pickle
 import jax
 import ray
 
-from alpa import global_config
+from alpa import init, global_config
 from alpa.util import run_cmd, get_ray_namespace_str, disable_tqdm_globally
 
 from benchmark_3d_one_case_gpt_bert import benchmark_gpt_bert_internal
@@ -23,8 +23,7 @@ def benchmark_one_case(model, case, niter,
         disable_tqdm_globally()
 
     if not use_separate_process:
-        ray.init(address="auto", ignore_reinit_error=True,
-                 namespace=get_ray_namespace_str())
+        init(cluster="ray")
 
         global_config.use_dummy_value_for_benchmarking = True
         global_config.pipeline_sync_for_timer = True
@@ -42,8 +41,6 @@ def benchmark_one_case(model, case, niter,
             result = benchmark_wresnet_internal(case, niter, num_hosts, num_devices_per_host)
         else:
             raise ValueError(f"Invalid model: {model}")
-
-        ray.shutdown()
     else:
         # Launch a new process for benchmark to isolate errors.
         # Get the return data via pickle.

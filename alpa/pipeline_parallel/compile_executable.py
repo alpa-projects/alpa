@@ -358,9 +358,12 @@ def _rewrite_global_outvars_post_concate(global_outvars, reduction_vector,
     ]
     return global_outvars, concat_vars_mapping
 
+
 _tic = None
 
+
 def debug_compilation_time(message):
+    """Print compilation time for debugging."""
     global _tic
     if message and global_config.print_compilation_time:
         print(f"compile_pipeshard_executable::{message}: "

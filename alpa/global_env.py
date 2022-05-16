@@ -56,7 +56,7 @@ class GlobalConfig:
         self.use_dummy_value_for_benchmarking = False
 
         ########## Options of logging ##########
-        self.print_compilation_time = True
+        self.print_compilation_time = False
 
         ########## Options of ray namespace ##########
         self.default_ray_namespace_prefix = "alpa-train"

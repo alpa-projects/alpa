@@ -6,13 +6,11 @@ Alpa can automatically parallelizes jax functions with both shard
 parallelism (a.k.a. intra-operator parallelism) and pipeline parallelism
 (a.k.a. inter-operator parallelism). Shard parallelism includes
 data parallelism, operator parallelism, and their combinations.
-The :ref:`getting started guide <Getting Started with Alpa>`
-focuses on using Alpa for shard parallelism.
+The :ref:`quick start <Alpa Quickstart>` focuses on using Alpa for shard parallelism.
 
-In this tutorial, we show how to use Alpa to parallelize an MLP model with
-both shard and pipeline parallelism. First, we show how to use Alpa
-to manually assign stages for pipeline parallelism. Then we show how
-to use Alpa to automate this process.
+In this tutorial, we show how to use Alpa with both shard and pipeline parallelism.
+First, we show how to use Alpa to manually assign stages for pipeline parallelism.
+Then we show how to use Alpa to automate this process.
 """
 
 ################################################################################
@@ -219,3 +217,5 @@ def auto_pipeline_train_step(state, batch):
 auto_pipeline_actual_state = auto_pipeline_train_step(state, batch)
 assert_allclose(expected_state.params, auto_pipeline_actual_state.params,
                 atol=5e-3)
+
+alpa.shutdown()

@@ -1276,7 +1276,7 @@ class PipeshardDriverExecutable:
             ]
             ray.get(rets)
         except ray.exceptions.RayActorError:
-            self.physical_meshes._exception_shutdown()
+            self.physical_meshes.exception_shutdown()
 
     def __del__(self):
         for worker, uuid in self.worker_executable_uuid_mapping:

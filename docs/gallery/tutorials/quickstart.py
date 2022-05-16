@@ -20,7 +20,7 @@ In this tutorial, we show the usage of Alpa with an MLP example.
 
 ################################################################################
 # Import Libraries
-# --------------------
+# ----------------
 # We first import the required libraries.
 # Flax and optax are libraries on top of jax for training neural networks.
 # Although we use these libraries in this example, Alpa works on jax's and XLA's internal

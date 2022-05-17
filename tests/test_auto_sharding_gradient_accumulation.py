@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 import ray
 
-from alpa import (init, parallelize, grad,
+from alpa import (init, shutdown, parallelize, grad,
                   LocalPhysicalDeviceMesh, ShardParallel)
 from alpa.device_mesh import (get_global_cluster, get_global_physical_mesh,
                               set_global_physical_mesh)
@@ -121,6 +121,9 @@ class GradAccumulationTest(unittest.TestCase):
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
                 count_communication_primitives(apply_grad))
             assert n_total == 0
+
+        if cluster == "ray":
+            shutdown()
 
     def test_gradient_accumulation_single_host(self):
         self.run_gradient_accumulation("local", use_2d_mesh=False)

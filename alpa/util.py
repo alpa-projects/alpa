@@ -97,6 +97,7 @@ def abstractify_with_aval(x):
 
 
 def tree_to_nparray(tree):
+    """Convert a pytree to a pytree of numpy array."""
 
     def convert_to_nparray(x):
         if hasattr(x, "__array__"):
@@ -106,13 +107,10 @@ def tree_to_nparray(tree):
     return tree_map(convert_to_nparray, tree)
 
 
-def set_jax_env_on_driver(use_cpu_on_driver=True):
-    """Set jax environment flags for the driver process, so the driver
-    process can release GPU memory for the worker processes."""
-
-    # Use cpu backend
-    if use_cpu_on_driver:
-        jax.config.update("jax_platform_name", "cpu")
+def update_jax_platform(platform):
+    """Update the jax backend platform."""
+    jax.config.update("jax_platform_name", platform)
+    xb.get_backend.cache_clear()
 
 
 ########################################

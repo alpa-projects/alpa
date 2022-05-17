@@ -18,7 +18,7 @@ from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
 import flax
 from flax.linen.module import compact, wrap_method_once
 
-from alpa.global_env import global_config
+from alpa.global_env import global_config, is_worker
 from alpa.pipeline_parallel.primitive_def import xla_identity
 
 ########################################
@@ -41,8 +41,9 @@ def override_get_backend(*args, **kwargs):
     return default_get_backend(*args, **kwargs)
 
 
-setattr(jax._src.lib.xla_bridge, "get_backend", override_get_backend)
-setattr(jax.lib.xla_bridge, "get_backend", override_get_backend)
+if is_worker:
+    setattr(jax._src.lib.xla_bridge, "get_backend", override_get_backend)
+    setattr(jax.lib.xla_bridge, "get_backend", override_get_backend)
 
 ########################################
 ##### Monkey patch Jax

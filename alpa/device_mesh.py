@@ -57,7 +57,7 @@ from alpa.util import (benchmark_func, list_gpu_info,
                        jax_tensor_to_xla_buffer, xla_buffer_to_cupy,
                        cupy_to_xla_buffer, is_continuous_subset,
                        infer_offset_and_n_elements, jax_tensor_index,
-                       OrderedSet, set_jax_env_on_driver)
+                       OrderedSet, update_jax_platform)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -1933,7 +1933,7 @@ def init_global_cluster(cluster: str):
     elif cluster == "ray":
         if not ray.is_initialized():
             ray.init(address="auto", ignore_reinit_error=True)
-        set_jax_env_on_driver(use_cpu_on_driver=True)
+        update_jax_platform("cpu")
         global_cluster = DeviceCluster()
         global_virtual_physical_mesh = global_cluster.get_virtual_physical_mesh()
 
@@ -1942,6 +1942,7 @@ def shutdown_global_cluster():
     global global_cluster, global_physical_mesh, global_virtual_physical_mesh
 
     global_cluster = None
+    update_jax_platform("gpu")
 
     if global_physical_mesh:
         global_physical_mesh.shutdown()

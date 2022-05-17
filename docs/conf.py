@@ -48,12 +48,16 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 # The listed files are sorted according to the list.
 # The unlisted files are sorted by filenames.
 # The unlisted files always appear after listed files.
+
+# Note: we need to execute files that use distributed runtime before
+# files that uses local runtime. Because all tutorials run on a single
+# process, using local runtime will allocate all GPU memory on the driver
+# script and leave no GPU memory for workers.
 within_subsection_order = {
     "tutorials": [
-        "quickstart.py",
         "pipeshard_parallelism.py",
+        "quickstart.py",
         "alpa_vs_pmap.py",
-        "advanced_api_usage.py",
     ],
 }
 

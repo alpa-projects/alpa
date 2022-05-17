@@ -35,7 +35,7 @@ jobs:
           export VERSION=$(bash GENVER --pep440)
           python setup.py sdist bdist_wheel
           ls -ltr dist/
-          echo "Publishn to PyPI"
+          echo "Publish to PyPI"
           twine upload --repository testpypi dist/*
 
   update-version:

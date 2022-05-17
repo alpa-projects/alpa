@@ -151,6 +151,7 @@ def build_and_move(build_ext):
 if __name__ == "__main__":
     import setuptools
     import setuptools.command.build_ext
+    from setuptools.command.install import install
 
     class build_ext(setuptools.command.build_ext.build_ext):
         def run(self):
@@ -159,6 +160,13 @@ if __name__ == "__main__":
     class BinaryDistribution(setuptools.Distribution):
         def has_ext_modules(self):
             return True
+
+    class InstallPlatlib(install):
+        def finalize_options(self):
+            install.finalize_options(self)
+            if self.distribution.has_ext_modules():
+                self.install_lib = self.install_platlib
+
 
     with open(os.path.join("README.md"), encoding="utf-8") as f:
         long_description = f.read()
@@ -181,7 +189,8 @@ if __name__ == "__main__":
                   "gpt-3 deep-learning language-model python"),
         packages=find_packages(exclude=["playground"]),
         python_requires='>=3.7',
-        cmdclass={"build_ext": build_ext},
+        cmdclass={"build_ext": build_ext,
+                  "install": InstallPlatlib},
         distclass=BinaryDistribution,
         install_requires=install_require_list,
         extras_require={

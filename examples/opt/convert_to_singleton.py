@@ -32,6 +32,7 @@ import os
 import sys
 
 import torch
+import numpy as np
 
 from metaseq import options, tasks, checkpoint_utils, utils
 from metaseq.dataclass.configs import MetaseqConfig
@@ -47,6 +48,22 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 logger = logging.getLogger("convert_to_singleton")
+
+
+def save_numpy(weight_dict, model_printout, to_folder):
+    """Save three things:
+    1. tensor_name, shape, tensor in numpy
+    2. model print out
+    """
+    os.makedirs(os.path.dirname(to_folder), exist_ok=True)
+    with open(to_folder + "/model_shard_structure.txt", "w") as f:
+        f.write(model_printout)
+    weights_folder = os.path.join(to_folder, "numpy_weights")
+    os.makedirs(weights_folder, exist_ok=True)
+    for tensor_name, tensor in weight_dict.items():
+        t = tensor.cpu().detach().numpy()
+        with open(weights_folder + "/" + tensor_name, "wb") as g:
+            np.save(g, t)
 
 
 def worker_main(cfg: MetaseqConfig):
@@ -98,12 +115,15 @@ def worker_main(cfg: MetaseqConfig):
     output_sd = checkpoint_utils.load_checkpoint_to_cpu(
         cfg.common_eval.path.replace("reshard.pt", "reshard-model_part-0.pt")
     )
-    output_sd["model"] = utils.move_to_cpu(glued)
+    output_sd["model"] = utils.move_to_cpu(glued, cast_to_fp32=False)
     output_sd["cfg"]["model"].arch = "transformer_lm"
 
     if dist_utils.get_global_rank() == 0:
         with open(cfg.task.data + "/restored.pt", "wb") as f:
             torch.save(output_sd, f)
+    model_printout = str(model.unwrapped_module)
+    to_folder = cfg.task.data
+    save_numpy(output_sd["model"], model_printout, to_folder)
 
 
 def main():

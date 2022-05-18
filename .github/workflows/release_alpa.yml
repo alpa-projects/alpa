@@ -44,7 +44,7 @@ jobs:
           --entrypoint docker/scripts/build_alpa.sh \
           ${PYTHON_VERSION} ${ALPA_BRANCH}
         env:
-          PYTHON_VERSION: ${{ matrix,python }}
+          PYTHON_VERSION: ${{ matrix.python }}
           ALPA_BRANCH: ${{ github.ref }}
 
       - name: Publish to Pypi

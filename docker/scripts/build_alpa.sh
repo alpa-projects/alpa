@@ -31,11 +31,13 @@ git checkout -qf FETCH_HEAD
 
 # install jaxlib and jax
 export VERSION=$(bash GENVER --pep440)
-python setup.py bdist_wheel
-ls -ltr dist/
+python setup.py bdist_wheel --plat-name=manylinux2014_x86_64
 
-# audit wheel
-auditwheel show dist/*.whl
-auditwheel repair --plat manylinux2014_x86_64 dist/*.whl
+if ! python -m auditwheel show dist/alpa-*.whl  | egrep 'platform tag: "(manylinux2010_x86_64|manylinux_2_12_x86_64)"' > /dev/null; then
+  # Print output for debugging
+  python -m auditwheel show dist/alpa-*.whl
+  echo "jaxlib wheel is not manylinux2010 compliant"
+  exit 1
+fi
 
 cp -r dist/*whl /dist/

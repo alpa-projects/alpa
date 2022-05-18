@@ -1,4 +1,3 @@
-# Adapted from https://github.com/alpa-projects/jax-alpa/blob/main/build/Dockerfile
 FROM gcr.io/tensorflow-testing/nosla-cuda11.1-cudnn8-ubuntu18.04-manylinux2010-multipython
 
 WORKDIR /

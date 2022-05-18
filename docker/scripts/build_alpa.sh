@@ -1,8 +1,8 @@
 #!/bin/bash
 set -xev
-if [ ! -d "/alpa-dist" ]
+if [ ! -d "/dist" ]
 then
-  echo "/alpa-dist must be mounted to produce output"
+  echo "/dist must be mounted to produce output"
   exit 1
 fi
 
@@ -28,10 +28,12 @@ git fetch origin +${ALPA_BRANCH}
 git checkout -qf FETCH_HEAD
 
 # install jaxlib and jax
-pip install /alpa-dist/jaxlib-alpa-ci/jaxlib-0.3.5-cp38-none-manylinux2010_x86_64.whl
-pip install /alpa-dist/jax-alpa/jax-0.3.5.tar.gz
+export VERSION=$(bash GENVER --pep440)
+python setup.py bdist_wheel
+ls -ltr dist/
 
-pip install -e .[dev]
-ray start --head
-cd tests
-python run_all.py
+# audit wheel
+auditwheel show dist/*.whl
+auditwheel repair --plat manylinux2014_x86_64 dist/*.whl
+
+cp -r dist/*whl /dist/

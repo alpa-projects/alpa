@@ -22,6 +22,10 @@ dist
 alpa/pipeline_parallel/xla_custom_call_marker/build
 build/lib
 build/bdist*
+jaxlib/build/bazel*
+jaxlib/bazel-*
+jaxlib/.jax_configure.bazelrc
+jaxlib/dist
 
 # Analysis temp files
 *.nvprof

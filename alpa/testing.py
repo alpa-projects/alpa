@@ -14,7 +14,7 @@ from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 import alpa
 from alpa.api import init, shutdown, parallelize
 from alpa.model.bert_model import BertConfig, FlaxBertLayer
-from alpa.model.model_util import TrainState
+from alpa.model.model_util import FlaxBaseModelOutput, TrainState
 from alpa.parallel_method import PipeshardParallel
 from alpa.pipeline_parallel.layer_construction import (
     automatic_layer_construction, manual_layer_construction)
@@ -203,6 +203,11 @@ def get_bert_layer_collection_inference_step(parallel_method,
                                  output_attentions=True,
                                  output_hidden_states=True)
             loss = jnp.mean((out.last_hidden_state - batch["y"])**2)
+            # FIXME(yonghao): Otherwise, the first hidden state is an input,
+            # but we do not support outputing an input(not batch-related outputs).
+            out = FlaxBaseModelOutput(last_hidden_state=out.last_hidden_state,
+                                      hidden_states=out.hidden_states[1:],
+                                      attentions=out.attentions)
             if manual_pipeline_layer:
                 mark_pipeline(name=str(n_layers - 1), mark_type='end')
             return out, loss

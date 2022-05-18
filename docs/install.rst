@@ -9,9 +9,6 @@ Requirements
 
 Install from Source
 -------------------
-Alpa depends on its own fork of jax and tensorflow.
-To install alpa from source, we need to build these forks.
-
 1.  Clone repos
 
   .. code:: bash
@@ -26,7 +23,7 @@ To install alpa from source, we need to build these forks.
 
       .. code:: bash
     
-        pip3 install cmake tqdm pybind11 numba numpy scipy pulp ray tensorstore flax==0.4.1 jax==0.3.5
+        pip3 install cmake tqdm pybind11 numba numpy pulp ray tensorstore flax==0.4.1 jax==0.3.5
         pip3 install cupy-cuda114  # use your own CUDA version. Here cuda-cuda114 means cuda 11.4.
 
   - NCCL:
@@ -52,8 +49,8 @@ To install alpa from source, we need to build these forks.
 
   .. code:: bash
   
-    cd alpa/jaxlib
-    python3 build/build.py --enable_cuda --dev_install --tf_path=../third_party/tensorflow-alpa
+    cd alpa/build_jaxlib
+    python3 build/build.py --enable_cuda --dev_install --tf_path=$(pwd)/../third_party/tensorflow-alpa
     cd dist
     pip3 install -e .
 
@@ -76,7 +73,7 @@ To install alpa from source, we need to build these forks.
   All installations are in development mode, so you can modify python code and it will take effect immediately.
   To modify c++ code in tensorflow, you only need to run the command below from step 3 to recompile jaxlib::
 
-    python3 build/build.py --enable_cuda --dev_install --tf_path=../third_party/tensorflow-alpa
+    python3 build/build.py --enable_cuda --dev_install --tf_path=$(pwd)/../third_party/tensorflow-alpa
 
 Check Installation
 ------------------

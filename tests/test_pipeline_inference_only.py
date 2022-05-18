@@ -3,7 +3,7 @@ import unittest
 import jax
 import jax.numpy as jnp
 
-from alpa import init, PipeshardParallel
+from alpa import init, shutdown, PipeshardParallel
 from alpa.model.bert_model import BertConfig, FlaxBertLayerCollection
 from alpa.testing import (MLPModel, create_train_state,
                           get_bert_layer_collection_inference_step,
@@ -14,6 +14,10 @@ class PipelineInferenceTest(unittest.TestCase):
 
     def setUp(self):
         init(cluster="ray")
+
+    # pylint: disable=no-self-use
+    def tearDown(self):
+        shutdown()
 
     def run_mlp_inference(self, manual_pipeline_layer=True):
         method = PipeshardParallel(num_micro_batches=4,

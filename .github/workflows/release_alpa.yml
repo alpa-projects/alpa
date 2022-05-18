@@ -40,9 +40,8 @@ jobs:
         run: |
           mkdir -p dist
           docker run --gpus all --tmpfs /build:exec \
-          --rm -v $(pwd)/dist:/dist build-alpa-image \
-          --entrypoint /build_alpa.sh \
-          ${PYTHON_VERSION} ${ALPA_BRANCH}
+          --rm -v $(pwd)/dist:/dist --entrypoint /build_alpa.sh \
+          build-alpa-image ${PYTHON_VERSION} ${ALPA_BRANCH}
         env:
           PYTHON_VERSION: ${{ matrix.python }}
           ALPA_BRANCH: ${{ github.ref }}

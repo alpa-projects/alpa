@@ -90,7 +90,7 @@ class PipelineInferenceTest(unittest.TestCase):
         return hlo_text
 
     def test_pipeline_inference_only(self):
-        # self.run_mlp_inference()
+        self.run_mlp_inference()
         self.run_bert_layer_collection_inference()
 
 

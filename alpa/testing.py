@@ -14,7 +14,7 @@ from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 import alpa
 from alpa.api import init, shutdown, parallelize
 from alpa.model.bert_model import BertConfig, FlaxBertLayer
-from alpa.model.model_util import TrainState
+from alpa.model.model_util import FlaxBaseModelOutput, TrainState
 from alpa.parallel_method import PipeshardParallel
 from alpa.pipeline_parallel.layer_construction import (
     automatic_layer_construction, manual_layer_construction)
@@ -115,7 +115,9 @@ def create_dummy_train_state(rngkey, model, inputs, dtype=jnp.float16):
 
 def decorate_loss_fn(fn, manual_pipeline, use_remat, layer_num):
     if manual_pipeline:
-        return manual_layer_construction(fn, remat_layer=use_remat)
+        return manual_layer_construction(fn,
+                                         remat_layer=use_remat,
+                                         lift_markers=True)
     return automatic_layer_construction(fn,
                                         remat_layer=use_remat,
                                         layer_num=layer_num)
@@ -170,12 +172,49 @@ def get_mlp_inference_step(parallel_method,
             loss = jnp.mean((out - batch["y"])**2)
             if manual_pipeline_layer:
                 mark_pipeline(name='2', mark_type='end')
-            return loss
+            return out, loss
 
         if parallel_method:
             forward = decorate_loss_fn(forward, manual_pipeline_layer,
                                        False, 2)
 
+        out = forward(state.params)
+        return out
+
+    if parallel_method:
+        return parallelize(inference_step, donate_argnums=(),
+                           method=parallel_method)
+    else:
+        return inference_step
+
+
+def get_bert_layer_collection_inference_step(parallel_method,
+                                             manual_pipeline_layer,
+                                             n_layers):
+
+    def inference_step(state, batch):
+
+        def forward(params):
+            if manual_pipeline_layer:
+                mark_pipeline(name='0', mark_type='start')
+            out = state.apply_fn(params,
+                                 batch["x"],
+                                 batch["attention_mask"],
+                                 output_attentions=True,
+                                 output_hidden_states=True)
+            loss = jnp.mean((out.last_hidden_state - batch["y"])**2)
+            # FIXME(yonghao): Otherwise, the first hidden state is an input,
+            # but we do not support outputing an input(not batch-related outputs).
+            out = FlaxBaseModelOutput(last_hidden_state=out.last_hidden_state,
+                                      hidden_states=out.hidden_states[1:],
+                                      attentions=out.attentions)
+            if manual_pipeline_layer:
+                mark_pipeline(name=str(n_layers - 1), mark_type='end')
+            return out, loss
+
+        if parallel_method:
+            forward = decorate_loss_fn(forward, manual_pipeline_layer,
+                                       False, 2)
         out = forward(state.params)
         return out
 
@@ -334,12 +373,10 @@ class PipelineBasicTest(unittest.TestCase):
                                                       None,
                                                       n_layers,
                                                       use_value_and_grad)
-        parallel_train_step = get_bert_layer_train_step(
-            method,
-            manual_pipeline_layer,
-            use_remat,
-            n_layers,
-            use_value_and_grad)
+        parallel_train_step = get_bert_layer_train_step(method,
+                                                        manual_pipeline_layer,
+                                                        use_remat, n_layers,
+                                                        use_value_and_grad)
         executable = parallel_train_step.get_executable(state, batch)
 
         # Run correctnesss test

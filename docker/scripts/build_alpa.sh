@@ -21,6 +21,8 @@ ALPA_BRANCH="$2"
 
 # Enter python env
 source /python${PY_VERSION}-env/bin/activate
+pip install cmake
+
 # switch to the merge commit
 git clone https://github.com/alpa-projects/alpa.git
 cd /build/alpa

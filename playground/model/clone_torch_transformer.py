@@ -590,7 +590,7 @@ def load_params(params, path, num_layers):
     load_param("params.transformers.embeddings.position_embeddings.embedding",
                load_array("decoder.embed_positions.weight"))
     for i in range(num_layers):
-        param_prefix = f"params.transformers.encoder.layer.{i}."
+        param_prefix = f"params.transformers.encoder.{i}."
         load_prefix = f"decoder.layers.{i}."
         # Attention weights
         wq = load_array(load_prefix + "self_attn.q_proj.weight")
@@ -641,8 +641,9 @@ def build_position_ids(input_ids, padding_idx):
     return position_ids
 
 
-def test_gpt_lm():
+def test_opt_125M():
     config = OPTConfig()
+    numpy_weights_folder = "./numpy_weights"
 
     # @partial(jax.jit, static_argnums=(2,))
     def inference_step(batch, apply_func):
@@ -675,4 +676,4 @@ def test_gpt_lm():
 
 
 if __name__ == "__main__":
-    test_gpt_lm()
+    test_opt_125M()

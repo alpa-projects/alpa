@@ -699,7 +699,7 @@ def test_gpt_lm():
 
     print("input_ids", input_ids.shape, input_ids)
 
-    model = OPTForLMModule()
+    model = OPTForLMModule(config)
     rngkey = jax.random.PRNGKey(0)
 
     params = model.init(rngkey, input_ids, attention_mask,

@@ -662,6 +662,12 @@ def print_params(params, prefix=""):
             print(prefix + key, value.shape)
 
 
+def build_position_ids(input_ids, padding_idx):
+    mask = (input_ids != padding_idx).astype(jnp.int32)
+    position_ids = jnp.cumsum(mask, axis=1).astype(jnp.int32) * mask + padding_idx
+    return position_ids
+
+
 def test_gpt_lm():
     config = OPTConfig()
     batch_size = config.batch_size
@@ -680,7 +686,7 @@ def test_gpt_lm():
     # TODO: attention_mask should be triu
     attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
     # TODO: set up position_ids correctly
-    position_ids = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
+    position_ids = build_position_ids(input_ids, config.pad)
 
     print("input_ids", input_ids.shape, input_ids)
 

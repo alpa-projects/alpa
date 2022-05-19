@@ -160,8 +160,7 @@ class PipelineInstEmitter:
                  global_outvars: Sequence[Var],
                  mesh_group: PhysicalDeviceMeshGroup, dependency: np.ndarray,
                  schedule: PipelineSchedule, is_batch: Sequence[bool],
-                 num_batch: int, flop_count: int,
-                 concat_vars_mapping: Dict[Var, Var], in_tree: PyTreeDef):
+                 num_batch: int, flop_count: int, in_tree: PyTreeDef):
         ##### Input arguments #####
         self.stages = stages
         self.global_invars = global_invars
@@ -193,7 +192,7 @@ class PipelineInstEmitter:
         self.mesh_arg_indices = []
         # Cached sharding indices for input arguments
         # List[mesh_idx -> List[sharding_indices]].
-        self.input_shard_indices = [] 
+        self.input_shard_indices = []
         # Cached sharding specs for input arguments.
         # List[mesh_idx -> List[sharding_spec]]
         self.input_shard_specs = []
@@ -234,7 +233,6 @@ class PipelineInstEmitter:
             assert len(mesh_indices) == 1
             stage.get_spmd_partitioned()
 
-
     def _compile_resharding_tasks(self):
         """Create and compile all resharding (send/recv/allgather) tasks."""
         for (src_mesh_idx, dst_mesh_idx,
@@ -271,6 +269,7 @@ class PipelineInstEmitter:
         # The shape of the numpy array is [num_hosts, num_devices_per_host]
         var_at = {}
 
+        self._compile_resharding_tasks()
         # Compile forward, backward and apply_grad computations
         executable_uuids = self._compile_computation_executables(
             executable_config_lists)

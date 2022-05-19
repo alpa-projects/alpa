@@ -47,9 +47,10 @@ class PipeshardDriverExecutable:
                  *,
                  stages: Sequence[XlaShardedPipelineComputation],
                  global_invars: Sequence[Var],
+                 grad_dummy_invars,
                  global_outvars: Sequence[Var],
                  mesh_group: PhysicalDeviceMeshGroup,
-                 dependency: np.ndarray,
+                 dependency,
                  schedule: PipelineSchedule,
                  is_batch: Sequence[bool],
                  num_batch: int,
@@ -67,51 +68,50 @@ class PipeshardDriverExecutable:
         self.num_batch = num_batch
         self.flop_count = flop_count
         self.in_tree = in_tree
-
-        ##### Internal states #####
-
-        # List[stage_idx -> executable_uuid]
-        self.executable_uuids = []
-
-        # for cross mesh communications
         self.num_mesh = len(mesh_group)
-        self._establish_nccl_groups()
-
-        ##### For handling inputs of the executable ####
-        # Whether the var should be donated
-        # List[mesh_idx -> List[bool]]
-        self.donate_invars = []
-        # List[mesh_idx -> List[arg_idx]]
-        self.mesh_arg_indices = []
-        # Cached sharding indices for input arguments
-        # List[mesh_idx -> List[sharding_indices]].
-        self.input_shard_indices = [] 
-        # Cached sharding specs for input arguments.
-        # List[mesh_idx -> List[sharding_spec]]
-        self.input_shard_specs = []
-        # Whether the argument should be deleted after shard
-        # List[mesh_idx -> List[bool]]
-        self.delete_after_shard = []
-        # Whether the argument is a batch argument
-        # List[mesh_idx -> List[bool]]
-        self.batch_invars = []
-
-        ##### For handling outputs of the executable ####
-        # Dict[worker -> List[uuid]]
-        self.output_local_uuid_list = {}
-        # List[arg_idx -> List[mesh_idx -> int]]
-        self.mesh_output_indices = []
-        # List[mesh_idx -> List[arg_idx -> sharding_spec]]
-        self.output_spec_list = [[] for _ in range(len(mesh_group))]
 
         ##### For debugging #####
         # List[stage_idx -> str]
         self.hlo_texts_after_spmd_partitioner = []
 
         # Compile pipeline instructions and configs of mesh executables
+        emitter = PipelineInstEmitter(
+             stages=stages, global_invars=global_invars, grad_dummy_invars=grad_dummy_invars, global_outvars=global_outvars,
+             mesh_group=mesh_group, dependency=dependency, schedule=schedule, is_batch=is_batch, num_batch=num_batch, flop_count=flop_count,
+             in_tree=in_tree)
+        self._establish_nccl_groups(emitter._communicator.task_spec_iter())
         (instruction_lists, executable_config_lists, input_local_uuid_lists,
-         grad_uuids, reduced_var_uuid_lists
-        ) = PipelineInstEmitter()._compile(concat_vars_mapping)
+         grad_uuids, reduced_var_uuid_lists) = emitter._compile(concat_vars_mapping)
+
+        ##### Internal states #####
+
+        # List[stage_idx -> executable_uuid]
+        self.executable_uuids = emitter.executable_uuids
+        ##### For handling inputs of the executable ####
+        # Whether the var should be donated
+        self.donate_invars = emitter.donate_invars
+        # List[mesh_idx -> List[arg_idx]]
+        self.mesh_arg_indices = emitter.mesh_arg_indices
+        # Cached sharding indices for input arguments
+        # List[mesh_idx -> List[sharding_indices]].
+        self.input_shard_indices = emitter.input_shard_indices
+        # Cached sharding specs for input arguments.
+        # List[mesh_idx -> List[sharding_spec]]
+        self.input_shard_specs = emitter.input_shard_specs
+        # Whether the argument should be deleted after shard
+        # List[mesh_idx -> List[bool]]
+        self.delete_after_shard = emitter.delete_after_shard
+        # Whether the argument is a batch argument
+        # List[mesh_idx -> List[bool]]
+        self.batch_invars = emitter.batch_invars
+
+        ##### For handling outputs of the executable ####
+        # Dict[worker -> List[uuid]]
+        self.output_local_uuid_list = emitter.output_local_uuid_list
+        # List[arg_idx -> List[mesh_idx -> int]]
+        self.mesh_output_indices = emitter.mesh_output_indices
+        # List[mesh_idx -> List[arg_idx -> sharding_spec]]
+        self.output_spec_list = emitter.output_spec_list
 
         # Create a PipeshardMeshWorkerExecuable for each MeshHostWorker
         self.worker_executable_uuid_mapping = {}  # Dict[
@@ -139,7 +139,7 @@ class PipeshardDriverExecutable:
 
     ##### Compilation Related Functions #####
 
-    def _establish_nccl_groups(self):
+    def _establish_nccl_groups(self, task_spec_iter):
         """
         Identify and create NCCL groups based on resharding specs.
 
@@ -155,7 +155,7 @@ class PipeshardDriverExecutable:
                               for _ in range(self.num_mesh)]
                              for _ in range(self.num_mesh)]
         # Merge (i, j) and (j, i)
-        for i, j, var_spec_map in self._communicator.task_spec_iter():
+        for i, j, var_spec_map in task_spec_iter:
             participants = OrderedSet()
             for _, spec in var_spec_map.items():  # for each var
                 participants = participants | spec.get_participant_device_strs()

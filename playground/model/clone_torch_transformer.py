@@ -255,7 +255,7 @@ class OPTEmbeddings(nn.Module):
         assert self.config.max_target_positions is not None
         assert self.config.decoder_learned_pos
         self.position_embeddings = nn.Embed(
-            self.config.max_target_positions,
+            self.config.max_target_positions + self.config.pad + 1,
             self.config.decoder_embed_dim,
             dtype=self.dtype,
         )
@@ -688,9 +688,10 @@ def test_gpt_lm():
 
     params = model.init(rngkey, input_ids, attention_mask,
                         position_ids)
-    print_params(params)
+    print_params(params.unfreeze())
     params = load_params(params.unfreeze(), "numpy_weights")
 
+    print("=" * 40 + " after init " + "=" * 40)
     # JIT compile
     inference_step({
             "input_ids": input_ids,

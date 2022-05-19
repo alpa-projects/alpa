@@ -645,7 +645,7 @@ def test_opt_125M():
     config = OPTConfig()
     numpy_weights_folder = "./numpy_weights"
 
-    # @partial(jax.jit, static_argnums=(2,))
+    @partial(jax.jit, static_argnums=(1,))
     def inference_step(batch, apply_func):
         logits = apply_func(params,
                             batch["input_ids"],
@@ -664,9 +664,8 @@ def test_opt_125M():
     params = model.init(rngkey, input_ids,
                         position_ids)
 
-    params = load_params(params.unfreeze(), "numpy_weights", num_layers=config.decoder_layers)
+    params = load_params(params.unfreeze(), numpy_weights_folder, num_layers=config.decoder_layers)
 
-    print("=" * 40 + " after init " + "=" * 40)
     # JIT compile
     logits = inference_step({
         "input_ids": input_ids,

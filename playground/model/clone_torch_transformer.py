@@ -19,6 +19,7 @@ ACT2FN = {
     "gelu_new": partial(nn.gelu, approximate=True),
 }
 
+
 @dataclass(frozen=True)
 class OPTConfig:
     # Inherited from OPT
@@ -671,6 +672,7 @@ def test_opt_125M():
         "input_ids": input_ids,
         "position_ids": position_ids,
     }, model.apply)
+
     print("logits", logits)
 
 

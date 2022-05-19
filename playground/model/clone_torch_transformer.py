@@ -663,6 +663,10 @@ def load_params(params, path, num_layers):
                    load_array(f"decoder.layers.{i}.fc2.bias"))
         load_param(f"params.transformers.encoder.layer.{i}.ffn.fc2.kernel",
                    np.transpose(load_array(f"decoder.layers.{i}.fc2.weight")))
+        load_param(f"params.transformers.encoder.layer.{i}.ffn.layer_norm.scale",
+                   load_array(f"decoder.layers.1.final_layer_norm.weight"))
+        load_param(f"params.transformers.encoder.layer.{i}.ffn.layer_norm.bias",
+                   load_array(f"decoder.layers.1.final_layer_norm.bias"))
     return params
 
 

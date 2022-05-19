@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 from functools import partial
 from typing import Callable, Optional, Tuple
@@ -414,6 +415,21 @@ class OPTFFN(nn.Module):
         return hidden_states
 
 
+def load_params(params, path):
+    def load_param(param_key, checkpoint_key):
+        param_dict = params
+        param_keys = param_key.split('.')
+        loaded_array = np.load(os.path.join(path, checkpoint_key))
+        for i, key in enumerate(param_keys):
+            if i == len(param_keys) - 1:
+                assert param_dict[key].shape == loaded_array.shape
+                param_dict[key] = loaded_array
+            else:
+                param_dict = param_dict[key]
+    load_param("params.transformers.embeddings.word_embeddings.embedding", "decoder.embed_tokens.weight")
+    return params
+
+
 class FlaxBertLayer(nn.Module):
     config: OPTConfig
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
@@ -664,6 +680,7 @@ def test_gpt_lm():
 
     params = model.init(rngkey, input_ids, attention_mask,
                         position_ids)
+    load_params(params, "numpy_weights")
 
     # JIT compile
     inference_step({

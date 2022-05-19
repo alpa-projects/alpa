@@ -641,6 +641,7 @@ class OPTForLMModule(nn.Module):
 def load_params(params, path, num_layers):
     def load_array(key):
         return np.load(os.path.join(path, key))
+
     def load_param(param_key, loaded_array):
         param_dict = params
         param_keys = param_key.split('.')
@@ -655,18 +656,41 @@ def load_params(params, path, num_layers):
     load_param("params.transformers.embeddings.position_embeddings.embedding",
                load_array("decoder.embed_positions.weight"))
     for i in range(num_layers):
-        load_param(f"params.transformers.encoder.layer.{i}.ffn.fc1.bias",
-                   load_array(f"decoder.layers.{i}.fc1.bias"))
-        load_param(f"params.transformers.encoder.layer.{i}.ffn.fc1.kernel",
-                   np.transpose(load_array(f"decoder.layers.{i}.fc1.weight")))
-        load_param(f"params.transformers.encoder.layer.{i}.ffn.fc2.bias",
-                   load_array(f"decoder.layers.{i}.fc2.bias"))
-        load_param(f"params.transformers.encoder.layer.{i}.ffn.fc2.kernel",
-                   np.transpose(load_array(f"decoder.layers.{i}.fc2.weight")))
-        load_param(f"params.transformers.encoder.layer.{i}.ffn.layer_norm.scale",
-                   load_array(f"decoder.layers.1.final_layer_norm.weight"))
-        load_param(f"params.transformers.encoder.layer.{i}.ffn.layer_norm.bias",
-                   load_array(f"decoder.layers.1.final_layer_norm.bias"))
+        param_prefix = f"params.transformers.encoder.layer.{i}."
+        load_prefix = f"decoder.layers.{i}."
+        # Attention weights
+        wq = load_array(load_prefix + "self_attn.q_proj.weight")
+        wk = load_array(load_prefix + "self_attn.k_proj.weight")
+        wv = load_array(load_prefix + "self_attn.v_proj.weight")
+        w_qvk = np.stack([wq, wv, wk], axis=1)
+        w_qvk = np.transpose(np.reshape(w_qvk, (-1, w_qvk.shape[-1])))
+        load_param(param_prefix + "attention.self.qvk_combined.kernel", w_qvk)
+        bq = load_array(load_prefix + "self_attn.q_proj.bias")
+        bk = load_array(load_prefix + "self_attn.k_proj.bias")
+        bv = load_array(load_prefix + "self_attn.v_proj.bias")
+        b_qvk = np.concatenate([bq, bv, bk], axis=0)
+        load_param(param_prefix + "attention.self.qvk_combined.bias", b_qvk)
+        load_param(param_prefix + "attention.dense.kernel",
+                   np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))
+        load_param(param_prefix + "attention.dense.bias",
+                   load_array(load_prefix + "self_attn.out_proj.bias"))
+        load_param(param_prefix + "attention.layer_norm.scale",
+                   load_array(load_prefix + "self_attn_layer_norm.weight"))
+        load_param(param_prefix + "attention.layer_norm.bias",
+                   load_array(load_prefix + "self_attn_layer_norm.bias"))
+        # FFN weights
+        load_param(param_prefix + "ffn.fc1.bias",
+                   load_array(load_prefix + "fc1.bias"))
+        load_param(param_prefix + "ffn.fc1.kernel",
+                   np.transpose(load_array(load_prefix + "fc1.weight")))
+        load_param(param_prefix + "ffn.fc2.bias",
+                   load_array(load_prefix + "fc2.bias"))
+        load_param(param_prefix + "ffn.fc2.kernel",
+                   np.transpose(load_array(load_prefix + "fc2.weight")))
+        load_param(param_prefix + "ffn.layer_norm.scale",
+                   load_array(load_prefix + "final_layer_norm.weight"))
+        load_param(param_prefix + "ffn.layer_norm.bias",
+                   load_array(load_prefix + "final_layer_norm.bias"))
     return params
 
 

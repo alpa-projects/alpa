@@ -349,31 +349,19 @@ class FlaxBertSelfAttention(nn.Module):
         return outputs
 
 
-class FlaxBertSelfOutput(nn.Module):
-    config: OPTConfig
-    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
-
-    def setup(self):
-        self.dense = nn.Dense(
-            self.config.decoder_embed_dim,
-            dtype=self.dtype,
-        )
-        self.LayerNorm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
-                                      dtype=self.dtype)
-
-    def __call__(self, hidden_states, input_tensor, deterministic: bool = True):
-        hidden_states = self.dense(hidden_states)
-        hidden_states = self.LayerNorm(hidden_states + input_tensor)
-        return hidden_states
-
-
-class FlaxBertAttention(nn.Module):
+class OPTAttention(nn.Module):
     config: OPTConfig
     dtype: jnp.dtype = jnp.float32
 
     def setup(self):
+        assert self.config.decoder_normalize_before
         self.self = FlaxBertSelfAttention(self.config, dtype=self.dtype)
-        self.output = FlaxBertSelfOutput(self.config, dtype=self.dtype)
+        self.dense = nn.Dense(
+            self.config.decoder_embed_dim,
+            dtype=self.dtype,
+        )
+        self.layer_norm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
+                                       dtype=self.dtype)
 
     def __call__(self,
                  hidden_states,
@@ -383,15 +371,15 @@ class FlaxBertAttention(nn.Module):
         # Attention mask comes in as attention_mask.shape == (*batch_sizes, kv_length)
         # FLAX expects: attention_mask.shape == (*batch_sizes, 1, 1, kv_length) such that it is broadcastable
         # with attn_weights.shape == (*batch_sizes, num_heads, q_length, kv_length)
+        residual = hidden_states
+        hidden_states = self.layer_norm(hidden_states)
         attn_outputs = self.self(hidden_states,
                                  attention_mask,
                                  deterministic=deterministic,
                                  output_attentions=output_attentions)
         attn_output = attn_outputs[0]
-        hidden_states = self.output(attn_output,
-                                    hidden_states,
-                                    deterministic=deterministic)
-
+        hidden_states = self.dense(attn_output)
+        hidden_states = hidden_states + residual
         outputs = (hidden_states,)
 
         if output_attentions:
@@ -400,42 +388,29 @@ class FlaxBertAttention(nn.Module):
         return outputs
 
 
-class FlaxBertIntermediate(nn.Module):
+class OPTFFN(nn.Module):
     config: OPTConfig
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
-        self.dense = nn.Dense(
+        self.fc1 = nn.Dense(
             self.config.decoder_ffn_embed_dim,
             dtype=self.dtype,
         )
         self.activation = ACT2FN[self.config.activation_fn]
-
-    def __call__(self, hidden_states):
-        hidden_states = self.dense(hidden_states)
-        hidden_states = self.activation(hidden_states)
-        return hidden_states
-
-
-class FlaxBertOutput(nn.Module):
-    config: OPTConfig
-    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
-
-    def setup(self):
-        self.dense = nn.Dense(
+        self.fc2 = nn.Dense(
             self.config.decoder_embed_dim,
             dtype=self.dtype,
         )
-        self.LayerNorm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
-                                      dtype=self.dtype)
+        self.layer_norm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
+                                       dtype=self.dtype)
 
-    def __call__(self,
-                 hidden_states,
-                 attention_output,
-                 deterministic: bool = True):
-        hidden_states = self.dense(hidden_states)
-        hidden_states = self.dropout(hidden_states, deterministic=deterministic)
-        hidden_states = self.LayerNorm(hidden_states + attention_output)
+    def __call__(self, hidden_states):
+        residual = hidden_states
+        hidden_states = self.layer_norm(hidden_states)
+        hidden_states = self.activation(self.fc1(hidden_states))
+        hidden_states = self.fc2(hidden_states)
+        hidden_states = hidden_states + residual
         return hidden_states
 
 
@@ -444,16 +419,13 @@ class FlaxBertLayer(nn.Module):
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
-        assert not self.config.decoder_normalize_before
+        assert self.config.decoder_normalize_before
         assert not getattr(self.config, "cross_self_attention", False)
         assert not getattr(self.config, "scale_heads", False)
         assert not getattr(self.config, "scale_attn", False)
         assert not getattr(self.config, "scale_fc", False)
-        self.attention = FlaxBertAttention(self.config, dtype=self.dtype)
-        self.intermediate = FlaxBertIntermediate(self.config, dtype=self.dtype)
-        self.ffn_ln = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
-                                   dtype=self.dtype)
-        self.output = FlaxBertOutput(self.config, dtype=self.dtype)
+        self.attention = OPTAttention(self.config, dtype=self.dtype)
+        self.ffn = OPTFFN(self.config, dtype=self.dtype)
 
     def __call__(self,
                  hidden_states,
@@ -461,25 +433,13 @@ class FlaxBertLayer(nn.Module):
                  deterministic: bool = True,
                  output_attentions: bool = False):
 
-        if not isinstance(deterministic, bool):
-            # A temporary hack to walkaround the bug in flax.nn.remat
-            # Using `nn.remat(concrete=True)` works for regular use cases
-            # (e.g., train_step, init) but does not work for init_dummy.
-            # So we still need this hack.
-            deterministic = True
-            output_attentions = True
-
         attention_outputs = self.attention(hidden_states,
                                            attention_mask,
                                            deterministic=deterministic,
                                            output_attentions=output_attentions)
         attention_output = attention_outputs[0]
 
-        hidden_states = self.intermediate(attention_output)
-        hidden_states = self.ffn_ln(hidden_states)
-        hidden_states = self.output(hidden_states,
-                                    attention_output,
-                                    deterministic=deterministic)
+        hidden_states = self.ffn(attention_output)
 
         outputs = (hidden_states,)
 

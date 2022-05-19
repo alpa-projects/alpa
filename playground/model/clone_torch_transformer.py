@@ -638,19 +638,31 @@ class OPTForLMModule(nn.Module):
         )
 
 
-def load_params(params, path):
-    def load_param(param_key, checkpoint_key):
+def load_params(params, path, num_layers):
+    def load_array(key):
+        return np.load(os.path.join(path, key))
+    def load_param(param_key, loaded_array):
         param_dict = params
         param_keys = param_key.split('.')
-        loaded_array = np.load(os.path.join(path, checkpoint_key))
         for i, key in enumerate(param_keys):
             if i == len(param_keys) - 1:
                 assert param_dict[key].shape == loaded_array.shape
                 param_dict[key] = loaded_array
             else:
                 param_dict = param_dict[key]
-    load_param("params.transformers.embeddings.word_embeddings.embedding", "decoder.embed_tokens.weight")
-    load_param("params.transformers.embeddings.position_embeddings.embedding", "decoder.embed_positions.weight")
+    load_param("params.transformers.embeddings.word_embeddings.embedding",
+               load_array("decoder.embed_tokens.weight"))
+    load_param("params.transformers.embeddings.position_embeddings.embedding",
+               load_array("decoder.embed_positions.weight"))
+    for i in range(num_layers):
+        load_param(f"params.transformers.encoder.layer.{i}.ffn.fc1.bias",
+                   load_array(f"decoder.layers.{i}.fc1.bias"))
+        load_param(f"params.transformers.encoder.layer.{i}.ffn.fc1.kernel",
+                   np.transpose(load_array(f"decoder.layers.{i}.fc1.weight")))
+        load_param(f"params.transformers.encoder.layer.{i}.ffn.fc2.bias",
+                   load_array(f"decoder.layers.{i}.fc2.bias"))
+        load_param(f"params.transformers.encoder.layer.{i}.ffn.fc2.kernel",
+                   np.transpose(load_array(f"decoder.layers.{i}.fc2.weight")))
     return params
 
 
@@ -696,7 +708,7 @@ def test_gpt_lm():
     params = model.init(rngkey, input_ids, attention_mask,
                         position_ids)
     print_params(params.unfreeze())
-    params = load_params(params.unfreeze(), "numpy_weights")
+    params = load_params(params.unfreeze(), "numpy_weights", num_layers=config.decoder_layers)
 
     print("=" * 40 + " after init " + "=" * 40)
     # JIT compile

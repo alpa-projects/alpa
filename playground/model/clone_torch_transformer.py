@@ -321,7 +321,7 @@ class FlaxBertSelfAttention(nn.Module):
                                          head_dim))
 
         # Convert the boolean attention mask to an attention bias.
-        autoregressive_attention_bias = jnp.triu(jnp.full((query_states.shape[1], key_states.shape[1]), -1e10), 1)
+        autoregressive_attention_bias = jnp.expand_dims(jnp.triu(jnp.full((query_states.shape[1], key_states.shape[1]), -1e10), 1), (0, 1))
         attn_weights = nn.attention.dot_product_attention_weights(
             query_states,
             key_states,

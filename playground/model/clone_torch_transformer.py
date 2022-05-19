@@ -321,21 +321,11 @@ class FlaxBertSelfAttention(nn.Module):
                                          head_dim))
 
         # Convert the boolean attention mask to an attention bias.
-        if attention_mask is not None:
-            # attention mask in the form of attention bias
-            attention_mask = jnp.expand_dims(attention_mask, axis=(-3, -2))
-            attention_bias = lax.select(
-                attention_mask > 0,
-                jnp.full(attention_mask.shape, 0.0).astype(self.dtype),
-                jnp.full(attention_mask.shape, -1e10).astype(self.dtype),
-            )
-        else:
-            attention_bias = None
-
+        autoregressive_attention_bias = jnp.triu(jnp.full((query_states.shape[1], key_states.shape[1]), -1e10), 1)
         attn_weights = nn.attention.dot_product_attention_weights(
             query_states,
             key_states,
-            bias=attention_bias,
+            bias=autoregressive_attention_bias,
             deterministic=deterministic,
             dtype=self.dtype,
             precision=None,

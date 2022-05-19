@@ -305,10 +305,10 @@ class FlaxBertSelfAttention(nn.Module):
 
         qvk_combined_states = self.qvk_combined(hidden_states)
         qvk_combined_states = qvk_combined_states.reshape(
-            qvk_combined_states.shape[:2] + (-1, 3))
+            qvk_combined_states.shape[:2] + (3, -1))
         query_states, value_states, key_states = jnp.split(qvk_combined_states,
                                                            3,
-                                                           axis=3)
+                                                           axis=2)
 
         query_states = query_states.reshape(hidden_states.shape[:2] +
                                             (self.config.decoder_attention_heads,
@@ -662,8 +662,7 @@ def load_params(params, path, num_layers):
         wq = load_array(load_prefix + "self_attn.q_proj.weight")
         wk = load_array(load_prefix + "self_attn.k_proj.weight")
         wv = load_array(load_prefix + "self_attn.v_proj.weight")
-        w_qvk = np.stack([wq, wv, wk], axis=1)
-        w_qvk = np.transpose(np.reshape(w_qvk, (-1, w_qvk.shape[-1])))
+        w_qvk = np.transpose(np.concatenate([wq, wv, wk], axis=0))
         load_param(param_prefix + "attention.self.qvk_combined.kernel", w_qvk)
         bq = load_array(load_prefix + "self_attn.q_proj.bias")
         bk = load_array(load_prefix + "self_attn.k_proj.bias")

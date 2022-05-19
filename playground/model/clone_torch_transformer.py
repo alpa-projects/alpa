@@ -1,12 +1,11 @@
 import os
 from dataclasses import dataclass
 from functools import partial
-from typing import Callable, Optional, Tuple
+from typing import Callable
 import math
 import numpy as np
 
 import jax
-from jax import lax
 import jax.numpy as jnp
 import flax.linen as nn
 from alpa.model.model_util import (FlaxBaseModelOutput,
@@ -266,9 +265,7 @@ class OPTEmbeddings(nn.Module):
 
     def __call__(self,
                  input_ids,
-                 position_ids,
-                 attention_mask,
-                 deterministic: bool = True):
+                 position_ids):
         # Embed
         inputs_embeds = self.embed_scale * self.word_embeddings(input_ids.astype("i4"))
         if self.project_in_dim is not None:
@@ -280,7 +277,7 @@ class OPTEmbeddings(nn.Module):
         return hidden_states
 
 
-class FlaxBertSelfAttention(nn.Module):
+class OPTSelfAttention(nn.Module):
     config: OPTConfig
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
@@ -298,8 +295,6 @@ class FlaxBertSelfAttention(nn.Module):
 
     def __call__(self,
                  hidden_states,
-                 attention_mask,
-                 deterministic=True,
                  output_attentions: bool = False):
         head_dim = self.config.decoder_embed_dim // self.config.decoder_attention_heads
 
@@ -321,12 +316,12 @@ class FlaxBertSelfAttention(nn.Module):
                                          head_dim))
 
         # Convert the boolean attention mask to an attention bias.
-        autoregressive_attention_bias = jnp.expand_dims(jnp.triu(jnp.full((query_states.shape[1], key_states.shape[1]), -1e10), 1), (0, 1))
+        autoregressive_attention_bias = jnp.expand_dims(jnp.triu(jnp.full(
+            (query_states.shape[1], key_states.shape[1]), -1e10), 1), (0, 1))
         attn_weights = nn.attention.dot_product_attention_weights(
             query_states,
             key_states,
             bias=autoregressive_attention_bias,
-            deterministic=deterministic,
             dtype=self.dtype,
             precision=None,
         )
@@ -346,7 +341,7 @@ class OPTAttention(nn.Module):
 
     def setup(self):
         assert self.config.decoder_normalize_before
-        self.self = FlaxBertSelfAttention(self.config, dtype=self.dtype)
+        self.self = OPTSelfAttention(self.config, dtype=self.dtype)
         self.dense = nn.Dense(
             self.config.decoder_embed_dim,
             dtype=self.dtype,
@@ -356,17 +351,10 @@ class OPTAttention(nn.Module):
 
     def __call__(self,
                  hidden_states,
-                 attention_mask,
-                 deterministic=True,
                  output_attentions: bool = False):
-        # Attention mask comes in as attention_mask.shape == (*batch_sizes, kv_length)
-        # FLAX expects: attention_mask.shape == (*batch_sizes, 1, 1, kv_length) such that it is broadcastable
-        # with attn_weights.shape == (*batch_sizes, num_heads, q_length, kv_length)
         residual = hidden_states
         hidden_states = self.layer_norm(hidden_states)
         attn_outputs = self.self(hidden_states,
-                                 attention_mask,
-                                 deterministic=deterministic,
                                  output_attentions=output_attentions)
         attn_output = attn_outputs[0]
         hidden_states = self.dense(attn_output)
@@ -405,7 +393,7 @@ class OPTFFN(nn.Module):
         return hidden_states
 
 
-class FlaxBertLayer(nn.Module):
+class OPTTransformerLayer(nn.Module):
     config: OPTConfig
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
@@ -420,13 +408,9 @@ class FlaxBertLayer(nn.Module):
 
     def __call__(self,
                  hidden_states,
-                 attention_mask,
-                 deterministic: bool = True,
                  output_attentions: bool = False):
 
         attention_outputs = self.attention(hidden_states,
-                                           attention_mask,
-                                           deterministic=deterministic,
                                            output_attentions=output_attentions)
         attention_output = attention_outputs[0]
 
@@ -445,17 +429,15 @@ class OPTTransformerLayerCollection(nn.Module):
 
     def setup(self):
         self.layers = [
-            FlaxBertLayer(self.config,
-                          name=str(i),
-                          dtype=self.dtype)
+            OPTTransformerLayer(self.config,
+                                name=str(i),
+                                dtype=self.dtype)
             for i in range(self.config.decoder_layers)
         ]
 
     def __call__(
         self,
         hidden_states,
-        attention_mask,
-        deterministic: bool = True,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
@@ -468,8 +450,6 @@ class OPTTransformerLayerCollection(nn.Module):
                 all_hidden_states += (hidden_states,)
 
             layer_outputs = layer(hidden_states,
-                                  attention_mask,
-                                  deterministic=deterministic,
                                   output_attentions=output_attentions)
             hidden_states = layer_outputs[0]
 
@@ -489,58 +469,26 @@ class OPTTransformerLayerCollection(nn.Module):
                                    attentions=all_attentions)
 
 
-class OPTTransformerEncoder(nn.Module):
-    config: OPTConfig
-    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
-
-    def setup(self):
-        self.layer = OPTTransformerLayerCollection(self.config, dtype=self.dtype)
-
-    def __call__(
-        self,
-        hidden_states,
-        attention_mask,
-        deterministic: bool = True,
-        output_attentions: bool = False,
-        output_hidden_states: bool = False,
-        return_dict: bool = True,
-    ):
-        return self.layer(
-            hidden_states,
-            attention_mask,
-            deterministic=deterministic,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
-
-
 class OPTTransformerModule(nn.Module):
     config: OPTConfig
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         self.embeddings = OPTEmbeddings(self.config, dtype=self.dtype)
-        self.encoder = OPTTransformerEncoder(self.config, dtype=self.dtype)
+        self.encoder = OPTTransformerLayerCollection(self.config, dtype=self.dtype)
 
     def __call__(
         self,
         input_ids,
-        attention_mask,
         position_ids,
-        deterministic: bool = True,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
     ):
         hidden_states = self.embeddings(input_ids,
-                                        position_ids,
-                                        attention_mask,
-                                        deterministic=deterministic)
+                                        position_ids)
         outputs = self.encoder(
             hidden_states,
-            attention_mask,
-            deterministic=deterministic,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
@@ -582,9 +530,7 @@ class OPTForLMModule(nn.Module):
     def __call__(
         self,
         input_ids,
-        attention_mask,
         position_ids,
-        deterministic: bool = True,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
@@ -592,9 +538,7 @@ class OPTForLMModule(nn.Module):
         # Model
         outputs = self.transformers(
             input_ids,
-            attention_mask,
             position_ids,
-            deterministic=deterministic,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
@@ -699,22 +643,16 @@ def build_position_ids(input_ids, padding_idx):
 
 def test_gpt_lm():
     config = OPTConfig()
-    batch_size = config.batch_size
-    seq_len = 9
 
     # @partial(jax.jit, static_argnums=(2,))
     def inference_step(batch, apply_func):
         logits = apply_func(params,
                             batch["input_ids"],
-                            batch["attention_mask"],
                             batch["position_ids"])[0]
         return logits
 
     # Init model and optimizer
     input_ids = jnp.array([[5625,   16,   10, 2721,  183,    8,   38,  236,    7]], dtype=jnp.int32)
-    # TODO: attention_mask should be triu
-    attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
-    # TODO: set up position_ids correctly
     position_ids = build_position_ids(input_ids, config.pad)
 
     print("input_ids", input_ids.shape, input_ids)
@@ -722,18 +660,19 @@ def test_gpt_lm():
     model = OPTForLMModule(config)
     rngkey = jax.random.PRNGKey(0)
 
-    params = model.init(rngkey, input_ids, attention_mask,
+    params = model.init(rngkey, input_ids,
                         position_ids)
-    print_params(params.unfreeze())
+
     params = load_params(params.unfreeze(), "numpy_weights", num_layers=config.decoder_layers)
 
     print("=" * 40 + " after init " + "=" * 40)
     # JIT compile
-    inference_step({
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "position_ids": position_ids,
-        }, model.apply)
+    logits = inference_step({
+        "input_ids": input_ids,
+        "position_ids": position_ids,
+    }, model.apply)
+    print("logits", logits)
+
 
 if __name__ == "__main__":
     test_gpt_lm()

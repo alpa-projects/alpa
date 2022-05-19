@@ -19,7 +19,7 @@ ACT2FN = {
     "gelu_new": partial(nn.gelu, approximate=True),
 }
 
-@dataclass
+@dataclass(frozen=True)
 class OPTConfig:
     # Inherited from OPT
     no_progress_bar = False

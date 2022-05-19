@@ -430,6 +430,14 @@ def load_params(params, path):
     return params
 
 
+def print_params(params, prefix=""):
+    for key, value in params.items():
+        if isinstance(value, dict):
+            print_params(value, prefix=prefix + key + ".")
+        else:
+            print(prefix + key, value.shape)
+
+
 class FlaxBertLayer(nn.Module):
     config: OPTConfig
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
@@ -680,7 +688,8 @@ def test_gpt_lm():
 
     params = model.init(rngkey, input_ids, attention_mask,
                         position_ids)
-    load_params(params, "numpy_weights")
+    print_params(params)
+    params = load_params(params.unfreeze(), "numpy_weights")
 
     # JIT compile
     inference_step({

@@ -7,9 +7,6 @@ import numpy as np
 import jax
 from jax import lax
 import jax.numpy as jnp
-from flax import optim
-
-from alpa.model.bert_model import OPTConfig
 import flax.linen as nn
 from alpa.model.model_util import (FlaxBaseModelOutput,
                                    FlaxMaskedLMOutput)

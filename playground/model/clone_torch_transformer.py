@@ -719,7 +719,7 @@ def test_opt_125M():
     config = OPTConfig()
     numpy_weights_folder = "./numpy_weights"
 
-    @partial(jax.jit, static_argnums=(1,))
+    # @partial(jax.jit, static_argnums=(1,))
     def inference_step_no_cache(batch, apply_func):
         logits = apply_func(params,
                             batch["input_ids"],

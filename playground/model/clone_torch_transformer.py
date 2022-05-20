@@ -346,7 +346,7 @@ class OPTSelfAttention(nn.Module):
             value_states = lax.dynamic_update_slice(cache_value, value_states, (0, cache_index, 0, 0))
             num_updated_cache_vectors = query_states.shape[1]
             max_length = key_states.shape[1]
-            attention_bias = (jnp.arange(max_length) < cache_index + num_updated_cache_vectors).astype(self.dtype) * -1e-10
+            attention_bias = (jnp.arange(max_length) >= cache_index + num_updated_cache_vectors).astype(self.dtype) * -1e10
             attention_bias = attention_bias[None, None, None, :]
             attention_cache = {
                 "key": key_states,
@@ -697,10 +697,10 @@ def build_init_cache(n_layers, batch_size, max_target_positions,
     for i in range(n_layers):
         layer_cache = {
             "key": jnp.zeros((batch_size, max_target_positions,
-                              head_dim, decoder_attention_heads),
+                              decoder_attention_heads, head_dim),
                              dtype=dtype),
             "value": jnp.zeros((batch_size, max_target_positions,
-                                head_dim, decoder_attention_heads),
+                                decoder_attention_heads, head_dim),
                                dtype=dtype),
             "index": 0,
         }
@@ -750,11 +750,11 @@ def test_opt_125M():
 
     # @partial(jax.jit, static_argnums=(1,))
     def inference_step_with_cache(batch, apply_func):
-        logits = apply_func(params,
+        output = apply_func(params,
                             batch["input_ids"],
                             batch["position_ids"],
-                            batch["cache"])[0]
-        return logits
+                            attention_cache=batch["cache"])
+        return output.logits, output.attention_cache
 
     cache = build_init_cache(
         config.decoder_layers, config.batch_size, config.max_target_positions,
@@ -763,7 +763,7 @@ def test_opt_125M():
     for i in range(input_ids.shape[1]):
         input_ids_step = input_ids[:, i:i+1]
         position_ids_step = jnp.full_like(input_ids_step, i + config.pad + 1)
-        logits_step = inference_step_with_cache({
+        logits_step, cache = inference_step_with_cache({
             "input_ids": input_ids_step,
             "position_ids": position_ids_step,
             "cache": cache,

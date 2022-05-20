@@ -689,6 +689,25 @@ def print_params(params, prefix=""):
             print(prefix + key, value.shape)
 
 
+def build_init_cache(n_layers, batch_size, max_target_positions,
+                     decoder_embed_dim, decoder_attention_heads,
+                     dtype=jnp.float32):
+    head_dim = decoder_embed_dim // decoder_attention_heads
+    all_cache = []
+    for i in range(n_layers):
+        layer_cache = {
+            "key": jnp.zeros((batch_size, max_target_positions,
+                              head_dim, decoder_attention_heads),
+                             dtype=dtype),
+            "value": jnp.zeros((batch_size, max_target_positions,
+                                head_dim, decoder_attention_heads),
+                               dtype=dtype),
+            "index": 0,
+        }
+        all_cache.append(layer_cache)
+    return all_cache
+
+
 def build_position_ids(input_ids, padding_idx):
     mask = (input_ids != padding_idx).astype(jnp.int32)
     position_ids = jnp.cumsum(mask, axis=1).astype(jnp.int32) * mask + padding_idx
@@ -696,11 +715,12 @@ def build_position_ids(input_ids, padding_idx):
 
 
 def test_opt_125M():
+    #TODO: align dtype
     config = OPTConfig()
     numpy_weights_folder = "./numpy_weights"
 
     @partial(jax.jit, static_argnums=(1,))
-    def inference_step(batch, apply_func):
+    def inference_step_no_cache(batch, apply_func):
         logits = apply_func(params,
                             batch["input_ids"],
                             batch["position_ids"])[0]
@@ -721,12 +741,34 @@ def test_opt_125M():
     params = load_params(params.unfreeze(), numpy_weights_folder, num_layers=config.decoder_layers)
 
     # JIT compile
-    logits = inference_step({
+    logits_no_cache = inference_step_no_cache({
         "input_ids": input_ids,
         "position_ids": position_ids,
     }, model.apply)
 
-    print("logits", logits)
+    print("logits_no_cache", logits_no_cache)
+
+    # @partial(jax.jit, static_argnums=(1,))
+    def inference_step_with_cache(batch, apply_func):
+        logits = apply_func(params,
+                            batch["input_ids"],
+                            batch["position_ids"],
+                            batch["cache"])[0]
+        return logits
+
+    cache = build_init_cache(
+        config.decoder_layers, config.batch_size, config.max_target_positions,
+        config.decoder_embed_dim, config.decoder_attention_heads)
+
+    for i in range(input_ids.shape[1]):
+        input_ids_step = input_ids[:, i:i+1]
+        position_ids_step = jnp.full_like(input_ids_step, i + config.pad)
+        logits_step = inference_step_with_cache({
+            "input_ids": input_ids_step,
+            "position_ids": position_ids_step,
+            "cache": cache,
+        }, model.apply)
+        print("logits_step", i, logits_step)
 
 
 if __name__ == "__main__":

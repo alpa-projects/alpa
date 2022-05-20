@@ -748,7 +748,7 @@ def test_opt_125M():
 
     print("logits_no_cache", logits_no_cache)
 
-    # @partial(jax.jit, static_argnums=(1,))
+    @partial(jax.jit, static_argnums=(1,))
     def inference_step_with_cache(batch, apply_func):
         output = apply_func(params,
                             batch["input_ids"],
@@ -760,6 +760,8 @@ def test_opt_125M():
         config.decoder_layers, config.batch_size, config.max_target_positions,
         config.decoder_embed_dim, config.decoder_attention_heads)
 
+    from alpa.testing import assert_allclose
+
     for i in range(input_ids.shape[1]):
         input_ids_step = input_ids[:, i:i+1]
         position_ids_step = jnp.full_like(input_ids_step, i + config.pad + 1)
@@ -768,7 +770,7 @@ def test_opt_125M():
             "position_ids": position_ids_step,
             "cache": cache,
         }, model.apply)
-        print("logits_step", i, logits_step)
+        assert_allclose(logits_step, logits_no_cache[:, i:i+1])
 
 
 if __name__ == "__main__":

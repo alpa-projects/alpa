@@ -762,7 +762,7 @@ def test_opt_125M():
 
     for i in range(input_ids.shape[1]):
         input_ids_step = input_ids[:, i:i+1]
-        position_ids_step = jnp.full_like(input_ids_step, i + config.pad)
+        position_ids_step = jnp.full_like(input_ids_step, i + config.pad + 1)
         logits_step = inference_step_with_cache({
             "input_ids": input_ids_step,
             "position_ids": position_ids_step,

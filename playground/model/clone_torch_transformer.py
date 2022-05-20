@@ -1,15 +1,17 @@
 import os
 from dataclasses import dataclass
 from functools import partial
-from typing import Callable
+from typing import Callable, Optional, Tuple, Dict
 import math
 import numpy as np
 
 import jax
+import flax
+from jax import lax
 import jax.numpy as jnp
+import jaxlib.xla_extension as jax_xla
 import flax.linen as nn
-from alpa.model.model_util import (FlaxBaseModelOutput,
-                                   FlaxMaskedLMOutput)
+from alpa.model.model_util import (ModelOutput)
 
 ACT2FN = {
     "gelu": partial(nn.gelu, approximate=False),
@@ -18,6 +20,22 @@ ACT2FN = {
     "swish": nn.swish,
     "gelu_new": partial(nn.gelu, approximate=True),
 }
+
+
+@flax.struct.dataclass
+class OPTModelOutput(ModelOutput):
+    last_hidden_state: jax_xla.DeviceArray = None
+    hidden_states: Optional[Tuple[jax_xla.DeviceArray]] = None
+    attentions: Optional[Tuple[jax_xla.DeviceArray]] = None
+    attention_cache: Optional[Tuple[Dict[str, jax_xla.DeviceArray]]] = None
+
+
+@flax.struct.dataclass
+class OPTLMOutput(ModelOutput):
+    logits: jax_xla.DeviceArray = None
+    hidden_states: Optional[Tuple[jax_xla.DeviceArray]] = None
+    attentions: Optional[Tuple[jax_xla.DeviceArray]] = None
+    attention_cache: Optional[Tuple[Dict[str, jax_xla.DeviceArray]]] = None
 
 
 @dataclass(frozen=True)
@@ -296,7 +314,8 @@ class OPTSelfAttention(nn.Module):
 
     def __call__(self,
                  hidden_states,
-                 output_attentions: bool = False):
+                 output_attentions: bool = False,
+                 attention_cache=None):
         head_dim = self.config.decoder_embed_dim // self.config.decoder_attention_heads
 
         qvk_combined_states = self.qvk_combined(hidden_states)
@@ -316,13 +335,28 @@ class OPTSelfAttention(nn.Module):
                                         (self.config.decoder_attention_heads,
                                          head_dim))
 
-        # Convert the boolean attention mask to an attention bias.
-        autoregressive_attention_bias = jnp.expand_dims(jnp.triu(jnp.full(
-            (query_states.shape[1], key_states.shape[1]), -1e10), 1), (0, 1))
+        if attention_cache is None:
+            attention_bias = jnp.expand_dims(jnp.triu(jnp.full(
+                (query_states.shape[1], key_states.shape[1]), -1e10), 1), (0, 1))
+        else:
+            cache_key = attention_cache["key"]
+            cache_value = attention_cache["value"]
+            cache_index = attention_cache["index"]
+            key_states = lax.dynamic_update_slice(cache_key, key_states, (0, cache_index, 0, 0))
+            value_states = lax.dynamic_update_slice(cache_value, value_states, (0, cache_index, 0, 0))
+            num_updated_cache_vectors = query_states.shape[1]
+            max_length = key_states.shape[1]
+            attention_bias = (jnp.arange(max_length) < cache_index + num_updated_cache_vectors).astype(self.dtype) * -1e-10
+            attention_bias = attention_bias[None, None, None, :]
+            attention_cache = {
+                "key": key_states,
+                "value": value_states,
+                "index": cache_index + num_updated_cache_vectors,
+            }
         attn_weights = nn.attention.dot_product_attention_weights(
             query_states,
             key_states,
-            bias=autoregressive_attention_bias,
+            bias=attention_bias,
             dtype=self.dtype,
             precision=None,
         )
@@ -331,8 +365,8 @@ class OPTSelfAttention(nn.Module):
                                  value_states)
         attn_output = attn_output.reshape(attn_output.shape[:2] + (-1,))
 
-        outputs = (attn_output,
-                   attn_weights) if output_attentions else (attn_output,)
+        outputs = (attn_output, attention_cache,
+                   attn_weights) if output_attentions else (attn_output, attention_cache)
         return outputs
 
 
@@ -352,18 +386,21 @@ class OPTAttention(nn.Module):
 
     def __call__(self,
                  hidden_states,
-                 output_attentions: bool = False):
+                 output_attentions: bool = False,
+                 attention_cache=None):
         residual = hidden_states
         hidden_states = self.layer_norm(hidden_states)
         attn_outputs = self.self(hidden_states,
-                                 output_attentions=output_attentions)
+                                 output_attentions=output_attentions,
+                                 attention_cache=attention_cache)
         attn_output = attn_outputs[0]
+        attention_cache = attn_outputs[1]
         hidden_states = self.dense(attn_output)
         hidden_states = hidden_states + residual
-        outputs = (hidden_states,)
+        outputs = (hidden_states, attention_cache)
 
         if output_attentions:
-            outputs += (attn_outputs[1],)
+            outputs += (attn_outputs[2],)
 
         return outputs
 
@@ -409,18 +446,21 @@ class OPTTransformerLayer(nn.Module):
 
     def __call__(self,
                  hidden_states,
-                 output_attentions: bool = False):
+                 output_attentions: bool = False,
+                 attention_cache=None):
 
         attention_outputs = self.attention(hidden_states,
-                                           output_attentions=output_attentions)
+                                           output_attentions=output_attentions,
+                                           attention_cache=attention_cache)
         attention_output = attention_outputs[0]
+        attention_cache = attention_outputs[1]
 
         hidden_states = self.ffn(attention_output)
 
-        outputs = (hidden_states,)
+        outputs = (hidden_states, attention_cache)
 
         if output_attentions:
-            outputs += (attention_outputs[1],)
+            outputs += (attention_outputs[2],)
         return outputs
 
 
@@ -442,20 +482,26 @@ class OPTTransformerLayerCollection(nn.Module):
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
+        attention_cache=None,
     ):
         all_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
+        new_attention_cache = () if attention_cache is not None else None
 
         for i, layer in enumerate(self.layers):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
-
+            layer_attention_cache = None
+            if attention_cache is not None:
+                layer_attention_cache = attention_cache[i]
             layer_outputs = layer(hidden_states,
-                                  output_attentions=output_attentions)
+                                  output_attentions=output_attentions,
+                                  attention_cache=layer_attention_cache)
             hidden_states = layer_outputs[0]
-
+            if attention_cache is not None:
+                new_attention_cache += (layer_outputs[1], )
             if output_attentions:
-                all_attentions += (layer_outputs[1],)
+                all_attentions += (layer_outputs[2],)
 
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
@@ -465,9 +511,10 @@ class OPTTransformerLayerCollection(nn.Module):
         if not return_dict:
             return tuple(v for v in outputs if v is not None)
 
-        return FlaxBaseModelOutput(last_hidden_state=hidden_states,
-                                   hidden_states=all_hidden_states,
-                                   attentions=all_attentions)
+        return OPTModelOutput(last_hidden_state=hidden_states,
+                              hidden_states=all_hidden_states,
+                              attentions=all_attentions,
+                              attention_cache=new_attention_cache)
 
 
 class OPTTransformerModule(nn.Module):
@@ -485,6 +532,7 @@ class OPTTransformerModule(nn.Module):
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
+        attention_cache=None,
     ):
         hidden_states = self.embeddings(input_ids,
                                         position_ids)
@@ -493,6 +541,7 @@ class OPTTransformerModule(nn.Module):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            attention_cache=attention_cache,
         )
         hidden_states = outputs[0]
 
@@ -500,10 +549,11 @@ class OPTTransformerModule(nn.Module):
             # if pooled is None, don't return it
             return (hidden_states,) + outputs[1:]
 
-        return FlaxBaseModelOutput(
+        return OPTModelOutput(
             last_hidden_state=hidden_states,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
+            attention_cache=outputs.attention_cache,
         )
 
 
@@ -535,6 +585,7 @@ class OPTForLMModule(nn.Module):
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
+        attention_cache=None,
     ):
         # Model
         outputs = self.transformers(
@@ -543,6 +594,7 @@ class OPTForLMModule(nn.Module):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            attention_cache=attention_cache,
         )
 
         hidden_states = outputs[0]
@@ -566,10 +618,11 @@ class OPTForLMModule(nn.Module):
         if not return_dict:
             return (logits,) + outputs[1:]
 
-        return FlaxMaskedLMOutput(
+        return OPTLMOutput(
             logits=logits,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
+            attention_cache=outputs.attention_cache,
         )
 
 

@@ -116,6 +116,47 @@ class DistSaveLoadTest(unittest.TestCase):
 
         # Cleanup
         physical_mesh.shutdown()
+    
+    def test_jax_mlp_save_dist_load(self):
+        save_prefix = self._get_save_prefix()
+
+        # Init model and optimizer
+        batch_size = 64
+        hidden_dim = 16
+        input_dim = output_dim = hidden_dim
+        model = MLPModel(hidden_dim=hidden_dim,
+                         output_dim=output_dim,
+                         manual_pipeline_layer=True)
+
+        # Init batch args
+        rngkey = jax.random.PRNGKey(0)
+        x = jax.random.normal(rngkey, (batch_size, input_dim), jnp.float32)
+        y = jax.random.normal(rngkey, (batch_size, output_dim), jnp.float32)
+        batch = {'x': x, 'y': y}
+        jax_state = create_train_state(rngkey, model, [x])
+
+
+        with tempfile.TemporaryDirectory(prefix=save_prefix) as ckpt_dir:
+            # save normal jax model using tensorstore for distributed loading
+            save_checkpoint(ckpt_dir, jax_state, 1)
+
+            # Compile
+            method = PipeshardParallel(num_micro_batches=2)
+            serial_train_step = get_mlp_train_step(None, None, None, False)
+            parallel_train_step = get_mlp_train_step(method, True, False, False)
+            executable = parallel_train_step.get_executable(jax_state, batch) 
+
+            # Restore checkpoint
+            state_ss, _ = executable.get_load_info()
+            load_state = restore_checkpoint(ckpt_dir, 1, jax_state, state_ss)
+
+        # Run after load
+        serial_state = serial_train_step(jax_state, batch)[0]
+        load_state = parallel_train_step(load_state, batch)[0]
+
+        # Check results
+        assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)
+
 
     def test_distributed_mlp_save_load(self):
         save_prefix = self._get_save_prefix()
@@ -231,6 +272,7 @@ class DistSaveLoadTest(unittest.TestCase):
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(DistSaveLoadTest("test_distributed_array_save_load"))
+    suite.addTest(DistSaveLoadTest("test_jax_mlp_save_dist_load"))
     suite.addTest(DistSaveLoadTest("test_distributed_mlp_save_load"))
     suite.addTest(DistSaveLoadTest("test_distributed_bert_save_load"))
     return suite

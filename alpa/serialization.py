@@ -83,11 +83,12 @@ def _msgpack_ext_unpack(code, data):
         return msgpack.unpackb(data)
     return msgpack.ExtType(code, data)
 
+
 def get_ts_spec(ckpt_path: str):
     spec = {
         'driver': 'zarr',
         'kvstore': {},
-        'metadata_key': f".zarray0"
+        'metadata_key': ".zarray0"
     }
     if ckpt_path.startswith('gs://'):
         m = re.fullmatch('^gs://([^/]*)/(.*)$', ckpt_path, re.DOTALL)
@@ -105,6 +106,7 @@ def get_ts_spec(ckpt_path: str):
     else:
         spec['kvstore'] = {'driver': 'file', 'path': ckpt_path}
     return spec
+
 
 def ts_store(ckpt_dir, data: Union[np.ndarray, jax.xla.DeviceArray]):
     ts_spec = get_ts_spec(ckpt_dir)
@@ -131,6 +133,7 @@ def ts_store(ckpt_dir, data: Union[np.ndarray, jax.xla.DeviceArray]):
                 }})).result()
 
     t.write(data).result()
+
 
 def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
                     step: int):

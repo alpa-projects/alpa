@@ -1,9 +1,7 @@
-import os
 from dataclasses import dataclass
 from functools import partial
 from typing import Callable, Optional, Tuple, Dict
 import math
-import numpy as np
 
 import jax
 import flax
@@ -11,7 +9,8 @@ from jax import lax
 import jax.numpy as jnp
 import jaxlib.xla_extension as jax_xla
 import flax.linen as nn
-from alpa.model.model_util import (ModelOutput)
+from alpa.model.model_util import ModelOutput
+
 
 ACT2FN = {
     "gelu": partial(nn.gelu, approximate=False),
@@ -24,18 +23,18 @@ ACT2FN = {
 
 @flax.struct.dataclass
 class OPTModelOutput(ModelOutput):
-    last_hidden_state: jax_xla.DeviceArray = None
+    last_hidden_state: jax_xla.DeviceArray
     hidden_states: Optional[Tuple[jax_xla.DeviceArray]] = None
     attentions: Optional[Tuple[jax_xla.DeviceArray]] = None
-    attention_cache: Optional[Tuple[Dict[str, jax_xla.DeviceArray]]] = None
+    attention_cache: Optional[Tuple[Tuple[jax_xla.DeviceArray]]] = None
 
 
 @flax.struct.dataclass
 class OPTLMOutput(ModelOutput):
-    logits: jax_xla.DeviceArray = None
+    logits: jax_xla.DeviceArray
     hidden_states: Optional[Tuple[jax_xla.DeviceArray]] = None
     attentions: Optional[Tuple[jax_xla.DeviceArray]] = None
-    attention_cache: Optional[Tuple[Dict[str, jax_xla.DeviceArray]]] = None
+    attention_cache: Optional[Tuple[Tuple[jax_xla.DeviceArray]]] = None
 
 
 @dataclass(frozen=True)
@@ -339,20 +338,14 @@ class OPTSelfAttention(nn.Module):
             attention_bias = jnp.expand_dims(jnp.triu(jnp.full(
                 (query_states.shape[1], key_states.shape[1]), -1e10), 1), (0, 1))
         else:
-            cache_key = attention_cache["key"]
-            cache_value = attention_cache["value"]
-            cache_index = attention_cache["index"]
+            cache_key, cache_value, cache_index = attention_cache
             key_states = lax.dynamic_update_slice(cache_key, key_states, (0, cache_index, 0, 0))
             value_states = lax.dynamic_update_slice(cache_value, value_states, (0, cache_index, 0, 0))
             num_updated_cache_vectors = query_states.shape[1]
             max_length = key_states.shape[1]
             attention_bias = (jnp.arange(max_length) >= cache_index + num_updated_cache_vectors).astype(self.dtype) * -1e10
             attention_bias = attention_bias[None, None, None, :]
-            attention_cache = {
-                "key": key_states,
-                "value": value_states,
-                "index": cache_index + num_updated_cache_vectors,
-            }
+            attention_cache = key_states, value_states, cache_index + num_updated_cache_vectors
         attn_weights = nn.attention.dot_product_attention_weights(
             query_states,
             key_states,
@@ -560,7 +553,7 @@ class OPTTransformerModule(nn.Module):
 class OPTForLMModule(nn.Module):
     config: OPTConfig
     dtype: jnp.dtype = jnp.float32
-    bias_init: Callable[..., np.ndarray] = jax.nn.initializers.zeros
+    bias_init: Callable[..., jnp.ndarray] = jax.nn.initializers.zeros
 
     def setup(self):
         self.transformers = OPTTransformerModule(config=self.config,
@@ -626,86 +619,44 @@ class OPTForLMModule(nn.Module):
         )
 
 
-def load_params(params, path, num_layers):
-    def load_array(key):
-        return np.load(os.path.join(path, key))
+def init_model_aval(config):
+    model = OPTForLMModule(config)
+    rngkey = jax.core.ShapedArray((2,), jnp.uint32)
+    input_ids = jax.core.ShapedArray((1, 128), jnp.int32)
+    position_ids = jax.core.ShapedArray((1, 128), jnp.int32)
+    params = jax.eval_shape(model.init, rngkey, input_ids, position_ids)
 
-    def load_param(param_key, loaded_array):
-        param_dict = params
-        param_keys = param_key.split('.')
-        for i, key in enumerate(param_keys):
-            if i == len(param_keys) - 1:
-                assert param_dict[key].shape == loaded_array.shape
-                param_dict[key] = loaded_array
-            else:
-                param_dict = param_dict[key]
-    load_param("params.transformers.embeddings.word_embeddings.embedding",
-               load_array("decoder.embed_tokens.weight"))
-    load_param("params.transformers.embeddings.position_embeddings.embedding",
-               load_array("decoder.embed_positions.weight"))
-    for i in range(num_layers):
-        param_prefix = f"params.transformers.encoder.{i}."
-        load_prefix = f"decoder.layers.{i}."
-        # Attention weights
-        wq = load_array(load_prefix + "self_attn.q_proj.weight")
-        wk = load_array(load_prefix + "self_attn.k_proj.weight")
-        wv = load_array(load_prefix + "self_attn.v_proj.weight")
-        w_qvk = np.transpose(np.concatenate([wq, wv, wk], axis=0))
-        load_param(param_prefix + "attention.self.qvk_combined.kernel", w_qvk)
-        bq = load_array(load_prefix + "self_attn.q_proj.bias")
-        bk = load_array(load_prefix + "self_attn.k_proj.bias")
-        bv = load_array(load_prefix + "self_attn.v_proj.bias")
-        b_qvk = np.concatenate([bq, bv, bk], axis=0)
-        load_param(param_prefix + "attention.self.qvk_combined.bias", b_qvk)
-        load_param(param_prefix + "attention.dense.kernel",
-                   np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))
-        load_param(param_prefix + "attention.dense.bias",
-                   load_array(load_prefix + "self_attn.out_proj.bias"))
-        load_param(param_prefix + "attention.layer_norm.scale",
-                   load_array(load_prefix + "self_attn_layer_norm.weight"))
-        load_param(param_prefix + "attention.layer_norm.bias",
-                   load_array(load_prefix + "self_attn_layer_norm.bias"))
-        # FFN weights
-        load_param(param_prefix + "ffn.fc1.bias",
-                   load_array(load_prefix + "fc1.bias"))
-        load_param(param_prefix + "ffn.fc1.kernel",
-                   np.transpose(load_array(load_prefix + "fc1.weight")))
-        load_param(param_prefix + "ffn.fc2.bias",
-                   load_array(load_prefix + "fc2.bias"))
-        load_param(param_prefix + "ffn.fc2.kernel",
-                   np.transpose(load_array(load_prefix + "fc2.weight")))
-        load_param(param_prefix + "ffn.layer_norm.scale",
-                   load_array(load_prefix + "final_layer_norm.weight"))
-        load_param(param_prefix + "ffn.layer_norm.bias",
-                   load_array(load_prefix + "final_layer_norm.bias"))
-    return params
+    if config.fp16:
+        params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, jnp.float16), params)
+
+    return model, params
 
 
-def print_params(params, prefix=""):
-    for key, value in params.items():
-        if isinstance(value, dict):
-            print_params(value, prefix=prefix + key + ".")
-        else:
-            print(prefix + key, value.shape)
+def inference_step_no_cache(params, batch, apply_func):
+    logits = apply_func(params,
+                        batch["input_ids"],
+                        batch["position_ids"])[0]
+    return logits
 
 
-def build_init_cache(n_layers, batch_size, max_target_positions,
-                     decoder_embed_dim, decoder_attention_heads,
-                     dtype=jnp.float32):
-    head_dim = decoder_embed_dim // decoder_attention_heads
+def build_init_cache(config):
+    batch_size = config.batch_size
+    dtype = jnp.float32
+    head_dim = config.decoder_embed_dim // config.decoder_attention_heads
+
     all_cache = []
-    for i in range(n_layers):
-        layer_cache = {
-            "key": jnp.zeros((batch_size, max_target_positions,
-                              decoder_attention_heads, head_dim),
-                             dtype=dtype),
-            "value": jnp.zeros((batch_size, max_target_positions,
-                                decoder_attention_heads, head_dim),
-                               dtype=dtype),
-            "index": 0,
-        }
+    for i in range(config.decoder_layers):
+        layer_cache = (
+            jnp.zeros((batch_size, config.max_target_positions,
+                       config.decoder_attention_heads, head_dim),
+                       dtype=dtype),
+            jnp.zeros((batch_size, config.max_target_positions,
+                       config.decoder_attention_heads, head_dim),
+                       dtype=dtype),
+            jnp.full((), 0, jnp.int32),
+        )
         all_cache.append(layer_cache)
-    return all_cache
+    return tuple(all_cache)
 
 
 def build_position_ids(input_ids, padding_idx):
@@ -713,65 +664,3 @@ def build_position_ids(input_ids, padding_idx):
     position_ids = jnp.cumsum(mask, axis=1).astype(jnp.int32) * mask + padding_idx
     return position_ids
 
-
-def test_opt_125M():
-    #TODO: align dtype
-    config = OPTConfig()
-    numpy_weights_folder = "./numpy_weights"
-
-    # @partial(jax.jit, static_argnums=(1,))
-    def inference_step_no_cache(batch, apply_func):
-        logits = apply_func(params,
-                            batch["input_ids"],
-                            batch["position_ids"])[0]
-        return logits
-
-    # Init model and optimizer
-    input_ids = jnp.array([[5625,   16,   10, 2721,  183,    8,   38,  236,    7]], dtype=jnp.int32)
-    position_ids = build_position_ids(input_ids, config.pad)
-
-    print("input_ids", input_ids.shape, input_ids)
-
-    model = OPTForLMModule(config)
-    rngkey = jax.random.PRNGKey(0)
-
-    params = model.init(rngkey, input_ids,
-                        position_ids)
-
-    params = load_params(params.unfreeze(), numpy_weights_folder, num_layers=config.decoder_layers)
-
-    # JIT compile
-    logits_no_cache = inference_step_no_cache({
-        "input_ids": input_ids,
-        "position_ids": position_ids,
-    }, model.apply)
-
-    print("logits_no_cache", logits_no_cache)
-
-    @partial(jax.jit, static_argnums=(1,))
-    def inference_step_with_cache(batch, apply_func):
-        output = apply_func(params,
-                            batch["input_ids"],
-                            batch["position_ids"],
-                            attention_cache=batch["cache"])
-        return output.logits, output.attention_cache
-
-    cache = build_init_cache(
-        config.decoder_layers, config.batch_size, config.max_target_positions,
-        config.decoder_embed_dim, config.decoder_attention_heads)
-
-    from alpa.testing import assert_allclose
-
-    for i in range(input_ids.shape[1]):
-        input_ids_step = input_ids[:, i:i+1]
-        position_ids_step = jnp.full_like(input_ids_step, i + config.pad + 1)
-        logits_step, cache = inference_step_with_cache({
-            "input_ids": input_ids_step,
-            "position_ids": position_ids_step,
-            "cache": cache,
-        }, model.apply)
-        assert_allclose(logits_step, logits_no_cache[:, i:i+1])
-
-
-if __name__ == "__main__":
-    test_opt_125M()

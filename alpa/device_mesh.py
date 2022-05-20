@@ -235,12 +235,34 @@ class MeshHostWorker:
         return self.executables[uuid].grad_sync_channel_ids
 
     ##### TensorStore Related Functions #####
+    def get_ts_spec(self, ckpt_path: str):
+        spec = {
+            'driver': 'zarr',
+            'kvstore': {},
+            'metadata_key': f".zarray{self.host_id}"
+        }
+        if ckpt_path.startswith('gs://'):
+            m = re.fullmatch('^gs://([^/]*)/(.*)$', ckpt_path, re.DOTALL)
+            if m is None:
+                raise ValueError(
+                    'The ckpt_path should contain the bucket name and the '
+                    f'file path inside the bucket. Got: {ckpt_path}')
+            gcs_bucket = m.group(1)
+            path_without_bucket = m.group(2)
+            spec['kvstore'] = {
+                'driver': 'gcs',
+                'bucket': gcs_bucket,
+                'path': path_without_bucket
+            }
+        else:
+            spec['kvstore'] = {'driver': 'file', 'path': ckpt_path}
+        return spec
+
     def load_buffers_from_ts(self, ckpt_dir: str, uuids: Sequence[int],
                              shard_indices: Sequence[Index],
                              device_ids: Sequence[int]):
         assert len(uuids) > 0
-        from alpa.serialization import get_ts_spec
-        ts_spec = get_ts_spec(ckpt_dir)
+        ts_spec = self.get_ts_spec(ckpt_dir)
         t = ts.open(ts.Spec(ts_spec), open=True).result()
 
         for index, uuid, device_id in zip(shard_indices, uuids, device_ids):
@@ -254,8 +276,7 @@ class MeshHostWorker:
         for uuid in uuids:
             assert uuid in self.buffers
 
-        from alpa.serialization import get_ts_spec
-        ts_spec = get_ts_spec(ckpt_dir)
+        ts_spec = self.get_ts_spec(ckpt_dir)
         dtype = self.buffers[uuids[0]].dtype
         if dtype == jnp.bfloat16:
             # Tensorstore uses 'bfloat16', not '<V2'.

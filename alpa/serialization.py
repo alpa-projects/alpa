@@ -140,8 +140,9 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
     """Save a checkpoint of the `target` to `path`. 
 
         Similar to flax.training.checkpoints.save_checkpoint, but support DistributedArrays 
-        and ReplicatedDistributedArray in alpa.
-        # TODO: copy all the safe-saving stuff from 
+        and ReplicatedDistributedArray in alpa. Also it will save np.ndarray and jax.xla.DeviceArray
+        into tensorstore for later distributed loading.
+        # TODO (zhongyinmin): copy all the safe-saving stuff from 
         https://flax.readthedocs.io/en/latest/_modules/flax/training/checkpoints.html#save_checkpoint
 
         Args:
@@ -193,7 +194,7 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, target: PyT
 
         Similar to flax.training.checkpoints.load_checkpoint, 
         but support DistributedArrays and ReplicatedDistributedArray in alpa.
-        # TODO: copy all the safe-loading stuff from 
+        # TODO (zhongyinmin): copy all the safe-loading stuff from 
         https://flax.readthedocs.io/en/latest/_modules/flax/training/checkpoints.html#restore_checkpoint
 
         Args:

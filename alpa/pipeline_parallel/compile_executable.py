@@ -164,7 +164,6 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
     debug_compilation_time("launch meshes")
 
     # Wrap all things into a distributed runtime
-    grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}
     global_outvars, concat_vars_mapping = _rewrite_global_outvars_post_concate(
         global_outvars, reduction_vector, microbatch_bound,
         post_microbatch_bound, gensym_func)

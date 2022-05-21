@@ -75,18 +75,26 @@ class PipeshardDriverExecutable:
         self.hlo_texts_after_spmd_partitioner = []
 
         # Compile pipeline instructions and configs of mesh executables
-        emitter = PipelineInstEmitter(
-             stages=stages, global_invars=global_invars, grad_dummy_invars=grad_dummy_invars, global_outvars=global_outvars,
-             mesh_group=mesh_group, dependency=dependency, schedule=schedule, is_batch=is_batch, num_batch=num_batch, flop_count=flop_count,
-             in_tree=in_tree)
+        emitter = PipelineInstEmitter(stages=stages,
+                                      global_invars=global_invars,
+                                      grad_dummy_invars=grad_dummy_invars,
+                                      global_outvars=global_outvars,
+                                      mesh_group=mesh_group,
+                                      dependency=dependency,
+                                      schedule=schedule,
+                                      is_batch=is_batch,
+                                      num_batch=num_batch,
+                                      flop_count=flop_count,
+                                      in_tree=in_tree)
         self._establish_nccl_groups(emitter._communicator.task_spec_iter())
-        (instruction_lists, executable_config_lists, input_local_uuid_lists,
-         grad_uuids, reduced_var_uuid_lists) = emitter._compile(concat_vars_mapping)
+        (instruction_lists, executable_config_lists, executable_uuids,
+         input_local_uuid_lists, grad_uuids,
+         reduced_var_uuid_lists) = emitter._compile(concat_vars_mapping)
 
         ##### Internal states #####
 
         # List[stage_idx -> executable_uuid]
-        self.executable_uuids = emitter.executable_uuids
+        self.executable_uuids = executable_uuids
         ##### For handling inputs of the executable ####
         # Whether the var should be donated
         self.donate_invars = emitter.donate_invars

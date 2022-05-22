@@ -1392,8 +1392,8 @@ class CrossMeshCommunicator:
                     sharding_spec=dst_sharding_spec)
                 task_spec = ReshardingTaskSpec(src_array, dst_array,
                                                local_chunks)
-                self.resharding_specs[src_mesh_index][dst_mesh_index][repr(
-                    var)] = task_spec
+                self.resharding_specs[src_mesh_index][dst_mesh_index][
+                    var] = task_spec
 
     def task_spec_iter(self):
         """A convenient iterator over all activated task specs."""

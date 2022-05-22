@@ -24,9 +24,8 @@ from alpa.pipeline_parallel.runtime_emitter import (
     PartialGradWorkerExecutableConfig, PipelineInstEmitter, PipelineInstType, PipelineInstruction)
 from alpa.pipeline_parallel.schedules import PipelineSchedule
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
-from alpa.serialization import LoadInfo
 from alpa.timer import timers
-from alpa.util import cached_property, OrderedSet
+from alpa.util import OrderedSet
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -59,15 +58,11 @@ class PipeshardDriverExecutable:
                  in_tree: PyTreeDef):
         ##### Input arguments #####
         self.stages = stages
-        self.global_invars = global_invars
-        self.global_outvars = global_outvars
         self.mesh_group = mesh_group
-        self.dependency = dependency
         self.schedule = schedule
         self.is_batch = is_batch
         self.num_batch = num_batch
         self.flop_count = flop_count
-        self.in_tree = in_tree
         self.num_mesh = len(mesh_group)
 
         ##### For debugging #####
@@ -88,8 +83,10 @@ class PipeshardDriverExecutable:
                                       in_tree=in_tree)
         self._establish_nccl_groups(emitter._communicator.task_spec_iter())
         (instruction_lists, executable_config_lists, executable_uuids,
-         input_local_uuid_lists, grad_uuids,
-         reduced_var_uuid_lists) = emitter._compile(concat_vars_mapping)
+         input_local_uuid_lists, grad_uuids, reduced_var_uuid_lists,
+         outs_handler, load_info, donate_invars, mesh_arg_indices,
+         input_shard_indices, input_shard_specs, delete_after_shard,
+         batch_invars) = emitter._compile(concat_vars_mapping)
 
         ##### Internal states #####
 
@@ -97,29 +94,32 @@ class PipeshardDriverExecutable:
         self.executable_uuids = executable_uuids
         ##### For handling inputs of the executable ####
         # Whether the var should be donated
-        self.donate_invars = emitter.donate_invars
+        # List[mesh_idx -> List[bool]]
+        self.donate_invars = donate_invars
         # List[mesh_idx -> List[arg_idx]]
-        self.mesh_arg_indices = emitter.mesh_arg_indices
+        self.mesh_arg_indices = mesh_arg_indices
         # Cached sharding indices for input arguments
         # List[mesh_idx -> List[sharding_indices]].
-        self.input_shard_indices = emitter.input_shard_indices
+        self.input_shard_indices = input_shard_indices
         # Cached sharding specs for input arguments.
         # List[mesh_idx -> List[sharding_spec]]
-        self.input_shard_specs = emitter.input_shard_specs
+        self.input_shard_specs = input_shard_specs
         # Whether the argument should be deleted after shard
         # List[mesh_idx -> List[bool]]
-        self.delete_after_shard = emitter.delete_after_shard
+        self.delete_after_shard = delete_after_shard
         # Whether the argument is a batch argument
         # List[mesh_idx -> List[bool]]
-        self.batch_invars = emitter.batch_invars
+        self.batch_invars = batch_invars
 
         ##### For handling outputs of the executable ####
         # Dict[worker -> List[uuid]]
         self.output_local_uuid_list = emitter.output_local_uuid_list
-        # List[arg_idx -> List[mesh_idx -> int]]
-        self.mesh_output_indices = emitter.mesh_output_indices
-        # List[mesh_idx -> List[arg_idx -> sharding_spec]]
-        self.output_spec_list = emitter.output_spec_list
+
+        # For handling input/outputs
+        self.outs_handler: Callable = outs_handler
+
+        # For weight serialization
+        self.load_info = load_info
 
         # Create a PipeshardMeshWorkerExecuable for each MeshHostWorker
         self.worker_executable_uuid_mapping = {}  # Dict[
@@ -140,10 +140,6 @@ class PipeshardDriverExecutable:
                 worker.put_executable.remote(uuid, PipeshardMeshWorkerExecuable,
                                              *args)
                 self.worker_executable_uuid_mapping[worker] = uuid
-
-        # For handling input/outputs
-        self.outs_handler: Callable = None
-        self._setup_outs_handler()
 
     ##### Compilation Related Functions #####
 
@@ -185,42 +181,6 @@ class PipeshardDriverExecutable:
         end_time = time.time()
         logger.debug(
             f"Initialize collective group takes {end_time - start_time:.2f}")
-
-    @cached_property
-    def mesh_index_to_outvar_indices_mapping(self) -> Dict[int, List[int]]:
-        """
-        A mapping from mesh index to its related global invar index.
-
-        Returns:
-            mapping (Dict[int, List[int]]): mapping[mesh_idx] is a list containing
-                the indices of global outvars of this mesh.
-        """
-        if self.mesh_output_indices is None:
-            raise RuntimeError()
-        mapping = {}
-        for i, _ in enumerate(self.global_outvars):
-            mesh_out_indices = self.mesh_output_indices[i]
-            for mesh_idx in mesh_out_indices:
-                if mesh_idx not in mapping:
-                    mapping[mesh_idx] = []
-                mapping[mesh_idx].append(i)
-        return mapping
-
-    @cached_property
-    def outvar_index_to_mesh_index_mapping(self) -> Dict[int, List[int]]:
-        """
-        A mapping from an outvar to the indices of meshes it locates on.
-
-        Returns:
-            mapping (Dict[int, List[int]]): mapping[outvar_idx] is a list
-                containing the indices of meshes it locates on.
-        """
-        if self.mesh_output_indices is None:
-            raise RuntimeError()
-        mapping = {}
-        for i, _ in enumerate(self.global_outvars):
-            mapping[i] = list(self.mesh_output_indices[i].keys())
-        return mapping
 
     ##### Execution Related Functions #####
     def launch_on_driver(self, *args):
@@ -305,73 +265,9 @@ class PipeshardDriverExecutable:
 
         return self.outs_handler(output_bufs)
 
-    def _setup_outs_handler(self):
-        """Setup outs handlers that assemble RemoteBufs into DistributedArrays."""
-        avals = [outvar.aval for outvar in self.global_outvars]
-        is_replicated = [
-            bool(len(self.outvar_index_to_mesh_index_mapping[i]) > 1)
-            for i, _ in enumerate(self.global_outvars)
-        ]
-
-        def outs_handler(bufs):
-            ret = []
-            for i, _ in enumerate(avals):
-                aval = avals[i]
-                if not is_replicated[i]:
-                    # construct DistributedArray
-                    mesh_idx = self.outvar_index_to_mesh_index_mapping[i][0]
-                    device_mesh = self.mesh_group[mesh_idx]
-                    outvar_index_on_mesh = self.mesh_output_indices[i][mesh_idx]
-                    spec = self.output_spec_list[mesh_idx][outvar_index_on_mesh]
-                    arr = DistributedArray(
-                        device_mesh=device_mesh,
-                        aval=aval,
-                        sharding_spec=spec,
-                        remote_buffers=bufs[mesh_idx][outvar_index_on_mesh],
-                        indices=pxla.spec_to_indices(aval.shape, spec))
-                else:
-                    # otherwise, construct RepliatedDistributedArray
-                    meshes = []
-                    distributed_arrays = []
-                    for _, mesh_idx in enumerate(
-                            self.outvar_index_to_mesh_index_mapping[i]):
-                        meshes.append(self.mesh_group[mesh_idx])
-                        outvar_index_on_mesh = self.mesh_output_indices[i][
-                            mesh_idx]
-                        spec = self.output_spec_list[mesh_idx][
-                            outvar_index_on_mesh]
-                        distributed_arrays.append(
-                            DistributedArray(
-                                device_mesh=self.mesh_group[mesh_idx],
-                                aval=aval,
-                                sharding_spec=spec,
-                                remote_buffers=bufs[mesh_idx]
-                                [outvar_index_on_mesh],
-                                indices=pxla.spec_to_indices(aval.shape, spec)))
-                    arr = ReplicatedDistributedArray(meshes, distributed_arrays)
-                ret.append(arr)
-            return ret
-
-        self.outs_handler = outs_handler
-
     ##### Load/Store Related Functions #####
     def get_load_info(self):
-        assert self.in_tree is not None
-
-        # build load_info_arr: flatten global index => LoadInfo object
-        load_info_arr = [None] * len(self.is_batch)
-        for mesh_idx, physical_mesh in enumerate(self.mesh_group):
-            for local_idx, global_idx in enumerate(self.mesh_arg_indices[mesh_idx]):
-                aval, mesh, spec = (self.global_invars[global_idx].aval, 
-                                    physical_mesh, 
-                                    self.input_shard_specs[mesh_idx][local_idx])
-                if load_info_arr[global_idx] is None:
-                    load_info_arr[global_idx] = LoadInfo([aval], [mesh], [spec])
-                else:
-                    load_info_arr[global_idx].add_replica(aval, mesh, spec)
-
-        # build load_info_arr
-        return tree_unflatten(self.in_tree, load_info_arr)
+        return self.load_info
 
     ##### Profiling and Debugging Related Functions #####
     def get_execution_time_costs(self,

@@ -4,20 +4,21 @@ from dataclasses import dataclass
 import enum
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-from jax._src.tree_util import PyTreeDef
+from jax._src.tree_util import PyTreeDef, tree_unflatten
 from jax.core import Var
 from jax.interpreters import pxla
 from jax.lib import xla_bridge as xb
 import numpy as np
 
 from alpa.global_env import global_config
-from alpa.device_mesh import PhysicalDeviceMeshGroup
+from alpa.device_mesh import DistributedArray, PhysicalDeviceMeshGroup, ReplicatedDistributedArray
 from alpa.mesh_executable import next_mesh_executable_uuid
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.pipeline_parallel.schedules import PipelineSchedule
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     CrossMeshCommunicator, SymbolicBroadcastReshardingTask,
     SymbolicReshardingTask)
+from alpa.serialization import LoadInfo
 from alpa.util import (DisjointDict, OrderedSet, cached_property,
                        get_shard_shape, get_microbatch_sharding_spec,
                        compile_concatenate)
@@ -149,10 +150,6 @@ def flatten_uuid_set(container):
     return output
 
 
-def _get_dict(d: Dict[Any, Dict], k) -> Dict:
-    return d.setdefault(k, {})
-
-
 class PipelineInstEmitterHelper:
 
     def __init__(self, global_invars, grad_dummy_invars, is_batch,
@@ -177,12 +174,12 @@ class PipelineInstEmitterHelper:
             key = (var, batch_idx)
         return key
 
-    def get_var_repr(self, var, batch_idx):
+    def get_var_with_accumulate(self, var, batch_idx):
         if (var in self.grad_dummy_invars and
                 batch_idx != self.schedule.first_backward_batch_index):
-            return repr(self.grad_dummy_invars[var])
+            return self.grad_dummy_invars[var]
         else:
-            return repr(var)
+            return var
 
     def get_var_mesh_uuids(self, var, batch_idx, mesh_idx) -> np.ndarray:
         key = self._get_var_key(var, batch_idx)
@@ -219,6 +216,7 @@ class PipelineInstEmitter:
         self.schedule = schedule
         self.is_batch = is_batch
         self.num_batch = num_batch
+        self.in_tree = in_tree
 
         ##### Internal states #####
         self.uuid_counter = 0  # counter for local buffer uuid
@@ -227,25 +225,6 @@ class PipelineInstEmitter:
 
         # for cross mesh communications
         self.num_mesh = len(mesh_group)
-
-        ##### For handling inputs of the executable ####
-        # Whether the var should be donated
-        # List[mesh_idx -> List[bool]]
-        self.donate_invars = []
-        # List[mesh_idx -> List[arg_idx]]
-        self.mesh_arg_indices = []
-        # Cached sharding indices for input arguments
-        # List[mesh_idx -> List[sharding_indices]].
-        self.input_shard_indices = []
-        # Cached sharding specs for input arguments.
-        # List[mesh_idx -> List[sharding_spec]]
-        self.input_shard_specs = []
-        # Whether the argument should be deleted after shard
-        # List[mesh_idx -> List[bool]]
-        self.delete_after_shard = []
-        # Whether the argument is a batch argument
-        # List[mesh_idx -> List[bool]]
-        self.batch_invars = []
 
         ##### For handling outputs of the executable ####
         # Dict[worker -> List[uuid]]
@@ -282,18 +261,18 @@ class PipelineInstEmitter:
         """Create and compile all resharding (send/recv/allgather) tasks."""
         for (src_mesh_idx, dst_mesh_idx,
              var_spec_map) in self._communicator.task_spec_iter():
-            for key, spec in var_spec_map.items():
+            for var, spec in var_spec_map.items():
                 cg = self.mesh_group.collective_groups[src_mesh_idx][
                     dst_mesh_idx]
                 src_mesh = self.mesh_group[src_mesh_idx]
                 dst_mesh = self.mesh_group[dst_mesh_idx]
                 if global_config.resharding_mode == "send_recv":
                     self._resharding_tasks[src_mesh_idx][dst_mesh_idx][
-                        key] = SymbolicReshardingTask(spec, cg, src_mesh,
+                        var] = SymbolicReshardingTask(spec, cg, src_mesh,
                                                       dst_mesh)
                 else:
                     self._resharding_tasks[src_mesh_idx][dst_mesh_idx][
-                        key] = SymbolicBroadcastReshardingTask(
+                        var] = SymbolicBroadcastReshardingTask(
                             spec, cg, src_mesh, dst_mesh)
 
     def _compile(self, concat_vars_mapping):
@@ -324,8 +303,10 @@ class PipelineInstEmitter:
             var for var, batch in zip(self.global_invars, self.is_batch)
             if batch
         ])
-        input_local_uuid_lists = self._compile_split_input_to_microbatches(
-            global_batch_invar_set)
+        (input_local_uuid_lists, donate_invars, mesh_arg_indices,
+         input_shard_indices, input_shard_specs, delete_after_shard,
+         batch_invars
+        ) = self._compile_split_input_to_microbatches(global_batch_invar_set)
 
         # Simulate the pipeline schedule and generate instructions
         donation_mapping = [DisjointDict() for _ in range(num_mesh)]
@@ -335,9 +316,8 @@ class PipelineInstEmitter:
                 worker_to_idx[worker] = (mesh_idx, worker_idx)
 
         for _, sched in enumerate(self.schedule.schedules):
-            self._compile_exec_one_tick(sched, global_batch_invar_set,
-                                        donation_mapping, instruction_lists,
-                                        executable_uuids,
+            self._compile_exec_one_tick(sched, donation_mapping,
+                                        instruction_lists, executable_uuids,
                                         executable_config_lists)
 
         # Compile concate
@@ -367,8 +347,15 @@ class PipelineInstEmitter:
             instruction_lists[worker] = self._compile_free(
                 worker, used_outside, donated, instruction_lists)
 
+        outs_handler = self._get_outs_handler()
+
+        load_info = self._compile_load_info(mesh_arg_indices, input_shard_specs)
+
         return (instruction_lists, executable_config_lists, executable_uuids,
-                input_local_uuid_lists, grad_uuids, reduced_var_uuid_lists)
+                input_local_uuid_lists, grad_uuids, reduced_var_uuid_lists,
+                outs_handler, load_info, donate_invars, mesh_arg_indices,
+                input_shard_indices, input_shard_specs, delete_after_shard,
+                batch_invars)
 
     def _compile_get_vars_from_mesh(self, invars, dst_specs, mesh_idx,
                                     batch_idx, instruction_lists,
@@ -384,7 +371,7 @@ class PipelineInstEmitter:
         recv_uuid_list = transposed
 
         for invar, recv_uuids in zip(invars, recv_uuid_list):
-            var_key = self.env.get_var_repr(invar, batch_idx)
+            var_key = self.env.get_var_with_accumulate(invar, batch_idx)
             src_idx, src_uuids = list(
                 self.env.get_var_meshes(invar, batch_idx).items())[0]
             resharding_task = self._resharding_tasks[src_idx][mesh_idx][var_key]
@@ -398,8 +385,7 @@ class PipelineInstEmitter:
                     self.mesh_group[src_idx], self.mesh_group[mesh_idx],
                     src_uuids, resharding_task, recv_uuids, instruction_lists)
 
-    def _compile_exec_one_tick(self, sched, global_batch_invar_set,
-                               donation_mapping, instruction_lists,
+    def _compile_exec_one_tick(self, sched, donation_mapping, instruction_lists,
                                executable_uuids, executable_config_lists):
         worker_tmp_instructions = {}
         for mesh in self.mesh_group:
@@ -433,7 +419,6 @@ class PipelineInstEmitter:
             # execute
             # allocate uuids for buffers created by RUN
             for outvar in stage.outvars:
-                key = (repr(outvar), batch_idx)
                 # get uuids of this outvar
 
                 output_uuids = self._get_next_uuids(
@@ -533,8 +518,6 @@ class PipelineInstEmitter:
                 # TODO(yonghao): Some var has non-gradient intermediate states
                 # that need accumulation. for these vars, we need to record its
                 # first mb index when accum will take place.
-                keys = [(repr(var), self.schedule.first_backward_batch_index)
-                        for var in grad_vars]
                 grad_uuids[mesh_idx] = self._compile_alloc(
                     grad_vars, grad_sharding_specs, mesh_idx,
                     self.schedule.first_backward_batch_index,
@@ -563,6 +546,11 @@ class PipelineInstEmitter:
 
         # Dispatch args to each mesh
         arg_last_use = {}
+        donate_invars = []
+        mesh_arg_indices = []
+        input_shard_indices = []
+        input_shard_specs = []
+        batch_invars = []
         for mesh_idx in range(num_mesh):
             mesh_arg_set = OrderedSet()
             var_to_spec = {}
@@ -583,7 +571,7 @@ class PipelineInstEmitter:
             mesh_arg_list = list(mesh_arg_set)
             mesh_arg_lists[mesh_idx] = mesh_arg_list
 
-            self.donate_invars.append([
+            donate_invars.append([
                 var in donated_invar_set or var in global_batch_invar_set
                 for var, _ in mesh_arg_list
             ])
@@ -616,16 +604,17 @@ class PipelineInstEmitter:
                         pxla.spec_to_indices(var.aval.shape, var_to_spec[var]))
                     tmp_input_shard_specs.append(var_to_spec[var])
 
-            self.mesh_arg_indices.append(tmp_mesh_arg_indices)
-            self.input_shard_indices.append(tmp_input_shard_indices)
-            self.input_shard_specs.append(tmp_input_shard_specs)
-            self.batch_invars.append(tmp_batch_invars)
+            mesh_arg_indices.append(tmp_mesh_arg_indices)
+            input_shard_indices.append(tmp_input_shard_indices)
+            input_shard_specs.append(tmp_input_shard_specs)
+            batch_invars.append(tmp_batch_invars)
 
+        delete_after_shard = []
         for mesh_idx in range(num_mesh):
-            self.delete_after_shard.append([
+            delete_after_shard.append([
                 self.global_invars[idx] in donated_invar_set and
                 arg_last_use[self.global_invars[idx]] == mesh_idx
-                for idx in self.mesh_arg_indices[mesh_idx]
+                for idx in mesh_arg_indices[mesh_idx]
             ])
 
         # Get local uuids for each input
@@ -644,7 +633,9 @@ class PipelineInstEmitter:
                 for worker_idx, worker in enumerate(physical_mesh.workers):
                     input_local_uuid_lists[worker].append(arg_uuids[arg_idx,
                                                                     worker_idx])
-        return input_local_uuid_lists
+        return (input_local_uuid_lists, donate_invars, mesh_arg_indices,
+                input_shard_indices, input_shard_specs, delete_after_shard,
+                batch_invars)
 
     def _compile_concate_get_spec(self, to_concate_vars):
         var_to_spec_all_meshes = []
@@ -815,6 +806,73 @@ class PipelineInstEmitter:
                                         transposed[var_idx])
         return output_uuids
 
+    def _get_outs_handler(self):
+        """Setup outs handlers that assemble RemoteBufs into DistributedArrays."""
+        avals = [outvar.aval for outvar in self.global_outvars]
+        is_replicated = [
+            bool(len(self.outvar_index_to_mesh_index_mapping[i]) > 1)
+            for i, _ in enumerate(self.global_outvars)
+        ]
+
+        def outs_handler(bufs):
+            ret = []
+            for i, _ in enumerate(avals):
+                aval = avals[i]
+                if not is_replicated[i]:
+                    # construct DistributedArray
+                    mesh_idx = self.outvar_index_to_mesh_index_mapping[i][0]
+                    device_mesh = self.mesh_group[mesh_idx]
+                    outvar_index_on_mesh = self.mesh_output_indices[i][mesh_idx]
+                    spec = self.output_spec_list[mesh_idx][outvar_index_on_mesh]
+                    arr = DistributedArray(
+                        device_mesh=device_mesh,
+                        aval=aval,
+                        sharding_spec=spec,
+                        remote_buffers=bufs[mesh_idx][outvar_index_on_mesh],
+                        indices=pxla.spec_to_indices(aval.shape, spec))
+                else:
+                    # otherwise, construct RepliatedDistributedArray
+                    meshes = []
+                    distributed_arrays = []
+                    for _, mesh_idx in enumerate(
+                            self.outvar_index_to_mesh_index_mapping[i]):
+                        meshes.append(self.mesh_group[mesh_idx])
+                        outvar_index_on_mesh = self.mesh_output_indices[i][
+                            mesh_idx]
+                        spec = self.output_spec_list[mesh_idx][
+                            outvar_index_on_mesh]
+                        distributed_arrays.append(
+                            DistributedArray(
+                                device_mesh=self.mesh_group[mesh_idx],
+                                aval=aval,
+                                sharding_spec=spec,
+                                remote_buffers=bufs[mesh_idx]
+                                [outvar_index_on_mesh],
+                                indices=pxla.spec_to_indices(aval.shape, spec)))
+                    arr = ReplicatedDistributedArray(meshes, distributed_arrays)
+                ret.append(arr)
+            return ret
+
+        return outs_handler
+
+    def _compile_load_info(self, mesh_arg_indices, input_shard_specs):
+        assert self.in_tree is not None
+
+        # build load_info_arr: flatten global index => LoadInfo object
+        load_info_arr = [None] * len(self.is_batch)
+        for mesh_idx, physical_mesh in enumerate(self.mesh_group):
+            for local_idx, global_idx in enumerate(mesh_arg_indices[mesh_idx]):
+                aval, mesh, spec = (self.global_invars[global_idx].aval, 
+                                    physical_mesh, 
+                                    input_shard_specs[mesh_idx][local_idx])
+                if load_info_arr[global_idx] is None:
+                    load_info_arr[global_idx] = LoadInfo([aval], [mesh], [spec])
+                else:
+                    load_info_arr[global_idx].add_replica(aval, mesh, spec)
+
+        # build load_info_arr
+        return tree_unflatten(self.in_tree, load_info_arr)
+
     # TODO(yonghao): set empty buffer is not compatiable with local allgather
     @staticmethod
     def _compile_resharding_task(src_mesh,
@@ -922,3 +980,19 @@ class PipelineInstEmitter:
             cannot_free_uuids.update(input_uuids)
             new_list.append(instruction)
         return list(reversed(new_list))
+
+    @cached_property
+    def outvar_index_to_mesh_index_mapping(self) -> Dict[int, List[int]]:
+        """
+        A mapping from an outvar to the indices of meshes it locates on.
+
+        Returns:
+            mapping (Dict[int, List[int]]): mapping[outvar_idx] is a list
+                containing the indices of meshes it locates on.
+        """
+        if self.mesh_output_indices is None:
+            raise RuntimeError()
+        mapping = {}
+        for i, _ in enumerate(self.global_outvars):
+            mapping[i] = list(self.mesh_output_indices[i].keys())
+        return mapping

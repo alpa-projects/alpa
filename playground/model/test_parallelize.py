@@ -87,7 +87,9 @@ def test_opt_125M_shard_parallel():
     }, model.apply)
 
     # Parallelize
-    method = alpa.ShardParallel()
+    method = alpa.ShardParallel(
+        devices=jax.local_devices()[:4],
+        auto_sharding_option=alpa.AutoShardingOption())
 
     @alpa.parallelize(static_argnums=(2,), batch_argnums=(), method=method)
     def inference_step_with_cache(params, batch, apply_func):
@@ -108,6 +110,12 @@ def test_opt_125M_shard_parallel():
             "cache": cache,
         }, model.apply)
         assert_allclose(logits_step, logits_no_cache[:, i:i+1])
+
+    executable = inference_step_with_cache.last_executable
+    with open("infer.hlo", "w") as fout:
+        fout.write(executable.get_hlo_text())
+
+    assert executable.get_hlo_text().count("all-reduce(") == 1 + 2 * config.decoder_layers
 
 
 if __name__ == "__main__":

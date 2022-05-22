@@ -93,6 +93,9 @@ class ParallelizedFunc:
         self.batch_argnums = batch_argnums
         self.method = method
 
+        # Store the last executable for debugging
+        self.last_executable = None
+
     def __call__(self, *args):
         """Launch the computation on the driver."""
         executable, _, out_tree, args_flat = self._decode_args_and_get_executable(*args)
@@ -162,6 +165,7 @@ class ParallelizedFunc:
         executable = _compile_parallel_executable(
             f, in_tree, out_tree_hashable, static_argnums, donated_invars,
             batch_invars, self.method, *abstract_args)
+        self.last_executable = executable
         return executable, in_tree, out_tree, args_flat
 
 

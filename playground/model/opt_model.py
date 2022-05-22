@@ -319,10 +319,10 @@ class OPTSelfAttention(nn.Module):
 
         qvk_combined_states = self.qvk_combined(hidden_states)
         qvk_combined_states = qvk_combined_states.reshape(
-            qvk_combined_states.shape[:2] + (3, -1))
+            qvk_combined_states.shape[:2] + (-1, 3))
         query_states, value_states, key_states = jnp.split(qvk_combined_states,
                                                            3,
-                                                           axis=2)
+                                                           axis=3)
 
         query_states = query_states.reshape(hidden_states.shape[:2] +
                                             (self.config.decoder_attention_heads,

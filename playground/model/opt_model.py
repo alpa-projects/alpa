@@ -1,16 +1,18 @@
 from dataclasses import dataclass
 from functools import partial
-from typing import Callable, Optional, Tuple, Dict
 import math
+import os
+from typing import Callable, Optional, Tuple, Dict
 
+from alpa import mark_pipeline
+from alpa.model.model_util import ModelOutput
+import flax.linen as nn
 import jax
 import flax
 from jax import lax
 import jax.numpy as jnp
 import jaxlib.xla_extension as jax_xla
-import flax.linen as nn
-from alpa.model.model_util import ModelOutput
-
+import numpy as np
 
 ACT2FN = {
     "gelu": partial(nn.gelu, approximate=False),
@@ -252,6 +254,7 @@ class OPTConfig:
     # Added
     vocab_size = 50272
     layer_norm_eps = 0.00001
+    num_pp_stages : int = None
 
 
 class OPTEmbeddings(nn.Module):
@@ -480,8 +483,17 @@ class OPTTransformerLayerCollection(nn.Module):
         all_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
         new_attention_cache = () if attention_cache is not None else None
+        
+        if self.config.num_pp_stages is not None:
+            layers_per_stage = self.config.decoder_layers // self.config.num_pp_stages
 
         for i, layer in enumerate(self.layers):
+            if self.config.num_pp_stages is not None:
+                if i % layers_per_stage == layers_per_stage - 1 and i != len(self.layers) - 1:
+                    stage_id = i // layers_per_stage
+                    mark_pipeline(name=str(stage_id), mark_type="end")
+                    mark_pipeline(name=str(stage_id + 1), mark_type="start")
+
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
             layer_attention_cache = None
@@ -663,4 +675,62 @@ def build_position_ids(input_ids, padding_idx):
     mask = (input_ids != padding_idx).astype(jnp.int32)
     position_ids = jnp.cumsum(mask, axis=1).astype(jnp.int32) * mask + padding_idx
     return position_ids
+
+
+def load_np_params(params, path, num_layers):
+    def load_array(key):
+        return np.load(os.path.join(path, key))
+
+    def load_param(param_key, loaded_array):
+        param_dict = params
+        param_keys = param_key.split('.')
+        for i, key in enumerate(param_keys):
+            if i == len(param_keys) - 1:
+                assert param_dict[key].shape == loaded_array.shape
+                assert param_dict[key].dtype == loaded_array.dtype
+                param_dict[key] = loaded_array
+            else:
+                param_dict = param_dict[key]
+    load_param("params.transformers.embeddings.word_embeddings.embedding",
+               load_array("decoder.embed_tokens.weight"))
+    load_param("params.transformers.embeddings.position_embeddings.embedding",
+               load_array("decoder.embed_positions.weight"))
+    for i in range(num_layers):
+        param_prefix = f"params.transformers.encoder.{i}."
+        load_prefix = f"decoder.layers.{i}."
+        # Attention weights
+        wq = load_array(load_prefix + "self_attn.q_proj.weight")
+        wk = load_array(load_prefix + "self_attn.k_proj.weight")
+        wv = load_array(load_prefix + "self_attn.v_proj.weight")
+        dim = wq.shape[-1]
+        w_qvk = np.concatenate([wq, wv, wk], axis=0).reshape((3, -1, dim)).transpose([2, 1, 0]).reshape((dim, -1))
+        load_param(param_prefix + "attention.self.qvk_combined.kernel", w_qvk)
+        bq = load_array(load_prefix + "self_attn.q_proj.bias")
+        bk = load_array(load_prefix + "self_attn.k_proj.bias")
+        bv = load_array(load_prefix + "self_attn.v_proj.bias")
+        b_qvk = np.concatenate([bq, bv, bk], axis=0).reshape((3, dim)).transpose([1, 0]).reshape((-1,))
+        load_param(param_prefix + "attention.self.qvk_combined.bias", b_qvk)
+        load_param(param_prefix + "attention.dense.kernel",
+                   np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))
+        load_param(param_prefix + "attention.dense.bias",
+                   load_array(load_prefix + "self_attn.out_proj.bias"))
+        load_param(param_prefix + "attention.layer_norm.scale",
+                   load_array(load_prefix + "self_attn_layer_norm.weight"))
+        load_param(param_prefix + "attention.layer_norm.bias",
+                   load_array(load_prefix + "self_attn_layer_norm.bias"))
+        # FFN weights
+        load_param(param_prefix + "ffn.fc1.bias",
+                   load_array(load_prefix + "fc1.bias"))
+        load_param(param_prefix + "ffn.fc1.kernel",
+                   np.transpose(load_array(load_prefix + "fc1.weight")))
+        load_param(param_prefix + "ffn.fc2.bias",
+                   load_array(load_prefix + "fc2.bias"))
+        load_param(param_prefix + "ffn.fc2.kernel",
+                   np.transpose(load_array(load_prefix + "fc2.weight")))
+        load_param(param_prefix + "ffn.layer_norm.scale",
+                   load_array(load_prefix + "final_layer_norm.weight"))
+        load_param(param_prefix + "ffn.layer_norm.bias",
+                   load_array(load_prefix + "final_layer_norm.bias"))
+    return params
+
 

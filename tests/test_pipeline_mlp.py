@@ -55,6 +55,8 @@ class PipelineMLPTest(unittest.TestCase):
         gradients = train_step(state, batch)
         p_train_step = parallelize(train_step, donate_argnums=(), method=method)
         gradients_with_pipeline = p_train_step(state, batch)
+        if isinstance(method, PipeshardParallel):
+            p_train_step.get_executable(state, batch).get_load_info()
 
         # Check results
         assert_allclose(gradients, gradients_with_pipeline)

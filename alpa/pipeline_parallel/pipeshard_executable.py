@@ -1158,20 +1158,19 @@ class PipeshardDriverExecutable:
     def get_load_info(self):
         assert self.in_tree is not None
 
-        # build load_info_map: flatten global index => LoadInfo object
-        load_info_map = {}
+        # build load_info_arr: flatten global index => LoadInfo object
+        load_info_arr = [None] * len(self.is_batch)
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
             for local_idx, global_idx in enumerate(self.mesh_arg_indices[mesh_idx]):
                 aval, mesh, spec = (self.global_invars[global_idx].aval, 
                                     physical_mesh, 
                                     self.input_shard_specs[mesh_idx][local_idx])
-                if load_info_map.get(global_idx) is None:
-                    load_info_map[global_idx] = LoadInfo([aval], [mesh], [spec])
+                if load_info_arr[global_idx] is None:
+                    load_info_arr[global_idx] = LoadInfo([aval], [mesh], [spec])
                 else:
-                    load_info_map[global_idx].add_replica(aval, mesh, spec)
+                    load_info_arr[global_idx].add_replica(aval, mesh, spec)
 
         # build load_info_arr
-        load_info_arr = [load_info_map[i] for i in range(len(self.is_batch))]
         return tree_unflatten(self.in_tree, load_info_arr)
 
     ##### Profiling and Debugging Related Functions #####

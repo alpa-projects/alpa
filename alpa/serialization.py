@@ -4,6 +4,7 @@ Add support for DistributedArray and ReplicatedDistributedArray serialization in
 """
 
 import enum
+import logging
 import os
 from typing import Union, Any, Sequence
 import uuid
@@ -19,6 +20,9 @@ import numpy as np
 from alpa.device_mesh import DistributedArray, ReplicatedDistributedArray, PhysicalDeviceMesh
 
 PyTree = Any
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 class _MsgpackExtType(enum.IntEnum):
@@ -153,6 +157,9 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, target: PyT
     flat_info = tree_leaves(load_info)
     flat_load_state = []
     for path, info in zip(state_paths, flat_info):
+        if info is None:
+            logger.warning("Variable is not used, skip loading it")
+            flat_load_state.append(None)
         if info.is_replicated():
             meshes, arrays = [], []
             for aval, mesh, spec in info.get_info():

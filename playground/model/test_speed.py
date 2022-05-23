@@ -66,4 +66,4 @@ def test_load(name, dummy):
 
 
 if __name__ == "__main__":
-    test_load("125M", False)
+    test_load("30B", True)

@@ -1,35 +1,32 @@
-"""Generate callables for shard_parallel."""
+"""Compile executables for shard parallelism."""
 import hashlib
 import inspect
-import time
-from typing import Callable, Sequence, Optional
+from typing import Callable, Sequence, Optional, Union
 
 import numpy as np
 from jax import linear_util as lu
 from jax._src.lib import xla_bridge as xb
 from jax.core import (Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym,
-                      ShapedArray, get_aval, raise_to_shaped)
+                      get_aval, raise_to_shaped, AbstractValue)
 from jax.interpreters import partial_eval as pe
 from jax.lax import add_p, div_p
 from jax.lib import xla_client as xc, xla_extension
 from jax.tree_util import PyTreeDef
 
-from alpa.device_mesh import (LogicalDeviceMesh, PhysicalDeviceMesh,
-                              LocalPhysicalDeviceMesh, DeviceCluster)
-from alpa.global_env import global_config
-from alpa.measure_record import SearchTask, load_best_record, StrategyConfig
+from alpa.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh
 from alpa.mesh_executable import (NormalMeshDriverExecutable,
                                   GradAccMeshDriverExecutable)
 from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
-                                               run_spmd_partitioner_pass)
+                                               run_spmd_partitioner_pass,
+                                               AutoShardingOption)
 from alpa.util import (jaxpr_to_hlo_computation, trace_jaxpr_with_micro_batch,
                        setup_computation_alias, OrderedSet)
 
 
 def get_compute_key(fun: lu.WrappedFun, in_tree: PyTreeDef,
                     donated_invars: Sequence[bool],
-                    *aval: Sequence[ShapedArray]):
+                    *aval: Sequence[AbstractValue]):
     """Return a unique string as the query key of a computation definition."""
 
     # Algorithm:
@@ -49,101 +46,46 @@ def get_compute_key(fun: lu.WrappedFun, in_tree: PyTreeDef,
     return hash_key
 
 
-def shard_parallel_callable(
+def compile_shard_executable(
     fun: lu.WrappedFun,
     in_tree: PyTreeDef,
     out_tree_thunk: Callable,
     static_argnums: Sequence[int],
     donated_invars: Sequence[bool],
     batch_invars: Sequence[bool],
-    devices,
-    memory_budget_per_device: float,
-    *avals: Sequence[ShapedArray],
+    device_mesh: Union[PhysicalDeviceMesh, LogicalDeviceMesh],
+    num_micro_batches: Optional[int],
+    as_option: AutoShardingOption,
+    *avals: Sequence[AbstractValue],
 ):
-    """Compile a callable with auto-sharding pass."""
-    # This function resolves the polymorphism in arguments and global configurations
-    # and calls actual compilation in shard_parallel_internal.
-
-    # Get physical mesh and logical mesh.
-    if devices is None:
-        devices = LocalPhysicalDeviceMesh(devices=xb.local_devices())
-    elif isinstance(devices, (list, tuple)):
-        devices = LocalPhysicalDeviceMesh(devices=devices)
-    elif isinstance(devices, DeviceCluster):
-        devices = devices.get_physical_mesh()
-
-    search_task = None
-    record_file = None
-    strategy_config = None
-    if isinstance(devices, PhysicalDeviceMesh):
-        physical_mesh = devices
-
-        if global_config.shard_parallel_search_logical_mesh_shape:
-            # Check cached strategy folder
-            compute_key = get_compute_key(fun, in_tree, donated_invars, *avals)
-            device_key = physical_mesh.get_signature()
-            search_task = SearchTask(compute_key, device_key)
-            record_file = global_config.shard_parallel_mesh_shape_search_log_file
-
-            if record_file:
-                inp, _ = load_best_record(search_task, filename=record_file)
-            else:
-                inp = None
-
-            if inp is None:
-                # Generate a search space that contains all possible mesh shapes.
-                logical_mesh_choices = []
-                num_devices = physical_mesh.num_devices
-                for i in range(1, num_devices):
-                    if num_devices % i == 0:
-                        logical_mesh_shape = (num_devices // i, i)
-                        logical_mesh_choices.append(
-                            physical_mesh.get_logical_mesh(
-                                mesh_shape=logical_mesh_shape,
-                                # TODO(lmzheng): export this as an argument in
-                                # set_parallelize_options or physical_mesh.
-                                #mesh_alpha=[1,1],
-                                #mesh_beta=[1,1]))
-                                mesh_topology="tree",
-                                inter_host_bandwidth=1,
-                                intra_host_bandwidth=30))
-            else:
-                logical_mesh_choices = []
-                strategy_config = inp.config
-        else:
-            logical_mesh_choices = [physical_mesh.get_default_logical_mesh()]
-    elif isinstance(devices, LogicalDeviceMesh):
-        physical_mesh = devices.physical_mesh
-        logical_mesh_choices = [devices]
+    """Compile an executable with auto-sharding pass."""
+    if isinstance(device_mesh, PhysicalDeviceMesh):
+        physical_mesh = device_mesh
+        logical_mesh_choices = [physical_mesh.get_logical_mesh()]
+    elif isinstance(device_mesh, LogicalDeviceMesh):
+        physical_mesh = device_mesh.physical_mesh
+        logical_mesh_choices = [device_mesh]
     else:
         raise ValueError("Invalid value of devices")
 
-    if global_config.num_micro_batches is not None:
+    if num_micro_batches is None:
+        return shard_parallel_internal(
+            fun, in_tree, out_tree_thunk, static_argnums, donated_invars,
+            physical_mesh, logical_mesh_choices, as_option, *avals)
+    else:
         return shard_parallel_internal_gradient_accumulation(
             fun, in_tree, out_tree_thunk, static_argnums, donated_invars,
             batch_invars, physical_mesh, logical_mesh_choices,
-            global_config.shard_parallel_mesh_shape_search_mode,
-            memory_budget_per_device, search_task, record_file, strategy_config,
-            *avals)
-
-    return shard_parallel_internal(
-        fun, in_tree, out_tree_thunk, static_argnums, donated_invars,
-        physical_mesh, logical_mesh_choices,
-        global_config.shard_parallel_mesh_shape_search_mode,
-        memory_budget_per_device, search_task, record_file, strategy_config,
-        *avals)
+            num_micro_batches, as_option, *avals)
 
 
 def shard_parallel_internal(
         fun: lu.WrappedFun, in_tree: PyTreeDef, out_tree_thunk: Callable,
         static_argnums: Sequence[int], donated_invars: Sequence[bool],
-        physical_mesh: PhysicalDeviceMesh,
-        logical_mesh_choices: Sequence[LogicalDeviceMesh],
-        logical_mesh_search_mode: str, memory_budget_per_device: float,
-        search_task: Optional[SearchTask], record_file: str,
-        strategy_config: StrategyConfig, *avals: Sequence[ShapedArray]):
+        physical_mesh: PhysicalDeviceMesh, logical_mesh_choices: Sequence[LogicalDeviceMesh],
+        as_option: AutoShardingOption, *avals: Sequence[AbstractValue]):
     """
-    Compile a callable with auto-sharding pass.
+    Compile an executable with auto-sharding pass.
 
     Args:
       fun: The wrapped jax function to be compiled.
@@ -154,21 +96,9 @@ def shard_parallel_internal(
       logical_mesh_choices: The candidates of logical mesh shape.
         If there is only one choice, use the given one. If there are multiple choices,
         we will try all of them and pick the best.
-      logical_mesh_search_mode: The choices are {"measurement", "cost_model"}.
-        If is "measurement", use real profiling to pick the best logical mesh shape.
-        If is "cost_model", use cost estimation in HLO IR to pick the best one.
-        This is ignored if len(logical_mesh_choices) == 1.
-      memory_budget_per_device: The memory budget per device in bytes.
-      search_task: Only used when doing logical mesh shape search.
-        Used when dumping measurement records to the file.
-      record_file: If is not None, dump measurement records into
-        this file.
-      strategy_config: If is not None, do compilation
-        according to this configuration.
+      as_option: The options of auto-sharding solver.
       avals: The input abstract values.
     """
-    tic = time.time()
-
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
 
@@ -181,34 +111,26 @@ def shard_parallel_internal(
         built.as_hlo_module())
 
     # Compile a XLA executable
-    if strategy_config is None:
-        hlo_module, strategy_config = run_auto_sharding_pass(
-            built,
-            avals,
-            out_avals,
-            donated_invars,
-            logical_mesh_choices[0],
-            "single",
-            1,
-            global_config.default_autosharding_option,
-            memory_budget_per_device=memory_budget_per_device)
-    else:
-        assert NotImplementedError
-
-    if global_config.print_xla_compilation_time:
-        print(f" - XLA Compilation time: {time.time() - tic:.2f} s")
+    hlo_module, strategy_config = run_auto_sharding_pass(
+        built,
+        avals,
+        out_avals,
+        donated_invars,
+        logical_mesh_choices[0],
+        "single",
+        1,
+        as_option)
 
     # Compile a mesh executable
-    executable = NormalMeshDriverExecutable(physical_mesh,
-                                            hlo_module,
-                                            strategy_config,
-                                            avals,
-                                            out_avals,
-                                            donated_invars,
-                                            static_argnums=static_argnums,
-                                            out_tree_thunk=out_tree_thunk,
-                                            flop_count=flop_count)
-    return executable.get_driver_callable()
+    return NormalMeshDriverExecutable(physical_mesh,
+                                      hlo_module,
+                                      strategy_config,
+                                      avals,
+                                      out_avals,
+                                      donated_invars,
+                                      static_argnums=static_argnums,
+                                      out_tree_thunk=out_tree_thunk,
+                                      flop_count=flop_count)
 
 
 def shard_parallel_internal_gradient_accumulation(
@@ -216,12 +138,10 @@ def shard_parallel_internal_gradient_accumulation(
         static_argnums: Sequence[int], donated_invars: Sequence[bool],
         batch_invars: Sequence[bool], physical_mesh: PhysicalDeviceMesh,
         logical_mesh_choices: Sequence[LogicalDeviceMesh],
-        logical_mesh_search_mode: str, memory_budget_per_device: float,
-        search_task: SearchTask, record_file: str,
-        strategy_config: StrategyConfig, *raw_avals: Sequence[ShapedArray]):
-    """Compile a gradient accumulation callable with auto-sharding pass."""
+        num_micro_batches: int, as_option: AutoShardingOption,
+        *raw_avals: Sequence[AbstractValue]):
+    """Compile a gradient accumulation executable with auto-sharding pass."""
     # Split the batch dimension
-    num_micro_batches = global_config.num_micro_batches
     closed_jaxpr, avals, _ = trace_jaxpr_with_micro_batch(
         fun, batch_invars, num_micro_batches, raw_avals)
 
@@ -250,8 +170,7 @@ def shard_parallel_internal_gradient_accumulation(
         logical_mesh_choices[0],
         "stage_protos",
         num_micro_batches,
-        global_config.default_autosharding_option,
-        memory_budget_per_device=memory_budget_per_device)
+        as_option)
     assert len(hlo_protos) == 2
 
     if hlo_proto_names[0].endswith(APPLY_GRAD_MARKER_SUFFIX):
@@ -282,20 +201,19 @@ def shard_parallel_internal_gradient_accumulation(
                                            physical_mesh.num_devices)
 
     # Compile them to a single mesh executable
-    mesh_executable = GradAccMeshDriverExecutable(physical_mesh,
-                                                  accumulate_grad,
-                                                  apply_grad,
-                                                  strategy_config,
-                                                  in_avals,
-                                                  out_avals,
-                                                  grad_avals,
-                                                  donated_invars,
-                                                  batch_invars,
-                                                  accumulate_grad_invar_indices,
-                                                  apply_grad_invar_indices,
-                                                  num_micro_batches,
-                                                  flop_count=flop_count)
-    return mesh_executable.get_driver_callable()
+    return GradAccMeshDriverExecutable(physical_mesh,
+                                       accumulate_grad,
+                                       apply_grad,
+                                       strategy_config,
+                                       in_avals,
+                                       out_avals,
+                                       grad_avals,
+                                       donated_invars,
+                                       batch_invars,
+                                       accumulate_grad_invar_indices,
+                                       apply_grad_invar_indices,
+                                       num_micro_batches,
+                                       flop_count=flop_count)
 
 
 def filter_used_vars(all_vars, eqns):

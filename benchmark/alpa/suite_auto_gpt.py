@@ -3,10 +3,10 @@ from suite_manual_gpt import gpt_specs
 
 max_global_batch_size = 1024
 
-search_global_config_dict = {
-    "auto_stage_construction_imbalance_tolerance": 1.0,
-    "logical_mesh_search_space": "all",
-    "submesh_choices_mode": "small_power_of_two",
+auto_stage_option = {
+    "submesh_physical_shape_space": "small_power_of_two",
+    "submesh_logical_shape_space": "all",
+    "auto_stage_imbalance_tolerance": 1.0,
     "use_hlo_cost_model": True,
     "profiling_database_filename": "prof_database.pkl",
 }
@@ -20,20 +20,20 @@ def get_search_cases(model_name, num_micro_batches_list, num_auto_layers_list):
     return [(max_global_batch_size, *gpt_specs[model_name],
              num_micro_batches, "search",
              (prefer_reduce_scatter, use_remat,
-              num_auto_layers, search_global_config_dict))
+              num_auto_layers, auto_stage_option))
             for num_micro_batches in num_micro_batches_list
             for num_auto_layers in num_auto_layers_list]
 
 def get_solution_case(model_name, num_micro_batches, num_auto_layers,
                       forward_stage_layer_ids,
-                      sub_physical_mesh_shapes, sub_logical_mesh_shapes,
+                      submesh_physical_shapes, submesh_logical_shapes,
                       submesh_autosharding_option_dicts):
     return [(max_global_batch_size, *gpt_specs[model_name],
              num_micro_batches, "load_solution",
              (prefer_reduce_scatter, use_remat, num_auto_layers,
-              forward_stage_layer_ids,
-              sub_physical_mesh_shapes, sub_logical_mesh_shapes,
-              submesh_autosharding_option_dicts))]
+              (forward_stage_layer_ids,
+               submesh_physical_shapes, submesh_logical_shapes,
+               submesh_autosharding_option_dicts)))]
 
 
 # Temporary debug suite

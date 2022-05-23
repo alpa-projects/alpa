@@ -4,27 +4,27 @@ Developer Guide
 
 Code Organization
 =================
-The code in this repository is organized as follows:
+
+The code in alpa's repository is organized as follows:
   - `alpa <https://github.com/alpa-projects/alpa/tree/main/alpa>`__: the python source code of Alpa
   - `benchmark <https://github.com/alpa-projects/alpa/tree/main/benchmark>`__: benchmark scripts
+  - `build_jaxlib <https://github.com/alpa-projects/alpa/tree/main/build_jaxlib>`__: build scripts for Alpa's version of jaxlib
   - `docs <https://github.com/alpa-projects/alpa/tree/main/docs>`__: documentation and tutorials
   - `examples <https://github.com/alpa-projects/alpa/tree/main/examples>`__: public examples
   - `playground <https://github.com/alpa-projects/alpa/tree/main/playground>`__: experimental scripts
   - `tests <https://github.com/alpa-projects/alpa/tree/main/tests>`__: unit tests
+  - `third_party <https://github.com/alpa-projects/alpa/tree/main/third_party>`__: third party repos
 
-There are two additional repositories:
+In addition, Alpa maintains a tensorflow fork. This is because alpa modifies the XLA compiler, whose code
+is hosted in the tensorflow repo.
 
 - `tensorflow-alpa <https://github.com/alpa-projects/tensorflow-alpa>`__: The TensorFlow fork for Alpa.
   The c++ source code of Alpa mainly resides in ``tensorflow/compiler/xla/service/spmd``.
-- `jax-alpa <https://github.com/alpa-projects/jax-alpa>`__: The JAX fork for Alpa, in which we do not change any
-  functionality, but modify the building scripts to make building with tensorflow-alpa easier.
-
 
 
 Contribute to Alpa
 ==================
 Please submit a `pull request <https://github.com/alpa-projects/alpa/compare>`__ if you plan to contribute to Alpa.
-
 
 Formatting and Linting
 ----------------------
@@ -36,8 +36,7 @@ Install prospector and yapf via:
 
     pip install prospector yapf
 
-
-Use yapf to automatically format the code:
+Use yapf to format the code:
 
 .. code-block:: bash
 
@@ -48,3 +47,9 @@ Then use prospector to run linting for the folder ``alpa/``:
 .. code-block:: bash
 
     prospector alpa/
+
+Unittest
+--------
+Every New feature should come with a unittest.
+
+`How to run unit test locally <https://github.com/alpa-projects/alpa/tree/main/tests/README.md>`_

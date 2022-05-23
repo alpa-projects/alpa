@@ -3,17 +3,19 @@ Alpa
 [**Documentation**](https://alpa-projects.github.io) |
 [**Slack**](https://forms.gle/YEZTCrtZD6EAVNBQ7)
 
-
 [![Build Jaxlib and Jax](https://github.com/alpa-projects/alpa/actions/workflows/build_jax.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/build_jax.yml)
 [![CI](https://github.com/alpa-projects/alpa/actions/workflows/ci.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/ci.yml)
 
-Alpa automatically parallelizes tensor computation graphs and runs them on a distributed cluster.
+Alpa is a system for large-scale distributed training.
+Alpa is specifically designed for training giant neural networks that cannot fit into a single device.
+Alpa can automatically generate dstirbuted execution plans that unify data, operator, and pipeline parallelism.
 
 Quick Start
 -----------
 
-Use Alpa's single line API ``@parallelize`` to scale your single-node training code to distributed clusters, even though 
+Use Alpa's decorator ``@parallelize`` to scale your single-node training code to distributed clusters, even though 
 your model is much bigger than a single device memory.
+
 ```python
 import alpa
 
@@ -38,13 +40,13 @@ Check out the [Alpa Documentation](https://alpa-projects.github.io) site for ins
 More Information
 ----------------
 - [Alpa paper](https://arxiv.org/pdf/2201.12023.pdf) (OSDI'22)
-- [Blog]()
+- [Blog](https://ai.googleblog.com/2022/05/alpa-automated-model-parallel-deep.html)
+
 
 Contributing
 ------------
 Please read the [contributor guide](https://alpa-projects.github.io/developer/developer_guide.html) if you are interested in contributing to Alpa. 
 Please connect to Alpa contributors via the [Alpa slack](https://forms.gle/YEZTCrtZD6EAVNBQ7).
-
 
 License
 -------

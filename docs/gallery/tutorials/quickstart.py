@@ -1,26 +1,26 @@
 """
-.. _Getting Started with Alpa:
+.. _Alpa Quickstart:
 
-Getting Started with Alpa
-=========================
+Alpa Quickstart
+===============
 
-Alpa is a library that automatically parallelizes jax functions and runs them
-on a distributed cluster. Alpa analyses the jax computational graph and generates
-a distributed execution plan tailored for the computational graph and target cluster.
-Alpa is specifically designed for training large-scale neural networks.
+Alpa is built on top of a tensor computation framework `Jax <https://jax.readthedocs.io/en/latest/index.html>`_ .
+Alpa can automatically parallelize jax functions and runs them on a distributed cluster.
+Alpa analyses the computational graph and generates a distributed execution plan 
+tailored for the computational graph and target cluster.
 The generated execution plan can combine state-of-the-art distributed training techniques
 including data parallelism, operator parallelism, and pipeline parallelism.
 
-Alpa provides a simple API ``@parallelize`` and automatically generates the best execution
-plan by solving optimization problems. Therefore, you can efficiently scale your jax
-computation on a distributed cluster, without any expertise in distributed computing.
+Alpa provides a simple API ``alpa.parallelize`` and automatically generates the best execution
+plan by solving optimization problems. Therefore, you can efficiently scale your jax computation
+on a distributed cluster, without any expertise in distributed computing.
 
 In this tutorial, we show the usage of Alpa with an MLP example.
 """
 
 ################################################################################
 # Import Libraries
-# --------------------
+# ----------------
 # We first import the required libraries.
 # Flax and optax are libraries on top of jax for training neural networks.
 # Although we use these libraries in this example, Alpa works on jax's and XLA's internal
@@ -66,12 +66,12 @@ num_layers = 10
 # Generate ground truth W and b
 rngkey = jax.random.PRNGKey(0)
 k1, k2 = random.split(rngkey)
-W = random.normal(k1, (dim, dim))
-b = random.normal(k2, (dim,))
+W = random.normal(k1, (dim, dim), jnp.float32)
+b = random.normal(k2, (dim,), jnp.float32)
 
 # Generate the training data
 ksample, knoise = random.split(k1)
-x = random.normal(ksample, (batch_size, dim))
+x = random.normal(ksample, (batch_size, dim), jnp.float32)
 y = (x @ W + b) + 0.1 * random.normal(knoise, (batch_size, dim))
 
 # Initialize a train state, which includes the model paramter and optimizer state.
@@ -95,11 +95,11 @@ batch = {"x": x, "y": y}
 expected_state = train_step(state, batch)
 
 ################################################################################
-# Auto-parallelization with ``@parallelize``
-# ------------------------------------------
-# Alpa provides a transformation ``@alpa.parallelize`` to parallelize a jax function.
-# ``@alpa.parallelize`` is similar to ``@jax.jit`` . ``@jax.jit`` compiles a jax
-# function for a single device, while ``@alpa.parallelize`` compiles a jax function
+# Auto-parallelization with ``alpa.parallelize``
+# ----------------------------------------------
+# Alpa provides a transformation ``alpa.parallelize`` to parallelize a jax function.
+# ``alpa.parallelize`` is similar to ``jax.jit`` . ``jax.jit`` compiles a jax
+# function for a single device, while ``alpa.parallelize`` compiles a jax function
 # for a distributed device cluster.
 # You may know that jax has some built-in transformations for parallelization,
 # such as ``pmap``, ``pjit``, and ``xmap``. However, these transformations are not
@@ -107,15 +107,14 @@ expected_state = train_step(state, batch)
 # strategies such as parallelization axes and device mapping schemes. You also need to
 # manually call communication primitives such as ``lax.pmean`` and ``lax.all_gather``,
 # which is nontrivial if you want to do advanced model parallelization.
-# Unlike these transformations, ``@alpa.parallelize`` can do all things automatically for
-# you. ``@alpa.parallelize`` finds the best parallelization strategy for the given jax
+# Unlike these transformations, ``alpa.parallelize`` can do all things automatically for
+# you. ``alpa.parallelize`` finds the best parallelization strategy for the given jax
 # function and does the code tranformation. You only need to write the code as if you are
 # writing for a single device.
 
-
 # Define the training step. The body of this function is the same as the
 # ``train_step`` above. The only difference is to decorate it with
-# ``@alpa.paralellize``.
+# ``alpa.paralellize``.
 
 @alpa.parallelize
 def alpa_train_step(state, batch):
@@ -133,7 +132,7 @@ actual_state = alpa_train_step(state, batch)
 assert_allclose(expected_state.params, actual_state.params, atol=5e-3)
 
 ################################################################################
-# After being decorated by ``@parallelize``, the function can still take numpy
+# After being decorated by ``alpa.parallelize``, the function can still take numpy
 # arrays or jax arrays as inputs. The function will first distribute the input
 # arrays into correct devices according to the parallelization strategy and then
 # execute the function distributedly. The returned result arrays are also
@@ -150,7 +149,7 @@ kernel_np = np.array(actual_state.params["params"]["Dense_0"]["kernel"])
 # --------------------------
 # By parallelizing a jax function, we can accelerate the computation and reduce
 # the memory usage per GPU, so we can train large models faster.
-# We benchmark the execution speed of ``@jax.jit`` and ``@alpa.parallelize``
+# We benchmark the execution speed of ``jax.jit`` and ``alpa.parallelize``
 # on a 8-GPU machine.
 
 state = actual_state  # We need this assignment because the original `state` is "donated" and freed.

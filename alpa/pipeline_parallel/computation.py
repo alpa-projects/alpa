@@ -860,8 +860,7 @@ def generate_sharded_xla_computations_arguments(
 def generate_sharded_xla_computations(
         name: str, jax_computations: Sequence[JaxPipelineComputation],
         computation_donate_invars, donatable_lists, acc_grad_outvars,
-        num_micro_batches, logical_mesh, autosharding_option,
-        memory_budget_per_device):
+        num_micro_batches, logical_mesh, autosharding_option):
     """
     Generate sharded XLA computations.
 
@@ -883,8 +882,7 @@ def generate_sharded_xla_computations(
         logical_mesh,
         "stage_protos",
         num_micro_batches,
-        autosharding_option,
-        memory_budget_per_device=memory_budget_per_device)
+        autosharding_option)
     computations = generate_computations_from_protos(
         jax_computations, computation_names, computation_protos,
         computation_donate_invars, donatable_lists, acc_grad_outvars,

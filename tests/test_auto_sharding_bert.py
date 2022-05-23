@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import optim, linen as nn
 
-from alpa import parallelize, set_parallelize_options, LocalPhysicalDeviceMesh, global_config
+from alpa import parallelize, ShardParallel, LocalPhysicalDeviceMesh, AutoShardingOption
 from alpa.model.bert_model import (BertConfig, FlaxBertLayerCollection,
                                    FlaxBertForMaskedLMModule)
 from alpa.util import count_communication_primitives
@@ -18,29 +18,21 @@ from test_auto_sharding_mlp import (
     assert_replicated_row_partitioned, assert_row_partitioned, is_fully_sharded,
     assert_sharding_zero_stage_3)
 
-as_option = global_config.default_autosharding_option
-
 
 class AutoShardingAttentionTest(unittest.TestCase):
 
     def setUp(self):
         assert len(jax.local_devices()) >= 4
-        self.devices = jax.local_devices()[:4]
-
-        self.as_option_backup = as_option.backup()
-
-    def tearDown(self):
-        as_option.restore(self.as_option_backup)
+        self.physical_mesh = LocalPhysicalDeviceMesh(jax.local_devices()[:4])
+        self.as_option = AutoShardingOption()
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
-        device_mesh = LocalPhysicalDeviceMesh(self.devices)
-        return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
+        return self.physical_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 
     def run_bert_layers(self, batch_size, seq_len, num_layers, hidden_size,
                         num_heads, deterministic, use_remat, device_mesh):
-        set_parallelize_options(devices=device_mesh)
-
-        @parallelize
+        @parallelize(method=ShardParallel(devices=device_mesh,
+                                          auto_sharding_option=self.as_option))
         def train_step(optimizer, batch, deterministic, apply_fn):
 
             def loss_func(params):
@@ -95,9 +87,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
     def run_bert_mlm(self, batch_size, seq_len, num_layers, hidden_size,
                      num_heads, vocab_size, deterministic, device_mesh):
-        set_parallelize_options(devices=device_mesh)
-
-        @parallelize
+        @parallelize(method=ShardParallel(devices=device_mesh,
+                                          auto_sharding_option=self.as_option))
         def train_step(optimizer, batch):
 
             def loss_func(params):
@@ -182,7 +173,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 deterministic, use_remat, device_mesh)
 
             assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh,
-                                      i)
+                                      self.as_option, i)
 
     def test_bert_layer_model_parallel(self):
         batch_size = 8
@@ -207,7 +198,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
                 count_communication_primitives(hlo_ir))
-            if as_option.prefer_reduce_scatter:
+            if self.as_option.prefer_reduce_scatter:
                 assert n_total == num_layers * 4 - 1
                 assert n_all_reduce == num_layers * 4 - 1
                 assert n_total == n_all_reduce
@@ -261,7 +252,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
             count_communication_primitives(hlo_ir,
                                            ignore_scalar_all_reduce=True))
-        if as_option.prefer_reduce_scatter:
+        if self.as_option.prefer_reduce_scatter:
             assert n_all_reduce == num_layers * 4 - 1
             assert n_reduce_scatter == 2
             assert n_all_gather == 1
@@ -271,7 +262,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             assert n_total == n_all_reduce
 
         # Check sharding specification
-        if as_option.prefer_reduce_scatter:
+        if self.as_option.prefer_reduce_scatter:
             for weight in jax.tree_util.tree_leaves(
                     optimizer.state.param_states):
                 if len(weight.shape) > 1:
@@ -302,14 +293,14 @@ class AutoShardingAttentionTest(unittest.TestCase):
         num_heads = 8
         deterministic = False
         use_remat = False
-        as_option.force_batch_dim_to_mesh_dim = 0
+        self.as_option.force_batch_dim_to_mesh_dim = 0
 
         # data parallel
         device_mesh = self.get_device_mesh([4, 1], [1, 1], [1, 1])
         optimizer, hlo_ir, objective = self.run_bert_layers(
             batch_size, seq_len, num_layers, hidden_size, num_heads,
             deterministic, use_remat, device_mesh)
-        assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, 0)
+        assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, self.as_option, 0)
 
         # model parallel (case 1)
         device_mesh = self.get_device_mesh([1, 4], [1, 1], [1, 1])
@@ -337,9 +328,6 @@ class AutoShardingAttentionTest(unittest.TestCase):
         seq_len = 8
         mesh_shape = [2, 2]
 
-        logical_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-        set_parallelize_options(devices=logical_mesh)
-
         # Model and training step definition
         class Model(nn.Module):
             """Tied input and output embedding."""
@@ -353,7 +341,9 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 x = x @ embed.T
                 return x
 
-        @parallelize
+        logical_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
+
+        @parallelize(method=ShardParallel(devices=logical_mesh))
         def func(optimizer, x, y):
 
             def loss_func(params):
@@ -413,13 +403,13 @@ class AutoShardingAttentionTest(unittest.TestCase):
                 batch_size, seq_len, num_layers, hidden_size, num_heads,
                 vocab_size, deterministic, device_mesh)
 
-            if as_option.force_zero_stage_3:
+            if self.as_option.force_zero_stage_3:
                 # only the weight and opt_state of token_embed is not sharded
                 assert_sharding_zero_stage_3(optimizer, 3)
                 continue
 
             assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh,
-                                      i, 1)
+                                      self.as_option, i, 1)
 
     @unittest.skip("This test is broken after we disallow some replicated iota."
                   )
@@ -431,8 +421,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
         num_heads = 4
         vocab_size = 512
         deterministic = False
-        as_option.allow_all_gather = False  # Temporary hack
-        as_option.allow_all_to_all = False  # Temporary hack
+        self.as_option.allow_all_gather = False  # Temporary hack
+        self.as_option.allow_all_to_all = False  # Temporary hack
 
         # Test on different logical mesh shapes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
@@ -501,9 +491,9 @@ class AutoShardingAttentionTest(unittest.TestCase):
         deterministic = False
         # To generate the desired strategy, we have to turn off mixed mesh shape and all-gather
         # and enable recomputing heavy ops.
-        as_option.allow_recompute_heavy_op = True
-        as_option.allow_all_gather = False
-        as_option.allow_mixed_mesh_shape = False
+        self.as_option.allow_recompute_heavy_op = True
+        self.as_option.allow_all_gather = False
+        self.as_option.allow_mixed_mesh_shape = False
 
         mesh_shape = [2, 2]
         device_mesh = self.get_device_mesh(mesh_shape, [2, 2], [1, 0.1])
@@ -516,7 +506,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
             count_communication_primitives(hlo_ir,
                                            ignore_scalar_all_reduce=True))
-        if as_option.prefer_reduce_scatter:
+        if self.as_option.prefer_reduce_scatter:
             assert n_all_reduce == 4 * num_layers + 2 + 2
             assert n_reduce_scatter <= 3  # The correct number should be 2,
             # but GpuMultiOutputFusion can make
@@ -533,7 +523,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         assert "s32[4,4,4096]{2,1,0} iota()" not in hlo_ir
         assert "s32[2,4,2048]{2,1,0} iota()" in hlo_ir
 
-        if as_option.prefer_reduce_scatter:
+        if self.as_option.prefer_reduce_scatter:
             num_not_sharded = 0  # allow the token_type_embeddings not partitioned.
             for weight in jax.tree_util.tree_leaves(
                     optimizer.state.param_states):
@@ -569,34 +559,34 @@ class AutoShardingAttentionTest(unittest.TestCase):
                             weights[j], mesh_shape)
 
     def test_bert_layer_data_parallel_reduce_scatter(self):
-        as_option.prefer_reduce_scatter = True
+        self.as_option.prefer_reduce_scatter = True
         self.test_bert_layer_data_parallel()
 
     def test_bert_layer_model_parallel_reduce_scatter(self):
-        as_option.prefer_reduce_scatter = True
+        self.as_option.prefer_reduce_scatter = True
         self.test_bert_layer_model_parallel()
 
     def test_bert_layer_2d_mesh_reduce_scatter(self):
-        as_option.prefer_reduce_scatter = True
+        self.as_option.prefer_reduce_scatter = True
         self.test_bert_layer_2d_mesh()
 
     def test_bert_mlm_data_parallel_reduce_scatter(self):
-        as_option.prefer_reduce_scatter = True
+        self.as_option.prefer_reduce_scatter = True
         self.test_bert_mlm_data_parallel()
 
     def test_bert_mlm_data_parallel_reduce_scatter_zero_3(self):
-        as_option.force_zero_stage_3 = True
-        as_option.force_zero_stage_3_all_gather_threshold = 1
+        self.as_option.force_zero_stage_3 = True
+        self.as_option.force_zero_stage_3_all_gather_threshold = 1
         self.test_bert_mlm_data_parallel()
 
     @unittest.skip("This test is broken after we disallow some replicated iota."
                   )
     def test_bert_mlm_model_parallel_reduce_scatter(self):
-        as_option.prefer_reduce_scatter = True
+        self.as_option.prefer_reduce_scatter = True
         self.test_bert_mlm_model_parallel()
 
     def test_bert_mlm_2d_mesh_reduce_scatter(self):
-        as_option.prefer_reduce_scatter = True
+        self.as_option.prefer_reduce_scatter = True
         self.test_bert_mlm_2d_mesh()
 
     def test_bert_layer_model_parallel_remat(self):

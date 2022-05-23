@@ -7,20 +7,21 @@ import ray
 import time
 
 import alpa
-from alpa import (parallelize, global_config, set_parallelize_options,
-                   DeviceCluster, mark_pipeline, manual_layer_construction,
-                   automatic_layer_construction, automatic_remat)
+from alpa import (parallelize, global_config, get_global_cluster,
+                  set_global_virtual_physical_mesh,
+                  PipeshardParallel, ManualPipeshardParallel,
+                  AutoShardingOption,
+                  mark_pipeline, manual_layer_construction,
+                  automatic_layer_construction, automatic_remat)
 from alpa.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from alpa.model.model_util import TrainState
 from alpa.model.gpt_model import FlaxGPTForLMModule
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.timer import timers
-from alpa.util import print_used_time, to_str_round, get_ray_namespace_str, GB
+from alpa.util import print_used_time, to_str_round, GB
 
 from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops
 
-
-as_option = global_config.default_autosharding_option
 
 
 def report_pipeline_breakdown(executable, timer_names, niter):
@@ -95,13 +96,14 @@ def create_train_state_aval(rngkey, model, batch, dtype):
     return state
 
 
-def get_train_step(auto_layer,
-                   num_manual_pipeline_stages=None,
-                   num_auto_layers=None,
-                   auto_remat_mode=None,
-                   num_auto_remat_layers=None):
+def get_train_step(parallel_method,
+                   auto_layer,
+                   num_manual_pipeline_stages,
+                   num_auto_layers,
+                   auto_remat_mode,
+                   num_auto_remat_layers):
 
-    @parallelize
+    @parallelize(method=parallel_method)
     def train_step(state, batch, rng_key):
 
         def loss_func(params):
@@ -154,42 +156,39 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     tie_word_embeddings = False
 
     # Connect to the cluster
-    device_cluster = DeviceCluster()
-    virtual_mesh = device_cluster.get_virtual_physical_mesh(
+    virtual_mesh = get_global_cluster().get_virtual_physical_mesh(
         host_ids=list(range(num_hosts)),
         num_devices_per_host=num_devices_per_host)
+    set_global_virtual_physical_mesh(virtual_mesh)
 
     # Parallel configs
     if parallel_mode == "search":
-        prefer_reduce_scatter, use_remat, num_auto_layers, overwrite_global_config_dict = parallel_args
+        prefer_reduce_scatter, use_remat, num_auto_layers, auto_stage_option = parallel_args
         auto_layer = True
         auto_remat_mode = "coarse_grained" if use_remat else None
         num_auto_remat_layers = None
         add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
-        set_parallelize_options(devices=virtual_mesh,
-                                strategy="pipeshard_parallel",
-                                pipeline_stage_mode="auto_stage",
-                                num_micro_batches=num_micro_batches)
-        global_config.update_with_dict(overwrite_global_config_dict)
+        method = PipeshardParallel(
+            stage_mode="auto",
+            num_micro_batches=num_micro_batches,
+            default_auto_sharding_option=AutoShardingOption(
+               prefer_reduce_scatter=prefer_reduce_scatter),
+            **auto_stage_option)
     elif parallel_mode == "load_solution":
-        (prefer_reduce_scatter, use_remat, num_auto_layers, forward_stage_layer_ids,
-         sub_physical_mesh_shapes, sub_logical_mesh_shapes,
-         submesh_autosharding_option_dicts) = parallel_args
+        prefer_reduce_scatter, use_remat, num_auto_layers, manual_stage_option = parallel_args
         auto_layer = True
         auto_remat_mode = "fine_grained" if use_remat else None
         num_auto_remat_layers = num_layers
         add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
-        set_parallelize_options(devices=virtual_mesh,
-                                strategy="pipeshard_parallel",
-                                pipeline_stage_mode="manual_stage",
-                                num_micro_batches=num_micro_batches,
-                                forward_stage_layer_ids=forward_stage_layer_ids,
-                                sub_physical_mesh_shapes=sub_physical_mesh_shapes,
-                                sub_logical_mesh_shapes=sub_logical_mesh_shapes,
-                                submesh_autosharding_option_dicts=submesh_autosharding_option_dicts)
+        method = ManualPipeshardParallel(
+            *manual_stage_option,
+            num_micro_batches=num_micro_batches,
+            default_auto_sharding_option=AutoShardingOption(
+                prefer_reduce_scatter=prefer_reduce_scatter))
     elif parallel_mode == "manual":
         (prefer_reduce_scatter, use_remat, (dp, op, pp),
             force_batch_dim_mapping) = parallel_args
+        as_option = AutoShardingOption(prefer_reduce_scatter=prefer_reduce_scatter)
         if force_batch_dim_mapping:
             as_option.force_batch_dim_to_mesh_dim = 0
         auto_layer = False
@@ -200,23 +199,23 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
         logical_mesh_shape = (dp, op)
         num_manual_pipeline_stages = pp
         num_mesh_devices = np.prod(logical_mesh_shape)
-        num_devices_per_host = 8
-        physical_mesh_shape = (
-            (num_mesh_devices + num_devices_per_host - 1) // num_devices_per_host,
-            num_mesh_devices % num_devices_per_host)
+        num_devices_per_host = virtual_mesh.num_devices_per_host
+        if num_mesh_devices <= num_devices_per_host:
+            physical_mesh_shape = (1, num_mesh_devices)
+        else:
+            assert num_mesh_devices % num_devices_per_host == 0
+            physical_mesh_shape = (num_mesh_devices // num_devices_per_host,
+                                   num_devices_per_host)
 
-        set_parallelize_options(devices=virtual_mesh,
-                                strategy="pipeshard_parallel",
-                                pipeline_stage_mode="manual_stage",
-                                num_micro_batches=num_micro_batches,
-                                forward_stage_layer_ids=[[i] for i in range(pp)],
-                                sub_physical_mesh_shapes=[physical_mesh_shape] * pp,
-                                sub_logical_mesh_shapes=[logical_mesh_shape] * pp,
-                                submesh_autosharding_option_dicts=[{}] * pp)
+        method = ManualPipeshardParallel(
+            num_micro_batches=num_micro_batches,
+            forward_stage_layer_ids=[[i] for i in range(pp)],
+            submesh_physical_shapes=[physical_mesh_shape] * pp,
+            submesh_logical_shapes=[logical_mesh_shape] * pp,
+            submesh_autosharding_option_dicts=[{}] * pp,
+            default_auto_sharding_option=as_option)
     else:
         raise ValueError(f"Invalid model: {parallel_mode}")
-
-    as_option.prefer_reduce_scatter = prefer_reduce_scatter
 
     # Prepare input batch
     batch = {
@@ -266,8 +265,9 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(auto_layer, num_manual_pipeline_stages, num_auto_layers,
-                                auto_remat_mode, num_auto_remat_layers)
+    train_step = get_train_step(method, auto_layer, num_manual_pipeline_stages,
+                                num_auto_layers, auto_remat_mode,
+                                num_auto_remat_layers)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 
@@ -297,7 +297,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
         executable.sync()
 
     latencies = executable.get_execution_time_costs(warmup=1)
-    max_mem_allocated = executable.get_max_memory_allocated()
+    max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
 
     # Benchmark latency with driver overhead
     if False:
@@ -324,6 +324,5 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
                                      np.mean(latencies), True)
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
     #report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], niter)
-    executable.shutdown()
     return (parameter_count, max_mem_allocated, latencies,
             tflops, tflops_ckpt, compilation_times) + get_last_dp_result()

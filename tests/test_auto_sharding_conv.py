@@ -10,12 +10,10 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-from alpa import parallelize, set_parallelize_options, LocalPhysicalDeviceMesh, global_config
+from alpa import parallelize, ShardParallel, LocalPhysicalDeviceMesh, AutoShardingOption
 from alpa.util import map_to_shape, count_communication_primitives
 
 from test_auto_sharding_mlp import assert_close, assert_all_replicated, is_sharded
-
-as_option = global_config.default_autosharding_option
 
 
 class TrainState(train_state.TrainState):
@@ -27,6 +25,7 @@ def assert_data_parallel_cost(state,
                               hlo_ir,
                               objective,
                               device_mesh,
+                              as_option,
                               mesh_dim,
                               allow_not_sharded_params=0):
     params = jax.tree_util.tree_leaves(state.params)
@@ -75,16 +74,11 @@ class AutoShardingConvTest(unittest.TestCase):
 
     def setUp(self):
         assert len(jax.local_devices()) >= 4
-        self.devices = jax.local_devices()[:4]
-
-        self.as_option_backup = as_option.backup()
-
-    def tearDown(self):
-        as_option.restore(self.as_option_backup)
+        self.physical_mesh = LocalPhysicalDeviceMesh(jax.local_devices()[:4])
+        self.as_option = AutoShardingOption()
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
-        device_mesh = LocalPhysicalDeviceMesh(devices=self.devices)
-        return device_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
+        return self.physical_mesh.get_logical_mesh(shape, mesh_alpha, mesh_beta)
 
     def run_n_layer_conv(self,
                          num_layers,
@@ -94,8 +88,6 @@ class AutoShardingConvTest(unittest.TestCase):
                          device_mesh,
                          use_bias=False,
                          is_depthwise=False):
-        set_parallelize_options(devices=device_mesh)
-
         if not is_depthwise:
 
             class Model(nn.Module):
@@ -144,7 +136,8 @@ class AutoShardingConvTest(unittest.TestCase):
             x = jnp.ones((batch_size, image_size, image_size, channel))
             y = jnp.ones((batch_size, image_size, image_size, channel))
 
-        @parallelize
+        @parallelize(method=ShardParallel(devices=device_mesh,
+                                          auto_sharding_option=self.as_option))
         def train_step(state, batch):
 
             def loss_func(params):
@@ -195,7 +188,8 @@ class AutoShardingConvTest(unittest.TestCase):
             state, hlo_ir, objective = self.run_n_layer_conv(
                 num_layers, batch_size, image_size, channel, device_mesh)
 
-            assert_data_parallel_cost(state, hlo_ir, objective, device_mesh, i)
+            assert_data_parallel_cost(state, hlo_ir, objective, device_mesh,
+                                      self.as_option, i)
 
     def test_n_layer_conv_model_parallel(self):
         batch_size = 8
@@ -221,7 +215,7 @@ class AutoShardingConvTest(unittest.TestCase):
         image_size = 32
         num_layers = 4
         channel = 8
-        as_option.allow_mixed_mesh_shape = False
+        self.as_option.allow_mixed_mesh_shape = False
 
         device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 0.1])
         state, hlo_ir, objective = self.run_n_layer_conv(
@@ -231,22 +225,22 @@ class AutoShardingConvTest(unittest.TestCase):
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all = (
             count_communication_primitives(hlo_ir,
                                            ignore_scalar_all_reduce=True))
-        if as_option.prefer_reduce_scatter:
+        if self.as_option.prefer_reduce_scatter:
             assert n_reduce_scatter > 0
-        if as_option.allow_mixed_mesh_shape:
+        if self.as_option.allow_mixed_mesh_shape:
             assert n_all_to_all > 0
 
     def test_n_layer_conv_2d_mesh_mixed_shape(self):
-        as_option.allow_mixed_mesh_shape = True
+        self.as_option.allow_mixed_mesh_shape = True
         self.test_n_layer_conv_2d_mesh()
 
     def test_n_layer_conv_data_parallel_reduce_scatter(self):
-        as_option.prefer_reduce_scatter = True
+        self.as_option.prefer_reduce_scatter = True
         self.test_n_layer_conv_data_parallel()
 
     def test_n_layer_conv_2d_mesh_mixed_shape_reduce_scatter(self):
-        as_option.allow_mixed_mesh_shape = True
-        as_option.prefer_reduce_scatter = True
+        self.as_option.allow_mixed_mesh_shape = True
+        self.as_option.prefer_reduce_scatter = True
         self.test_n_layer_conv_2d_mesh()
 
     def test_n_layer_depthwise_conv_model_parallel(self):

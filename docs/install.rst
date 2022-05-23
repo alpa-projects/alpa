@@ -9,16 +9,11 @@ Requirements
 
 Install from Source
 -------------------
-Alpa depends on its own fork of jax and tensorflow.
-To install alpa from source, we need to build these forks.
-
 1.  Clone repos
 
   .. code:: bash
   
-    git clone git@github.com:alpa-projects/alpa.git
-    git clone git@github.com:alpa-projects/jax-alpa.git
-    git clone git@github.com:alpa-projects/tensorflow-alpa.git
+    git clone --recursive git@github.com:alpa-projects/alpa.git
 
 2. Install dependencies
 
@@ -28,7 +23,7 @@ To install alpa from source, we need to build these forks.
 
       .. code:: bash
     
-        pip3 install cmake tqdm pybind11 numba numpy scipy pulp ray flax==0.4.1 tensorstore
+        pip3 install cmake tqdm pybind11 numba numpy pulp ray tensorstore flax==0.4.1 jax==0.3.5
         pip3 install cupy-cuda114  # use your own CUDA version. Here cuda-cuda114 means cuda 11.4.
 
   - NCCL:
@@ -54,27 +49,19 @@ To install alpa from source, we need to build these forks.
 
   .. code:: bash
   
-    cd jax-alpa
-    export TF_PATH=~/tensorflow-alpa  # update this with your path
-    python3 build/build.py --enable_cuda --dev_install --tf_path=$TF_PATH
+    cd alpa/build_jaxlib
+    python3 build/build.py --enable_cuda --dev_install --tf_path=$(pwd)/../third_party/tensorflow-alpa
     cd dist
     pip3 install -e .
 
-4. Install jax
-
-  .. code:: bash
-  
-    cd jax-alpa
-    pip3 install -e .
-
-5. Install Alpa
+4. Install Alpa
 
   .. code:: bash
   
     cd alpa
     pip3 install -e .
 
-6. Build XLA pipeline marker custom call
+5. Build XLA pipeline marker custom call
 
   .. code:: bash
 
@@ -86,7 +73,7 @@ To install alpa from source, we need to build these forks.
   All installations are in development mode, so you can modify python code and it will take effect immediately.
   To modify c++ code in tensorflow, you only need to run the command below from step 3 to recompile jaxlib::
 
-    python3 build/build.py --enable_cuda --dev_install --tf_path=$TF_PATH
+    python3 build/build.py --enable_cuda --dev_install --tf_path=$(pwd)/../third_party/tensorflow-alpa
 
 Check Installation
 ------------------

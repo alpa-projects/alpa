@@ -48,12 +48,16 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 # The listed files are sorted according to the list.
 # The unlisted files are sorted by filenames.
 # The unlisted files always appear after listed files.
+
+# Note: we need to execute files that use distributed runtime before
+# files that uses local runtime. Because all tutorials run on a single
+# process, using local runtime will allocate all GPU memory on the driver
+# script and leave no GPU memory for workers.
 within_subsection_order = {
     "tutorials": [
-        "getting_started.py",
         "pipeshard_parallelism.py",
+        "quickstart.py",
         "alpa_vs_pmap.py",
-        "advanced_api_usage.py",
     ],
 }
 
@@ -93,7 +97,7 @@ sphinx_gallery_conf = {
     'gallery_dirs': ['tutorials'],
     'within_subsection_order': WithinSubsectionOrder,
     'backreferences_dir': 'gen_modules/backreferences',
-    "filename_pattern": os.environ.get("ALPA_TUTORIAL_EXEC_PATTERN", r"(?<!pipeshard_parallelism).py"),
+    "filename_pattern": os.environ.get("ALPA_TUTORIAL_EXEC_PATTERN", r".py"),
 }
 
 # configuration for intersphinx: refer to the Python standard library.
@@ -105,6 +109,10 @@ intersphinx_mapping = {
 
 # -- Monkey patch -------------------------------------------------
 
-# Fix a bug in sphinx_gallery
+# Fix bugs in sphinx_gallery
+import io
 from sphinx_gallery import gen_rst
-setattr(gen_rst._LoggingTee, "close", lambda x:x.restore_std())
+setattr(gen_rst._LoggingTee, "close", lambda x: x.restore_std())
+def raise_io_error(*args):
+    raise io.UnsupportedOperation()
+setattr(gen_rst._LoggingTee, "fileno", raise_io_error)

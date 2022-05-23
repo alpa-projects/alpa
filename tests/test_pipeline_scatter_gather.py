@@ -1,29 +1,31 @@
 import unittest
 
-from alpa import DeviceCluster
+from alpa.device_mesh import (get_global_cluster,
+                              set_global_virtual_physical_mesh)
+from alpa.pipeline_parallel.stage_construction import ManualStageOption
 from alpa.testing import PipelineBasicTest
 
 
 class ScatterGatherTest(PipelineBasicTest):
 
     def test_2_layer_bert(self):
-        virtual_mesh = DeviceCluster().get_virtual_physical_mesh([0], 4)
+        virtual_mesh = get_global_cluster().get_virtual_physical_mesh([0], 4)
+        set_global_virtual_physical_mesh(virtual_mesh)
+
+        stage_option = ManualStageOption(
+            forward_stage_layer_ids=[[0], [1]],
+            submesh_physical_shapes=[(1, 2), (1, 2)],
+            submesh_logical_shapes=[(1, 2), (2, 1)],
+            submesh_autosharding_option_dicts=[
+                dict(force_batch_dim_to_mesh_dim=0), {}
+            ])
 
         self.run_n_layer_bert(n_layers=2,
                               batch_size=4,
                               seq_len=4,
                               hidden_size=4,
                               num_heads=1,
-                              pipeline_stage_mode="manual_stage",
-                              forward_stage_layer_ids=[[0], [1]],
-                              overwrite_global_config_dict=dict(
-                                  sub_physical_mesh_shapes=[(1, 2)] * 2,
-                                  sub_logical_mesh_shapes=[(1, 2), (2, 1)],
-                                  submesh_autosharding_option_dicts=[
-                                      dict(force_batch_dim_to_mesh_dim=0), {}
-                                  ],
-                                  use_scatter_gather=True),
-                              virtual_mesh=virtual_mesh)
+                              stage_option=stage_option)
 
 
 def suite():

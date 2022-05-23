@@ -11,6 +11,7 @@ import argparse
 import glob
 import multiprocessing
 import os
+import numpy as np
 import time
 from typing import Sequence
 import unittest
@@ -62,10 +63,21 @@ if __name__ == "__main__":
         type=float,
         default=0.2,
         help="The fraction of GPU memory used to run unit tests")
+    arg_parser.add_argument(
+        "--order",
+        type=str,
+        default="sorted",
+        choices=["sorted", "random", "reverse_sorted"])
     args = arg_parser.parse_args()
 
     files = glob.glob("*.py")
-    files.sort()
+    if args.order == "sorted":
+        files.sort()
+    elif args.order == "random":
+        files = [files[i] for i in np.random.permutation(len(files))]
+    elif args.order == "reverse_sorted":
+        files.sort()
+        files = reversed(files)
 
     tic = time.time()
     success = run_unittest_files(files, args)

@@ -76,7 +76,6 @@ def get_cuda_version_str(no_dot=False):
 
 install_require_list = [
     "tqdm",
-    "scipy",
     "ray[default]",
     "jax==0.3.5",
     "flax==0.4.1",

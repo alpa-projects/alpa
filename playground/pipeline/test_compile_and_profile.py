@@ -68,8 +68,6 @@ params = model.init(rngkey, x, attention_mask)
 optimizer = optim.GradientDescent(1e-2).create(params)
 batch = {"x": x, "y": y, "attention_mask": attention_mask}
 
-# global_config.num_micro_batches = 2
-
 origin_jaxpr = make_jaxpr(train_step, static_argnums=(2,))(optimizer, batch,
                                                            model.apply)
 

@@ -8,16 +8,15 @@ import numpy as np
 import optax
 
 import alpa
-from alpa import (parallelize, global_config, set_parallelize_options,
-                  DeviceCluster, automatic_layer_construction)
+from alpa import (parallelize, get_global_cluster,
+                  set_global_virtual_physical_mesh,
+                  ShardParallel, PipeshardParallel, ManualPipeshardParallel,
+                  AutoShardingOption, automatic_layer_construction)
 from alpa.model.wide_resnet import get_wide_resnet, TrainState
 from alpa.pipeline_parallel.layer_construction import automatic_remat
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.timer import timers
 from alpa.util import print_used_time, compute_param_number, to_str_round
-
-
-as_option = global_config.default_autosharding_option
 
 
 def compute_metrics(logits, labels):
@@ -76,9 +75,10 @@ def create_train_state(rngkey, model, input_images, learning_rate_fn):
     return state
 
 
-def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_auto_layers):
+def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_auto_layers,
+                   method):
 
-    @parallelize
+    @parallelize(method=method)
     def train_step(state, batch):
 
         def loss_fn(params):
@@ -102,7 +102,7 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_auto_layers):
             }
             return loss, (new_model_state, metrics)
 
-        if global_config.strategy == "shard_parallel" and use_remat:
+        if isinstance(method, ShardParallel) and use_remat:
             loss_fn = automatic_remat(loss_fn, layer_num=num_auto_layers)
         else:
             loss_fn = automatic_layer_construction(loss_fn,
@@ -161,40 +161,34 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
         raise ValueError(f"Invalid dtype: {dtype}")
 
     # Connect to the cluster
-    device_cluster = DeviceCluster()
-    host_ids = None if num_hosts == None else list(range(num_hosts))
-    virtual_mesh = device_cluster.get_virtual_physical_mesh(
-        host_ids=host_ids, num_devices_per_host=num_devices_per_host)
+    virtual_mesh = get_global_cluster().get_virtual_physical_mesh(
+        host_ids=list(range(num_hosts)),
+        num_devices_per_host=num_devices_per_host)
+    set_global_virtual_physical_mesh(virtual_mesh)
 
     # Parallel configs
+    allow_mixed_mesh_shape = True
     if parallel_mode == "search":
-        prefer_reduce_scatter, use_remat, overwrite_global_config_dict = parallel_args
-        set_parallelize_options(devices=virtual_mesh,
-                                strategy="pipeshard_parallel",
-                                pipeline_stage_mode="manual_stage",
-                                num_micro_batches=num_micro_batches)
-        global_config.update_with_dict(overwrite_global_config_dict)
+        prefer_reduce_scatter, use_remat, auto_stage_option = parallel_args
+        method = PipeshardParallel(
+            stage_mode="auto",
+            num_micro_batches=num_micro_batches,
+            default_auto_sharding_option=AutoShardingOption(
+               prefer_reduce_scatter=prefer_reduce_scatter,
+               allow_mixed_mesh_shape=allow_mixed_mesh_shape,
+            ),
+            **auto_stage_option)
     elif parallel_mode == "load_solution":
-        (prefer_reduce_scatter, use_remat, forward_stage_layer_ids,
-         sub_physical_mesh_shapes, sub_logical_mesh_shapes,
-         submesh_autosharding_option_dicts) = parallel_args
-
-        if len(forward_stage_layer_ids) > 1:
-            set_parallelize_options(devices=virtual_mesh,
-                                    strategy="pipeshard_parallel",
-                                    pipeline_stage_mode="manual_stage",
-                                    num_micro_batches=num_micro_batches,
-                                    forward_stage_layer_ids=forward_stage_layer_ids,
-                                    sub_physical_mesh_shapes=sub_physical_mesh_shapes,
-                                    sub_logical_mesh_shapes=sub_logical_mesh_shapes,
-                                    submesh_autosharding_option_dicts=submesh_autosharding_option_dicts)
-        else:
-            logical_mesh_shape = sub_logical_mesh_shapes[0]
-            physical_mesh = virtual_mesh.get_physical_mesh()
-            logical_mesh = physical_mesh.get_logical_mesh(logical_mesh_shape)
-            set_parallelize_options(devices=logical_mesh,
-                                    strategy="shard_parallel",
-                                    num_micro_batches=num_micro_batches)
+        prefer_reduce_scatter, use_remat, manual_stage_option = parallel_args
+        method = ManualPipeshardParallel(
+            *manual_stage_option,
+            num_micro_batches=num_micro_batches,
+            default_auto_sharding_option=AutoShardingOption(
+               prefer_reduce_scatter=prefer_reduce_scatter,
+               allow_mixed_mesh_shape=allow_mixed_mesh_shape,
+            ))
+    else:
+        raise ValueError(f"Invalid model: {parallel_mode}")
 
     if num_layers == 50:
         num_auto_layers = 16   # number of residual blocks
@@ -206,9 +200,6 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
     else:
         use_grad_acc = False
         num_micro_batches = None
-
-    as_option.prefer_reduce_scatter = prefer_reduce_scatter
-    as_option.allow_mixed_mesh_shape = True
 
     # Prepare input batch
     num_classes = 1024
@@ -226,8 +217,8 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
     learning_rate_fn = create_learning_rate_fn()
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, batch["images"], learning_rate_fn)
-    train_step = get_train_step(learning_rate_fn, use_grad_acc, use_remat,
-                                num_auto_layers)
+    train_step = get_train_step(learning_rate_fn, use_grad_acc,
+                                use_remat, num_auto_layers, method)
     print_used_time("Create train state")
     parameter_count = compute_param_number(state.params)
 
@@ -244,17 +235,16 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
         compilation_times = None
 
     # Dump hlo ir for debugging
-    if global_config.strategy == "pipeshard_parallel":
+    if isinstance(method, PipeshardParallel):
         stage_hlo_texts = executable.get_hlo_text()
         for i in range(len(stage_hlo_texts)):
             with open(f"tmp/stage_{i}.hlo", "w") as fout:
                 fout.write(stage_hlo_texts[i])
         with open(f"tmp/resharding_tasks.txt", "w") as fout:
             fout.write(executable.print_resharding_tasks())
-
-    elif global_config.strategy == "shard_parallel":
+    else:
         hlo_text = executable.get_hlo_text()
-        with open("tmp/last_2d.hlo", "w") as fout:
+        with open("tmp/last_2d_wresnet.hlo", "w") as fout:
             fout.write(hlo_text)
     executable.sync()
     print_used_time("Compile (workers)")
@@ -266,10 +256,10 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
         executable.sync()
 
     latencies = executable.get_execution_time_costs(warmup=2)
-    if global_config.strategy == "pipeshard_parallel":
-        max_mem_allocated = executable.get_max_memory_allocated()
-    elif global_config.strategy == "shard_parallel":
-        max_mem_allocated = physical_mesh.get_max_memory_allocated()
+    if isinstance(method, PipeshardParallel):
+        max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
+    else:
+        max_mem_allocated = executable.physical_mesh.get_max_memory_allocated()
     print_used_time("Benchmark")
 
     # Profile submesh executables
@@ -284,10 +274,6 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
     # Compute statistics
     num_gpus = virtual_mesh.num_devices
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
-    if global_config.strategy == "pipeshard_parallel":
-        executable.shutdown()
-    elif global_config.strategy == "shard_parallel":
-        physical_mesh.shutdown()
 
     return (parameter_count, max_mem_allocated, latencies,
             tflops, tflops, compilation_times) + get_last_dp_result()

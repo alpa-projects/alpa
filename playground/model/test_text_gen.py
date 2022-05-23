@@ -9,8 +9,8 @@ import torch
 from transformers import GPT2Tokenizer, OPTForCausalLM, GPT2LMHeadModel
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
 
-
-from playground.model.opt_model import get_pipeshard_executable, get_config, build_init_cache
+from opt_model import (get_config, get_pipeshard_executable, load_params_dis_array,
+                       init_cache_dis_array)
 
 
 @dataclass
@@ -121,23 +121,22 @@ def get_model(model_name):
 
     elif "alpa/opt" in model_name:
         name = model_name.split("-")[1].upper()
-        config = get_config(name, num_pp_stages=4)
-        # ckpt_dir = os.path.abspath(f"{name}_ts_weights")
-        ckpt_dir = "/home/ubuntu/parax-efs/pycharm/opt/alpa_weights/125M/125M_ts_weights"
+        config = get_config(name, num_pp_stages=2)
+        path = f"/home/ubuntu/opt_weights/{name}_np"
 
         alpa.init()
-        executable, _ = get_pipeshard_executable(config)
-        params_info, _ = executable.get_load_info()
-        params = alpa.restore_checkpoint(ckpt_dir, 1, params_info, params_info)
+        dummy = False
+        executable, params_aval = get_pipeshard_executable(config)
+        params = load_params_dis_array(path, executable, params_aval, config, dummy=dummy)
+        init_cache = init_cache_dis_array(executable, config, dummy=dummy)
 
         step_ct = 0
 
         def inference_func(input_ids, past_key_values):
             nonlocal step_ct
 
-            assert input_ids.shape[1] == 1, f"{input_ids.shape}"
             if past_key_values is None:
-                past_key_values = build_init_cache(config)
+                past_key_values = init_cache
                 step_ct = 0
 
             input_ids_step = input_ids.numpy()
@@ -157,20 +156,20 @@ def get_model(model_name):
     return WrappedInferenceFunc(inference_func, inference_func_config)
 
 
-model_name = "alpa/opt-125m"
-# "alpa/opt-125m"
-# "facebook/opt-125m"
-# "gpt2"
+tokenizer = GPT2Tokenizer.from_pretrained("facebook/opt-125m")
+model = get_model("alpa/opt-125M")
 
-torch.manual_seed(8)
-prompt = "Computer science is the study of computation and"
+prompts = [
+    "Computer science is the study of computation and",
+    "Ion Stoica is a Romanian-American computer scientist specializing in",
+    "The University of California, Berkeley is a public",
+]
 
-tokenizer = GPT2Tokenizer.from_pretrained(model_name.replace("alpa", "facebook"))
-model = get_model(model_name)
-
-input_ids = tokenizer(prompt, return_tensors="pt").input_ids
-generated_ids = model.generate(input_ids=input_ids, max_length=20, do_sample=True)
-generated_string = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-
-print(input_ids)
-print(generated_string)
+for prompt in prompts:
+    tic = time.time()
+    torch.manual_seed(8)
+    input_ids = tokenizer(prompt, return_tensors="pt").input_ids
+    generated_ids = model.generate(input_ids=input_ids, max_length=20, do_sample=True)
+    generated_string = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+    duration = time.time() - tic
+    print(f"{generated_string}, speed: {len(generated_ids)/duration:.2f} token/s")

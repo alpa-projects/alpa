@@ -43,6 +43,7 @@ import cupy
 from cupy.cuda import nccl
 import ray
 import tensorstore as ts
+from tqdm import tqdm
 
 from alpa import mesh_profiling
 import alpa.collective as col
@@ -284,9 +285,6 @@ class MeshHostWorker:
         else:
             dtype = np.dtype(dtype).str
         metadata = {
-            'compressor': {
-                'id': 'gzip'
-            },
             'shape': global_shape,
             'chunks': self.buffers[uuids[0]].shape,
             'dtype': dtype,
@@ -1180,15 +1178,19 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             slow_path = False
 
             if is_batch_var:
-                slow_path = True
-                if not isinstance(arg, ShapedArray):
-                    arg = np.asarray(arg)
-                bufs = _shard_array(arg, self, indices, num_micro_batches)
-                bufs = np.array(bufs).reshape(self.num_hosts, self.num_devices_per_host,
-                                              num_micro_batches)
-                bufs = bufs.transpose([2, 0, 1]).reshape(
-                    (num_micro_batches, self.num_hosts * self.num_devices_per_host))
-                ret_bufs.append(bufs)
+                if isinstance(arg, DistributedArray):
+                    assert num_micro_batches == 1
+                    ret_bufs.append([arg.remote_buffers])
+                else:
+                    slow_path = True
+                    if not isinstance(arg, ShapedArray):
+                        arg = np.asarray(arg)
+                    bufs = _shard_array(arg, self, indices, num_micro_batches)
+                    bufs = np.array(bufs).reshape(self.num_hosts, self.num_devices_per_host,
+                                                  num_micro_batches)
+                    bufs = bufs.transpose([2, 0, 1]).reshape(
+                        (num_micro_batches, self.num_hosts * self.num_devices_per_host))
+                    ret_bufs.append(bufs)
             else:
                 if isinstance(arg, DistributedArray) and arg.indices == indices:
                     # Fast path for DistributedArray
@@ -1415,7 +1417,6 @@ class DistributedArray:
                     device_mesh.workers[host_id].load_buffers_from_ts.remote(
                         path, uuids, indices_per_host[host_id],
                         device_ids_per_host[host_id]))
-        ray.get(obj_refs)
         return DistributedArray(device_mesh, aval, sharding_spec, buf_refs,
                                 indices)
 
@@ -1768,6 +1769,24 @@ class PhysicalDeviceMeshGroup:
             cg.instantiate()
         self.collective_groups[src_mesh_id][dst_mesh_id] = cg
         self.collective_groups[dst_mesh_id][src_mesh_id] = cg
+
+    def shard_args_to_arrays(self, load_infos, args):
+        rets = []
+
+        for info, arg in tqdm(zip(load_infos, args)):
+            if info.is_replicated():
+                meshes, arrays = [], []
+                for aval, mesh, spec in info.get_info():
+                    meshes.append(mesh)
+                    indices = pxla.spec_to_indices(aval.shape, spec)
+                    arrays.append(mesh.shard_args_to_arrays((aval,), (indices,), (spec,), (arg,))[0])
+                rets.append(ReplicatedDistributedArray(meshes, arrays))
+            else:
+                aval, mesh, spec = info.get_info()
+                indices = pxla.spec_to_indices(aval.shape, spec)
+                rets.append(mesh.shard_args_to_arrays((aval,), (indices,), (spec,), (arg,))[0])
+
+        return rets
 
     def sync_workers(self):
         """Sync device activities on all workers."""

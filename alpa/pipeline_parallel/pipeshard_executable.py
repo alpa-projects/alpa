@@ -591,7 +591,7 @@ class PipeshardDriverExecutable:
             mesh_arg_lists[mesh_idx] = mesh_arg_list
 
             self.donate_invars.append(
-                [var in donated_invar_set or var in global_batch_invar_set
+                [var in donated_invar_set #or var in global_batch_invar_set
                  for var, batch_idx in mesh_arg_list])
 
             tmp_mesh_arg_indices = []

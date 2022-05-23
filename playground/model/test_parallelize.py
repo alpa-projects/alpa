@@ -8,14 +8,14 @@ import numpy as np
 from alpa.testing import assert_allclose
 import alpa
 
-from opt_model import (OPTConfig, OPTForLMModule, get_config,
-                       init_model_aval, inference_step_no_cache,
+from opt_model import (get_config, init_model_aval, inference_step_no_cache,
                        build_init_cache, build_position_ids, load_np_params)
+
 
 def test_opt_125M_shard_parallel():
     name = "125M"
     config = get_config(name)
-    numpy_weights_folder = os.path.abspath(f"./{name}_numpy_weights")
+    np_weights_folder = f"/home/ubuntu/opt_weights/{name}_np"
 
     # Init model
     input_ids = jnp.array([[5625,   16,   10, 2721,  183,    8,   38,  236,    7]], dtype=jnp.int32)
@@ -23,7 +23,7 @@ def test_opt_125M_shard_parallel():
     print("input_ids", input_ids)
 
     model, params = init_model_aval(config)
-    params = load_np_params(params, numpy_weights_folder, config)
+    params = load_np_params(params, np_weights_folder, config)
 
     # Get expected results
     logits_no_cache = inference_step_no_cache(params, {
@@ -68,7 +68,7 @@ def test_opt_125M_shard_parallel():
 def test_opt_125M_pipeshard_parallel():
     name = "125M"
     config = get_config(name, num_pp_stages=2)
-    numpy_weights_folder = os.path.abspath(f"./{name}_numpy_weights")
+    np_weights_folder = f"/home/ubuntu/opt_weights/{name}_np"
 
     alpa.init()
 
@@ -78,7 +78,7 @@ def test_opt_125M_pipeshard_parallel():
     print("input_ids", input_ids)
 
     model, params = init_model_aval(config)
-    params = load_np_params(params, numpy_weights_folder, config)
+    params = load_np_params(params, np_weights_folder, config)
 
     # Get expected results
     logits_no_cache = inference_step_no_cache(params, {

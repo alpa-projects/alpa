@@ -111,6 +111,7 @@ def get_ts_spec(ckpt_path: str):
         spec['kvstore'] = {'driver': 'file', 'path': ckpt_path}
     return spec
 
+futures = []
 
 def ts_store(ckpt_dir, data: Union[np.ndarray, jax.xla.DeviceArray]):
     ts_spec = get_ts_spec(ckpt_dir)
@@ -121,9 +122,6 @@ def ts_store(ckpt_dir, data: Union[np.ndarray, jax.xla.DeviceArray]):
     else:
         dtype = np.dtype(dtype).str
     metadata = {
-        'compressor': {
-            'id': 'gzip'
-        },
         'shape': data.shape,
         'chunks': data.shape,
         'dtype': dtype,
@@ -135,8 +133,7 @@ def ts_store(ckpt_dir, data: Union[np.ndarray, jax.xla.DeviceArray]):
                 context=ts.Context({'file_io_concurrency': {
                     'limit': 128
                 }})).result()
-
-    t.write(data).result()
+    futures.append(t.write(data))
 
 
 def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
@@ -157,11 +154,18 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
     state_dict = to_state_dict(target)
     os.makedirs(ckpt_dir, exist_ok=True)
     ckpt_path = os.path.join(ckpt_dir, f"checkpoint_{step}")
+
+    global futures
+    futures = []
+
     with open(ckpt_path, 'wb') as fp:
         fp.write(
             msgpack.packb(state_dict,
                           default=_msgpack_ext_pack_wrapper(ckpt_dir),
                           strict_types=True))
+
+    for x in futures:
+        x.result()
 
 
 class LoadInfo:

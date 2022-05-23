@@ -47,6 +47,7 @@ def test_load(name):
         flat_args, in_tree = tree_flatten(params)
         flat_info = tree_leaves(params_info)
         params = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
+        alpa.global_config.use_dummy_value_for_benchmarking = False
     executable.sync()
     duration = time.time() - tic
     num_bytes = compute_bytes(params)
@@ -60,6 +61,7 @@ def test_load(name):
     flat_args, in_tree = tree_flatten(cache)
     flat_info = tree_leaves(cache_info)
     cache = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
+    executable.sync()
     duration = time.time() - tic
     num_bytes = compute_bytes(cache)
     print(f"Duration: {duration:.2f}, Bandwidth: {num_bytes / duration / GB:.2f} GB/s")

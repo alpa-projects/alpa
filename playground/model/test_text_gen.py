@@ -122,21 +122,21 @@ def get_model(model_name):
 
     elif "alpa/opt" in model_name:
         name = model_name.split("-")[1].upper()
-        config = get_config(name, num_pp_stages=4)
-        path = f"/home/ubuntu/opt_weights/{name}_ts"
+        config = get_config(name, num_pp_stages=2)
+        path = f"/home/ubuntu/opt_weights/{name}_np"
 
         alpa.init()
         executable, params_aval = get_pipeshard_executable(config)
         params = load_distributed_params(path, executable, params_aval, config)
+        init_cache = build_init_cache(config)
 
         step_ct = 0
 
         def inference_func(input_ids, past_key_values):
             nonlocal step_ct
 
-            assert input_ids.shape[1] == 1, f"{input_ids.shape}"
             if past_key_values is None:
-                past_key_values = build_init_cache(config)
+                past_key_values = init_cache
                 step_ct = 0
 
             input_ids_step = input_ids.numpy()
@@ -161,15 +161,20 @@ model_name = "alpa/opt-125m"
 # "facebook/opt-125m"
 # "gpt2"
 
-torch.manual_seed(8)
-prompt = "Computer science is the study of computation and"
-
 tokenizer = GPT2Tokenizer.from_pretrained(model_name.replace("alpa", "facebook"))
 model = get_model(model_name)
 
-input_ids = tokenizer(prompt, return_tensors="pt").input_ids
-generated_ids = model.generate(input_ids=input_ids, max_length=20, do_sample=True)
-generated_string = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+prompts = [
+    "Computer science is the study of computation and",
+    "Ion Stoica is a Romanian-American computer scientist specializing in",
+    "The University of California, Berkeley is a public",
+]
 
-print(input_ids)
-print(generated_string)
+for prompt in prompts:
+    tic = time.time()
+    torch.manual_seed(8)
+    input_ids = tokenizer(prompt, return_tensors="pt").input_ids
+    generated_ids = model.generate(input_ids=input_ids, max_length=20, do_sample=True)
+    generated_string = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+    duration = time.time() - tic
+    print(f"{generated_string}, speed: {len(generated_ids)/duration:.2f} token/s")

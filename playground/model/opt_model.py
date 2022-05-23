@@ -376,8 +376,11 @@ class OPTForLMModule(nn.Module):
     bias_init: Callable[..., jnp.ndarray] = jax.nn.initializers.zeros
 
     def setup(self):
+        assert self.config.decoder_normalize_before
         self.transformers = OPTTransformerModule(config=self.config,
                                                  dtype=self.dtype)
+        self.layer_norm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
+                                       dtype=self.dtype)
 
         self.project_out_dim = nn.Dense(
             self.config.decoder_input_dim,
@@ -411,6 +414,8 @@ class OPTForLMModule(nn.Module):
         )
 
         hidden_states = outputs[0]
+
+        hidden_states = self.layer_norm(hidden_states)
 
         if self.project_out_dim is not None:
             hidden_states = self.project_out_dim(hidden_states)
@@ -559,6 +564,10 @@ def load_np_params(params, path, config):
                load_array("decoder.embed_tokens.weight"))
     load_param("params.transformers.embeddings.position_embeddings.embedding",
                load_array("decoder.embed_positions.weight"))
+    load_param("params.transformers.layer_norm.scale",
+               load_array("decoder.layer_norm.bias"))
+    load_param("params.transformers.layer_norm.scale",
+               load_array("decoder.layer_norm.weight"))
     for i in range(config.decoder_layers):
         param_prefix = f"params.transformers.encoder.{i}."
         load_prefix = f"decoder.layers.{i}."

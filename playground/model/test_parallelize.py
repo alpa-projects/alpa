@@ -13,35 +13,36 @@ from opt_model import (OPTConfig, OPTForLMModule, get_config,
                        build_init_cache, build_position_ids, load_np_params)
 
 def test_opt_125M_shard_parallel():
-    #TODO: align dtype
-    config = get_config("125M")
-    numpy_weights_folder = "./numpy_weights"
+    name = "125M"
+    config = get_config(name)
+    numpy_weights_folder = os.path.abspath(f"./{name}_numpy_weights")
 
-    # Init model and optimizer
+    # Init model
     input_ids = jnp.array([[5625,   16,   10, 2721,  183,    8,   38,  236,    7]], dtype=jnp.int32)
     position_ids = build_position_ids(input_ids, config.pad)
     print("input_ids", input_ids)
 
     model, params = init_model_aval(config)
-    params = load_params(params.unfreeze(), numpy_weights_folder, num_layers=config.decoder_layers)
+    params = load_np_params(params, numpy_weights_folder, config)
 
     # Get expected results
     logits_no_cache = inference_step_no_cache(params, {
         "input_ids": input_ids,
         "position_ids": position_ids,
     }, model.apply)
+    print("logits_no_cache", logits_no_cache)
 
     # Parallelize
     method = alpa.ShardParallel(
         devices=jax.local_devices()[:4],
         auto_sharding_option=alpa.AutoShardingOption())
 
-    @alpa.parallelize(static_argnums=(2,), batch_argnums=(), method=method)
-    def inference_step_with_cache(params, batch, apply_func):
-        output = apply_func(params,
-                            batch["input_ids"],
-                            batch["position_ids"],
-                            attention_cache=batch["cache"])
+    @alpa.parallelize(method=method)
+    def inference_step_with_cache(params, batch):
+        output = model.apply(params,
+                             batch["input_ids"],
+                             batch["position_ids"],
+                             attention_cache=batch["cache"])
         return output.logits, output.attention_cache
 
     cache = build_init_cache(config)
@@ -53,7 +54,7 @@ def test_opt_125M_shard_parallel():
             "input_ids": input_ids_step,
             "position_ids": position_ids_step,
             "cache": cache,
-        }, model.apply)
+        })
         assert_allclose(logits_step, logits_no_cache[:, i:i+1])
 
     # Dump IR
@@ -65,11 +66,10 @@ def test_opt_125M_shard_parallel():
 
 
 def test_opt_125M_pipeshard_parallel():
-    #TODO: align dtype
-    config = get_config("125M")
-    config = dataclasses.replace(config, num_pp_stages=2)
-    numpy_weights_folder = "./numpy_weights"
-    
+    name = "125M"
+    config = get_config(name, num_pp_stages=2)
+    numpy_weights_folder = os.path.abspath(f"./{name}_numpy_weights")
+
     alpa.init()
 
     # Init model and optimizer
@@ -78,29 +78,28 @@ def test_opt_125M_pipeshard_parallel():
     print("input_ids", input_ids)
 
     model, params = init_model_aval(config)
-    params = load_np_params(params.unfreeze(), numpy_weights_folder, num_layers=config.decoder_layers)
+    params = load_np_params(params, numpy_weights_folder, config)
 
     # Get expected results
     logits_no_cache = inference_step_no_cache(params, {
         "input_ids": input_ids,
         "position_ids": position_ids,
     }, model.apply)
-
     print("logits_no_cache", logits_no_cache)
 
     # Parallelize
     method = alpa.PipeshardParallel(num_micro_batches=1,
                                     pipeline_schedule="inference")
 
-    @alpa.parallelize(static_argnums=(3,), batch_argnums=(1,), method=method)
-    def inference_step_with_cache(params, batch, cache, apply_func):
+    @alpa.parallelize(method=method)
+    def inference_step_with_cache(params, batch):
         @alpa.manual_layer_construction
         def forward(params, cache):
             alpa.mark_pipeline(name="0", mark_type="start")
-            output = apply_func(params,
-                                batch["input_ids"],
-                                batch["position_ids"],
-                                attention_cache=cache)
+            output = model.apply(params,
+                                 batch["input_ids"],
+                                 batch["position_ids"],
+                                 attention_cache=batch["cache"])
             alpa.mark_pipeline(name=f"{config.num_pp_stages - 1}", mark_type="end")
             return output
 
@@ -115,7 +114,8 @@ def test_opt_125M_pipeshard_parallel():
         logits_step, cache = inference_step_with_cache(params, {
             "input_ids": input_ids_step,
             "position_ids": position_ids_step,
-        }, cache, model.apply)
+            "cache": cache,
+        })
         assert_allclose(logits_step, logits_no_cache[:, i:i+1])
 
     # Dump IR

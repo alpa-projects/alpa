@@ -1,9 +1,11 @@
+import dataclasses
 from dataclasses import dataclass
 from functools import partial
 import math
 import os
 from typing import Callable, Optional, Tuple, Dict
 
+import alpa
 from alpa import mark_pipeline
 from alpa.model.model_util import ModelOutput
 import flax.linen as nn
@@ -342,8 +344,8 @@ class OPTSelfAttention(nn.Module):
                 (query_states.shape[1], key_states.shape[1]), -1e10), 1), (0, 1))
         else:
             cache_key, cache_value, cache_index = attention_cache
-            key_states = lax.dynamic_update_slice(cache_key, key_states, (0, cache_index, 0, 0))
-            value_states = lax.dynamic_update_slice(cache_value, value_states, (0, cache_index, 0, 0))
+            key_states = lax.dynamic_update_slice(cache_key, key_states, (0, cache_index[0], 0, 0))
+            value_states = lax.dynamic_update_slice(cache_value, value_states, (0, cache_index[0], 0, 0))
             num_updated_cache_vectors = query_states.shape[1]
             max_length = key_states.shape[1]
             attention_bias = (jnp.arange(max_length) >= cache_index + num_updated_cache_vectors).astype(self.dtype) * -1e10
@@ -489,10 +491,10 @@ class OPTTransformerLayerCollection(nn.Module):
 
         for i, layer in enumerate(self.layers):
             if self.config.num_pp_stages is not None:
-                if i % layers_per_stage == layers_per_stage - 1 and i != len(self.layers) - 1:
+                if i % layers_per_stage == 0 and i != 0:
                     stage_id = i // layers_per_stage
-                    mark_pipeline(name=str(stage_id), mark_type="end")
-                    mark_pipeline(name=str(stage_id + 1), mark_type="start")
+                    mark_pipeline(name=str(stage_id - 1), mark_type="end")
+                    mark_pipeline(name=str(stage_id), mark_type="start")
 
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -631,7 +633,7 @@ class OPTForLMModule(nn.Module):
         )
 
 
-def get_config(name):
+def get_config(name, **kwargs):
     if name == "125M":
         config = OPTConfig()
     elif name == "30B":
@@ -641,7 +643,7 @@ def get_config(name):
     else:
         raise ValueError()
 
-    return config
+    return dataclasses.replace(config, **kwargs)
 
 
 def init_model_aval(config):
@@ -657,11 +659,24 @@ def init_model_aval(config):
     return model, params
 
 
-def inference_step_no_cache(params, batch, apply_func):
-    logits = apply_func(params,
-                        batch["input_ids"],
-                        batch["position_ids"])[0]
-    return logits
+def build_init_cache_aval(config):
+    batch_size = config.batch_size
+    dtype = jnp.float32
+    head_dim = config.decoder_embed_dim // config.decoder_attention_heads
+
+    all_cache = []
+    for i in range(config.decoder_layers):
+        layer_cache = (
+            jax.core.ShapedArray((batch_size, config.max_target_positions,
+                                  config.decoder_attention_heads, head_dim),
+                                  dtype),
+            jax.core.ShapedArray((batch_size, config.max_target_positions,
+                                  config.decoder_attention_heads, head_dim),
+                                  dtype),
+            jax.core.ShapedArray((batch_size,), jnp.int32),
+        )
+        all_cache.append(layer_cache)
+    return tuple(all_cache)
 
 
 def build_init_cache(config):
@@ -678,7 +693,7 @@ def build_init_cache(config):
             jnp.zeros((batch_size, config.max_target_positions,
                        config.decoder_attention_heads, head_dim),
                        dtype=dtype),
-            jnp.full((), 0, jnp.int32),
+            jnp.full((batch_size,), 0, jnp.int32),
         )
         all_cache.append(layer_cache)
     return tuple(all_cache)
@@ -690,7 +705,14 @@ def build_position_ids(input_ids, padding_idx):
     return position_ids
 
 
-def load_np_params(params, path, num_layers):
+def inference_step_no_cache(params, batch, apply_func):
+    logits = apply_func(params,
+                        batch["input_ids"],
+                        batch["position_ids"])[0]
+    return logits
+
+
+def load_np_params(params, path, config):
     def load_array(key):
         return np.load(os.path.join(path, key))
 
@@ -704,11 +726,13 @@ def load_np_params(params, path, num_layers):
                 param_dict[key] = loaded_array
             else:
                 param_dict = param_dict[key]
+
+    params = params.unfreeze()
     load_param("params.transformers.embeddings.word_embeddings.embedding",
                load_array("decoder.embed_tokens.weight"))
     load_param("params.transformers.embeddings.position_embeddings.embedding",
                load_array("decoder.embed_positions.weight"))
-    for i in range(num_layers):
+    for i in range(config.decoder_layers):
         param_prefix = f"params.transformers.encoder.{i}."
         load_prefix = f"decoder.layers.{i}."
         # Attention weights
@@ -744,6 +768,37 @@ def load_np_params(params, path, num_layers):
                    load_array(load_prefix + "final_layer_norm.weight"))
         load_param(param_prefix + "ffn.layer_norm.bias",
                    load_array(load_prefix + "final_layer_norm.bias"))
-    return params
+
+    return flax.core.freeze(params)
 
 
+def get_pipeshard_executable(config):
+    # Init model
+    model, params = init_model_aval(config)
+
+    # Parallelize
+    method = alpa.PipeshardParallel(num_micro_batches=1,
+                                    pipeline_schedule="inference")
+
+    @alpa.parallelize(batch_argnums=(1,), method=method)
+    def inference_step_with_cache(params, batch):
+        @alpa.manual_layer_construction
+        def forward(params):
+            alpa.mark_pipeline(name="0", mark_type="start")
+            output = model.apply(params,
+                                 batch["input_ids"],
+                                 batch["position_ids"],
+                                 attention_cache=batch["cache"])
+            alpa.mark_pipeline(name=f"{config.num_pp_stages - 1}", mark_type="end")
+            return output
+
+        output = forward(params)
+        return output.logits, output.attention_cache
+
+    executable = inference_step_with_cache.get_executable(params, {
+        "input_ids": jax.core.ShapedArray((1, 1), jnp.int32),
+        "position_ids": jax.core.ShapedArray((1, 1), jnp.int32),
+        "cache": build_init_cache_aval(config),
+    })
+
+    return executable, params

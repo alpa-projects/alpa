@@ -990,6 +990,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.num_hosts = len(host_ids)
         self.num_devices_per_host = num_devices_per_host
         self.parent = parent
+        self.mesh_id = None
         self.workers = None
         self.launched = False
         self.service_server = None
@@ -1715,6 +1716,7 @@ class VirtualPhysicalMesh:
 
         def launch_func(i):
             physical_meshes[i] = sliced_virtual_meshes[i].get_physical_mesh()
+            physical_meshes[i].mesh_id = i
 
         threads = []
         for i in range(len(sliced_virtual_meshes)):

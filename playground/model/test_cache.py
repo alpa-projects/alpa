@@ -21,8 +21,9 @@ def print_params(params, prefix=""):
 
 def test_opt_125M():
     #TODO: align dtype
-    config = get_config("125M")
-    numpy_weights_folder = "./numpy_weights"
+    name = "125M"
+    config = get_config(name)
+    numpy_weights_folder = os.path.abspath(f"./{name}_numpy_weights")
 
     # Init model
     input_ids = jnp.array([[5625,   16,   10, 2721,  183,    8,   38,  236,    7]], dtype=jnp.int32)
@@ -30,24 +31,23 @@ def test_opt_125M():
     print("input_ids", input_ids)
 
     model, params = init_model_aval(config)
-    params = load_np_params(params.unfreeze(), numpy_weights_folder, num_layers=config.decoder_layers)
+    params = load_np_params(params, numpy_weights_folder, config)
 
     # Get expected results
     logits_no_cache = inference_step_no_cache(params, {
         "input_ids": input_ids,
         "position_ids": position_ids,
     }, model.apply)
-
     print("logits_no_cache", logits_no_cache)
 
     # JIT
-    @partial(jax.jit, static_argnums=(2,))
-    def inference_step_with_cache(params, batch, apply_func):
+    @partial(jax.jit)
+    def inference_step_with_cache(params, batch):
         print("traced")
-        output = apply_func(params,
-                            batch["input_ids"],
-                            batch["position_ids"],
-                            attention_cache=batch["cache"])
+        output = model.apply(params,
+                             batch["input_ids"],
+                             batch["position_ids"],
+                             attention_cache=batch["cache"])
         return output.logits, output.attention_cache
 
     cache = build_init_cache(config)
@@ -58,8 +58,8 @@ def test_opt_125M():
         logits_step, cache = inference_step_with_cache(params, {
             "input_ids": input_ids_step,
             "position_ids": position_ids_step,
-            "cache": cache,
-        }, model.apply)
+            "cache": cache
+        })
         assert_allclose(logits_step, logits_no_cache[:, i:i+1])
 
 

@@ -60,6 +60,7 @@ class OPTConfig:
     decoder_normalize_before: bool = True
     share_decoder_input_output_embed: bool = True
     # Added
+    version: int = 1
     vocab_size: int = 50272
     layer_norm_eps: float = 0.00001
     num_pp_stages: int = None
@@ -360,7 +361,8 @@ class OPTTransformerModule(nn.Module):
             attention_cache=attention_cache,
         )
         hidden_states = outputs[0]
-        hidden_states = self.layer_norm(hidden_states)
+        if self.config.version > 2:
+            hidden_states = self.layer_norm(hidden_states)
 
         if not return_dict:
             # if pooled is None, don't return it
@@ -461,6 +463,7 @@ def get_config(name, **kwargs):
             decoder_attention_heads=56,
             decoder_input_dim=7168,
             decoder_ffn_embed_dim=28672,
+            version=3,
         )
     elif name == "175B":
         config = OPTConfig(
@@ -470,6 +473,7 @@ def get_config(name, **kwargs):
             decoder_attention_heads=96,
             decoder_input_dim=12288,
             decoder_ffn_embed_dim=49152,
+            version=3,
         )
     else:
         raise ValueError()

@@ -50,14 +50,15 @@ class OPTConfig:
     decoder_attention_heads: int = 12
     decoder_input_dim: int = 768
     decoder_ffn_embed_dim: int = 3072
+    batch_size: int = 1
     pad: int = 1
     activation_fn: str = 'relu'
+    fp16: bool = True
     use_stable_embedding: bool = False
     no_scale_embedding: bool = True
     decoder_learned_pos: bool = True
     decoder_normalize_before: bool = True
     share_decoder_input_output_embed: bool = True
-    batch_size: int = 1
     # Added
     vocab_size: int = 50272
     layer_norm_eps: float = 0.00001

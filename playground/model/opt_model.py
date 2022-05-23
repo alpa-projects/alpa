@@ -335,8 +335,11 @@ class OPTTransformerModule(nn.Module):
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
+        assert self.config.decoder_normalize_before
         self.embeddings = OPTEmbeddings(self.config, dtype=self.dtype)
         self.encoder = OPTTransformerLayerCollection(self.config, dtype=self.dtype)
+        self.layer_norm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
+                                       dtype=self.dtype)
 
     def __call__(
         self,
@@ -357,6 +360,7 @@ class OPTTransformerModule(nn.Module):
             attention_cache=attention_cache,
         )
         hidden_states = outputs[0]
+        hidden_states = self.layer_norm(hidden_states)
 
         if not return_dict:
             # if pooled is None, don't return it
@@ -376,11 +380,8 @@ class OPTForLMModule(nn.Module):
     bias_init: Callable[..., jnp.ndarray] = jax.nn.initializers.zeros
 
     def setup(self):
-        assert self.config.decoder_normalize_before
         self.transformers = OPTTransformerModule(config=self.config,
                                                  dtype=self.dtype)
-        self.layer_norm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
-                                       dtype=self.dtype)
 
         self.project_out_dim = nn.Dense(
             self.config.decoder_input_dim,
@@ -414,8 +415,6 @@ class OPTForLMModule(nn.Module):
         )
 
         hidden_states = outputs[0]
-
-        hidden_states = self.layer_norm(hidden_states)
 
         if self.project_out_dim is not None:
             hidden_states = self.project_out_dim(hidden_states)

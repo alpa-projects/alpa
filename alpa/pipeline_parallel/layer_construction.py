@@ -11,7 +11,7 @@ from jax._src.tree_util import tree_unflatten
 from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun,
                       new_jaxpr_eqn, gensym)
 from jax.interpreters.partial_eval import remat_call_p
-import numba
+# import numba
 
 from alpa.pipeline_parallel.layer_stats import (global_invar_size,
                                                 is_nontrivial, eqn_flops,

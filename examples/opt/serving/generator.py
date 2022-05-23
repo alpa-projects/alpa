@@ -1,7 +1,9 @@
+import numpy as np
+import os
 import time
 import logging
 
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Sequence
 import torch
 from torch import Tensor
 
@@ -10,8 +12,42 @@ from metaseq import checkpoint_utils, tasks
 from examples.opt.serving import utils
 from transformers import GPT2Tokenizer, OPTForCausalLM, GPT2LMHeadModel
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
+from playground.model.opt_model import get_pipeshard_executable, get_config, build_init_cache
 
 logger = logging.getLogger(__name__)
+
+@dataclass
+class InferenceFuncConfig:
+    """Implements a minimal config class for using huggingface's generator."""
+    bos_token_id: int = 0
+    num_beams: int = 1
+    num_beam_groups: int = 1
+    length_penalty: float = 1.0
+    repetition_penalty: float = 1.0
+    early_stopping: bool = False
+    num_return_sequences: int = 1
+    pad_token_id: int = 1
+    eos_token_id: int = 2
+    output_scores: bool = False
+    output_attentions: bool = False
+    output_hidden_states: bool = False
+    return_dict_in_generate: bool = False
+    is_encoder_decoder: bool = False
+    min_length: bool = 0
+    no_repeat_ngram_size: int = 0
+    encoder_no_repeat_ngram_size: int = 0
+    bad_words_ids: Sequence = None
+    diversity_penalty: float = 0.0
+    forced_bos_token_id: int = None
+    forced_eos_token_id: int = None
+    remove_invalid_values: bool = False
+    exponential_decay_length_penalty: float = None
+    top_k: int = 50
+    top_p: int = 1.0
+    typical_p: int = 1.0
+    temperature: float = 1.0
+    do_sample: bool = False
+
 
 
 class GeneratorInterface:
@@ -24,35 +60,81 @@ class GeneratorInterface:
         self.task = None
         self.tokenizer = None
 
+        self.config = None
+
     def load_model(self, model_name="facebook/opt-125m"):
         """Load model and return the inference_func."""
 
+        inference_func = None
         # Initialize model
         if "gpt" in model_name:
             self.model = GPT2LMHeadModel.from_pretrained(model_name).to("cuda:0").half()
-        elif "opt" in model_name:
+            self.config = self.model.config
+
+            def inference_func(input_ids, past_key_values):
+                out = self.model(input_ids=input_ids, past_key_values=past_key_values)
+                return InferenceFuncOutput(out.logits, out.past_key_values)
+
+
+        elif "facebook/opt" in model_name:
             model_path = "/home/ubuntu/parax-efs/pycharm/opt/raw_weights/125M/pytorch_model.bin"
             self.model = OPTForCausalLM.from_pretrained(model_path).to("cuda:0").half()
+            self.config = self.model.config
+
+            def inference_func(input_ids, past_key_values):
+                assert input_ids.shape[1] == 1, f"{input_ids.shape}"
+                if past_key_values is None:
+                    attention_mask = None
+                else:
+                    past_length = past_key_values[0][0].shape[2]
+                    attention_mask = torch.ones((input_ids.shape[0], past_length + 1)).to("cuda:0")
+                out = self.model(input_ids=input_ids,
+                                 attention_mask=attention_mask,
+                                 past_key_values=past_key_values)
+                return InferenceFuncOutput(out.logits, out.past_key_values)
+
+        elif "alpa/opt" in model_name:
+            name = model_name.split("-")[1].upper()
+            config = get_config(name, num_pp_stages=4)
+            ckpt_dir = "/home/ubuntu/parax-efs/pycharm/opt/alpa_weights/125M/125M_ts_weights"
+            import alpa
+            alpa.init()
+            executable, _ = get_pipeshard_executable(config)
+            params_info, _ = executable.get_load_info()
+            params = alpa.restore_checkpoint(ckpt_dir, 1, params_info, params_info)
+
+            step_ct = 0
+
+            def inference_func(input_ids, past_key_values):
+                nonlocal step_ct
+
+                assert input_ids.shape[1] == 1, f"{input_ids.shape}"
+                if past_key_values is None:
+                    past_key_values = build_init_cache(config)
+                    step_ct = 0
+
+                input_ids_step = input_ids.cpu().numpy()
+                position_ids_step = np.full_like(input_ids_step, step_ct + config.pad + 1)
+
+                logits_step, past_key_values = executable(params, {
+                    "input_ids": input_ids_step,
+                    "position_ids": position_ids_step,
+                    "cache": past_key_values,
+                })
+
+                step_ct += 1
+                return InferenceFuncOutput(torch.from_numpy(np.array(logits_step)).cuda(), past_key_values)
+            self.model = executable
+            self.config = InferenceFuncConfig()
         else:
             raise RuntimeError("Unrecognized model name.")
 
-        def inference_func(input_ids, past_key_values):
-            assert input_ids.shape[1] == 1, f"{input_ids.shape}"
-            if past_key_values is None:
-                attention_mask = None
-            else:
-                past_length = past_key_values[0][0].shape[2]
-                attention_mask = torch.ones((input_ids.shape[0], past_length + 1)).to("cuda:0")
-            out = self.model(input_ids=input_ids,
-                             attention_mask=attention_mask,
-                             past_key_values=past_key_values)
-            return InferenceFuncOutput(out.logits, out.past_key_values)
 
         # init inference func
         self.inference_func = inference_func
 
         # Init tokenizer
-        self.tokenizer = GPT2Tokenizer.from_pretrained(model_name)
+        self.tokenizer = GPT2Tokenizer.from_pretrained(model_name.replace("alpa", "facebook"))
 
         # Init task
         # TODO(Hao): remove this part later
@@ -149,7 +231,9 @@ class GeneratorInterface:
             # generator = self.task.build_generator(
             #     self.models, self.cfg.generation, extra_gen_cls_kwargs={"stop": stop}
             # )
-            generator = self.build_generator(self.inference_func, self.cfg.generation, extra_gen_cls_kwargs={"stop": stop})
+            generator = self.build_generator(self.inference_func,
+                                             self.cfg.generation,
+                                             extra_gen_cls_kwargs={"stop": stop})
 
 
             # okay actually generate
@@ -286,7 +370,7 @@ class GeneratorInterface:
             distributions = distributions[: len(output)]
         return new_tokens, new_scores, distributions
 
-    def build_generator(self, models, args, seq_gen_cls=None, extra_gen_cls_kwargs=None):
+    def build_generator(self, inference_func, args, seq_gen_cls=None, extra_gen_cls_kwargs=None):
         # Choose search strategy.
         sampling = getattr(args, "sampling", False)
         sampling_topk = getattr(args, "sampling_topk", -1)
@@ -307,8 +391,8 @@ class GeneratorInterface:
             seq_gen_cls = WrappedInferenceFunc
 
         return seq_gen_cls(
-            models,
-            self.model.config,
+            inference_func,
+            self.config,
             self.task.target_dictionary,
             beam_size=getattr(args, "beam", 5),
             max_len_a=getattr(args, "max_len_a", 0),

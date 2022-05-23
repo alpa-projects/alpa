@@ -564,9 +564,9 @@ def load_np_params(params, path, config):
     load_param("params.transformers.embeddings.position_embeddings.embedding",
                load_array("decoder.embed_positions.weight"))
     load_param("params.transformers.layer_norm.scale",
-               load_array("decoder.layer_norm.bias"))
-    load_param("params.transformers.layer_norm.scale",
                load_array("decoder.layer_norm.weight"))
+    load_param("params.transformers.layer_norm.bias",
+               load_array("decoder.layer_norm.bias"))
     for i in range(config.decoder_layers):
         param_prefix = f"params.transformers.encoder.{i}."
         load_prefix = f"decoder.layers.{i}."

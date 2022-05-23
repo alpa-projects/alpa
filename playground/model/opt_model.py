@@ -339,8 +339,9 @@ class OPTTransformerModule(nn.Module):
         assert self.config.decoder_normalize_before
         self.embeddings = OPTEmbeddings(self.config, dtype=self.dtype)
         self.encoder = OPTTransformerLayerCollection(self.config, dtype=self.dtype)
-        self.layer_norm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
-                                       dtype=self.dtype)
+        if self.config.version > 2:
+            self.layer_norm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
+                                           dtype=self.dtype)
 
     def __call__(
         self,
@@ -567,10 +568,11 @@ def load_np_params(params, path, config):
                load_array("decoder.embed_tokens.weight"))
     load_param("params.transformers.embeddings.position_embeddings.embedding",
                load_array("decoder.embed_positions.weight"))
-    load_param("params.transformers.layer_norm.scale",
-               load_array("decoder.layer_norm.weight"))
-    load_param("params.transformers.layer_norm.bias",
-               load_array("decoder.layer_norm.bias"))
+    if config.version > 2:
+        load_param("params.transformers.layer_norm.scale",
+                   load_array("decoder.layer_norm.weight"))
+        load_param("params.transformers.layer_norm.bias",
+                   load_array("decoder.layer_norm.bias"))
     for i in range(config.decoder_layers):
         param_prefix = f"params.transformers.encoder.{i}."
         load_prefix = f"decoder.layers.{i}."

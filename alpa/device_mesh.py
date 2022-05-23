@@ -1178,15 +1178,19 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             slow_path = False
 
             if is_batch_var:
-                slow_path = True
-                if not isinstance(arg, ShapedArray):
-                    arg = np.asarray(arg)
-                bufs = _shard_array(arg, self, indices, num_micro_batches)
-                bufs = np.array(bufs).reshape(self.num_hosts, self.num_devices_per_host,
-                                              num_micro_batches)
-                bufs = bufs.transpose([2, 0, 1]).reshape(
-                    (num_micro_batches, self.num_hosts * self.num_devices_per_host))
-                ret_bufs.append(bufs)
+                if isinstance(arg, DistributedArray):
+                    assert num_micro_batches == 1
+                    ret_bufs.append([arg.remote_buffers])
+                else:
+                    slow_path = True
+                    if not isinstance(arg, ShapedArray):
+                        arg = np.asarray(arg)
+                    bufs = _shard_array(arg, self, indices, num_micro_batches)
+                    bufs = np.array(bufs).reshape(self.num_hosts, self.num_devices_per_host,
+                                                  num_micro_batches)
+                    bufs = bufs.transpose([2, 0, 1]).reshape(
+                        (num_micro_batches, self.num_hosts * self.num_devices_per_host))
+                    ret_bufs.append(bufs)
             else:
                 if isinstance(arg, DistributedArray) and arg.indices == indices:
                     # Fast path for DistributedArray

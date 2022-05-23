@@ -521,19 +521,19 @@ def build_init_cache_aval(config):
 
 def build_init_cache(config):
     batch_size = config.batch_size
-    dtype = jnp.float32
+    dtype = np.float32
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
     all_cache = []
     for i in range(config.decoder_layers):
         layer_cache = (
-            jnp.zeros((batch_size, config.max_target_positions,
+            np.zeros((batch_size, config.max_target_positions,
                        config.decoder_attention_heads, head_dim),
                        dtype=dtype),
-            jnp.zeros((batch_size, config.max_target_positions,
+            np.zeros((batch_size, config.max_target_positions,
                        config.decoder_attention_heads, head_dim),
                        dtype=dtype),
-            jnp.full((batch_size,), 0, jnp.int32),
+            np.zeros((batch_size,), np.int32),
         )
         all_cache.append(layer_cache)
     return tuple(all_cache)

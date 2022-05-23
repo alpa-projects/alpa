@@ -41,7 +41,7 @@ def test_load(name):
     if use_ts:
         params = alpa.restore_checkpoint(ts_weights_folder, 1, params_info, params_info)
     else:
-        dummy = True
+        dummy = False
         alpa.global_config.use_dummy_value_for_benchmarking = dummy
         params = load_np_params(params_aval, np_weights_folder, config, dummy=dummy)
         flat_args, in_tree = tree_flatten(params)
@@ -52,8 +52,19 @@ def test_load(name):
     num_bytes = compute_bytes(params)
     print(f"Duration: {duration:.2f}, Bandwidth: {num_bytes / duration / GB:.2f} GB/s")
 
-    # Run
+    print("Build cache...")
+    tic = time.time()
     cache = build_init_cache(config)
+    _, batch_info = executable.get_load_info()
+    cache_info = batch_info["cache"]
+    flat_args, in_tree = tree_flatten(cache)
+    flat_info = tree_leaves(cache_info)
+    cache = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
+    duration = time.time() - tic
+    num_bytes = compute_bytes(cache)
+    print(f"Duration: {duration:.2f}, Bandwidth: {num_bytes / duration / GB:.2f} GB/s")
+
+    # Run
     for i in range(input_ids.shape[1]):
         tic = time.time()
         input_ids_step = input_ids[:, i:i+1]
@@ -63,11 +74,14 @@ def test_load(name):
             "position_ids": position_ids_step,
             "cache": cache,
         })
+
         logits_step = str(logits_step).replace("\n", " ")
-        print(f"step: {i}, latency: {time.time() - tic:.2f}, logits: {logits_step}")
+        print(f"step: {i}, latency: {time.time() - tic:.2f}, "
+              f"exec_cost: {executable.get_execution_time_costs(warmup=0)[-1]:.2f}, "
+              f"logits: {logits_step}")
 
 
 if __name__ == "__main__":
-    name = "30B"
+    name = "125M"
 
     test_load(name)

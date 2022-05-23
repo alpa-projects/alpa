@@ -23,7 +23,7 @@ from megatron.initialize import initialize_megatron
 from metaseq import checkpoint_utils
 import torch
 
-path = "/home/ubuntu/parax-efs/pycharm/opt/raw_weights/1.3B"
+path = "/home/ubuntu/parax-efs/pycharm/opt/raw_weights/125M"
 
 # # just need to initialize args with something,
 # # => doesn't need to correspond to the "correct" architecture for this checkpoint
@@ -64,10 +64,10 @@ def worker_main(cfg: MetaseqConfig):
         return logits
 
     prompts = [
-        "Today is a beautiful day and I want to",
-        "In the city of",
+        # "Today is a beautiful day and I want to",
+        # "In the city of",
         "Paris is the capital of France and",
-        "Computers and mobile phones have taken",
+        # "Computers and mobile phones have taken",
     ]
 
     print("Next word generation")

@@ -6,7 +6,8 @@ import jax.numpy as jnp
 import numpy as np
 from alpa.testing import assert_allclose
 
-from opt_model import (OPTConfig, OPTForLMModule, init_model_aval, inference_step_no_cache,
+from opt_model import (OPTConfig, OPTForLMModule, get_config,
+                       init_model_aval, inference_step_no_cache,
                        build_init_cache, build_position_ids, load_np_params)
 
 
@@ -20,7 +21,7 @@ def print_params(params, prefix=""):
 
 def test_opt_125M():
     #TODO: align dtype
-    config = OPTConfig()
+    config = get_config("125M")
     numpy_weights_folder = "./numpy_weights"
 
     # Init model

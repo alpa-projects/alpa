@@ -8,12 +8,13 @@ import numpy as np
 from alpa.testing import assert_allclose
 import alpa
 
-from opt_model import (OPTConfig, OPTForLMModule, init_model_aval, inference_step_no_cache,
+from opt_model import (OPTConfig, OPTForLMModule, get_config,
+                       init_model_aval, inference_step_no_cache,
                        build_init_cache, build_position_ids, load_np_params)
 
 def test_opt_125M_shard_parallel():
     #TODO: align dtype
-    config = OPTConfig()
+    config = get_config("125M")
     numpy_weights_folder = "./numpy_weights"
 
     # Init model and optimizer
@@ -65,7 +66,7 @@ def test_opt_125M_shard_parallel():
 
 def test_opt_125M_pipeshard_parallel():
     #TODO: align dtype
-    config = OPTConfig()
+    config = get_config("125M")
     config = dataclasses.replace(config, num_pp_stages=2)
     numpy_weights_folder = "./numpy_weights"
     
@@ -84,6 +85,8 @@ def test_opt_125M_pipeshard_parallel():
         "input_ids": input_ids,
         "position_ids": position_ids,
     }, model.apply)
+
+    print("logits_no_cache", logits_no_cache)
 
     # Parallelize
     method = alpa.PipeshardParallel(num_micro_batches=1,

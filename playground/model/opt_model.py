@@ -631,6 +631,19 @@ class OPTForLMModule(nn.Module):
         )
 
 
+def get_config(name):
+    if name == "125M":
+        config = OPTConfig()
+    elif name == "30B":
+        raise NotImplementedError()
+    elif name == "175B":
+        raise NotImplementedError()
+    else:
+        raise ValueError()
+
+    return config
+
+
 def init_model_aval(config):
     model = OPTForLMModule(config)
     rngkey = jax.core.ShapedArray((2,), jnp.uint32)

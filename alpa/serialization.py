@@ -193,7 +193,7 @@ class LoadInfo:
         return len(self.avals) > 1
 
 
-def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, target: PyTree, load_info: PyTree):
+def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, load_info: PyTree):
     """Restore the specified checkpoint from `path`. 
 
         Similar to flax.training.checkpoints.load_checkpoint, 
@@ -204,7 +204,6 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, target: PyT
         Args:
             ckpt_dir: directory of checkpoints to restore from.
             step: step number to load.
-            target: matching object to rebuild via deserialized state-dict.
             load_info: shardingSpec and deviceMesh allocation info for loading.
     """
     ckpt_path = os.path.join(ckpt_dir, f"checkpoint_{step}")
@@ -213,7 +212,7 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, target: PyT
     state_dict_content = msgpack.unpackb(ckpt_contents,
                                          ext_hook=_msgpack_ext_unpack,
                                          raw=False)
-    state_paths, state_tree = tree_flatten(from_state_dict(target, state_dict_content))
+    state_paths, state_tree = tree_flatten(from_state_dict(load_info, state_dict_content))
     flat_info = tree_leaves(load_info)
     flat_load_state = []
     for path, info in zip(state_paths, flat_info):

@@ -13,8 +13,11 @@ import jax
 import flax
 from jax import lax
 import jax.numpy as jnp
+from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves
 import jaxlib.xla_extension as jax_xla
 import numpy as np
+from tqdm import tqdm
+
 
 ACT2FN = {
     "gelu": partial(nn.gelu, approximate=False),
@@ -294,6 +297,7 @@ class OPTTransformerLayerCollection(nn.Module):
         new_attention_cache = () if attention_cache is not None else None
 
         if self.config.num_pp_stages is not None:
+            assert self.config.decoder_layers % self.config.num_pp_stages == 0
             layers_per_stage = self.config.decoder_layers // self.config.num_pp_stages
 
         for i, layer in enumerate(self.layers):
@@ -548,8 +552,10 @@ def inference_step_no_cache(params, batch, apply_func):
     return logits
 
 
-def load_np_params(params, path, config):
+def load_np_params(params, path, config, dummy=False):
     def load_array(key):
+        if dummy:
+            return np.ones((1,))
         return np.load(os.path.join(path, key))
 
     def load_param(param_key, loaded_array):
@@ -557,9 +563,13 @@ def load_np_params(params, path, config):
         param_keys = param_key.split('.')
         for i, key in enumerate(param_keys):
             if i == len(param_keys) - 1:
-                assert param_dict[key].shape == loaded_array.shape
-                assert param_dict[key].dtype == loaded_array.dtype
-                param_dict[key] = loaded_array
+                if dummy:
+                    param_dict[key] = jax.core.ShapedArray(
+                        param_dict[key].shape, param_dict[key].dtype)
+                else:
+                    assert param_dict[key].shape == loaded_array.shape
+                    assert param_dict[key].dtype == loaded_array.dtype
+                    param_dict[key] = loaded_array
             else:
                 param_dict = param_dict[key]
 
@@ -573,7 +583,7 @@ def load_np_params(params, path, config):
                    load_array("decoder.layer_norm.weight"))
         load_param("params.transformers.layer_norm.bias",
                    load_array("decoder.layer_norm.bias"))
-    for i in range(config.decoder_layers):
+    for i in tqdm(range(config.decoder_layers)):
         param_prefix = f"params.transformers.encoder.{i}."
         load_prefix = f"decoder.layers.{i}."
         # Attention weights
@@ -643,3 +653,17 @@ def get_pipeshard_executable(config):
     })
 
     return executable, params
+
+
+def load_distributed_params(path, executable, params_aval, config):
+    if path[-2:] == "np":
+        params_info, _ = executable.get_load_info()
+        params = load_np_params(params_aval, path, config)
+        flat_args, in_tree = tree_flatten(params)
+        flat_info = tree_leaves(params_info)
+        return executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
+    elif path[-2:] == "ts":
+        params_info, _ = executable.get_load_info()
+        return alpa.restore_checkpoint(path, 1, params_info, params_info)
+    else:
+        raise ValueError()

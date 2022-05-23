@@ -10,7 +10,8 @@ from transformers import GPT2Tokenizer, OPTForCausalLM, GPT2LMHeadModel
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
 
 
-from opt_model import get_pipeshard_executable, get_config, build_init_cache
+from opt_model import (get_pipeshard_executable, get_config, load_distributed_params,
+                       build_init_cache)
 
 
 @dataclass
@@ -122,12 +123,11 @@ def get_model(model_name):
     elif "alpa/opt" in model_name:
         name = model_name.split("-")[1].upper()
         config = get_config(name, num_pp_stages=4)
-        ckpt_dir = os.path.abspath(f"{name}_ts_weights")
+        path = f"/home/ubuntu/opt_weights/{name}_ts"
 
         alpa.init()
-        executable, _ = get_pipeshard_executable(config)
-        params_info, _ = executable.get_load_info()
-        params = alpa.restore_checkpoint(ckpt_dir, 1, params_info, params_info)
+        executable, params_aval = get_pipeshard_executable(config)
+        params = load_distributed_params(path, executable, params_aval, config)
 
         step_ct = 0
 

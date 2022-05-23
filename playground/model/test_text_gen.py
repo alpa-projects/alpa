@@ -147,9 +147,10 @@ def get_model(model_name):
                 "position_ids": position_ids_step,
                 "cache": past_key_values,
             })
+            logits_step = torch.from_numpy(np.array(logits_step))
 
             step_ct += 1
-            return InferenceFuncOutput(torch.from_numpy(np.array(logits_step)), past_key_values)
+            return InferenceFuncOutput(logits_step, past_key_values)
 
         inference_func_config = InferenceFuncConfig()
 

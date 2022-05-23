@@ -9,9 +9,8 @@ import torch
 from transformers import GPT2Tokenizer, OPTForCausalLM, GPT2LMHeadModel
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
 
-
-from opt_model import (get_pipeshard_executable, get_config, load_distributed_params,
-                       build_init_cache)
+from opt_model import (get_config, get_pipeshard_executable, load_params_dis_array,
+                       init_cache_dis_array)
 
 
 @dataclass
@@ -126,9 +125,10 @@ def get_model(model_name):
         path = f"/home/ubuntu/opt_weights/{name}_np"
 
         alpa.init()
+        dummy = False
         executable, params_aval = get_pipeshard_executable(config)
-        params = load_distributed_params(path, executable, params_aval, config)
-        init_cache = build_init_cache(config)
+        params = load_params_dis_array(path, executable, params_aval, config, dummy=dummy)
+        init_cache = init_cache_dis_array(executable, config, dummy=dummy)
 
         step_ct = 0
 
@@ -156,13 +156,8 @@ def get_model(model_name):
     return WrappedInferenceFunc(inference_func, inference_func_config)
 
 
-model_name = "alpa/opt-125m"
-# "alpa/opt-125m"
-# "facebook/opt-125m"
-# "gpt2"
-
-tokenizer = GPT2Tokenizer.from_pretrained(model_name.replace("alpa", "facebook"))
-model = get_model(model_name)
+tokenizer = GPT2Tokenizer.from_pretrained("facebook/opt-125m")
+model = get_model("alpa/opt-125M")
 
 prompts = [
     "Computer science is the study of computation and",

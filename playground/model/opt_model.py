@@ -499,7 +499,7 @@ def init_model_aval(config):
     return model, params
 
 
-def build_init_cache_aval(config):
+def init_cache_aval(config):
     batch_size = config.batch_size
     dtype = jnp.float32
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
@@ -519,7 +519,7 @@ def build_init_cache_aval(config):
     return tuple(all_cache)
 
 
-def build_init_cache(config):
+def init_cache_np(config):
     batch_size = config.batch_size
     dtype = np.float32
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
@@ -552,7 +552,7 @@ def inference_step_no_cache(params, batch, apply_func):
     return logits
 
 
-def load_np_params(params, path, config, dummy=False):
+def load_params_np(params, path, config, dummy=False):
     def load_array(key):
         if dummy:
             return np.ones((1,))
@@ -649,21 +649,37 @@ def get_pipeshard_executable(config):
     executable = inference_step_with_cache.get_executable(params, {
         "input_ids": jax.core.ShapedArray((1, 1), jnp.int32),
         "position_ids": jax.core.ShapedArray((1, 1), jnp.int32),
-        "cache": build_init_cache_aval(config),
+        "cache": init_cache_aval(config),
     })
 
     return executable, params
 
 
-def load_distributed_params(path, executable, params_aval, config):
+def load_params_dis_array(path, executable, params_aval, config, dummy=False):
     if path[-2:] == "np":
+        alpa.global_config.use_dummy_value_for_benchmarking = dummy
         params_info, _ = executable.get_load_info()
-        params = load_np_params(params_aval, path, config)
+        params = load_params_np(params_aval, path, config, dummy)
         flat_args, in_tree = tree_flatten(params)
         flat_info = tree_leaves(params_info)
-        return executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
+        ret = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
+        alpa.global_config.use_dummy_value_for_benchmarking = False
+        return ret
     elif path[-2:] == "ts":
         params_info, _ = executable.get_load_info()
         return alpa.restore_checkpoint(path, 1, params_info, params_info)
     else:
         raise ValueError()
+
+
+def init_cache_dis_array(executable, config, dummy=False):
+    alpa.global_config.use_dummy_value_for_benchmarking = dummy
+    cache = init_cache_np(config)
+    _, batch_info = executable.get_load_info()
+    cache_info = batch_info["cache"]
+    flat_args, in_tree = tree_flatten(cache)
+    flat_info = tree_leaves(cache_info)
+    ret = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
+    alpa.global_config.use_dummy_value_for_benchmarking = False
+    return ret
+

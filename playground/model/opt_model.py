@@ -1,6 +1,7 @@
 import dataclasses
 from dataclasses import dataclass
 from functools import partial
+import itertools
 import math
 import os
 from typing import Callable, Optional, Tuple, Dict
@@ -8,14 +9,18 @@ from typing import Callable, Optional, Tuple, Dict
 import alpa
 from alpa import mark_pipeline
 from alpa.model.model_util import ModelOutput
+from alpa.mesh_executable import create_remote_buffer_refs
+from alpa.device_mesh import DistributedArray, ReplicatedDistributedArray
 import flax.linen as nn
 import jax
 import flax
 from jax import lax
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves
+from jax.interpreters import pxla
 import jaxlib.xla_extension as jax_xla
 import numpy as np
+import ray
 from tqdm import tqdm
 
 
@@ -677,8 +682,74 @@ def get_pipeshard_executable(config, support_output_attentions=False,
     return executable, params
 
 
+def load_opt_params_fast_path(path, executable, params_aval, config, dummy=False):
+    params_info, _ = executable.get_load_info()
+
+    prefix_to_flat_idx = {}
+    ct = itertools.count()
+    def dfs(dict_tree, result_dict, cur_prefix):
+        if isinstance(dict_tree, (dict, flax.core.FrozenDict)):
+            for key in dict_tree.keys():
+                dfs(dict_tree[key], result_dict,
+                    cur_prefix + ("." if cur_prefix else "") + key)
+        else:
+            result_dict[cur_prefix] = next(ct)
+    dfs(params_aval, prefix_to_flat_idx, "")
+
+    flat_infos, in_tree = tree_flatten(params_info)
+
+    flat_shapes = []
+    flat_uuids = []
+    flat_indices = []
+    flat_mesh_ids = []
+    flat_arrays = []
+
+    for info in flat_infos:
+        if info.is_replicated():
+            tmp_shapes = []
+            tmp_uuids = []
+            tmp_indices = []
+            tmp_mesh_ids = []
+            tmp_arrays = []
+            tmp_meshes = []
+            for aval, mesh, spec in info.get_info():
+                indices = pxla.spec_to_indices(aval.shape, spec)
+                buf_refs, buf_uuids = create_remote_buffer_refs(mesh, 1)
+                array = DistributedArray(mesh, aval, spec, buf_refs, indices)
+                tmp_shapes.append(aval.shape)
+                tmp_uuids.append(buf_uuids)
+                tmp_indices.append(indices)
+                tmp_mesh_ids.append(mesh.mesh_id)
+                tmp_meshes.append(mesh)
+                tmp_arrays.append(array)
+            flat_shapes.append(tuple(tmp_shapes))
+            flat_uuids.append(tuple(tmp_uuids))
+            flat_indices.append(tuple(tmp_indices))
+            flat_mesh_ids.append(tuple(tmp_mesh_ids))
+            flat_arrays.append(ReplicatedDistributedArray(tmp_meshes, tmp_arrays))
+        else:
+            aval, mesh, spec = info.get_info()
+            indices = pxla.spec_to_indices(aval.shape, spec)
+            buf_refs, buf_uuids = create_remote_buffer_refs(mesh, 1)
+            flat_shapes.append([aval.shape])
+            flat_uuids.append([buf_uuids])
+            flat_indices.append([indices])
+            flat_mesh_ids.append([mesh.mesh_id])
+            flat_arrays.append(DistributedArray(mesh, aval, spec, buf_refs, indices))
+
+    for m in executable.mesh_group.meshes:
+        for w in m.workers:
+            w.load_opt_params_fast_path.remote(path, prefix_to_flat_idx, config,
+                flat_shapes, flat_uuids, flat_indices, flat_mesh_ids)
+
+    return flat_arrays
+
+
 def load_params_dis_array(path, executable, params_aval, config, dummy=False):
     if path[-2:] == "np":
+        if not dummy:
+            return load_opt_params_fast_path(path, executable, params_aval, config, dummy)
+
         alpa.global_config.use_dummy_value_for_benchmarking = dummy
         params_info, _ = executable.get_load_info()
         params = load_params_np(params_aval, path, config, dummy)

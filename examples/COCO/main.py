@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Main file for running the ImageNet example.
+"""Main file for running the Unet COCO example.
 
 This file is intentionally kept short. The majority for logic is in libraries
 that can be easily tested and imported in Colab.
@@ -25,6 +25,7 @@ from clu import platform
 import jax
 from ml_collections import config_flags
 import tensorflow as tf
+
 import train
 
 FLAGS = flags.FLAGS
@@ -43,14 +44,14 @@ def main(argv):
 
   # Hide any GPUs from TensorFlow. Otherwise TF might reserve memory and make
   # it unavailable to JAX.
-  tf.config.experimental.set_visible_devices([], 'GPU')
+#  tf.config.experimental.set_visible_devices([], 'GPU')
 
-  #logging.info('JAX process: %d / %d', jax.process_index(), jax.process_count())
-  #logging.info('JAX local devices: %r', jax.local_devices())
+#  logging.info('JAX process: %d / %d', jax.process_index(), jax.process_count())
+#  logging.info('JAX local devices: %r', jax.local_devices())
 
   # Add a note so that we can tell which task is which JAX host.
   # (Depending on the platform task 0 is not guaranteed to be host 0)
-  #platform.work_unit().set_task_status(f'process_index: {jax.process_index()}, '
+  # platform.work_unit().set_task_status(f'process_index: {jax.process_index()}, '
   #                                     f'process_count: {jax.process_count()}')
   platform.work_unit().create_artifact(platform.ArtifactType.DIRECTORY,
                                        FLAGS.workdir, 'workdir')

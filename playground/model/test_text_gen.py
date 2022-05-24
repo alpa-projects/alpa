@@ -1,7 +1,7 @@
 from collections import namedtuple
 import os
 import time
-from typing import Sequence
+from typing import Sequence, Any
 
 import alpa
 import numpy as np
@@ -15,8 +15,10 @@ from opt_model import (get_config, get_pipeshard_executable, load_params_dis_arr
 
 @dataclass
 class InferenceFuncOutput(ModelOutput):
-    logits: any = None
-    past_key_values: any = None
+    logits: Any = None
+    past_key_values: Any = None
+    hidden_states: Any = None
+    attentions: Any = None
 
 
 @dataclass
@@ -60,7 +62,7 @@ class WrappedInferenceFunc(GenerationMixin):
     This class also decomposes the first call of prompt during generation to one token by one token.
     """
     def __init__(self, inference_func, config):
-        self.inference_func = inference_func 
+        self.inference_func = inference_func
         self.config = config
         self.main_input_name = "input_ids"
 
@@ -85,17 +87,24 @@ class WrappedInferenceFunc(GenerationMixin):
                  return_dict = None):
         for i in range(input_ids.shape[1]):
             ret = self.inference_func(input_ids[:,i:i+1],
-                                      past_key_values)
+                                      past_key_values,
+                                      output_hidden_states=output_hidden_states,
+                                      output_attentions=output_attentions)
             past_key_values = ret.past_key_values
         return ret
 
 
-def get_model(model_name):
+def get_model(model_name, support_output_attentions=False,
+              support_output_hidden_states=False):
     if "gpt" in model_name:
         raw_model = GPT2LMHeadModel.from_pretrained(model_name)
 
-        def inference_func(input_ids, past_key_values):
-            out = raw_model(input_ids=input_ids, past_key_values=past_key_values)
+        def inference_func(input_ids, past_key_values, output_attentions=False,
+                           output_hidden_states=False):
+            out = raw_model(input_ids=input_ids,
+                            past_key_values=past_key_values,
+                            output_attentions=output_attentions,
+                            output_hidden_states=output_hidden_states)
             return InferenceFuncOutput(out.logits, out.past_key_values)
 
         inference_func_config = raw_model.config
@@ -103,7 +112,9 @@ def get_model(model_name):
     elif "facebook/opt" in model_name:
         raw_model = OPTForCausalLM.from_pretrained(model_name)
 
-        def inference_func(input_ids, past_key_values):
+        def inference_func(input_ids, past_key_values,
+                           output_attentions=False,
+                           output_hidden_states=False):
             if past_key_values is None:
                 attention_mask = None
             else:
@@ -111,7 +122,9 @@ def get_model(model_name):
                 attention_mask = torch.ones((input_ids.shape[0], past_length+1))
             out = raw_model(input_ids=input_ids,
                             attention_mask=attention_mask,
-                            past_key_values=past_key_values)
+                            past_key_values=past_key_values,
+                            output_attentions=output_attentions,
+                            output_hidden_states=output_hidden_states)
             return InferenceFuncOutput(out.logits, out.past_key_values)
 
         inference_func_config = InferenceFuncConfig()
@@ -126,13 +139,17 @@ def get_model(model_name):
 
         alpa.init()
         dummy = False
-        executable, params_aval = get_pipeshard_executable(config)
+        executable, params_aval = get_pipeshard_executable(
+            config,
+            support_output_attentions=support_output_attentions,
+            support_output_hidden_states=support_output_hidden_states)
         params = load_params_dis_array(path, executable, params_aval, config, dummy=dummy)
         init_cache = init_cache_dis_array(executable, config, dummy=dummy)
 
         step_ct = 0
 
-        def inference_func(input_ids, past_key_values):
+        def inference_func(input_ids, past_key_values, output_attentions=False,
+                           output_hidden_states=False):
             nonlocal step_ct
 
             if past_key_values is None:
@@ -142,15 +159,20 @@ def get_model(model_name):
             input_ids_step = input_ids.numpy()
             position_ids_step = np.full_like(input_ids_step, step_ct + config.pad + 1)
 
-            logits_step, past_key_values = executable(params, {
+            output = executable(params, {
                 "input_ids": input_ids_step,
                 "position_ids": position_ids_step,
                 "cache": past_key_values,
             })
             logits_step = torch.from_numpy(np.array(logits_step))
 
+            logits_step = output.last_hidden_state
+            past_key_values = output.attention_cache
+
             step_ct += 1
-            return InferenceFuncOutput(logits_step, past_key_values)
+            return InferenceFuncOutput(logits_step, past_key_values,
+                                       output.hidden_states,
+                                       output.attentions)
 
         inference_func_config = InferenceFuncConfig()
 

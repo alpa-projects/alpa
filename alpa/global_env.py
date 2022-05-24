@@ -8,7 +8,7 @@ class GlobalConfig:
     def __init__(self):
         ########## Options of device mesh ##########
         self.xla_client_mem_fraction = float(
-            os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", 0.85))
+            os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", 0.88))
         self.xla_gpu_autotune_level = 4
         self.delete_remote_buffers_threshold = 500
         # use AWS EFA network interface

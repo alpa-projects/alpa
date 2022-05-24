@@ -154,11 +154,12 @@ class OPTSelfAttention(nn.Module):
                 (query_states.shape[1], key_states.shape[1]), -1e10), 1), (0, 1))
         else:
             cache_key, cache_value, cache_index = attention_cache
-            key_states = lax.dynamic_update_slice(cache_key, key_states, (0, cache_index[0], 0, 0))
-            value_states = lax.dynamic_update_slice(cache_value, value_states, (0, cache_index[0], 0, 0))
+            cache_index_ = cache_index[0]
+            key_states = lax.dynamic_update_slice(cache_key, key_states, (0, cache_index_, 0, 0))
+            value_states = lax.dynamic_update_slice(cache_value, value_states, (0, cache_index_, 0, 0))
             num_updated_cache_vectors = query_states.shape[1]
             max_length = key_states.shape[1]
-            attention_bias = (jnp.arange(max_length) >= cache_index + num_updated_cache_vectors).astype(self.dtype) * -1e10
+            attention_bias = (jnp.arange(max_length) >= cache_index_ + num_updated_cache_vectors).astype(self.dtype) * -1e10
             attention_bias = attention_bias[None, None, None, :]
             attention_cache = key_states, value_states, cache_index + num_updated_cache_vectors
         attn_weights = nn.attention.dot_product_attention_weights(
@@ -519,8 +520,7 @@ def init_model_aval(config):
     return model, params
 
 
-def init_cache_aval(config):
-    batch_size = config.batch_size
+def init_cache_aval(config, batch_size):
     dtype = jnp.float32
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
@@ -539,8 +539,7 @@ def init_cache_aval(config):
     return tuple(all_cache)
 
 
-def init_cache_np(config):
-    batch_size = config.batch_size
+def init_cache_np(config, batch_size):
     dtype = np.float32
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
@@ -560,8 +559,8 @@ def init_cache_np(config):
 
 
 def build_position_ids(input_ids, padding_idx):
-    mask = (input_ids != padding_idx).astype(jnp.int32)
-    position_ids = jnp.cumsum(mask, axis=1).astype(jnp.int32) * mask + padding_idx
+    mask = (input_ids != padding_idx).astype(np.int32)
+    position_ids = np.cumsum(mask, axis=1).astype(np.int32) * mask + padding_idx
     return position_ids
 
 
@@ -672,7 +671,7 @@ def get_pipeshard_executable(config, support_output_attentions=False,
     executable = inference_step_with_cache.get_executable(params, {
         "input_ids": jax.core.ShapedArray((1, 1), jnp.int32),
         "position_ids": jax.core.ShapedArray((1, 1), jnp.int32),
-        "cache": init_cache_aval(config),
+        "cache": init_cache_aval(config, 1),
     })
 
     return executable, params
@@ -695,9 +694,9 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
         raise ValueError()
 
 
-def init_cache_dis_array(executable, config, dummy=False):
+def init_cache_dis_array(executable, config, batch_size, dummy=False):
     alpa.global_config.use_dummy_value_for_benchmarking = dummy
-    cache = init_cache_np(config)
+    cache = init_cache_np(config, batch_size)
     _, batch_info = executable.get_load_info()
     cache_info = batch_info["cache"]
     flat_args, in_tree = tree_flatten(cache)

@@ -151,7 +151,7 @@ def get_model(model_name, device, dummy,
             support_output_attentions=support_output_attentions,
             support_output_hidden_states=support_output_hidden_states)
         params = load_params_dis_array(path, executable, params_aval, config, args.dummy)
-        init_cache = init_cache_dis_array(executable, config, args.dummy)
+        init_cache = init_cache_dis_array(executable, config, 1, args.dummy)
 
         step_ct = 0
 
@@ -192,7 +192,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     tokenizer = GPT2Tokenizer.from_pretrained("facebook/opt-125m")
+
+    tic = time.time()
     model = get_model(args.model, args.device, args.dummy)
+    load_time = time.time() - tic
 
     prompts = [
         "Computer science is the study of computation and",
@@ -211,6 +214,6 @@ if __name__ == "__main__":
         speed = np.prod(generated_ids.shape) / (time.time() - tic)
         print(f"{generated_string}, speed: {speed:.2f} token/s")
 
-    heads = ["Model", "Device", "Dummy", "Speed"]
-    values = [args.model, args.device, args.dummy, f"{speed:.2f}"]
+    heads = ["Model", "Device", "Dummy", "Load (s)", "Speed (token/s)"]
+    values = [args.model, args.device, args.dummy, f"{load_time:.2f}", f"{speed:.2f}"]
     write_tsv(heads, values, "results.tsv")

@@ -1,3 +1,4 @@
+import argparse
 import dataclasses
 from functools import partial
 import os
@@ -16,13 +17,14 @@ from opt_model import (get_config, get_pipeshard_executable, load_params_dis_arr
 GB = 1 << 30
 
 
-def test_load(name, dummy):
-    config = get_config(name, num_pp_stages=4)
+def test_load(name, dummy, batch_size):
+    config = get_config(name, num_pp_stages=2)
     path = f"/home/ubuntu/opt_weights/{name}_np"
 
     alpa.init()
 
     input_ids = np.array([[5625,   16,   10, 2721,  183,    8,   38,  236,    7]], dtype=np.int32)
+    input_ids = np.tile(input_ids, [batch_size, 1])
     print("input_ids", input_ids)
 
     print("Compile...")
@@ -42,7 +44,7 @@ def test_load(name, dummy):
 
     print("Build cache...")
     tic = time.time()
-    init_cache = init_cache_dis_array(executable, config, dummy=dummy)
+    init_cache = init_cache_dis_array(executable, config, batch_size, dummy=dummy)
     executable.sync()
     duration = time.time() - tic
     num_bytes = compute_bytes(init_cache)
@@ -73,4 +75,10 @@ def test_load(name, dummy):
 
 
 if __name__ == "__main__":
-    test_load("30B", True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, default="125M")
+    parser.add_argument("--dummy", action="store_true")
+    parser.add_argument("--batch-size", type=int, default=1)
+    args = parser.parse_args()
+
+    test_load(args.model, args.dummy, args.batch_size)

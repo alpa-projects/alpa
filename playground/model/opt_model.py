@@ -623,7 +623,8 @@ def load_params_np(params, path, config, dummy=False):
     return flax.core.freeze(params)
 
 
-def get_pipeshard_executable(config):
+def get_pipeshard_executable(config, support_output_attentions=False,
+                             support_output_hidden_states=False):
     # Init model
     model, params = init_model_aval(config)
 
@@ -639,12 +640,14 @@ def get_pipeshard_executable(config):
             output = model.apply(params,
                                  batch["input_ids"],
                                  batch["position_ids"],
-                                 attention_cache=batch["cache"])
+                                 attention_cache=batch["cache"],
+                                 output_attentions=support_output_attentions,
+                                 output_hidden_states=support_output_hidden_states)
             alpa.mark_pipeline(name=f"{config.num_pp_stages - 1}", mark_type="end")
             return output
 
         output = forward(params)
-        return output.logits, output.attention_cache
+        return output
 
     executable = inference_step_with_cache.get_executable(params, {
         "input_ids": jax.core.ShapedArray((1, 1), jnp.int32),

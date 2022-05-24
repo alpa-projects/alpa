@@ -453,31 +453,51 @@ class OPTForLMModule(nn.Module):
 def get_config(name, **kwargs):
     if name == "125M":
         config = OPTConfig(
-            decoder_layers=12,
             max_target_positions=2048,
-            decoder_embed_dim=768,
+            decoder_layers=12,
             decoder_attention_heads=12,
+            decoder_embed_dim=768,
             decoder_input_dim=768,
-            decoder_ffn_embed_dim=3072,
+            decoder_ffn_embed_dim=768 * 4,
+        )
+    elif name == "2.7B":
+        config = OPTConfig(
+            max_target_positions=2048,
+            decoder_layers=32,
+            decoder_attention_heads=32,
+            decoder_embed_dim=2560,
+            decoder_input_dim=2560,
+            decoder_ffn_embed_dim=2560 * 4,
+            version=3,
+        )
+    elif name == "6.7B":
+        config = OPTConfig(
+            max_target_positions=2048,
+            decoder_layers=32,
+            decoder_attention_heads=32,
+            decoder_embed_dim=4096,
+            decoder_input_dim=4096,
+            decoder_ffn_embed_dim=4096 * 4,
+            version=3,
         )
     elif name == "30B":
         config = OPTConfig(
-            decoder_layers=48,
             max_target_positions=2048,
-            decoder_embed_dim=7168,
+            decoder_layers=48,
             decoder_attention_heads=56,
+            decoder_embed_dim=7168,
             decoder_input_dim=7168,
-            decoder_ffn_embed_dim=28672,
+            decoder_ffn_embed_dim=7168 * 4,
             version=3,
         )
     elif name == "175B":
         config = OPTConfig(
-            decoder_layers=96,
             max_target_positions=2048,
-            decoder_embed_dim=12288,
+            decoder_layers=96,
             decoder_attention_heads=96,
+            decoder_embed_dim=12288,
             decoder_input_dim=12288,
-            decoder_ffn_embed_dim=49152,
+            decoder_ffn_embed_dim=12288 * 4,
             version=3,
         )
     else:

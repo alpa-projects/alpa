@@ -5,6 +5,7 @@ import time
 from typing import Sequence, Any
 
 import alpa
+from alpa.util import write_tsv
 import numpy as np
 import torch
 from transformers import GPT2Tokenizer, OPTForCausalLM, GPT2LMHeadModel
@@ -95,7 +96,7 @@ class WrappedInferenceFunc(GenerationMixin):
         return ret
 
 
-def get_model(model_name, device="cpu",
+def get_model(model_name, device, dummy,
               support_output_attentions=False,
               support_output_hidden_states=False):
     if "gpt" in model_name:
@@ -145,13 +146,12 @@ def get_model(model_name, device="cpu",
         config = get_config(name, num_pp_stages=num_pp_stages)
         path = f"/home/ubuntu/opt_weights/{name}_np"
 
-        dummy = False
         executable, params_aval = get_pipeshard_executable(
             config,
             support_output_attentions=support_output_attentions,
             support_output_hidden_states=support_output_hidden_states)
-        params = load_params_dis_array(path, executable, params_aval, config, dummy=dummy)
-        init_cache = init_cache_dis_array(executable, config, dummy=dummy)
+        params = load_params_dis_array(path, executable, params_aval, config, args.dummy)
+        init_cache = init_cache_dis_array(executable, config, args.dummy)
 
         step_ct = 0
 
@@ -187,11 +187,12 @@ def get_model(model_name, device="cpu",
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="alpa/opt-125m")
-    parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--dummy", action="store_true")
     args = parser.parse_args()
 
     tokenizer = GPT2Tokenizer.from_pretrained("facebook/opt-125m")
-    model = get_model(args.model, args.device)
+    model = get_model(args.model, args.device, args.dummy)
 
     prompts = [
         "Computer science is the study of computation and",
@@ -207,5 +208,9 @@ if __name__ == "__main__":
                                 return_dict_in_generate=True, output_hidden_states=False)
         generated_ids = output.sequences
         generated_string = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-        duration = time.time() - tic
-        print(f"{generated_string}, speed: {np.prod(generated_ids.shape)/duration:.2f} token/s")
+        speed = np.prod(generated_ids.shape) / (time.time() - tic)
+        print(f"{generated_string}, speed: {speed:.2f} token/s")
+
+    heads = ["Model", "Device", "Dummy", "Speed"]
+    values = [args.model, args.device, args.dummy, f"{speed:.2f}"]
+    write_tsv(heads, values, "results.tsv")

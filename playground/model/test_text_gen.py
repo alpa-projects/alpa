@@ -1,3 +1,4 @@
+import argparse
 from collections import namedtuple
 import os
 import time
@@ -94,10 +95,12 @@ class WrappedInferenceFunc(GenerationMixin):
         return ret
 
 
-def get_model(model_name, support_output_attentions=False,
+def get_model(model_name, device="cpu",
+              support_output_attentions=False,
               support_output_hidden_states=False):
     if "gpt" in model_name:
         raw_model = GPT2LMHeadModel.from_pretrained(model_name)
+        raw_model = raw_model.to(device)
 
         def inference_func(input_ids, past_key_values, output_attentions=False,
                            output_hidden_states=False):
@@ -110,7 +113,9 @@ def get_model(model_name, support_output_attentions=False,
         inference_func_config = raw_model.config
 
     elif "facebook/opt" in model_name:
-        raw_model = OPTForCausalLM.from_pretrained(model_name)
+        raw_model = OPTForCausalLM.from_pretrained(
+            model_name, torch_dtype=torch.float16 if "cuda" in device else torch.float32)
+        raw_model = raw_model.to(device)
 
         def inference_func(input_ids, past_key_values,
                            output_attentions=False,
@@ -119,7 +124,7 @@ def get_model(model_name, support_output_attentions=False,
                 attention_mask = None
             else:
                 past_length = past_key_values[0][0].shape[2]
-                attention_mask = torch.ones((input_ids.shape[0], past_length+1))
+                attention_mask = torch.ones((input_ids.shape[0], past_length+1)).to(device)
             out = raw_model(input_ids=input_ids,
                             attention_mask=attention_mask,
                             past_key_values=past_key_values,
@@ -158,7 +163,7 @@ def get_model(model_name, support_output_attentions=False,
                 past_key_values = init_cache
                 step_ct = 0
 
-            input_ids_step = input_ids.numpy()
+            input_ids_step = input_ids.cpu().numpy()
             position_ids_step = np.full_like(input_ids_step, step_ct + config.pad + 1)
 
             output = executable(params, {
@@ -166,7 +171,7 @@ def get_model(model_name, support_output_attentions=False,
                 "position_ids": position_ids_step,
                 "cache": past_key_values,
             })
-            logits_step = torch.from_numpy(np.array(output.logits))
+            logits_step = torch.from_numpy(np.array(output.logits)).to(device)
 
             step_ct += 1
             return InferenceFuncOutput(logits_step,
@@ -179,22 +184,28 @@ def get_model(model_name, support_output_attentions=False,
     return WrappedInferenceFunc(inference_func, inference_func_config)
 
 
-tokenizer = GPT2Tokenizer.from_pretrained("facebook/opt-125m")
-model = get_model("alpa/opt-125M", support_output_hidden_states=False)
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, default="alpa/opt-125m")
+    parser.add_argument("--device", type=str, default="cpu")
+    args = parser.parse_args()
 
-prompts = [
-    "Computer science is the study of computation and",
-    "Ion Stoica is a Romanian-American computer scientist specializing in",
-    "The University of California, Berkeley is a public",
-]
+    tokenizer = GPT2Tokenizer.from_pretrained("facebook/opt-125m")
+    model = get_model(args.model, args.device)
 
-for prompt in prompts:
-    tic = time.time()
-    torch.manual_seed(8)
-    input_ids = tokenizer(prompt, return_tensors="pt").input_ids
-    output = model.generate(input_ids=input_ids, max_length=20, do_sample=True,
-                            return_dict_in_generate=True, output_hidden_states=True)
-    generated_ids = output.sequences
-    generated_string = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-    duration = time.time() - tic
-    print(f"{generated_string}, speed: {np.prod(generated_ids.shape)/duration:.2f} token/s")
+    prompts = [
+        "Computer science is the study of computation and",
+        "Ion Stoica is a Romanian-American computer scientist specializing in",
+        "The University of California, Berkeley is a public",
+    ]
+
+    for prompt in prompts:
+        tic = time.time()
+        torch.manual_seed(8)
+        input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(args.device)
+        output = model.generate(input_ids=input_ids, max_length=20, do_sample=True,
+                                return_dict_in_generate=True, output_hidden_states=False)
+        generated_ids = output.sequences
+        generated_string = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+        duration = time.time() - tic
+        print(f"{generated_string}, speed: {np.prod(generated_ids.shape)/duration:.2f} token/s")

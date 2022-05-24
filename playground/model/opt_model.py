@@ -746,7 +746,7 @@ def load_opt_params_fast_path(path, executable, params_aval, config, dummy=False
 
 
 def load_params_dis_array(path, executable, params_aval, config, dummy=False):
-    if path[-2:] == "np":
+    if path[-2:] == "np" or path[-10:] == "np_reshard":
         if not dummy:
             return load_opt_params_fast_path(path, executable, params_aval, config, dummy)
 

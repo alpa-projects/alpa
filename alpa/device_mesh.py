@@ -1209,7 +1209,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def delete_remote_buffers(self, buf_refs: List["RemoteBufferRef"]):
         """Delete remote buffers."""
-        if self.workers is None or not ray.is_initialized():
+        if self.workers is None or not ray or not ray.is_initialized():
             return
 
         # Put delete requests into per-host buffers
@@ -1848,7 +1848,7 @@ class PhysicalDeviceMeshGroup:
     def shard_args_to_arrays(self, load_infos, args):
         rets = []
 
-        for info, arg in tqdm(zip(load_infos, args)):
+        for info, arg in zip(load_infos, args):
             if info.is_replicated():
                 meshes, arrays = [], []
                 for aval, mesh, spec in info.get_info():

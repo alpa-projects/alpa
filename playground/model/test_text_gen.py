@@ -150,8 +150,9 @@ def get_model(model_name, device, dummy,
             config,
             support_output_attentions=support_output_attentions,
             support_output_hidden_states=support_output_hidden_states)
-        params = load_params_dis_array(path, executable, params_aval, config, args.dummy)
-        init_cache = init_cache_dis_array(executable, config, 1, args.dummy)
+        params = load_params_dis_array(path, executable, params_aval, config, dummy)
+        init_cache = init_cache_dis_array(executable, config, 1, dummy)
+        executable.sync()
 
         step_ct = 0
 

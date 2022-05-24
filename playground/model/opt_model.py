@@ -459,6 +459,7 @@ def get_config(name, **kwargs):
             decoder_attention_heads=12,
             decoder_input_dim=768,
             decoder_ffn_embed_dim=3072,
+            version=3,
         )
     elif name == "30B":
         config = OPTConfig(

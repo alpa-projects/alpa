@@ -1134,7 +1134,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def delete_remote_buffers(self, buf_refs: List["RemoteBufferRef"]):
         """Delete remote buffers."""
-        if self.workers is None or not ray.is_initialized():
+        if self.workers is None or ray.worker is None or not ray.is_initialized():
             return
 
         # Put delete requests into per-host buffers

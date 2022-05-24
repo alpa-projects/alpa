@@ -17,9 +17,11 @@ def save_numpy(weight_dict, to_folder):
 
 
 def worker_main(cfg: MetaseqConfig):
-    raw_weights_path = "/home/ubuntu/parax-efs/pycharm/opt/raw_weights/175B_resharded/consolidated.pt"
+    # raw_weights_path = "/home/ubuntu/parax-efs/pycharm/opt/raw_weights/175B_resharded/consolidated.pt"
+    # raw_weights_path = "/home/ubuntu/parax-efs/pycharm/opt/opt_metaseq_2700m/model/restored.pt"
+    raw_weights_path = "/home/ubuntu/parax-efs/pycharm/opt/opt_metaseq_30000m/model/restored.pt"
     state = torch_load_cpu(raw_weights_path)
-    to_folder = "/home/ubuntu/parax-efs/pycharm/opt/raw_weights/175B_resharded/"
+    to_folder = "/home/ubuntu/parax-efs/pycharm/opt/raw_weights/30B_resharded/"
     save_numpy(state["model"], to_folder)
 
 

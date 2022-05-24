@@ -161,7 +161,7 @@ def get_model(model_name):
 
 
 tokenizer = GPT2Tokenizer.from_pretrained("facebook/opt-125m")
-model = get_model("alpa/opt-125M")
+model = get_model("facebook/opt-30b")
 
 prompts = [
     "Computer science is the study of computation and",

@@ -61,6 +61,7 @@ def save_numpy(weight_dict, model_printout, to_folder):
     weights_folder = os.path.join(to_folder, "numpy_weights")
     os.makedirs(weights_folder, exist_ok=True)
     for tensor_name, tensor in weight_dict.items():
+        print(f"Saving weight {tensor_name}")
         t = tensor.cpu().detach().numpy()
         with open(weights_folder + "/" + tensor_name, "wb") as g:
             np.save(g, t)
@@ -75,7 +76,7 @@ def worker_main(cfg: MetaseqConfig):
 
     def _build_model(cfg, task):
         # hardcoded to cpu & fp16
-        model = task.build_model(cfg.model).half().cuda()
+        model = task.build_model(cfg.model).half()#.cuda()
         return fsdp_wrap(model)
 
     with fsdp_enable_wrap(
@@ -100,9 +101,9 @@ def worker_main(cfg: MetaseqConfig):
     with model.summon_full_params():
         for name, p in model.named_parameters():
             print(f"rank:{cfg.distributed_training.distributed_rank}, param name: {name}, param shape: {p.shape}")
-            gathered = [torch.zeros_like(p) for _ in range(mp_size)]
+            gathered = [torch.zeros_like(p).cuda() for _ in range(mp_size)]
             torch.distributed.all_gather(
-                gathered, p, group=dist_utils.get_global_group()
+                gathered, p.cuda(), group=dist_utils.get_global_group()
             )
             for r, t in enumerate(gathered):
                 model_parts[r][name] = t.cpu()
@@ -122,7 +123,7 @@ def worker_main(cfg: MetaseqConfig):
         with open(cfg.task.data + "/restored.pt", "wb") as f:
             torch.save(output_sd, f)
     model_printout = str(model.unwrapped_module)
-    to_folder = cfg.task.data
+    to_folder = "/home/ubuntu/parax-efs/pycharm/opt/raw_weights/30B_resharded/"
     save_numpy(output_sd["model"], model_printout, to_folder)
 
 

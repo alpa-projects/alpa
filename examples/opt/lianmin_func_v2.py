@@ -52,11 +52,11 @@ class WrappedInferenceFunc(GenerationMixin):
 
 
 # model_name = "gpt2"
-# model_name = "facebook/opt-2.7b"
+model_name = "facebook/opt-2.7b"
 # model_name = "facebook/opt-1.3b"
-model_name = "facebook/opt-125m"
+# model_name = "facebook/opt-125m"
 model_name_my_own = "/home/ubuntu/parax-efs/pycharm/opt/raw_weights/125M/pytorch_model.bin"
-
+model_name_my_own = model_name
 # model_name = "facebook/opt-125m"
 tokenizer = GPT2Tokenizer.from_pretrained(model_name)
 # path = "/home/ubuntu/parax-efs/pycharm/opt/raw_weights/1.3B"

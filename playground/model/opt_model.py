@@ -471,6 +471,16 @@ def get_config(name, **kwargs):
             decoder_ffn_embed_dim=28672,
             version=3,
         )
+    elif name == "2.7B":
+        config = OPTConfig(
+            decoder_layers=32,
+            max_target_positions=2048,
+            decoder_embed_dim=2560,
+            decoder_attention_heads=32,
+            decoder_input_dim=2560,
+            decoder_ffn_embed_dim=10240,
+            version=1,
+        )
     elif name == "175B":
         config = OPTConfig(
             decoder_layers=96,

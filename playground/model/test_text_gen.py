@@ -133,11 +133,13 @@ def get_model(model_name, support_output_attentions=False,
         print(inference_func_config)
 
     elif "alpa/opt" in model_name:
+        alpa.init()
+        num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
+
         name = model_name.split("-")[1].upper()
-        config = get_config(name, num_pp_stages=2)
+        config = get_config(name, num_pp_stages=num_pp_stages)
         path = f"/home/ubuntu/opt_weights/{name}_np"
 
-        alpa.init()
         dummy = False
         executable, params_aval = get_pipeshard_executable(
             config,
@@ -164,12 +166,11 @@ def get_model(model_name, support_output_attentions=False,
                 "position_ids": position_ids_step,
                 "cache": past_key_values,
             })
-            logits_step = output.logits
-            logits_step = torch.from_numpy(np.array(logits_step))
-            past_key_values = output.attention_cache
+            logits_step = torch.from_numpy(np.array(output.logits))
 
             step_ct += 1
-            return InferenceFuncOutput(logits_step, past_key_values,
+            return InferenceFuncOutput(logits_step,
+                                       output.attention_cache,
                                        output.hidden_states,
                                        output.attentions)
 
@@ -179,7 +180,7 @@ def get_model(model_name, support_output_attentions=False,
 
 
 tokenizer = GPT2Tokenizer.from_pretrained("facebook/opt-125m")
-model = get_model("alpa/opt-125M", support_output_hidden_states=True)
+model = get_model("alpa/opt-125M", support_output_hidden_states=False)
 
 prompts = [
     "Computer science is the study of computation and",
@@ -196,4 +197,4 @@ for prompt in prompts:
     generated_ids = output.sequences
     generated_string = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
     duration = time.time() - tic
-    print(f"{generated_string}, speed: {len(generated_ids)/duration:.2f} token/s")
+    print(f"{generated_string}, speed: {np.prod(generated_ids.shape)/duration:.2f} token/s")

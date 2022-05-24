@@ -17,7 +17,7 @@ GB = 1 << 30
 
 
 def test_load(name, dummy):
-    config = get_config(name, num_pp_stages=2)
+    config = get_config(name, num_pp_stages=4)
     path = f"/home/ubuntu/opt_weights/{name}_np"
 
     alpa.init()
@@ -42,27 +42,34 @@ def test_load(name, dummy):
 
     print("Build cache...")
     tic = time.time()
-    cache = init_cache_dis_array(executable, config, dummy=dummy)
+    init_cache = init_cache_dis_array(executable, config, dummy=dummy)
     executable.sync()
     duration = time.time() - tic
-    num_bytes = compute_bytes(cache)
+    num_bytes = compute_bytes(init_cache)
     print(f"Duration: {duration:.2f}, Bandwidth: {num_bytes / duration / GB:.2f} GB/s")
 
     # Run
-    for i in range(input_ids.shape[1]):
-        tic = time.time()
-        input_ids_step = input_ids[:, i:i+1]
-        position_ids_step = np.full_like(input_ids_step, i + config.pad + 1)
-        logits_step, cache = executable(params, {
-            "input_ids": input_ids_step,
-            "position_ids": position_ids_step,
-            "cache": cache,
-        })
+    for _ in range(2):
+        start_time = time.time()
+        cache = init_cache
+        for i in range(input_ids.shape[1]):
+            tic = time.time()
+            input_ids_step = input_ids[:, i:i+1]
+            position_ids_step = np.full_like(input_ids_step, i + config.pad + 1)
+            output = executable(params, {
+                "input_ids": input_ids_step,
+                "position_ids": position_ids_step,
+                "cache": cache,
+            })
+            cache = output.attention_cache
 
-        logits_step = str(logits_step).replace("\n", " ")
-        print(f"step: {i}, latency: {time.time() - tic:.2f}, "
-              f"exec_cost: {executable.get_execution_time_costs(warmup=0)[-1]:.2f}, "
-              f"logits: {logits_step}")
+            logits_step = str(output.logits).replace("\n", " ")
+            print(f"step: {i}, latency: {time.time() - tic:.2f}, "
+                  f"exec_cost: {executable.get_execution_time_costs(warmup=0)[-1]:.2f}, "
+                  f"logits: {logits_step}")
+        duration = time.time() - start_time
+        latency = duration / np.prod(input_ids.shape)
+        print(f"latency: {latency:.2f} s/token, throughput: {1/latency:.2f} token/s")
 
 
 if __name__ == "__main__":

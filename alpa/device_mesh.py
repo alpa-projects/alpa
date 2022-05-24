@@ -1879,6 +1879,10 @@ class DeviceCluster:
             map(lambda info: int(info["Resources"]["CPU"]), self.host_info))
 
     @property
+    def num_hosts(self):
+        return len(self.host_info)
+
+    @property
     def num_devices(self):
         return sum(self.host_num_devices)
 

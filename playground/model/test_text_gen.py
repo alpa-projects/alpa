@@ -179,7 +179,7 @@ def get_model(model_name, support_output_attentions=False,
 
 
 tokenizer = GPT2Tokenizer.from_pretrained("facebook/opt-125m")
-model = get_model("alpa/opt-125M")
+model = get_model("alpa/opt-125M", support_output_hidden_states=True)
 
 prompts = [
     "Computer science is the study of computation and",
@@ -191,7 +191,9 @@ for prompt in prompts:
     tic = time.time()
     torch.manual_seed(8)
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids
-    generated_ids = model.generate(input_ids=input_ids, max_length=20, do_sample=True)
+    output = model.generate(input_ids=input_ids, max_length=20, do_sample=True,
+                            return_dict_in_generate=True, output_hidden_states=True)
+    generated_ids = output.sequences
     generated_string = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
     duration = time.time() - tic
     print(f"{generated_string}, speed: {len(generated_ids)/duration:.2f} token/s")

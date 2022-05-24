@@ -164,7 +164,7 @@ def get_model(model_name, support_output_attentions=False,
                 "position_ids": position_ids_step,
                 "cache": past_key_values,
             })
-            logits_step = output.last_hidden_state
+            logits_step = output.logits
             logits_step = torch.from_numpy(np.array(logits_step))
             past_key_values = output.attention_cache
 

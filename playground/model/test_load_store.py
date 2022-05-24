@@ -56,7 +56,7 @@ def test_load_ts():
             "position_ids": position_ids_step,
             "cache": cache,
         })
-        logits_step = output.last_hidden_state
+        logits_step = output.logits
         cache = output.attention_cache
         print(i, logits_step)
 

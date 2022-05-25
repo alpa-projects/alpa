@@ -95,7 +95,7 @@ class GeneratorInterface:
         batches = self.task.get_batch_iterator(
             dataset=self.task.build_dataset_for_inference(tokens, lengths),
             max_tokens=None,
-            max_sentences=None,
+            max_sentences=1,
             max_positions=None,
             ignore_invalid_inputs=False,
         ).next_epoch_itr(shuffle=False)

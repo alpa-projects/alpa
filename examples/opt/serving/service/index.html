@@ -1,6 +1,6 @@
 <html>
 <head>
-    <title>Serving OPT-175B with Alpa</title>
+    <title>Serving OPT Language Model with Alpa</title>
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
     <script type="text/javascript">
     // these constants are only used for providing user expectations.
@@ -9,21 +9,17 @@
 
     // examples for the user
     var EXAMPLES = {
-        "news": {
-            "prompt": "FACEBOOK DEVELOPS ARTIFICIAL INTELLIGENCE FOR TACO RECOMMENDATIONS\nBloomberg News - Menlo Park, CA\n\nThe technology world is reeling after Facebook ($FB) announced today",
-            "length": 256
+        "question": {
+            "prompt": "Question: What is the color of the cloud?\nAnswer: White\n\nQuestion: What is the color of the sky?\nAnswer:",
+            "length": 64
         },
-        "arxiv": {
-            "prompt": "Abstract\n\nWe introduce OPT-175B, a 175B parameter language model that",
-            "length": 256
+        "ion": {
+            "prompt": "Ion Stoica is a Romanian-American computer scientist specializing in",
+            "length": 128
         },
         "chatbot": {
             "prompt": "A chat between a teacher and student who wants to learn about tacos.\n\nTeacher: Hi there. What would you like to learn about today?\nStudent:",
             "length": 128
-        },
-        "question": {
-            "prompt": "Question: What color is the sky?\nAnswer: blue\n\nQuestion: Who was the first president of the United States?\nAnswer: George Washington\n\nQuestion: Who is the president in 2021?\nAnswer:",
-            "length": 64
         },
         "poetry": {
             "prompt": "A sonnet about Dodos\n\n",
@@ -111,12 +107,12 @@ body {
     font-family: monospace;
     white-space: pre-wrap;
     word-wrap: break-word;
-    font-size: 12pt;
+    font-size: 16pt;
     clear: both;
     margin-top: 1em;
     border: 1px solid black;
     padding: 1em;
-    width: 60em;
+    width: 50em;
     min-height: 12em;
 }
 #promptDisplay {
@@ -159,11 +155,11 @@ label {
 </style>
 <body>
 <div class="header">
-    <h1>Serving OPT-175B with Alpa</h1>
+    <h1>Serving OPT Langauge Model with Alpa</h1>
 </div>
 <div id="about">
 <p>
-OPT-175B is a generative language model released by Meta AI. It reproduces the famous GPT-3 model.
+OPT is a generative language model released by Meta AI. It reproduces the famous GPT-3 model.
 In this demo, we use Alpa and the weights released by Meta to serve this mode.
 </p>
 
@@ -178,10 +174,9 @@ This model will generate MANY offensive things. Due to this being an alpha demo,
 </ul>
 <p id="examples">
     <span style="font-weight: bold">Examples:</span>
-    <span><a href='javascript:set_prompt("news");'>News</a></span>
-    <span><a href='javascript:set_prompt("arxiv");'>ML paper</a></span>
+    <span><a href='javascript:set_prompt("question");'>Question</a></span>
+    <span><a href='javascript:set_prompt("ion");'>Facts about Ion</a></span>
     <span><a href='javascript:set_prompt("chatbot");'>Chatbot</a></span>
-    <span><a href='javascript:set_prompt("question");'>QA</a></span>
     <span><a href='javascript:set_prompt("poetry");'>Poetry</a></span>
 </div>
 <div class="request">
@@ -205,9 +200,9 @@ This model will generate MANY offensive things. Due to this being an alpha demo,
     </div>
     <div>
     <label>top-p:</label>
-    <input type="range" value="0.9" min="0.0" max="1.0" step="0.10" class="slider"
+    <input type="range" value="0.5" min="0.0" max="1.0" step="0.10" class="slider"
         oninput="this.nextElementSibling.value = this.value" name="top_p">
-    <output>0.9</output>
+    <output>0.5</output>
     </div>
     <div class="submit-holder">
         <input type="submit" value="Submit" id="generate-form-button"/>

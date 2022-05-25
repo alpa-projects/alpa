@@ -11,6 +11,7 @@ Launch with `python -m metaseq_cli.interactive_hosted` to run locally.
 See docs/api.md for more information.
 """
 
+import argparse
 import os
 import queue
 import pkg_resources
@@ -137,7 +138,7 @@ def batching_loop(timeout=100, max_tokens=MAX_BATCH_TOKENS):
                 continue
 
 
-def worker_main(cfg1: MetaseqConfig, namespace_args=None):
+def worker_main(cfg1: MetaseqConfig, model_name, namespace_args=None):
     # disable multithreading in tokenizers and torch, as different Flask threads
     # may then fight for resources.
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -154,7 +155,7 @@ def worker_main(cfg1: MetaseqConfig, namespace_args=None):
     logger.info(f"loaded model on driver...")
 
     # TODO(Hao): setup Ray and Alpa here
-    generator.load_model("alpa/opt-30B")  # noqa: F841
+    generator.load_model(model_name)  # noqa: F841
     logger.info(f"Driver engaged! {get_my_ip()}:{port}")
 
     thread = threading.Thread(target=batching_loop, daemon=True)
@@ -242,12 +243,12 @@ def completions(engine=None):
 @app.route("/")
 def index():
     # TODO(roller): decouple demopage.html
-    fn = pkg_resources.resource_filename("metaseq", "service/index.html")
+    fn = "/home/ubuntu/parax-efs/lianmin/alpa-projects/alpa/examples/opt/serving/service/index.html"
     with open(fn) as f:
         return f.read()
 
 
-def cli_main():
+def cli_main(model_name):
     """
     Hosted version of the web UI for generation.
     """
@@ -267,8 +268,11 @@ def cli_main():
     cfg = convert_namespace_to_omegaconf(args)
     cfg.distributed_training.distributed_world_size = TOTAL_WORLD_SIZE
     # dist_utils.call_main(cfg, worker_main, namespace_args=args)
-    worker_main(cfg, args)
+    worker_main(cfg, model_name, args)
 
 
 if __name__ == "__main__":
-    cli_main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, default="alpa/opt-125m")
+    args = parser.parse_args()
+    cli_main(args.model)

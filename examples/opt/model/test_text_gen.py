@@ -3,8 +3,7 @@ from collections import namedtuple
 import os
 import time
 from typing import Sequence, Any
-
-import ray
+import sys
 
 import alpa
 from alpa.util import write_tsv
@@ -13,8 +12,12 @@ import torch
 from transformers import GPT2Tokenizer, OPTForCausalLM, GPT2LMHeadModel
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
 
-from .opt_model import (get_config, get_pipeshard_executable, load_params_dis_array,
-                        init_cache_dis_array)
+try:
+    from .opt_model import (get_config, get_pipeshard_executable,
+                            load_params_dis_array, init_cache_dis_array)
+except ImportError:
+    from opt_model import (get_config, get_pipeshard_executable,
+                           load_params_dis_array, init_cache_dis_array)
 
 @dataclass
 class InferenceFuncOutput(ModelOutput):

@@ -8,7 +8,7 @@ from torch import Tensor
 
 from examples.opt.serving import utils
 from metaseq import tasks
-from playground.model.test_text_gen import get_model
+from examples.opt.model.test_text_gen import get_model
 from transformers import GPT2Tokenizer, OPTForCausalLM, GPT2LMHeadModel
 
 logger = logging.getLogger(__name__)

@@ -1,6 +1,6 @@
 <html>
 <head>
-    <title>gpt &#x1F4A4;</title>
+    <title>Serving OPT-175B with Alpa</title>
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
     <script type="text/javascript">
     // these constants are only used for providing user expectations.
@@ -159,10 +159,14 @@ label {
 </style>
 <body>
 <div class="header">
-    <h1>gpt &#x1F4A4;</h1>
+    <h1>Serving OPT-175B with Alpa</h1>
 </div>
 <div id="about">
-<p>Alpa Demo of Serving OPT-175B</p>
+<p>
+OPT-175B is a generative language model released by Meta AI. It reproduces the famous GPT-3 model.
+In this demo, we use Alpa and the weights released by Meta to serve this mode.
+</p>
+
 <p><span style="color: red">WARNING:</span>
 This model will generate MANY offensive things. Due to this being an alpha demo, NO safety measures are in place. </p>
 <p>Tips for better generation:</p>
@@ -219,10 +223,18 @@ This model will generate MANY offensive things. Due to this being an alpha demo,
     </div>
 </div>
 </div>
-<div id="result"><span id="promptDisplay"></span><span id="response"></span><span id="error"></span></div>
-<div id="faq">
 
-<p>Credit: this webserver interface is modified from metaseq.</p>
+<div id="result"><span id="promptDisplay"></span><span id="response"></span><span id="error"></span></div>
+
+<div id="links">
+
+<h2>Links</h2>
+<ul>
+    <li>Start Alpa on <a href="https://github.com/alpa-projects/alpa">github</a> </li>
+    <li>This website interface is modified from <a href="https://github.com/facebookresearch/metaseq">metaseq</a> </li>
+    <li>Check out the <a href="https://arxiv.org/abs/2201.12023">Alpa paper</a> and <a href="https://arxiv.org/abs/2205.01068">OPT paper</a> for technical details.</li>
+</ul>
+</div>
 
 </body>
 </html>

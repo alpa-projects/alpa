@@ -7,10 +7,8 @@ import torch
 from torch import Tensor
 
 from examples.opt.serving import utils
-from examples.opt.serving.wrapper import InferenceFuncConfig, InferenceFuncOutput, WrappedInferenceFunc
 from metaseq import tasks
-from playground.model.opt_model import get_pipeshard_executable, get_config, load_params_dis_array, \
-    init_cache_dis_array
+from playground.model.test_text_gen import get_model
 from transformers import GPT2Tokenizer, OPTForCausalLM, GPT2LMHeadModel
 
 logger = logging.getLogger(__name__)
@@ -31,89 +29,8 @@ class GeneratorInterface:
     def load_model(self, model_name="alpa/opt-125m"):
         """Load model and return the model wrapper."""
         self.task = tasks.setup_task(self.cfg.task)
-
-        if "gpt" in model_name:
-            raw_model = GPT2LMHeadModel.from_pretrained(model_name).to("cuda:0").half()
-
-            def inference_func(input_ids, past_key_values):
-                out = raw_model(input_ids=input_ids, past_key_values=past_key_values)
-                return InferenceFuncOutput(out.logits, out.past_key_values)
-
-            inference_func_config = raw_model.config
-
-            tokenizer = GPT2Tokenizer.from_pretrained(model_name)
-
-        elif "facebook/opt" in model_name:
-
-            # Note(Hao): HF.OPT misses a layer norm. Below is my own weight
-            # model_name = "/home/ubuntu/parax-efs/pycharm/opt/raw_weights/125M/pytorch_model.bin"
-            raw_model = OPTForCausalLM.from_pretrained(model_name).to("cuda:0").half()
-
-            def inference_func(input_ids, past_key_values):
-                assert input_ids.shape[1] == 1, f"{input_ids.shape}"
-                if past_key_values is None:
-                    attention_mask = None
-                else:
-                    past_length = past_key_values[0][0].shape[2]
-                    attention_mask = torch.ones((input_ids.shape[0], past_length + 1)).to("cuda:0")
-                out = raw_model(input_ids=input_ids,
-                                attention_mask=attention_mask,
-                                past_key_values=past_key_values)
-                return InferenceFuncOutput(out.logits, out.past_key_values)
-
-            inference_func_config = InferenceFuncConfig()
-            for key in inference_func_config.__dataclass_fields__.keys():
-                setattr(inference_func_config, key, getattr(raw_model.config, key))
-            logger.debug(inference_func_config)
-
-            tokenizer = GPT2Tokenizer.from_pretrained(model_name)
-
-        elif "alpa/opt" in model_name:
-            import alpa
-            alpa.init()
-
-            import ray
-            name = model_name.split("-")[1].upper()
-            # config = get_config(name, num_pp_stages=len(ray.nodes()))
-            config = get_config(name, num_pp_stages=2)
-            path = f"/home/ubuntu/opt_weights/{name}_np"
-
-            # compile
-            executable, params_aval = get_pipeshard_executable(config)
-            params = load_params_dis_array(path, executable, params_aval, config, dummy=self.dummy)
-            init_cache = init_cache_dis_array(executable, config, dummy=self.dummy)
-
-            step_ct = 0
-
-            def inference_func(input_ids, past_key_values):
-                nonlocal step_ct
-
-                if past_key_values is None:
-                    past_key_values = init_cache
-                    step_ct = 0
-
-                input_ids_step = input_ids.cpu().numpy()
-                position_ids_step = np.full_like(input_ids_step, step_ct + config.pad + 1)
-
-                logits_step, past_key_values = executable(params, {
-                    "input_ids": input_ids_step,
-                    "position_ids": position_ids_step,
-                    "cache": past_key_values,
-                })
-                logits_step = torch.from_numpy(np.array(logits_step)).cuda()
-
-                step_ct += 1
-                return InferenceFuncOutput(logits_step, past_key_values)
-
-            inference_func_config = InferenceFuncConfig()
-            tokenizer = GPT2Tokenizer.from_pretrained(model_name.replace("alpa", "facebook"))
-
-        else:
-            raise RuntimeError("Unrecognized model name.")
-
-        self.model_wrapper = WrappedInferenceFunc(inference_func, inference_func_config)
-        self.tokenizer = tokenizer
-
+        self.model_wrapper = get_model(model_name, "cuda", False)
+        self.tokenizer = GPT2Tokenizer.from_pretrained("facebook/opt-125m")
         return self.model_wrapper
 
     def generate(
@@ -372,7 +289,7 @@ class Generator:
             # top_k=self.top_k,
             top_p=self.top_p,
             early_stopping=True,
-            # no_repeat_ngram_size=2
+            no_repeat_ngram_size=2
             # return_dict_in_generate=True
             # output_hidden_states=True
         )

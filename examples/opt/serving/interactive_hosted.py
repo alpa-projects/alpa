@@ -154,7 +154,7 @@ def worker_main(cfg1: MetaseqConfig, namespace_args=None):
     logger.info(f"loaded model on driver...")
 
     # TODO(Hao): setup Ray and Alpa here
-    generator.load_model("alpa/opt-125m")  # noqa: F841
+    generator.load_model("alpa/opt-30B")  # noqa: F841
     logger.info(f"Driver engaged! {get_my_ip()}:{port}")
 
     thread = threading.Thread(target=batching_loop, daemon=True)

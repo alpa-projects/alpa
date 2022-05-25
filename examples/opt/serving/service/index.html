@@ -162,12 +162,9 @@ label {
     <h1>gpt &#x1F4A4;</h1>
 </div>
 <div id="about">
-<p>This is an alpha demo of the
-175B parameter model.</p>
+<p>Alpa Demo of Serving OPT-175B</p>
 <p><span style="color: red">WARNING:</span>
-This model will generate MANY offensive things. Due to this being an alpha
-demo, NO safety measures are in place.
-</p>
+This model will generate MANY offensive things. Due to this being an alpha demo, NO safety measures are in place. </p>
 <p>Tips for better generation:</p>
 <ul>
     <li>Use the examples to get an idea of how to control it.</li>
@@ -224,49 +221,8 @@ demo, NO safety measures are in place.
 </div>
 <div id="result"><span id="promptDisplay"></span><span id="response"></span><span id="error"></span></div>
 <div id="faq">
-<h2>FAQ and Nerd stuff</h2>
 
-<h3>How does it work?</h3>
-<p>OPT-175B is a large <a href="https://en.wikipedia.org/wiki/Language_model">Language
-model</a>. It predicts the next word based on all the previous words. It's the same
-idea as the predictive auto-complete in your phone or email, but supercharged.</p>
+<p>Credit: this webserver interface is modified from metaseq.</p>
 
-<h3>What's the model trained on?</h3>
-<p>A combination of CCNews, CommonCrawl, DM Mathematics, Enron corpus, Project
-Gutenberg, HackerNews, OpenSubtitles, OpenWebText2, USPTO, Wikipedia,
-BookCorpus, Stories, and Pushshift.io Reddit.</p>
-
-<h3>How up to date is the model?</h3>
-<p>The newest data in the model goes to roughly through September 2021, but <b>most</b>
-of the data is older. The model knows about COVID-19, knows Joe Biden is president,
-but isn't aware of the rebrand to Meta.</p>
-
-<p>You can encourage the model to focus on newer information by putting "2021"
-somewhere in your prompt.</p>
-
-<h3>It's not following my instructions or answering my question.</h3>
-<p>The model doesn't work well with declarative instructions, or point blank
-questions. See the Examples to understand how to best use the model.</p>
-
-<h3>It said something deeply offensive, or factually incorrect!</h3>
-<p>This is a well-known problem with language models, and there is great research
-being done at Meta AI to address these problems. Due to the alpha nature of this
-demo, we have not been able to incorporate that work yet.</p>
-
-<h3>It's really repetitive!</h3>
-<p>Yes, it definitely can be. We're sampling from the model, so you can try
-generating again and see if it helps. We will address repetition in future
-iterations.</p>
-
-<h3>What are you doing with my data in this demo?</h3>
-<p>During this alpha stage, we are not collecting or storing any data from this
-demo. We encourage you to create your own document with feedback or analysis of
-the model, and provide a link in the comments of the workplace post.</p>
-
-<h3>It can only generate 512 tokens?</h3>
-<p>The model has a context length of 2048, but limited 512 in this demo for compute reasons.</p>
-
-<h3>What generation algorithm is running?</h3>
-<p>For this demo, we use Nucleus sampling (p=0.9) with a softmax temperature of T=0.7.</p>
 </body>
 </html>

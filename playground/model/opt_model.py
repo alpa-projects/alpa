@@ -1,6 +1,7 @@
 import dataclasses
 from dataclasses import dataclass
 from functools import partial
+import itertools
 import math
 import os
 from typing import Callable, Optional, Tuple, Dict
@@ -8,14 +9,18 @@ from typing import Callable, Optional, Tuple, Dict
 import alpa
 from alpa import mark_pipeline
 from alpa.model.model_util import ModelOutput
+from alpa.mesh_executable import create_remote_buffer_refs
+from alpa.device_mesh import DistributedArray, ReplicatedDistributedArray
 import flax.linen as nn
 import jax
 import flax
 from jax import lax
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves
+from jax.interpreters import pxla
 import jaxlib.xla_extension as jax_xla
 import numpy as np
+import ray
 from tqdm import tqdm
 
 
@@ -154,11 +159,12 @@ class OPTSelfAttention(nn.Module):
                 (query_states.shape[1], key_states.shape[1]), -1e10), 1), (0, 1))
         else:
             cache_key, cache_value, cache_index = attention_cache
-            key_states = lax.dynamic_update_slice(cache_key, key_states, (0, cache_index[0], 0, 0))
-            value_states = lax.dynamic_update_slice(cache_value, value_states, (0, cache_index[0], 0, 0))
+            cache_index_ = cache_index[0]
+            key_states = lax.dynamic_update_slice(cache_key, key_states, (0, cache_index_, 0, 0))
+            value_states = lax.dynamic_update_slice(cache_value, value_states, (0, cache_index_, 0, 0))
             num_updated_cache_vectors = query_states.shape[1]
             max_length = key_states.shape[1]
-            attention_bias = (jnp.arange(max_length) >= cache_index + num_updated_cache_vectors).astype(self.dtype) * -1e10
+            attention_bias = (jnp.arange(max_length) >= cache_index_ + num_updated_cache_vectors).astype(self.dtype) * -1e10
             attention_bias = attention_bias[None, None, None, :]
             attention_cache = key_states, value_states, cache_index + num_updated_cache_vectors
         attn_weights = nn.attention.dot_product_attention_weights(
@@ -453,42 +459,52 @@ class OPTForLMModule(nn.Module):
 def get_config(name, **kwargs):
     if name == "125M":
         config = OPTConfig(
+            max_target_positions=2048,
             decoder_layers=12,
-            max_target_positions=2048,
-            decoder_embed_dim=768,
             decoder_attention_heads=12,
+            decoder_embed_dim=768,
             decoder_input_dim=768,
-            decoder_ffn_embed_dim=3072,
-            version=3,
-        )
-    elif name == "30B":
-        config = OPTConfig(
-            decoder_layers=48,
-            max_target_positions=2048,
-            decoder_embed_dim=7168,
-            decoder_attention_heads=56,
-            decoder_input_dim=7168,
-            decoder_ffn_embed_dim=28672,
+            decoder_ffn_embed_dim=768 * 4,
             version=3,
         )
     elif name == "2.7B":
         config = OPTConfig(
-            decoder_layers=32,
             max_target_positions=2048,
-            decoder_embed_dim=2560,
+            decoder_layers=32,
             decoder_attention_heads=32,
+            decoder_embed_dim=2560,
             decoder_input_dim=2560,
-            decoder_ffn_embed_dim=10240,
-            version=1,
+            decoder_ffn_embed_dim=2560 * 4,
+            version=3,
+        )
+    elif name == "6.7B":
+        config = OPTConfig(
+            max_target_positions=2048,
+            decoder_layers=32,
+            decoder_attention_heads=32,
+            decoder_embed_dim=4096,
+            decoder_input_dim=4096,
+            decoder_ffn_embed_dim=4096 * 4,
+            version=3,
+        )
+    elif name == "30B":
+        config = OPTConfig(
+            max_target_positions=2048,
+            decoder_layers=48,
+            decoder_attention_heads=56,
+            decoder_embed_dim=7168,
+            decoder_input_dim=7168,
+            decoder_ffn_embed_dim=7168 * 4,
+            version=3,
         )
     elif name == "175B":
         config = OPTConfig(
-            decoder_layers=96,
             max_target_positions=2048,
-            decoder_embed_dim=12288,
+            decoder_layers=96,
             decoder_attention_heads=96,
+            decoder_embed_dim=12288,
             decoder_input_dim=12288,
-            decoder_ffn_embed_dim=49152,
+            decoder_ffn_embed_dim=12288 * 4,
             version=3,
         )
     else:
@@ -510,8 +526,7 @@ def init_model_aval(config):
     return model, params
 
 
-def init_cache_aval(config):
-    batch_size = config.batch_size
+def init_cache_aval(config, batch_size):
     dtype = jnp.float32
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
@@ -530,8 +545,7 @@ def init_cache_aval(config):
     return tuple(all_cache)
 
 
-def init_cache_np(config):
-    batch_size = config.batch_size
+def init_cache_np(config, batch_size):
     dtype = np.float32
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
@@ -551,8 +565,8 @@ def init_cache_np(config):
 
 
 def build_position_ids(input_ids, padding_idx):
-    mask = (input_ids != padding_idx).astype(jnp.int32)
-    position_ids = jnp.cumsum(mask, axis=1).astype(jnp.int32) * mask + padding_idx
+    mask = (input_ids != padding_idx).astype(np.int32)
+    position_ids = np.cumsum(mask, axis=1).astype(np.int32) * mask + padding_idx
     return position_ids
 
 
@@ -634,7 +648,8 @@ def load_params_np(params, path, config, dummy=False):
     return flax.core.freeze(params)
 
 
-def get_pipeshard_executable(config):
+def get_pipeshard_executable(config, support_output_attentions=False,
+                             support_output_hidden_states=False):
     # Init model
     model, params = init_model_aval(config)
 
@@ -650,24 +665,92 @@ def get_pipeshard_executable(config):
             output = model.apply(params,
                                  batch["input_ids"],
                                  batch["position_ids"],
-                                 attention_cache=batch["cache"])
+                                 attention_cache=batch["cache"],
+                                 output_attentions=support_output_attentions,
+                                 output_hidden_states=support_output_hidden_states)
             alpa.mark_pipeline(name=f"{config.num_pp_stages - 1}", mark_type="end")
             return output
 
         output = forward(params)
-        return output.logits, output.attention_cache
+        return output
 
     executable = inference_step_with_cache.get_executable(params, {
         "input_ids": jax.core.ShapedArray((1, 1), jnp.int32),
         "position_ids": jax.core.ShapedArray((1, 1), jnp.int32),
-        "cache": init_cache_aval(config),
+        "cache": init_cache_aval(config, 1),
     })
 
     return executable, params
 
 
+def load_opt_params_fast_path(path, executable, params_aval, config, dummy=False):
+    params_info, _ = executable.get_load_info()
+
+    prefix_to_flat_idx = {}
+    ct = itertools.count()
+    def dfs(dict_tree, result_dict, cur_prefix):
+        if isinstance(dict_tree, (dict, flax.core.FrozenDict)):
+            for key in dict_tree.keys():
+                dfs(dict_tree[key], result_dict,
+                    cur_prefix + ("." if cur_prefix else "") + key)
+        else:
+            result_dict[cur_prefix] = next(ct)
+    dfs(params_aval, prefix_to_flat_idx, "")
+
+    flat_infos, in_tree = tree_flatten(params_info)
+
+    flat_shapes = []
+    flat_uuids = []
+    flat_indices = []
+    flat_mesh_ids = []
+    flat_arrays = []
+
+    for info in flat_infos:
+        if info.is_replicated():
+            tmp_shapes = []
+            tmp_uuids = []
+            tmp_indices = []
+            tmp_mesh_ids = []
+            tmp_arrays = []
+            tmp_meshes = []
+            for aval, mesh, spec in info.get_info():
+                indices = pxla.spec_to_indices(aval.shape, spec)
+                buf_refs, buf_uuids = create_remote_buffer_refs(mesh, 1)
+                array = DistributedArray(mesh, aval, spec, buf_refs, indices)
+                tmp_shapes.append(aval.shape)
+                tmp_uuids.append(buf_uuids)
+                tmp_indices.append(indices)
+                tmp_mesh_ids.append(mesh.mesh_id)
+                tmp_meshes.append(mesh)
+                tmp_arrays.append(array)
+            flat_shapes.append(tuple(tmp_shapes))
+            flat_uuids.append(tuple(tmp_uuids))
+            flat_indices.append(tuple(tmp_indices))
+            flat_mesh_ids.append(tuple(tmp_mesh_ids))
+            flat_arrays.append(ReplicatedDistributedArray(tmp_meshes, tmp_arrays))
+        else:
+            aval, mesh, spec = info.get_info()
+            indices = pxla.spec_to_indices(aval.shape, spec)
+            buf_refs, buf_uuids = create_remote_buffer_refs(mesh, 1)
+            flat_shapes.append([aval.shape])
+            flat_uuids.append([buf_uuids])
+            flat_indices.append([indices])
+            flat_mesh_ids.append([mesh.mesh_id])
+            flat_arrays.append(DistributedArray(mesh, aval, spec, buf_refs, indices))
+
+    for m in executable.mesh_group.meshes:
+        for w in m.workers:
+            w.load_opt_params_fast_path.remote(path, prefix_to_flat_idx, config,
+                flat_shapes, flat_uuids, flat_indices, flat_mesh_ids)
+
+    return flat_arrays
+
+
 def load_params_dis_array(path, executable, params_aval, config, dummy=False):
-    if path[-2:] == "np":
+    if path[-2:] == "np" or path[-10:] == "np_reshard":
+        if not dummy:
+            return load_opt_params_fast_path(path, executable, params_aval, config, dummy)
+
         alpa.global_config.use_dummy_value_for_benchmarking = dummy
         params_info, _ = executable.get_load_info()
         params = load_params_np(params_aval, path, config, dummy)
@@ -683,9 +766,9 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
         raise ValueError()
 
 
-def init_cache_dis_array(executable, config, dummy=False):
+def init_cache_dis_array(executable, config, batch_size, dummy=False):
     alpa.global_config.use_dummy_value_for_benchmarking = dummy
-    cache = init_cache_np(config)
+    cache = init_cache_np(config, batch_size)
     _, batch_info = executable.get_load_info()
     cache_info = batch_info["cache"]
     flat_args, in_tree = tree_flatten(cache)

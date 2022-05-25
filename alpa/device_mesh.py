@@ -86,9 +86,10 @@ ReshardingBroadcastTask = namedtuple("ReshardingBroadcastTask",
 class MeshHostWorker:
     """A ray actor that manages the xla computation and buffers on a single host."""
 
-    def __init__(self, server_address: str, num_hosts: int, host_id: int):
+    def __init__(self, server_address: str, num_hosts: int, host_id: int, mesh_id: int):
         self.num_hosts = num_hosts
         self.host_id = host_id
+        self.mesh_id = mesh_id
         self.distributed_client = (
             xla_client._xla.get_distributed_runtime_client(
                 server_address, host_id))
@@ -701,6 +702,79 @@ class MeshHostWorker:
         self.executables.clear()
         self.distributed_client.shutdown()
 
+    def load_opt_params_fast_path(self, path, prefix_to_idx, config,
+                                  shapes, uuids, indices, mesh_ids):
+        def load_array(key):
+            return np.load(os.path.join(path, key))
+
+        def load_param(param_key, loaded_array):
+            i = prefix_to_idx[param_key]
+
+            for j in range(len(mesh_ids[i])):
+                if self.mesh_id != mesh_ids[i][j]:
+                    continue
+
+                assert shapes[i][j] == loaded_array.shape
+                for k in range(len(self.local_devices)):
+                    idx = self.host_id * len(self.local_devices) + k
+                    uuid = uuids[i][j][idx]
+                    data = loaded_array[indices[i][j][idx]]
+                    self.put_buffer(uuid, k, data)
+
+        load_param("params.transformers.embeddings.word_embeddings.embedding",
+                   load_array("decoder.embed_tokens.weight"))
+        load_param("params.transformers.embeddings.position_embeddings.embedding",
+                   load_array("decoder.embed_positions.weight"))
+
+        if config.version > 2:
+            load_param("params.transformers.layer_norm.scale",
+                       load_array("decoder.layer_norm.weight"))
+            load_param("params.transformers.layer_norm.bias",
+                       load_array("decoder.layer_norm.bias"))
+
+        layers_per_stage = config.decoder_layers // config.num_pp_stages
+
+        for i in range(config.decoder_layers):
+            stage_id = i // layers_per_stage
+            if stage_id != self.mesh_id:
+                continue
+
+            param_prefix = f"params.transformers.encoder.{i}."
+            load_prefix = f"decoder.layers.{i}."
+            # Attention weights
+            wq = load_array(load_prefix + "self_attn.q_proj.weight")
+            wk = load_array(load_prefix + "self_attn.k_proj.weight")
+            wv = load_array(load_prefix + "self_attn.v_proj.weight")
+            dim = wq.shape[-1]
+            w_qvk = np.concatenate([wq, wv, wk], axis=0).reshape((3, -1, dim)).transpose([2, 1, 0]).reshape((dim, -1))
+            load_param(param_prefix + "attention.self.qvk_combined.kernel", w_qvk)
+            bq = load_array(load_prefix + "self_attn.q_proj.bias")
+            bk = load_array(load_prefix + "self_attn.k_proj.bias")
+            bv = load_array(load_prefix + "self_attn.v_proj.bias")
+            b_qvk = np.concatenate([bq, bv, bk], axis=0).reshape((3, dim)).transpose([1, 0]).reshape((-1,))
+            load_param(param_prefix + "attention.self.qvk_combined.bias", b_qvk)
+            load_param(param_prefix + "attention.dense.kernel",
+                       np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))
+            load_param(param_prefix + "attention.dense.bias",
+                       load_array(load_prefix + "self_attn.out_proj.bias"))
+            load_param(param_prefix + "attention.layer_norm.scale",
+                       load_array(load_prefix + "self_attn_layer_norm.weight"))
+            load_param(param_prefix + "attention.layer_norm.bias",
+                       load_array(load_prefix + "self_attn_layer_norm.bias"))
+            # FFN weights
+            load_param(param_prefix + "ffn.fc1.bias",
+                       load_array(load_prefix + "fc1.bias"))
+            load_param(param_prefix + "ffn.fc1.kernel",
+                       np.transpose(load_array(load_prefix + "fc1.weight")))
+            load_param(param_prefix + "ffn.fc2.bias",
+                       load_array(load_prefix + "fc2.bias"))
+            load_param(param_prefix + "ffn.fc2.kernel",
+                       np.transpose(load_array(load_prefix + "fc2.weight")))
+            load_param(param_prefix + "ffn.layer_norm.scale",
+                       load_array(load_prefix + "final_layer_norm.weight"))
+            load_param(param_prefix + "ffn.layer_norm.bias",
+                       load_array(load_prefix + "final_layer_norm.bias"))
+
 
 class PhysicalDeviceMesh(ABC):
     """The base class of physical device mesh.
@@ -981,14 +1055,15 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                  head_ip: str,
                  num_devices_per_host: int,
                  parent: "VirtualPhysicalMesh" = None,
-                 devices: Sequence[Sequence[int]] = None):
+                 devices: Sequence[Sequence[int]] = None,
+                 mesh_id: int = None):
         self.host_ids = host_ids  # The indices of hosts in the global DeviceCluster
         self.host_info = host_info
         self.head_ip = head_ip
         self.num_hosts = len(host_ids)
         self.num_devices_per_host = num_devices_per_host
         self.parent = parent
-        self.mesh_id = None
+        self.mesh_id = mesh_id
         self.workers = None
         self.launched = False
         self.service_server = None
@@ -1076,7 +1151,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                              resources={node_resource: 1e-3})(MeshHostWorker)
             worker = cls.options(runtime_env={
                 "env_vars": env_vars
-            }).remote(self.server_address, self.num_hosts, i)
+            }).remote(self.server_address, self.num_hosts, i, self.mesh_id)
             self.workers.append(worker)
         self.launched = True
 
@@ -1134,7 +1209,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def delete_remote_buffers(self, buf_refs: List["RemoteBufferRef"]):
         """Delete remote buffers."""
-        if self.workers is None or ray.worker is None or not ray.is_initialized():
+        if self.workers is None or not ray or not ray.worker or not ray.is_initialized():
             return
 
         # Put delete requests into per-host buffers
@@ -1693,7 +1768,7 @@ class VirtualPhysicalMesh:
         mesh_beta = mesh_beta or (1, 0.1)
         return LogicalDeviceMesh(None, id_mesh, mesh_alpha, mesh_beta)
 
-    def get_physical_mesh(self):
+    def get_physical_mesh(self, mesh_id=0):
         """Launch a physical mesh (which will request resources from Ray)."""
         assert self.launched_physical_mesh is None, \
             "Physical mesh can only be launched once."
@@ -1704,7 +1779,8 @@ class VirtualPhysicalMesh:
             head_ip=self.head_ip,
             num_devices_per_host=self.num_devices_per_host,
             parent=self,
-            devices=self.devices)
+            devices=self.devices,
+            mesh_id=mesh_id)
         return self.launched_physical_mesh
 
     def get_physical_mesh_group(self, sliced_virtual_meshes):
@@ -1716,8 +1792,7 @@ class VirtualPhysicalMesh:
         physical_meshes = [None] * len(sliced_virtual_meshes)
 
         def launch_func(i):
-            physical_meshes[i] = sliced_virtual_meshes[i].get_physical_mesh()
-            physical_meshes[i].mesh_id = i
+            physical_meshes[i] = sliced_virtual_meshes[i].get_physical_mesh(i)
 
         threads = []
         for i in range(len(sliced_virtual_meshes)):
@@ -1773,7 +1848,7 @@ class PhysicalDeviceMeshGroup:
     def shard_args_to_arrays(self, load_infos, args):
         rets = []
 
-        for info, arg in tqdm(zip(load_infos, args)):
+        for info, arg in zip(load_infos, args):
             if info.is_replicated():
                 meshes, arrays = [], []
                 for aval, mesh, spec in info.get_info():
@@ -1877,6 +1952,10 @@ class DeviceCluster:
     def num_cpus(self):
         return sum(
             map(lambda info: int(info["Resources"]["CPU"]), self.host_info))
+
+    @property
+    def num_hosts(self):
+        return len(self.host_info)
 
     @property
     def num_devices(self):

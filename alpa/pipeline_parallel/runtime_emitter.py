@@ -354,8 +354,7 @@ class PipelineInstEmitter:
         return (instruction_lists, executable_config_lists, executable_uuids,
                 input_local_uuid_lists, grad_uuids, reduced_var_uuid_lists,
                 outs_handler, load_info, donate_invars, mesh_arg_indices,
-                input_shard_indices, input_shard_specs, delete_after_shard,
-                batch_invars)
+                input_shard_indices, delete_after_shard, batch_invars)
 
     def _compile_get_vars_from_mesh(self, invars, dst_specs, mesh_idx,
                                     batch_idx, instruction_lists,
@@ -526,6 +525,54 @@ class PipelineInstEmitter:
 
         return grad_uuids
 
+    def _compile_collect_mesh_input(self, mesh_idx, batch_vars):
+        mesh_arg_set = OrderedSet()
+        var_to_spec = {}
+        mesh_batch_vars = OrderedSet()
+        num_batch = self.num_batch
+        mesh_arg_indices = []
+        input_shard_indices = []
+        input_shard_specs = []
+        mesh_invar_is_batch = []
+        for stage_idx in self.schedule.mesh_stage_mapping[mesh_idx]:
+            stage = self.stages[stage_idx]
+            for spec, invar in zip(stage.input_sharding_specs, stage.invars):
+                if invar in self.global_invars:
+                    var_to_spec[invar] = spec
+                    if invar in batch_vars:
+                        # Split batch arg
+                        for batch_idx in range(num_batch):
+                            mesh_arg_set.add((invar, batch_idx))
+                        mesh_batch_vars.add(invar)
+                    else:
+                        mesh_arg_set.add((invar, 0))
+        mesh_arg_list = list(mesh_arg_set)
+
+        for info in mesh_arg_list:
+            var, batch_idx = info
+            if batch_idx != 0:
+                continue
+
+            global_idx = self.global_invars.index(var)
+            mesh_arg_indices.append(global_idx)
+            mesh_invar_is_batch.append(self.is_batch[global_idx])
+
+            if self.is_batch[global_idx]:
+                aval = var.aval
+                batch_dim = 0
+                new_shape = (num_batch * aval.shape[0],) + aval.shape[1:]
+                new_spec = get_microbatch_sharding_spec(var_to_spec[var],
+                                                        batch_dim, num_batch)
+                input_shard_indices.append(
+                    pxla.spec_to_indices(new_shape, new_spec))
+                input_shard_specs.append(new_spec)
+            else:
+                input_shard_indices.append(
+                    pxla.spec_to_indices(var.aval.shape, var_to_spec[var]))
+                input_shard_specs.append(var_to_spec[var])
+        return (mesh_arg_list, mesh_arg_indices, input_shard_indices,
+                input_shard_specs, mesh_invar_is_batch)
+
     def _compile_split_input_to_microbatches(self, global_batch_invar_set):
         """
       Split batch arguments into micro batches.
@@ -541,7 +588,6 @@ class PipelineInstEmitter:
                 if donate and invar in global_invar_set:
                     donated_invar_set.add(invar)
         num_mesh = len(self.mesh_group)
-        num_batch = self.num_batch
         mesh_arg_lists = [None for _ in range(num_mesh)]
 
         # Dispatch args to each mesh
@@ -552,62 +598,26 @@ class PipelineInstEmitter:
         input_shard_specs = []
         batch_invars = []
         for mesh_idx in range(num_mesh):
-            mesh_arg_set = OrderedSet()
-            var_to_spec = {}
-            mesh_batch_vars = OrderedSet()
-            for stage_idx in self.schedule.mesh_stage_mapping[mesh_idx]:
-                stage = self.stages[stage_idx]
-                for spec, invar in zip(stage.input_sharding_specs,
-                                       stage.invars):
-                    if invar in self.global_invars:
-                        var_to_spec[invar] = spec
-                        if invar in global_batch_invar_set:
-                            # Split batch arg
-                            for batch_idx in range(num_batch):
-                                mesh_arg_set.add((invar, batch_idx))
-                            mesh_batch_vars.add(invar)
-                        else:
-                            mesh_arg_set.add((invar, 0))
-            mesh_arg_list = list(mesh_arg_set)
-            mesh_arg_lists[mesh_idx] = mesh_arg_list
+            (mesh_arg_list, arg_indices, shard_indices, shard_specs,
+             is_batch) = self._compile_collect_mesh_input(
+                 mesh_idx, global_batch_invar_set)
 
-            donate_invars.append([
+            mesh_arg_lists[mesh_idx] = mesh_arg_list
+            delete_after_run = [
                 var in donated_invar_set or var in global_batch_invar_set
                 for var, _ in mesh_arg_list
-            ])
-
-            tmp_mesh_arg_indices = []
-            tmp_input_shard_indices = []
-            tmp_input_shard_specs = []
-            tmp_batch_invars = []
+            ]
+            donate_invars.append(delete_after_run)
             for info in mesh_arg_list:
                 var, batch_idx = info
                 if batch_idx != 0:
                     continue
                 arg_last_use[var] = mesh_idx
 
-                global_idx = self.global_invars.index(var)
-                tmp_mesh_arg_indices.append(global_idx)
-                tmp_batch_invars.append(self.is_batch[global_idx])
-
-                if self.is_batch[global_idx]:
-                    aval = var.aval
-                    batch_dim = 0
-                    new_shape = (num_batch * aval.shape[0],) + aval.shape[1:]
-                    new_spec = get_microbatch_sharding_spec(
-                        var_to_spec[var], batch_dim, num_batch)
-                    tmp_input_shard_indices.append(
-                        pxla.spec_to_indices(new_shape, new_spec))
-                    tmp_input_shard_specs.append(new_spec)
-                else:
-                    tmp_input_shard_indices.append(
-                        pxla.spec_to_indices(var.aval.shape, var_to_spec[var]))
-                    tmp_input_shard_specs.append(var_to_spec[var])
-
-            mesh_arg_indices.append(tmp_mesh_arg_indices)
-            input_shard_indices.append(tmp_input_shard_indices)
-            input_shard_specs.append(tmp_input_shard_specs)
-            batch_invars.append(tmp_batch_invars)
+            mesh_arg_indices.append(arg_indices)
+            input_shard_indices.append(shard_indices)
+            input_shard_specs.append(shard_specs)
+            batch_invars.append(is_batch)
 
         delete_after_shard = []
         for mesh_idx in range(num_mesh):
@@ -862,8 +872,8 @@ class PipelineInstEmitter:
         load_info_arr = [None] * len(self.is_batch)
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
             for local_idx, global_idx in enumerate(mesh_arg_indices[mesh_idx]):
-                aval, mesh, spec = (self.global_invars[global_idx].aval, 
-                                    physical_mesh, 
+                aval, mesh, spec = (self.global_invars[global_idx].aval,
+                                    physical_mesh,
                                     input_shard_specs[mesh_idx][local_idx])
                 if load_info_arr[global_idx] is None:
                     load_info_arr[global_idx] = LoadInfo([aval], [mesh], [spec])

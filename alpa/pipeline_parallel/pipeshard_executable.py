@@ -85,7 +85,7 @@ class PipeshardDriverExecutable:
         (instruction_lists, executable_config_lists, executable_uuids,
          input_local_uuid_lists, grad_uuids, reduced_var_uuid_lists,
          outs_handler, load_info, donate_invars, mesh_arg_indices,
-         input_shard_indices, input_shard_specs, delete_after_shard,
+         input_shard_indices, delete_after_shard,
          batch_invars) = emitter._compile(concat_vars_mapping)
 
         ##### Internal states #####
@@ -101,9 +101,6 @@ class PipeshardDriverExecutable:
         # Cached sharding indices for input arguments
         # List[mesh_idx -> List[sharding_indices]].
         self.input_shard_indices = input_shard_indices
-        # Cached sharding specs for input arguments.
-        # List[mesh_idx -> List[sharding_spec]]
-        self.input_shard_specs = input_shard_specs
         # Whether the argument should be deleted after shard
         # List[mesh_idx -> List[bool]]
         self.delete_after_shard = delete_after_shard

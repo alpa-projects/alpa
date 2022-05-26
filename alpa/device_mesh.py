@@ -1747,7 +1747,10 @@ class PhysicalDeviceMeshGroup:
     def index(self, *args, **kwargs):
         return self.meshes.index(*args, **kwargs)
 
-    def establish_nccl_group(self, src_mesh_id: int, dst_mesh_id: int):
+    def establish_nccl_group(self,
+                             src_mesh_id: int,
+                             dst_mesh_id: int,
+                             instantiate=True):
         """Establish NCCL group between two meshes."""
         # pylint: disable=import-outside-toplevel
         from alpa.pipeline_parallel.cross_mesh_resharding import CollectiveGroup
@@ -1760,12 +1763,23 @@ class PhysicalDeviceMeshGroup:
         dst_mesh = self.meshes[dst_mesh_id]
         device_strs = OrderedSet(src_mesh.device_strs + dst_mesh.device_strs)
         cg = CollectiveGroup(device_strs, src_mesh, dst_mesh)
-        if global_config.eagerly_create_communicators:
-            cg.instantiate_now()
-        else:
-            cg.instantiate()
+        if instantiate:
+            if global_config.eagerly_create_communicators:
+                cg.instantiate_now()
+            else:
+                cg.instantiate()
         self.collective_groups[src_mesh_id][dst_mesh_id] = cg
         self.collective_groups[dst_mesh_id][src_mesh_id] = cg
+
+    def instantiate_all(self):
+        for src_id in range(len(self)):
+            for dst_id in range(src_id + 1, len(self)):
+                cg = self.collective_groups[src_id][dst_id]
+                if cg and not cg.instantiated:
+                    if global_config.eagerly_create_communicators:
+                        cg.instantiate_now()
+                    else:
+                        cg.instantiate()
 
     def sync_workers(self):
         """Sync device activities on all workers."""

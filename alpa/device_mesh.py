@@ -1426,7 +1426,8 @@ class DistributedArray:
                 obj_refs.append(
                     self.device_mesh.workers[host_id].save_buffers_to_ts.remote(
                         path, uuids, indices_per_host[host_id], self.shape))
-        return ray.get(obj_refs)
+        ray.get(obj_refs)
+        return 
 
     @classmethod
     def load(cls, path: str, aval: ShapedArray, device_mesh: PhysicalDeviceMesh,

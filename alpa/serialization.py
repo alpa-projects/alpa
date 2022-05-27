@@ -8,6 +8,7 @@ in Alpa.
 import enum
 import logging
 import os
+import pickle
 import re
 from typing import Union, Any, Sequence
 import uuid
@@ -154,15 +155,14 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
            target: serializable flax object, usually a trainState
            step: training step number or other metric number
     """
-    state_dict = to_state_dict(target)
     os.makedirs(ckpt_dir, exist_ok=True)
-    ckpt_path = os.path.join(ckpt_dir, f'checkpoint_{step}')
+    ckpt_path = os.path.join(ckpt_dir, f"checkpoint_{step}")
+    state_dict = to_state_dict(target)
     with open(ckpt_path, 'wb') as fp:
         fp.write(
             msgpack.packb(state_dict,
                           default=_msgpack_ext_pack_wrapper(ckpt_dir),
                           strict_types=True))
-
 
 class LoadInfo:
     """

@@ -86,8 +86,11 @@ install_require_list = [
 ]
 
 dev_require_list = [
-    "prospector",
-    "yapf",
+    "yapf==0.32.0",
+    "pylint==2.8.2",
+    # https://github.com/edaniszewski/pylint-quotes
+    "pylint-quotes==0.2.3",
+    "coverage",
     "cmake",
     "pybind11"
 ]

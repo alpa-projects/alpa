@@ -4,7 +4,7 @@ import time
 import timeit
 from tempfile import TemporaryFile, TemporaryDirectory
 
-from flax.training.checkpoints import save_checkpoint 
+from flax.training.checkpoints import save_checkpoint, restore_checkpoint
 import jax
 import jax.numpy as jnp
 from jax import random
@@ -14,6 +14,7 @@ import numpy as np
 import alpa
 from alpa import save_checkpoint as alpa_save_checkpoint
 from alpa import restore_checkpoint as alpa_restore_checkpoint
+from alpa import PipeshardParallel  
 from alpa.testing import (MLPModel, BertLayerModel, create_train_state,
                           get_bert_layer_train_step, get_mlp_train_step,
                           assert_allclose)
@@ -27,9 +28,8 @@ def _get_efs_mount_point():
             return cols[-1]+"/"
     return None
 
-def _get_save_prefix():
-    device_cluster = get_global_cluster()
-    if len(device_cluster.host_info) > 1:
+def _get_save_prefix(to_efs):
+    if to_efs:
         # Get EFS mount point for the multi-host test
         save_prefix = _get_efs_mount_point()
     else:
@@ -41,65 +41,98 @@ LOOP_CNT=5
 
 def benchmark_ndarray_save_load(mode="flax", to_efs=True):
     """
-    Save/Load path is set under the EFS filesystem.
     EFS performance: https://docs.aws.amazon.com/efs/latest/ug/performance.html
 
     if mode == "flax": use flax.training.checkpoints.save_checkpoint/restore_checkpoint
+    elif mode == "alpa": use alpa.serialization.save_checkpoint/restore_checkpoint
     elif mode == "numpy: use np.save/load
 
     Benchmark results on EFS: 
-    - flax.save_checkpoint: average run time: 1.482362699508667 seconds, average throughput: 0.6749969769443334 Gbps
-    - alpa.save_checkpoint: average run time: 1.336690330505371 seconds, average throughput: 0.7484693878347961 Gbps
-    - np.save: average run time: 1.2787351608276367 seconds, average throughput: 0.7874443325181828 Gbps
+    - flax.save_checkpoint:    save average run time: 15.0580 seconds, save average throughput: 0.5313 Gbps
+    - flax.restore_checkpoint: load average run time:  6.8287 seconds, load average throughput: 1.2225 Gbps
+
+    - alpa.save_checkpoint:    save average run time: 12.8583 seconds, save average throughput: 0.6222 Gbps
+    - alpa.restore_checkpoint: N/A
+
+    - np.save:                 save average run time: 10.4157 seconds, save average throughput: 0.7682 Gbps
+    - np.load:                 load average run time:  2.9987 seconds, load average throughput: 4.9950 Gbps
 
     Benchmark results on local filesystem:
-    - flax.save_checkpoint: average run time: 0.6772919178009034 seconds, average throughput: 1.4764804301530936 Gbps
-    - alpa.save_checkpoint: average run time: 0.8362024784088135 seconds, average throughput: 1.2280585577116316 Gbps
-    - np.save: average run time: 0.09975528717041016 seconds, average throughput: 10.024606837849765 Gbps
+    - flax.save_checkpoint:    save average run time: 5.5268 seconds, save average throughput: 1.4475 Gbps
+    - flax.restore_checkpoint: load average run time: 5.1856 seconds, load average throughput: 1.5428 Gbps
+
+    - alpa.save_checkpoint:    save average run time: 10.3145 seconds, save average throughput: 0.7756 Gbps
+    - alpa.restore_checkpoint: N/A
+
+    - np.save:                 save average run time: 0.8104 seconds, save average throughput:  9.8718 Gbps
+    - np.load:                 load average run time: 0.5116 seconds, load average throughput: 15.6365 Gbps
     """
     rngkey = random.PRNGKey(0)
     #arr_sizes = [1024*1024, 4*1024*1024, 16*1024*1024, 32*1024*1024] # 4M, 16M, 64M, 128M
-    arr_sizes = [32*1024*1024] # 128M
+    arr_sizes = [256*1024*1024] # 1G
     benchmark_arrs = [random.normal(rngkey, (arr_size,)) for arr_size in arr_sizes]
     for arr in benchmark_arrs:
-        tot_duration = 0.0
-        tot_throughput = 0.0
+        save_tot_duration = 0.0
+        save_tot_throughput = 0.0
+        load_tot_duration = 0.0
+        load_tot_throughput = 0.0
+        prefix = _get_save_prefix(to_efs)
         for i in range(LOOP_CNT):
-            if to_efs:
-                outdir = TemporaryDirectory(prefix=_get_save_prefix()).name
-            else:
-                outdir = TemporaryDirectory().name
+            assert(prefix is not None)
+            outdir = os.path.join(prefix, "benchmark_checkpoint")
+            # clean working directory
+            subprocess.run(["rm", "-rf", outdir])
+            # rebuild working directory
+            os.mkdir(outdir)
             print (f"save to {outdir}")
+            ckpt_path = os.path.join(outdir, "checkpoint_1.npy") # numpy-only
 
+            # save benchmark
             start = time.time()
             if mode == "flax":
                 save_checkpoint(outdir, arr, i)
             elif mode == "alpa":
                 alpa_save_checkpoint(outdir, arr, i)
             else:
-                os.makedirs(outdir, exist_ok=True)
-                ckpt_path = os.path.join(outdir, f"checkpoint_1")
                 np.save(ckpt_path, arr)
             duration = time.time() - start
-
             throughput = arr.size * 32 / 1024 / 1024 / 1024 / duration
-            tot_duration += duration
-            tot_throughput += throughput
-            print(f"loop {i}, time: {duration} seconds, throughput: {throughput} Gbps")
-        print(f"average run time: {tot_duration/LOOP_CNT} seconds, average throughput: {tot_throughput/LOOP_CNT} Gbps")
+            save_tot_duration += duration
+            save_tot_throughput += throughput
+            print(f"loop {i} save, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
+
+            # load benchmark
+            start = time.time()
+            if mode == "flax":
+                restore_checkpoint(outdir, None, None)
+            elif mode == "alpa":
+                print("alpa skip load array benchmark")
+                continue
+            else:
+                np.load(ckpt_path)
+            duration = time.time() - start
+            throughput = arr.size * 32 / 1024 / 1024 / 1024 / duration
+            load_tot_duration += duration
+            load_tot_throughput += throughput
+            print(f"loop {i} load, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
+
+        print(f"save average run time: {save_tot_duration/LOOP_CNT:.4f} seconds, save average throughput: {save_tot_throughput/LOOP_CNT:.4f} Gbps")
+        print(f"load average run time: {load_tot_duration/LOOP_CNT:.4f} seconds, load average throughput: {load_tot_throughput/LOOP_CNT:.4f} Gbps")
 
 def count_params(model):
     return sum(x.size for x in jax.tree_leaves(model))
 
-def benchmark_mlp_save_load(mode="flax", to_efs=True):
+def benchmark_mlp_save(mode="flax", to_efs=True):
     """
     Benchmark results on EFS: 
     - flax.save_checkpoint: average run time: 45.19087886810303 seconds, average throughput: 0.5313484040513637 Gbps
     - alpa.save_checkpoint: average run time: 16.15189399719238, average throughput: 1.4860819837013484 Gbps
+    - np.save:              average run time: 20.618193340301513, average throughput: 1.1642373201358331 Gbps
 
     Benchmark results on local disk:
     - flax.save_checkpoint: average run time: 16.1341721534729, average throughput: 1.4877078603042466 Gbps
     - alpa.save_checkpoint: average run time: 10.663438653945922, average throughput: 2.2509621962263244 Gbps
+    - np.save:              average run time: 20.618193340301513, average throughput: 1.1642373201358331 Gbps
     """
     # Init model and optimizer
     batch_size = 64
@@ -118,18 +151,25 @@ def benchmark_mlp_save_load(mode="flax", to_efs=True):
 
     tot_duration = 0.0
     tot_throughput = 0.0
+    prefix = _get_save_prefix(to_efs)
     for i in range(LOOP_CNT):
-        outdir = TemporaryDirectory(prefix=_get_save_prefix()).name
-        if to_efs:
-            outdir = TemporaryDirectory(prefix=_get_save_prefix()).name
-        else:
-            outdir = TemporaryDirectory().name
+        assert(prefix is not None)
+        outdir = os.path.join(prefix, "benchmark_checkpoint")
+        ckpt_path = os.path.join(outdir, f"checkpoint_1.npy") # numpy-only
+        # clean working directory
+        subprocess.run(["rm", "-rf", outdir])
+        # rebuild working directory
+        os.mkdir(outdir)
+        print (f"save to {outdir}")
 
         start = time.time()
         if mode == "flax":
             save_checkpoint(outdir, state, i)
-        else:
+        elif mode == "alpa":
             alpa_save_checkpoint(outdir, state, i)
+        else:
+            np.save(ckpt_path, state.params)
+            np.save(ckpt_path, state.opt_state)
         duration = time.time() - start
 
         throughput = model_size * 32 / 1024 / 1024 / 1024 / duration
@@ -137,6 +177,68 @@ def benchmark_mlp_save_load(mode="flax", to_efs=True):
         tot_throughput += throughput
         print(f"loop {i}, time: {duration} seconds, throughput: {throughput} Gbps")
     print(f"average run time: {tot_duration/LOOP_CNT}, average throughput: {tot_throughput/LOOP_CNT} Gbps")
+
+def benchmark_mlp_dist_save_load():
+    """
+    Benchmark results on EFS:
+    - alpa.save_checkpoint:
+        save average run time: 161.8653 seconds, save average throughput: 0.1483 Gbps
+        load average run time:  40.2772 seconds, load average throughput: 0.5965 Gbps
+    """
+    # Init model and optimizer
+    batch_size = 64
+    hidden_dim = 8192 # 3072M
+    input_dim = output_dim = hidden_dim
+    model = MLPModel(hidden_dim=hidden_dim,
+                        output_dim=output_dim,
+                        manual_pipeline_layer=True)
+
+    # Init batch args
+    rngkey = random.PRNGKey(0)
+    x = random.normal(rngkey, (batch_size, input_dim), jnp.float32)
+    y = jax.random.normal(rngkey, (batch_size, output_dim), jnp.float32)
+    batch = {'x': x, 'y': y}
+ 
+    state = create_train_state(rngkey, model, [x])
+    model_size = count_params(state)
+    print(f"model size: {model_size * 4 / 1024 / 1024} MB")
+
+    # Compile
+    method = PipeshardParallel(num_micro_batches=2)
+    parallel_train_step = get_mlp_train_step(method, True, False, False)
+    executable = parallel_train_step.get_executable(state, batch) 
+    state_ss, _ = executable.get_load_info()
+    parallel_state = parallel_train_step(state, batch)[0]
+
+    save_tot_duration = 0.0
+    save_tot_throughput = 0.0
+    load_tot_duration = 0.0
+    load_tot_throughput = 0.0
+    prefix = _get_save_prefix(True) # must save to/load from EFS
+    assert(prefix is not None)
+    for i in range(LOOP_CNT):
+        with TemporaryDirectory(prefix=prefix) as outdir:
+            print(f"save to {outdir}")
+            # benchmark saving
+            start = time.time()
+            alpa_save_checkpoint(outdir, parallel_state, 1)
+            duration = time.time() - start
+            throughput = model_size * 32 / 1024 / 1024 / 1024 / duration
+            save_tot_duration += duration
+            save_tot_throughput += throughput
+            print(f"loop {i} save, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
+
+            # benchmark loading
+            start = time.time()
+            _ = alpa_restore_checkpoint(outdir, 1, state_ss)
+            duration = time.time() - start
+            throughput = model_size * 32 / 1024 / 1024 / 1024 / duration
+            load_tot_duration += duration
+            load_tot_throughput += throughput
+            print(f"loop {i} load, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
+
+    print(f"save average run time: {save_tot_duration/LOOP_CNT:.4f} seconds, save average throughput: {save_tot_throughput/LOOP_CNT:.4f} Gbps")
+    print(f"load average run time: {load_tot_duration/LOOP_CNT:.4f} seconds, load average throughput: {load_tot_throughput/LOOP_CNT:.4f} Gbps")
 
 
 
@@ -150,22 +252,26 @@ if __name__ == "__main__":
     # print("\nnumpy")
     # benchmark_ndarray_save_load(mode="numpy")
 
-    print("ndarray benchmark on local disk:") 
-    print("flax")
-    benchmark_ndarray_save_load(mode="flax", to_efs=False)
-    print("\nalpa")
-    benchmark_ndarray_save_load(mode="alpa", to_efs=False)
-    print("\nnumpy")
-    benchmark_ndarray_save_load(mode="numpy", to_efs=False)
+    # print("\n\nndarray benchmark on local disk:") 
+    # print("flax")
+    # benchmark_ndarray_save_load(mode="flax", to_efs=False)
+    # print("\nalpa")
+    # benchmark_ndarray_save_load(mode="alpa", to_efs=False)
+    # print("\nnumpy")
+    # benchmark_ndarray_save_load(mode="numpy", to_efs=False)
 
     # print("mlp benchmark on EFS:")
-    # benchmark_mlp_save_load(mode="flax")
-    # benchmark_mlp_save_load(mode="alpa")
+    # benchmark_mlp_save(mode="flax")
+    # benchmark_mlp_save(mode="alpa")
+    # benchmark_mlp_save(mode="numpy")
 
     # print("mlp benchmark on local disk:")
-    # benchmark_mlp_save_load(mode="flax", to_efs=False)
-    # benchmark_mlp_save_load(mode="alpa", to_efs=False)
+    # benchmark_mlp_save(mode="flax", to_efs=False)
+    # benchmark_mlp_save(mode="alpa", to_efs=False)
+    # benchmark_mlp_save(mode="numpy", to_efs=False)
 
+    # print("mlp dist save/load benchmark:")
+    benchmark_mlp_dist_save_load()
 
     alpa.shutdown()
     

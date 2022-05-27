@@ -14,7 +14,6 @@ on:
 jobs:
   Unittest:
     runs-on: [self-hosted, gpu]
-    needs: linting
     steps:
       - name: Cancel previous
         uses: styfle/cancel-workflow-action@0.9.1

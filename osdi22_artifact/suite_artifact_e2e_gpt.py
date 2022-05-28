@@ -74,3 +74,27 @@ artifact_result_e2e_gpt_suite = {
     "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0} for _ in range(4)],
 }),
 }
+
+
+artifact_result_inter_op_ablation_gpt_suite = {
+16: # Ours
+get_auto_test_case("6.7B", [64], [8], "manual_gpipe", {
+    "forward_stage_layer_ids": [[0, 1, 2, 3], [4, 5, 6, 7]],
+    "sub_physical_mesh_shapes": [(1, 8)] * 2,
+    "sub_logical_mesh_shapes": [(2, 4)] * 2,
+    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0} for _ in range(2)],
+}) + # Equal operator
+get_auto_test_case("6.7B", [64], [8], "manual_gpipe", {
+    "use_equal_eqn": True,
+    "forward_stage_layer_ids": [[0, 1, 2, 3], [4, 5, 6, 7]],
+    "sub_physical_mesh_shapes": [(1, 8)] * 2,
+    "sub_logical_mesh_shapes": [(2, 4)] * 2,
+    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0} for _ in range(2)],
+}) + # Equal layer
+get_auto_test_case("6.7B", [64], [8], "manual_gpipe", {
+    "forward_stage_layer_ids": [[0, 1, 2, 3], [4, 5, 6, 7]],
+    "sub_physical_mesh_shapes": [(1, 8)] * 2,
+    "sub_logical_mesh_shapes": [(2, 4)] * 2,
+    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0} for _ in range(2)],
+}),
+}

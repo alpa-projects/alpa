@@ -165,3 +165,85 @@ artifact_result_e2e_wresnet_ppdp_suite = {
     "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 16,
 }),
 }
+
+
+paper_inter_op_ablation_wresnet_search_suite = {
+    8:  get_auto_test_case("2B", [32], 1536),
+
+    16: get_auto_test_case("4B", [32], 1536),
+
+    32: get_auto_test_case("6.8B", [32], 1536)
+}
+
+
+paper_inter_op_ablation_wresnet_result_suite = {
+8: # Ours
+get_auto_test_case("2B", [32], 1536, overwrite_global_config_dict={
+    "pipeline_stage_mode": "manual_gpipe",
+    "forward_stage_layer_ids": [[0, 1, 2, 3, 4, 5, 6, 7], [8, 9, 10, 11, 12, 13, 14, 15]],
+    "sub_physical_mesh_shapes": [(1, 4), (1, 4)],
+    "sub_logical_mesh_shapes": [(4, 1), (1, 4)],
+    "submesh_autosharding_option_dicts": [{}, {'force_batch_dim_to_mesh_dim': 0}]
+}) + # Equal operator
+get_auto_test_case("2B", [32], 1536, overwrite_global_config_dict={
+    "use_equal_eqn": True,
+    "pipeline_stage_mode": "manual_gpipe",
+    "forward_stage_layer_ids": [[0, 1, 2, 3, 4, 5, 6, 7], [8, 9, 10, 11, 12, 13, 14, 15]],
+    "sub_physical_mesh_shapes": [(1, 4)] * 2,
+    "sub_logical_mesh_shapes": [(2, 2), (1, 4)],
+    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 2
+}) + # Equal Layer
+get_auto_test_case("2B", [32], 1536, overwrite_global_config_dict={
+    "pipeline_stage_mode": "manual_gpipe",
+    "forward_stage_layer_ids": [[0, 1, 2, 3, 4, 5, 6, 7], [8, 9, 10, 11, 12, 13, 14, 15]],
+    "sub_physical_mesh_shapes": [(1, 4), (1, 4)],
+    "sub_logical_mesh_shapes": [(4, 1), (1, 4)],
+    "submesh_autosharding_option_dicts": [{}, {'force_batch_dim_to_mesh_dim': 0}]
+}),
+16: # Ours
+get_auto_test_case("4B", [32], 1536, overwrite_global_config_dict={
+    "pipeline_stage_mode": "manual_gpipe",
+    "forward_stage_layer_ids": [[0, 1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12, 13, 14, 15]],
+    "sub_physical_mesh_shapes": [(1, 4), (1, 4), (1, 8)],
+    "sub_logical_mesh_shapes": [(4, 1), (4, 1), (8, 1)],
+    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}, {'force_batch_dim_to_mesh_dim': 0}, {}]
+}) + # Equal operator
+get_auto_test_case("4B", [35], 1540, overwrite_global_config_dict={
+    "use_equal_eqn": True,
+    "pipeline_stage_mode": "manual_gpipe",
+    "forward_stage_layer_ids": [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11, 12, 13, 14, 15]],
+    "sub_physical_mesh_shapes": [(1, 4), (1, 4), (1, 8)],
+    "sub_logical_mesh_shapes": [(4, 1), (1, 4), (1, 8)],
+    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 3
+}) + # Equal layer
+get_auto_test_case("4B", [32], 1536, overwrite_global_config_dict={
+    "pipeline_stage_mode": "manual_gpipe",
+    "forward_stage_layer_ids": [[0, 1, 2, 3, 4, 5, 6, 7], [8, 9, 10, 11, 12, 13, 14, 15]],
+    "sub_physical_mesh_shapes": [(1, 8)] * 2,
+    "sub_logical_mesh_shapes": [(2, 4), (1, 8)],
+    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 2
+}),
+32: # Ours
+get_auto_test_case("6.8B", [32], 1536, overwrite_global_config_dict={
+    "pipeline_stage_mode": "manual_gpipe",
+    "forward_stage_layer_ids": [[0, 1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15]],
+    "sub_physical_mesh_shapes": [(1, 8), (1, 8), (1, 8), (1, 8)],
+    "sub_logical_mesh_shapes": [(8, 1), (8, 1), (8, 1), (8, 1)],
+    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}, {}, {}, {}],
+}) + # Equal operator
+get_auto_test_case("6.8B", [35], 1540, overwrite_global_config_dict={
+    "use_equal_eqn": True,
+    "pipeline_stage_mode": "manual_gpipe",
+    "forward_stage_layer_ids": [[0, 1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15]],
+    "sub_physical_mesh_shapes": [(1, 8), (1, 8), (1, 8), (1, 8)],
+    "sub_logical_mesh_shapes": [(4, 2), (1, 8), (8, 1), (8, 1)],
+    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}, {'force_batch_dim_to_mesh_dim': 0}, {}, {}],
+}) + # Equal layer
+get_auto_test_case("6.8B", [32], 1536, overwrite_global_config_dict={
+    "pipeline_stage_mode": "manual_gpipe",
+    "forward_stage_layer_ids": [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15]],
+    "sub_physical_mesh_shapes": [(1, 8), (1, 8), (1, 8), (1, 8)],
+    "sub_logical_mesh_shapes": [(8, 1), (1, 8), (1, 8), (1, 8)],
+    "submesh_autosharding_option_dicts": [{'force_batch_dim_to_mesh_dim': 0}] * 4,
+}),
+}

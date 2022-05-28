@@ -839,6 +839,9 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 env_vars["XLA_PYTHON_CLIENT_ALLOCATOR"] = os.environ[
                     "XLA_PYTHON_CLIENT_ALLOCATOR"]
 
+            if "NCCL_LAUNCH_MODE" in os.environ:
+                env_vars["NCCL_LAUNCH_MODE"] = os.environ["NCCL_LAUNCH_MODE"]
+
             if global_config.use_aws_efa:
                 env_vars.update({
                     "FI_PROVIDER": "efa",

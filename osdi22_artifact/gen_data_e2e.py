@@ -4,6 +4,7 @@ sys.path.append("../benchmark/alpa/")
 
 import argparse
 import time
+import numpy as np
 
 from alpa.util import write_tsv, run_cmd
 
@@ -81,10 +82,16 @@ if __name__ == "__main__":
     parser.add_argument("--search", action="store_true")
     parser.add_argument("--niter", type=int, default=3,
         help="The number of benchmark iterations")
+    parser.add_argument("--cluster-size", type=int)
     args = parser.parse_args()
 
     cluster_sizes = [(4, 8), (2, 8), (1, 8), (1, 4), (1, 1)]
     output_name = f"results_e2e.tsv"
+
+    if args.cluster_size:
+        cluster_sizes = [x for x in cluster_sizes if np.prod(x) == args.cluster_size]
+
+    print(f"Cluster sizes: {cluster_sizes}")
 
     if args.model is None:
         models = ["gpt", "moe", "wresnet"]

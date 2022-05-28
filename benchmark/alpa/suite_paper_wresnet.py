@@ -78,11 +78,3 @@ paper_auto_wresnet_suite = {  # key = the number of gpus, value = a list of case
          get_auto_test_case("13B", [42], 1512) +
          [(1520, 224, 101,  320,  16, "fp32", 38, False, False, True,  "single_node_model_parallel")]),
 }
-
-paper_ablation_wresnet_suite = {  # key = the number of gpus, value = a list of cases
-    8:  get_auto_test_case("2B", [32], 1536),
-
-    16: get_auto_test_case("4B", [32], 1536),
-
-    32: get_auto_test_case("6.8B", [32], 1536)
-}

@@ -1,6 +1,7 @@
 """Intra-op parallelism ablation study."""
 import argparse
 import time
+import os
 
 import numpy as np
 import ray
@@ -25,7 +26,7 @@ benchmark_one_case_wresnet = (lambda case, niter, num_host, num_devices_per_host
 GB = 1 << 30
 
 gpt_1_spec = [
-    #B,   S,    H     L, #head,     V,    
+    #B,   S,    H     L, #head,     V,
     (8,   1024, 2048, 8, 2048//128, 25600),
     (8,   1024, 3072, 8, 3072//128, 25600),
     (8,   1024, 4096, 8, 4096//128, 25600),
@@ -132,11 +133,11 @@ moe_heuristic = [
 ]
 
 wresnet_1_spec = [
-    #B,   I,   L,  C,   W, dtype,  
-    (32,  224, 50, 160, 2, "fp32"), 
-    (32,  224, 50, 224, 2, "fp32"), 
-    (32,  224, 50, 320, 2, "fp32"), 
-    (32,  224, 50, 448, 2, "fp32"), 
+    #B,   I,   L,  C,   W, dtype,
+    (32,  224, 50, 160, 2, "fp32"),
+    (32,  224, 50, 224, 2, "fp32"),
+    (32,  224, 50, 320, 2, "fp32"),
+    (32,  224, 50, 448, 2, "fp32"),
 ]
 
 wresnet_auto_sharding = [
@@ -242,6 +243,10 @@ if __name__ == "__main__":
         exp_name, instance, num_hosts, num_devices_per_host, model_name,\
             method, benchmark_func, args = case
 
+        if model_name == "moe" and args[-2] == "shard-largest":
+            os.environ["NCCL_LAUNCH_MODE"] = "PARALLEL"
+            print("Set nccl launch mode")
+
         # Benchmark case
         result = benchmark_func(args, niter, num_hosts, num_devices_per_host)
         param_count, ilp_objective, peak_mem, latencies, tflops = result
@@ -256,7 +261,7 @@ if __name__ == "__main__":
         }
 
         # Log results
-        heads = ["Exp", "Instance", "num_hosts", "num_devices_per_host", "model_name", 
+        heads = ["Exp", "Instance", "num_hosts", "num_devices_per_host", "model_name",
                  "method", "value", "tstamp"]
         values = [exp_name, instance, num_hosts, num_devices_per_host,
                   model_name, method, to_str_round(value_dict, 4),

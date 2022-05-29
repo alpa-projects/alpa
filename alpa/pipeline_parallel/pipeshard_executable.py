@@ -362,7 +362,7 @@ class PipeshardDriverExecutable:
             self.mesh_group.exception_shutdown()
 
     def __del__(self):
-        for worker, uuid in self.worker_executable_uuid_mapping:
+        for worker, uuid in self.worker_executable_uuid_mapping.items():
             worker.delete_executable.remote(uuid)
 
 

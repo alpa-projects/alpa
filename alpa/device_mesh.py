@@ -1771,6 +1771,15 @@ class PhysicalDeviceMeshGroup:
         self.collective_groups[src_mesh_id][dst_mesh_id] = cg
         self.collective_groups[dst_mesh_id][src_mesh_id] = cg
 
+    def instantiate_nccl_group(self,
+                               src_mesh_id: int,
+                               dst_mesh_id: int):
+        cg = self.collective_groups[src_mesh_id][dst_mesh_id]
+        if global_config.eagerly_create_communicators:
+            cg.instantiate_now()
+        else:
+            cg.instantiate()
+
     def instantiate_all(self):
         for src_id in range(len(self)):
             for dst_id in range(src_id + 1, len(self)):

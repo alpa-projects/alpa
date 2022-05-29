@@ -387,8 +387,9 @@ class SymbolicReshardingTask(ReshardingTask):
         self._compile()
 
         # create communicators
-        if global_config.eagerly_create_communicators:
-            self._create_resharding_communicators()
+        # FIXME(yonghao)
+        # if global_config.eagerly_create_communicators:
+        #     self._create_resharding_communicators()
         # print(self.__str__()+"\n")
 
     @property
@@ -979,6 +980,7 @@ class CollectiveGroup:
             ray.get(worker.destroy_collective_group.remote(self.group_name))
         # Destroy the declared named actor in ray
         self._destroy_info_actor()
+        self.instantiated = False
 
     def _destroy_info_actor(self):
         name = "info_" + self.group_name

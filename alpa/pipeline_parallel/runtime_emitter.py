@@ -2,6 +2,7 @@
 from collections import namedtuple, defaultdict
 from dataclasses import dataclass
 import enum
+import logging
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from jax._src.tree_util import PyTreeDef, tree_unflatten
@@ -22,6 +23,9 @@ from alpa.serialization import LoadInfo
 from alpa.util import (DisjointDict, OrderedSet, cached_property,
                        get_shard_shape, get_microbatch_sharding_spec,
                        compile_concatenate)
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 class PipelineInstType(enum.IntEnum):
@@ -275,9 +279,46 @@ class PipelineInstEmitter:
                         var] = SymbolicBroadcastReshardingTask(
                             spec, cg, src_mesh, dst_mesh)
 
+    def _establish_nccl_groups(self):
+        """
+        Identify and create NCCL groups based on resharding specs.
+
+        We establish one collective group between two physical meshes, covering all the devices in
+        these two meshes that require NCCL communication.
+
+        Returns:
+            device_str_groups (List[List[set]]): a num_mesh x num_mesh matrix. Only entries at
+                device_str_groups[i][j] (i < j) are filled, entries with i > j are None, because
+                (spec[i][j], spec[j][i]) will share collective groups.
+        """
+        device_str_groups = [[OrderedSet()
+                              for _ in range(self.num_mesh)]
+                             for _ in range(self.num_mesh)]
+        # Merge (i, j) and (j, i)
+        for i, j, var_spec_map in self._communicator.task_spec_iter():
+            participants = OrderedSet()
+            for _, spec in var_spec_map.items():  # for each var
+                participants = participants | spec.get_participant_device_strs()
+            if i <= j:
+                device_str_groups[i][j] = device_str_groups[i][j] | participants
+            else:
+                device_str_groups[j][i] = device_str_groups[j][i] | participants
+
+        # construct groups
+        for i in range(self.num_mesh):
+            for j in range(self.num_mesh):
+                if i >= j:
+                    assert not device_str_groups[i][j]
+                    continue
+                if not device_str_groups[i][j]:
+                    continue
+                self.mesh_group.establish_nccl_group(i, j, instantiate=False)
+        return device_str_groups
+
     def _compile(self, concat_vars_mapping):
         """Compile pipeline instructions and executables for workers."""
         num_mesh = len(self.mesh_group)
+        device_str_groups = self._establish_nccl_groups()
 
         instruction_lists = {}  # Dict[worker -> List[PipelineInstruction]]
         executable_config_lists = {}  # Dict[worker -> List[ExecutableConfig]]
@@ -354,7 +395,8 @@ class PipelineInstEmitter:
         return (instruction_lists, executable_config_lists, executable_uuids,
                 input_local_uuid_lists, grad_uuids, reduced_var_uuid_lists,
                 outs_handler, load_info, donate_invars, mesh_arg_indices,
-                input_shard_indices, delete_after_shard, batch_invars)
+                input_shard_indices, delete_after_shard, batch_invars,
+                device_str_groups)
 
     def _compile_get_vars_from_mesh(self, invars, dst_specs, mesh_idx,
                                     batch_idx, instruction_lists,

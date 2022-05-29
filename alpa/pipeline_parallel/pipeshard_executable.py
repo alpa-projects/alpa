@@ -1,15 +1,14 @@
 """The dirver part and worker part of a pipeshard executable."""
 import logging
 import time
-from typing import Dict, Sequence, List, Callable
+from typing import Dict, Sequence, Callable
 
 from jax.core import Var
-from jax.interpreters import pxla
-from jax.tree_util import tree_unflatten, PyTreeDef
+from jax.tree_util import PyTreeDef
 import numpy as np
 import ray.exceptions
 
-from alpa.device_mesh import MeshHostWorker, DistributedArray, ReplicatedDistributedArray
+from alpa.device_mesh import MeshHostWorker
 from alpa.global_env import global_config
 from alpa.device_mesh import PhysicalDeviceMeshGroup
 from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
@@ -81,12 +80,12 @@ class PipeshardDriverExecutable:
                                       num_batch=num_batch,
                                       flop_count=flop_count,
                                       in_tree=in_tree)
-        self._establish_nccl_groups(emitter._communicator.task_spec_iter())
         (instruction_lists, executable_config_lists, executable_uuids,
          input_local_uuid_lists, grad_uuids, reduced_var_uuid_lists,
          outs_handler, load_info, donate_invars, mesh_arg_indices,
-         input_shard_indices, delete_after_shard,
-         batch_invars) = emitter._compile(concat_vars_mapping)
+         input_shard_indices, delete_after_shard, batch_invars,
+         device_str_groups) = emitter._compile(concat_vars_mapping)
+        self._instantiate_nccl_groups(device_str_groups)
 
         ##### Internal states #####
 
@@ -140,30 +139,15 @@ class PipeshardDriverExecutable:
 
     ##### Compilation Related Functions #####
 
-    def _establish_nccl_groups(self, task_spec_iter):
+    def _instantiate_nccl_groups(self, device_str_groups):
         """
-        Identify and create NCCL groups based on resharding specs.
+        Instantiate NCCL groups between two physical meshes.
 
-        We establish one collective group between two physical meshes, covering all the devices in
-        these two meshes that require NCCL communication.
-
-        Returns:
+        Args:
             device_str_groups (List[List[set]]): a num_mesh x num_mesh matrix. Only entries at
                 device_str_groups[i][j] (i < j) are filled, entries with i > j are None, because
                 (spec[i][j], spec[j][i]) will share collective groups.
         """
-        device_str_groups = [[OrderedSet()
-                              for _ in range(self.num_mesh)]
-                             for _ in range(self.num_mesh)]
-        # Merge (i, j) and (j, i)
-        for i, j, var_spec_map in task_spec_iter:
-            participants = OrderedSet()
-            for _, spec in var_spec_map.items():  # for each var
-                participants = participants | spec.get_participant_device_strs()
-            if i <= j:
-                device_str_groups[i][j] = device_str_groups[i][j] | participants
-            else:
-                device_str_groups[j][i] = device_str_groups[j][i] | participants
 
         # construct groups
         start_time = time.time()
@@ -174,7 +158,7 @@ class PipeshardDriverExecutable:
                     continue
                 if not device_str_groups[i][j]:
                     continue
-                self.mesh_group.establish_nccl_group(i, j)
+                self.mesh_group.instantiate_nccl_group(i, j)
         end_time = time.time()
         logger.debug(
             f"Initialize collective group takes {end_time - start_time:.2f}")

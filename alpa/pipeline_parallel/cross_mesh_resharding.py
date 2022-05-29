@@ -385,11 +385,6 @@ class SymbolicReshardingTask(ReshardingTask):
 
         # generate the above states
         self._compile()
-
-        # create communicators
-        # FIXME(yonghao)
-        # if global_config.eagerly_create_communicators:
-        #     self._create_resharding_communicators()
         # print(self.__str__()+"\n")
 
     @property
@@ -492,7 +487,7 @@ class SymbolicReshardingTask(ReshardingTask):
                 worker.put_resharding_allgather_task.remote(uuid, task))
         ray.get(task_dones)
 
-    def _create_resharding_communicators(self):
+    def create_resharding_communicators(self):
         """Create the NCCL communicators in advance."""
         communicator_params = set()
         for worker, recv_tasks in self.receiver_tasks.items():
@@ -509,8 +504,8 @@ class SymbolicReshardingTask(ReshardingTask):
 
         # now init the communicators
         group_name = self.collective_group.group_name
+        task_dones = []
         for param in communicator_params:
-            task_dones = []
             src_rank, src_gpu_idx, dst_rank, dst_gpu_idx = param
             src_worker = self.collective_group.mesh_workers[src_rank]
             dst_worker = self.collective_group.mesh_workers[dst_rank]
@@ -523,7 +518,7 @@ class SymbolicReshardingTask(ReshardingTask):
                 dst_worker.init_p2p_communicator.remote(group_name, dst_rank,
                                                         dst_gpu_idx, src_rank,
                                                         src_gpu_idx, nccl_uid))
-            ray.get(task_dones)
+        ray.get(task_dones)
 
     def _compile_send_recv_tasks(self):
         """Generate all send/recv tasks."""
@@ -749,10 +744,6 @@ class SymbolicBroadcastReshardingTask(ReshardingTask):
 
         # generate the above states
         self._compile()
-
-        # create communicators
-        if global_config.eagerly_create_communicators:
-            self._create_resharding_communicators()
         # print(self.__str__()+"\n")
 
     @property
@@ -845,7 +836,7 @@ class SymbolicBroadcastReshardingTask(ReshardingTask):
                 self.communicator_configs.add(comm_config)
         return self._broadcast_tasks
 
-    def _create_resharding_communicators(self):
+    def create_resharding_communicators(self):
         """Create the NCCL communicators for broadcast in advance."""
         group_name = self.collective_group.group_name
         for config in self.communicator_configs:

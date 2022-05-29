@@ -84,7 +84,7 @@ class PipeshardDriverExecutable:
          input_local_uuid_lists, grad_uuids, reduced_var_uuid_lists,
          outs_handler, load_info, donate_invars, mesh_arg_indices,
          input_shard_indices, delete_after_shard, batch_invars,
-         device_str_groups) = emitter._compile(concat_vars_mapping)
+         device_str_groups) = emitter.compile(concat_vars_mapping)
         self._instantiate_nccl_groups(device_str_groups)
 
         ##### Internal states #####
@@ -136,6 +136,10 @@ class PipeshardDriverExecutable:
                 worker.put_executable.remote(uuid, PipeshardMeshWorkerExecuable,
                                              *args)
                 self.worker_executable_uuid_mapping[worker] = uuid
+
+        if global_config.eagerly_create_communicators:
+            for task in emitter.resharding_task_iter():
+                task.create_resharding_communicators()
 
     ##### Compilation Related Functions #####
 

@@ -270,6 +270,7 @@ class PipelineInstEmitter:
                     dst_mesh_idx]
                 src_mesh = self.mesh_group[src_mesh_idx]
                 dst_mesh = self.mesh_group[dst_mesh_idx]
+                # TODO(yonghao): delay put_resharding_XXXX_task until pipeshard executable
                 if global_config.resharding_mode == "send_recv":
                     self._resharding_tasks[src_mesh_idx][dst_mesh_idx][
                         var] = SymbolicReshardingTask(spec, cg, src_mesh,
@@ -281,7 +282,7 @@ class PipelineInstEmitter:
 
     def _establish_nccl_groups(self):
         """
-        Identify and create NCCL groups based on resharding specs.
+        Identify NCCL groups based on resharding specs but do not instantiate them.
 
         We establish one collective group between two physical meshes, covering all the devices in
         these two meshes that require NCCL communication.
@@ -315,7 +316,7 @@ class PipelineInstEmitter:
                 self.mesh_group.establish_nccl_group(i, j, instantiate=False)
         return device_str_groups
 
-    def _compile(self, concat_vars_mapping):
+    def compile(self, concat_vars_mapping):
         """Compile pipeline instructions and executables for workers."""
         num_mesh = len(self.mesh_group)
         device_str_groups = self._establish_nccl_groups()
@@ -397,6 +398,14 @@ class PipelineInstEmitter:
                 outs_handler, load_info, donate_invars, mesh_arg_indices,
                 input_shard_indices, delete_after_shard, batch_invars,
                 device_str_groups)
+
+    def resharding_task_iter(self):
+        """An iterator over all resharding tasks."""
+        for src_idx in range(self.num_mesh):
+            for dst_idx in range(self.num_mesh):
+                tasks = self._resharding_tasks[src_idx][dst_idx].values()
+                for task in tasks:
+                    yield task
 
     def _compile_get_vars_from_mesh(self, invars, dst_specs, mesh_idx,
                                     batch_idx, instruction_lists,
@@ -617,12 +626,12 @@ class PipelineInstEmitter:
 
     def _compile_split_input_to_microbatches(self, global_batch_invar_set):
         """
-      Split batch arguments into micro batches.
+        Split batch arguments into micro batches.
 
-      The split is like:
-      before: a, b, c, d
-      after (b, d are batch args and #mb=2): a, b0, b1, c, d0, d1
-      """
+        The split is like:
+        before: a, b, c, d
+        after (b, d are batch args and #mb=2): a, b0, b1, c, d0, d1
+        """
         donated_invar_set = OrderedSet()
         global_invar_set = OrderedSet(self.global_invars)
         for stage in self.stages:
@@ -708,9 +717,9 @@ class PipelineInstEmitter:
     def _compile_concate(self, instruction_lists, executable_config_lists,
                          concat_vars_mapping):
         """
-      Generate concate instruction for variables used in non-microbatch part,
-      but are not reduced. They should be concated.
-      """
+        Generate concate instruction for variables used in non-microbatch part,
+        but are not reduced. They should be concated.
+        """
         batch_dim = 0
         to_concate_vars = set(concat_vars_mapping.values())
         to_concate_specs, output_at = self._compile_concate_get_spec(
@@ -756,11 +765,11 @@ class PipelineInstEmitter:
 
     def _compile_collect_outputs(self, concat_vars_mapping) -> None:
         """
-      Generate output information.
+        Generate output information.
 
-      This function dispatches output information, including local uuid, local indices to global
-      indices, and output specs to each mesh.
-      """
+        This function dispatches output information, including local uuid, local indices to global
+        indices, and output specs to each mesh.
+        """
         num_mesh = len(self.mesh_group)
 
         for mesh in self.mesh_group:
@@ -814,10 +823,10 @@ class PipelineInstEmitter:
                        executable_config_lists):
         """Compile an executable which allocates zero buffers.
 
-      The zero buffers are:
-      1) gradient accumulation buffers
-      2) temp buffers for receiving tensors
-      """
+        The zero buffers are:
+        1) gradient accumulation buffers
+        2) temp buffers for receiving tensors
+        """
         config_class = (MemZeroWorkerExecutableConfig
                         if preallocated else AllocateZeroWorkerExecutableConfig)
         avals = [var.aval for var in variables]
@@ -935,16 +944,16 @@ class PipelineInstEmitter:
                                  instruction_lists,
                                  set_empty_buffer=False):
         """
-      Compile and generate SEND and RECV PipelineInstructions for a ReshardingTask.
+        Compile and generate SEND and RECV PipelineInstructions for a ReshardingTask.
 
-      Args:
-          src_mesh: the src mesh
-          dst_mesh: the dst mesh
-          src_uuids: uuids of resharded buffer in src mesh
-          resharding_task: the task to be compiled
-          recv_uuids: uuids of resharded buffer in dst mesh
-          set_empty_buffer: set the empty buffer when recv or not
-      """
+        Args:
+            src_mesh: the src mesh
+            dst_mesh: the dst mesh
+            src_uuids: uuids of resharded buffer in src mesh
+            resharding_task: the task to be compiled
+            recv_uuids: uuids of resharded buffer in dst mesh
+            set_empty_buffer: set the empty buffer when recv or not
+        """
         num_devices_per_host = dst_mesh.num_devices_per_host
         send_buf_uuids = {worker: [] for worker in src_mesh.workers}
         recv_buf_uuids = {worker: [] for worker in dst_mesh.workers}

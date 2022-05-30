@@ -23,7 +23,7 @@ jobs:
 
       - name: build docker image
         run: |
-          docker build -t build-alpa-image -f docker/build_jaxlib.Dockerfile docker/
+          docker build -t build-alpa-image -f docker/build_alpa.Dockerfile docker/
 
   release-alpa:
     runs-on: [self-hosted]

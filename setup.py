@@ -120,9 +120,10 @@ def build():
     build_command += [f"CUDACXX={cudacxx_path} ./build.sh"]
     build_command = " ".join(build_command)
     print(build_command)
-    if subprocess.call(build_command, shell=True) != 0:
-        print("Failed to build the pipeline markers")
-        sys.exit()
+    ret = subprocess.call(build_command, shell=True)
+    if ret != 0:
+        raise RuntimeError("Failed to build the pipeline markers "
+                           f"with exit code {ret}")
 
 
 def move_file(target_dir, filename):

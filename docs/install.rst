@@ -52,6 +52,7 @@ Install from Source
     cd alpa/build_jaxlib
     python3 build/build.py --enable_cuda --dev_install --tf_path=$(pwd)/../third_party/tensorflow-alpa
     cd dist
+
     pip3 install -e .
 
 4. Install Alpa
@@ -59,14 +60,8 @@ Install from Source
   .. code:: bash
   
     cd alpa
-    pip3 install -e .
+    pip3 install -e .[dev]  # Note that the suffix `[dev]` is required to build custom modules.
 
-5. Build XLA pipeline marker custom call
-
-  .. code:: bash
-
-    cd alpa/alpa/pipeline_parallel/xla_custom_call_marker
-    bash build.sh
 
 .. note::
 

@@ -50,7 +50,7 @@ jobs:
         run: |
           echo "Move to self-hosted pypi"
           ls -ltr dist/
-#          twine upload --repository testpypi dist/*
+          twine upload --repository testpypi dist/*
 
   update-version:
     runs-on: [ubuntu-latest]

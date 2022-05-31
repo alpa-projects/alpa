@@ -16,13 +16,14 @@ Alpa provides wheels for the following CUDA (CuDNN) and Python versions:
 
   .. code:: bash
 
+    # Install Alpa
     pip3 install alpa
 
-    # Install Alpa-modified Jaxlib, make sure CUDA and CuDNN versions match the wheel version following:
+    # Install Alpa-modified Jaxlib. Make sure CUDA and CuDNN versions match the wheel version following:
     # jaxlib==0.3.5+cuda{cuda_version}.cudnn{cudnn_version}
     pip3 install --trusted-host 169.229.48.123 --index-url http://169.229.48.123:8080/simple/ jaxlib==0.3.5+cuda110.cudnn805
 
-If you use other CUDA or Python versions, please follow the section :ref:`Install from Source<install-from-source>`
+If you need other CUDA or Python versions, please follow the section :ref:`Install from Source<install-from-source>`.
 
 .. _install-from-source:
 
@@ -100,5 +101,28 @@ You can check the installation by running the following test script.
   python3 tests/test_install.py
 
 
-Troubleshooting for Installation
---------------------------------
+Troubleshooting
+---------------
+
+Using Alpa on Slurm
+###################
+Since Alpa relies on Ray to manage the cluster nodes, Alpa can run on a Slurm cluster as long as Ray can run on it.
+We recommend to follow `this guide <https://docs.ray.io/en/latest/cluster/slurm.html>`__ to setup Ray on Slurm and make sure simple Ray examples
+can run without any problem, then move to install and run Alpa on the same environment.
+You might also find the discussoin under `issue#452 <https://github.com/alpa-projects/alpa/issues/452>`__ helpful.
+
+Jaxlib and Jax Version Mismatch
+###############################
+If you see the following error:
+
+.. code:: bash
+
+
+
+Numpy versions
+##############
+
+
+You might also find similar issues addressed in the `Alpa issue <https://github.com/alpa-projects/alpa/issues?q=is%3Aissue+is%3Aclosed>`__ list.
+
+If you still have troubles with installing Alpa, please join `Alpa Slack <https://forms.gle/YEZTCrtZD6EAVNBQ7>`__ and ask questions.

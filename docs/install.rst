@@ -3,9 +3,28 @@ Install Alpa
 
 Requirements
 ------------
-- CUDA >= 11.1
-- CuDNN >= 8.1
+- CUDA >= 11.0
+- CuDNN >= 8.0.5
 - python >= 3.7
+
+Install from Wheels
+-------------------
+Alpa provides wheels for the following CUDA (CuDNN) and Python versions:
+
+- CUDA (CuDNN): 11.0 (8.0.5), 11.1 (8.0.5), 11.2 (8.1.0)
+- Python: 3.7, 3.8, 3.9
+
+  .. code:: bash
+
+    pip3 install alpa
+
+    # Install Alpa-modified Jaxlib, make sure CUDA and CuDNN versions match the wheel version following:
+    # jaxlib==0.3.5+cuda{cuda_version}.cudnn{cudnn_version}
+    pip3 install --trusted-host 169.229.48.123 --index-url http://169.229.48.123:8080/simple/ jaxlib==0.3.5+cuda110.cudnn805
+
+If you use other CUDA or Python versions, please follow the section :ref:`Install from Source<install-from-source>`
+
+.. _install-from-source:
 
 Install from Source
 -------------------
@@ -80,3 +99,6 @@ You can check the installation by running the following test script.
   ray start --head
   python3 tests/test_install.py
 
+
+Troubleshooting for Installation
+--------------------------------

@@ -46,9 +46,19 @@ jobs:
           PYTHON_VERSION: ${{ matrix.python }}
           ALPA_BRANCH: ${{ github.ref }}
 
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v3
+        with:
+          python-version: 3.8
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install twine
+
       - name: Publish to Pypi
         run: |
-          echo "Move to self-hosted pypi"
+          echo "Publish to PyPI"
           ls -ltr dist/
           twine upload --repository testpypi dist/*
 

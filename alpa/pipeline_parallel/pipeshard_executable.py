@@ -649,6 +649,7 @@ class PipeshardDriverExecutable:
 
     def _compile_concate_get_spec(self, to_concate_vars):
         var_to_spec_all_meshes = []
+        output_at = {}
         num_mesh = len(self.mesh_group)
         for mesh_idx in range(num_mesh):
             var_to_spec = {}
@@ -658,8 +659,10 @@ class PipeshardDriverExecutable:
                                         stage.outvars):
                     if outvar in to_concate_vars:
                         var_to_spec[outvar] = spec
+                        output_at.setdefault(outvar,
+                                             OrderedSet()).add(mesh_idx)
             var_to_spec_all_meshes.append(var_to_spec)
-        return var_to_spec_all_meshes
+        return var_to_spec_all_meshes, output_at
 
     def _compile_concate(self, instruction_lists, executable_config_lists,
                          concat_vars_mapping, var_at):
@@ -669,14 +672,13 @@ class PipeshardDriverExecutable:
         """
         batch_dim = 0
         to_concate_vars = set(concat_vars_mapping.values())
-        to_concate_specs = self._compile_concate_get_spec(to_concate_vars)
+        to_concate_specs, output_at = self._compile_concate_get_spec(
+            to_concate_vars)
         for var in concat_vars_mapping:
             src_var = concat_vars_mapping[var]
-            dummy_key = (repr(src_var), self.schedule.last_backward_batch_index)
-            mesh_to_uuids = _get_dict(var_at, dummy_key)
             dst_key = (repr(var), self.schedule.last_backward_batch_index)
             dst_mesh_to_uuids = _get_dict(var_at, dst_key)
-            for mesh_idx in mesh_to_uuids:
+            for mesh_idx in output_at[src_var]:
                 physical_mesh = self.mesh_group[mesh_idx]
                 # Get input and output uuids
                 input_args = np.zeros((self.num_batch, *physical_mesh.shape),
@@ -732,6 +734,7 @@ class PipeshardDriverExecutable:
             for k, v in concat_vars_mapping.items()
             if k in global_outvar_set
         }
+        output_at = {}
         for mesh_idx in range(num_mesh):
             var_to_spec = {}
             for stage_idx in self.schedule.mesh_stage_mapping[mesh_idx]:
@@ -740,8 +743,12 @@ class PipeshardDriverExecutable:
                                         stage.outvars):
                     if outvar in global_outvar_set:
                         var_to_spec[outvar] = spec
+                        output_at.setdefault(outvar, OrderedSet()).add(mesh_idx)
                     if outvar in reversed_concat:
-                        var_to_spec[reversed_concat[outvar]] = spec
+                        concat_outvar = reversed_concat[outvar]
+                        var_to_spec[concat_outvar] = spec
+                        output_at.setdefault(concat_outvar,
+                                             OrderedSet()).add(mesh_idx)
             var_to_spec_all_meshes.append(var_to_spec)
         # assign indices and get specs
         for outvar in self.global_outvars:
@@ -749,7 +756,7 @@ class PipeshardDriverExecutable:
             key = (repr(outvar), self.schedule.last_backward_batch_index)
             var_meshes = var_at[key]
             mesh_out_indices = {}
-            for mesh_idx in var_meshes:
+            for mesh_idx in output_at[outvar]:
                 mesh = self.mesh_group[mesh_idx]
                 uuids = var_meshes[mesh_idx]
                 for worker_idx, worker in enumerate(mesh.workers):
@@ -1151,20 +1158,19 @@ class PipeshardDriverExecutable:
     def get_load_info(self):
         assert self.in_tree is not None
 
-        # build load_info_map: flatten global index => LoadInfo object
-        load_info_map = {}
+        # build load_info_arr: flatten global index => LoadInfo object
+        load_info_arr = [None] * len(self.is_batch)
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
             for local_idx, global_idx in enumerate(self.mesh_arg_indices[mesh_idx]):
                 aval, mesh, spec = (self.global_invars[global_idx].aval, 
                                     physical_mesh, 
                                     self.input_shard_specs[mesh_idx][local_idx])
-                if load_info_map.get(global_idx) is None:
-                    load_info_map[global_idx] = LoadInfo([aval], [mesh], [spec])
+                if load_info_arr[global_idx] is None:
+                    load_info_arr[global_idx] = LoadInfo([aval], [mesh], [spec])
                 else:
-                    load_info_map[global_idx].add_replica(aval, mesh, spec)
+                    load_info_arr[global_idx].add_replica(aval, mesh, spec)
 
         # build load_info_arr
-        load_info_arr = [load_info_map[i] for i in range(len(self.is_batch))]
         return tree_unflatten(self.in_tree, load_info_arr)
 
     ##### Profiling and Debugging Related Functions #####

@@ -1,4 +1,3 @@
-# Adapted from https://github.com/alpa-projects/jax-alpa/blob/main/build/Dockerfile
 FROM gcr.io/tensorflow-testing/nosla-cuda11.1-cudnn8-ubuntu18.04-manylinux2010-multipython
 
 WORKDIR /
@@ -26,9 +25,9 @@ RUN /bin/bash -c 'if [[ ! "$CUDA_VERSION" =~ ^$JAX_CUDA_VERSION.*$ ]]; then \
 
 
 WORKDIR /
-COPY scripts/build_wheel_docker_entrypoint.sh /build_wheel_docker_entrypoint.sh
-RUN chmod +x /build_wheel_docker_entrypoint.sh
+COPY scripts/build_jaxlib_docker_entrypoint.sh /build_jaxlib_docker_entrypoint.sh
+RUN chmod +x /build_jaxlib_docker_entrypoint.sh
 
 WORKDIR /build
 ENV TEST_TMPDIR /build
-ENTRYPOINT ["/build_wheel_docker_entrypoint.sh"]
+ENTRYPOINT ["/build_jaxlib_docker_entrypoint.sh"]

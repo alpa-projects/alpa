@@ -26,14 +26,15 @@ PY_VERSION="$1"
 echo "Python version $PY_VERSION"
 TF_BRANCH="$4"
 
-git clone -b $TF_BRANCH https://github.com/alpa-projects/tensorflow-alpa.git /build/tensorflow-alpa
-git clone https://github.com/alpa-projects/jax-alpa.git /build/jax
-cd /build/jax/build
+# switch tensorflow-alpa branch
+git clone --recursive https://github.com/alpa-projects/alpa.git
+cd /build/alpa/third_party/tensorflow-alpa
+git fetch origin +${TF_BRANCH}
+git checkout -qf FETCH_HEAD
 
 mkdir /build/tmp
 mkdir /build/root
 export TMPDIR=/build/tmp
-export TF_PATH=/build/tensorflow-alpa
 
 # Builds and activates a specific Python version.
 source /python${PY_VERSION}-env/bin/activate
@@ -59,12 +60,14 @@ fi
 pip install cupy-cuda${JAX_CUDA_VERSION//.}
 python -m cupyx.tools.install_library --library nccl --cuda $JAX_CUDA_VERSION
 
+# start building
+cd /build/alpa/build_jaxlib
 case $2 in
   cuda)
-    python build.py --enable_cuda --bazel_startup_options="--output_user_root=/build/root" --tf_path=$TF_PATH
+    python build/build.py --enable_cuda --bazel_startup_options="--output_user_root=/build/root" --tf_path=$(pwd)/../third_party/tensorflow-alpa
     ;;
   nocuda)
-    python build.py --enable_tpu --bazel_startup_options="--output_user_root=/build/root" --tf_path=$TF_PATH
+    python build/build.py --enable_tpu --bazel_startup_options="--output_user_root=/build/root" --tf_path=$(pwd)/../third_party/tensorflow-alpa
     ;;
   *)
     usage

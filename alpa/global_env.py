@@ -22,6 +22,7 @@ class GlobalConfig:
         ########## Options of pipeline_parallel ##########
         self.profile_with_whole_ray_cluster = True
         self.debug_with_local_runtime = False
+        self.debug_with_pipeshard_runtime = False
         self.profile_timeout = 500
         self.profile_maximum_retry = 2
         self.overwrite_submesh_choices = None

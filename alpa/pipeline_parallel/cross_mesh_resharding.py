@@ -462,6 +462,13 @@ class SymbolicReshardingTask(ReshardingTask):
         if self.is_local_allgather_task:
             self._compile_allgather_tasks()
 
+        if not global_config.debug_with_pipeshard_runtime:
+            self.put_all_tasks()
+
+    def put_all_tasks(self):
+        """
+        Put all send, recv and allgather tasks to their MeshHostWorkers
+        """
         # put send and recv tasks
         task_dones = []
         for worker, task in self.sender_tasks.items():
@@ -762,7 +769,11 @@ class SymbolicBroadcastReshardingTask(ReshardingTask):
         """
         self._compile_broadcast_tasks()
 
-        # put broadcast tasks on corresponding mesh workers
+        if not global_config.debug_with_pipeshard_runtime:
+            self.put_all_tasks()
+
+    def put_all_tasks(self):
+        """Put all tasks to their corresponding MeshHostWorkers."""
         task_dones = []
         for worker, task in self._broadcast_tasks.items():
             uuid = next_resharding_task_uuid()

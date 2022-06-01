@@ -24,7 +24,7 @@ import os
 import re
 import threading
 import time
-from typing import Any, List, Union, Sequence, Tuple, Optional
+from typing import Any, List, Union, Sequence, Tuple, Optional, Callable
 
 import jax
 from jax import core, xla, device_put
@@ -177,6 +177,26 @@ class MeshHostWorker:
                     dim_size = len(range(*filled_slice))
                     shard_shape.append(dim_size)
                 self.put_non_zero_buffer(uuids[idx], i, shard_shape, dtype)
+
+    def shard_and_apply_func_on_buffer(self,
+                                       uuids: Sequence[int],
+                                       shape: Sequence[int],
+                                       dtype: np.dtype,
+                                       indices: Sequence,
+                                       num_batch: int,
+                                       apply_func: Callable[
+                                           ["MeshHostWorker", int, int, Sequence[int], np.dtype], None
+                                       ]):
+        assert len(uuids) == len(indices) == len(self.local_devices) * num_batch
+        for i in range(len(self.local_devices)):
+            for b in range(num_batch):
+                shard_shape = []
+                idx = i * num_batch + b
+                for j, s in enumerate(indices[idx]):
+                    filled_slice = s.indices(shape[j])
+                    dim_size = len(range(*filled_slice))
+                    shard_shape.append(dim_size)
+                apply_func(self, uuids[idx], i, shard_shape, dtype)
 
     def get_buffers(self, uuids: Union[Sequence[int], int]):
         if isinstance(uuids, Iterable):

@@ -272,7 +272,6 @@ class PipelineBasicTest(unittest.TestCase):
     def setUp(self):
         init(cluster="ray")
 
-    # pylint: disable=no-self-use
     def tearDown(self):
         shutdown()
 
@@ -334,7 +333,6 @@ class PipelineBasicTest(unittest.TestCase):
         hlo_text = executable.get_hlo_text()
         return hlo_text
 
-    # pylint: disable=no-self-use
     def run_n_layer_bert(self,
                          n_layers,
                          batch_size=16,

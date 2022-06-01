@@ -961,13 +961,13 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
         timers(timer_name).reset()
 
     def get_memory_allocated(self):
-        return max([d.memory_allocated() for d in self.devices])
+        return max(d.memory_allocated() for d in self.devices)
 
     def get_max_memory_allocated(self):
-        return max([d.max_memory_allocated() for d in self.devices])
+        return max(d.max_memory_allocated() for d in self.devices)
 
     def get_available_memory(self):
-        return min([device.available_memory() for device in self.devices])
+        return min(device.available_memory() for device in self.devices)
 
     def reset_memory_stats(self):
         for device in self.devices:
@@ -1261,9 +1261,9 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
         def outs_handler(bufs):
             ret = []
-            for i, _ in enumerate(avals):
+            for i, aval in enumerate(avals):
                 dis_array = DistributedArray(device_mesh=self,
-                                             aval=avals[i],
+                                             aval=aval,
                                              sharding_spec=sharding_specs[i],
                                              remote_buffers=bufs[i],
                                              indices=indices[i])

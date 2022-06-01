@@ -603,7 +603,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                     pxla.spec_to_indices(new_shape, new_spec))
             else:
                 global_arg_shard_indices.append(
-                    pxla.spec_to_indices(avals[i].shape, global_arg_sharding_specs[i]))
+                    pxla.spec_to_indices(aval.shape, global_arg_sharding_specs[i]))
 
         accumulate_grad_batch_arg_indices = [
             i for i, j in enumerate(accumulate_grad_invar_indices)

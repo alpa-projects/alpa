@@ -10,14 +10,14 @@ import re
 from typing import Union, Any, Sequence
 import uuid
 
-from flax.serialization import to_state_dict, from_state_dict, _ndarray_from_bytes, _ndarray_to_bytes
+import numpy as np
 import jax
 from jax.interpreters.pxla import ShardingSpec
 from jax.core import ShapedArray
 import jax.numpy as jnp
 from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
+from flax.serialization import to_state_dict, from_state_dict, _ndarray_from_bytes, _ndarray_to_bytes
 import msgpack
-import numpy as np
 import tensorstore as ts
 
 from alpa.device_mesh import DistributedArray, ReplicatedDistributedArray, PhysicalDeviceMesh

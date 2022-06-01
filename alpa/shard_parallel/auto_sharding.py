@@ -109,8 +109,8 @@ class LogicalDeviceMesh:
             sharding[tensor_dim] = pxla.Chunked([self.id_mesh.shape[mesh_dim]],)
             mesh_mapping[mesh_dim] = pxla.ShardedAxis(i)
 
-        for i, _ in enumerate(mesh_mapping):
-            if mesh_mapping[i] is None:
+        for i, mapping in enumerate(mesh_mapping):
+            if mapping is None:
                 mesh_mapping[i] = pxla.Replicated(self.id_mesh.shape[i])
 
         return pxla.ShardingSpec(sharding, mesh_mapping)

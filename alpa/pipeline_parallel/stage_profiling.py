@@ -775,7 +775,7 @@ def profile_layer_communication_cost(
     for task in tasks:
         results.append(task.do_prepared(task.src_array, True))
 
-    tot_cost = sum([max(result) for result in results])
+    tot_cost = sum(max(result) for result in results)
 
     global_config.use_dummy_value_for_benchmarking = backup_use_dummy_value
     return tot_cost
@@ -792,17 +792,17 @@ def _compute_vars_size(sharding_specs, selected_vars, logical_mesh_shape):
 
     avals = [v.aval for v in selected_vars]
     if np.prod(logical_mesh_shape) == 1:
-        return sum([get_byte(aval.shape, aval.dtype) for aval in avals])
+        return sum(get_byte(aval.shape, aval.dtype) for aval in avals)
 
     sharded_shapes = [
         get_shard_shape(aval, spec)
         for aval, spec in zip(avals, sharding_specs)
     ]
 
-    return sum([
+    return sum(
         get_byte(shape, aval.dtype)
         for shape, aval in zip(sharded_shapes, avals)
-    ])
+    )
 
 
 def compute_intermediate_size(serialized_proto, intermediate_vars,

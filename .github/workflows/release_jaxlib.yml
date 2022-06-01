@@ -24,7 +24,7 @@ jobs:
     needs: [clean-up]
     strategy:
       matrix:
-        cuda: ["11.0", "11.1", "11.2"]
+        cuda: ["11.1", "11.2", "11.3"]
         python: ["3.7", "3.8", "3.9"]
 
     steps:
@@ -55,7 +55,7 @@ jobs:
     needs: [build-jaxlib]
     strategy:
       matrix:
-        cuda: ["11.0", "11.1", "11.2"]
+        cuda: ["11.1", "11.2", "11.3"]
     steps:
     - name: Publish CUDA${{ matrix.cuda }}
       run: |

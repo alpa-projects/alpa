@@ -3,7 +3,7 @@ Install Alpa
 
 Requirements
 ------------
-- CUDA >= 11.0
+- CUDA >= 11.1
 - CuDNN >= 8.0.5
 - python >= 3.7
 
@@ -13,26 +13,38 @@ Install from Python Wheels
 --------------------------
 Alpa provides wheels for the following CUDA (CuDNN) and Python versions:
 
-- CUDA (CuDNN): 11.0 (8.0.5), 11.1 (8.0.5), 11.2 (8.1.0)
+- CUDA (CuDNN): 11.1 (8.0.5), 11.2 (8.1.0), 11.3 (8.2.0)
 - Python: 3.7, 3.8, 3.9
+
+If you need to use other CUDA, CuDNN, or Python versions, please follow the next section to :ref:`install from source<install-from-source>`.
 
 1. To install from wheels, first install Alpa:
 
   .. code:: bash
 
+    pip3 install --upgrade pip
     pip3 install alpa
 
-2. Then install the Alpa-modified Jaxlib from our `self-hosted PyPI server <http://169.229.48.123:8080/simple/>`_, and make sure that your CUDA and CuDNN versions match the package name following:
+2. Then install the Alpa-modified Jaxlib from our `self-hosted PyPI server <http://169.229.48.123:8080/simple/>`_,
+   and make sure that the jaxlib version corresponds to the version of the existing CUDA and CuDNN installation you want to use.
+   You can specify a particular CUDA and CuDNN version for jaxlib explicitly:
 
   .. code:: bash
 
     pip3 install --trusted-host 169.229.48.123 -i http://169.229.48.123:8080/simple/ jaxlib==0.3.5+cuda{cuda_version}.cudnn{cudnn_version}
 
-  For example, to install the wheel built for CUDA 11.1 and CuDNN 8.0.5, use the following command:
+  For example, to install the wheel built compatible with CUDA >= 11.1 and CuDNN >= 8.0.5, use the following command:
 
   .. code:: bash
 
-    pip3 install --trusted-host 169.229.48.123 -i http://169.229.48.123:8080/simple/ jaxlib==0.3.5+cuda110.cudnn805
+    pip3 install --trusted-host 169.229.48.123 -i http://169.229.48.123:8080/simple/ jaxlib==0.3.5+cuda111.cudnn805
+
+  You can see all available wheel versions at our `PyPI index <http://169.229.48.123:8080/simple/jaxlib/>`_.
+
+.. note::
+
+  As of now, Alpa modified the original jaxlib at the version ``jaxlib==0.3.5``. Alpa regularly rebases the official jaxlib repository to catch up with the upstream.
+  If you need features from newer versions of jaxlib, please open an issue at the `Alpa GitHub Issue Page <https://github.com/alpa-projects/alpa/issues>`_.
 
 3. Finally, install the ILP solver:
 
@@ -44,7 +56,6 @@ Alpa provides wheels for the following CUDA (CuDNN) and Python versions:
 
     Otherwise, please try to install via `binary <https://projects.coin-or.org/Cbc#DownloadandInstall>`_ or `conda <https://anaconda.org/conda-forge/coincbc>`_.
 
-If you need to use other CUDA or Python versions, please follow the next section :ref:`Install from Source<install-from-source>`.
 
 .. _install-from-source:
 

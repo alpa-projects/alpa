@@ -184,7 +184,9 @@ class MeshHostWorker:
                                        dtype: np.dtype,
                                        indices: Sequence,
                                        num_batch: int,
-                                       apply_func: Callable[["MeshHostWorker", int, int, Sequence[int], np.dtype], None]):
+                                       apply_func: Callable[
+                                           ["MeshHostWorker", int, int, Sequence[int], np.dtype], None
+                                       ]):
         assert len(uuids) == len(indices) == len(self.local_devices) * num_batch
         for i in range(len(self.local_devices)):
             for b in range(num_batch):

@@ -36,7 +36,7 @@ def get_compute_key(fun: lu.WrappedFun, in_tree: PyTreeDef,
     #
     # TODO(lmzheng): use jaxpr or hlo instead of source code?
 
-    location = fun.f.__str__().split("at")[0]
+    location = str(fun.f).split("at", maxsplit=1)[0]
     source_code = inspect.getsource(fun.f)
     donated_invars = str(donated_invars)
     aval = "".join(x.str_short() for x in aval)

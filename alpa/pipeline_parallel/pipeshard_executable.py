@@ -1115,8 +1115,7 @@ class PipeshardDriverExecutable:
 
         def outs_handler(bufs):
             ret = []
-            for i, _ in enumerate(avals):
-                aval = avals[i]
+            for i, aval in enumerate(avals):
                 if not is_replicated[i]:
                     # construct DistributedArray
                     mesh_idx = self.outvar_index_to_mesh_index_mapping[i][0]

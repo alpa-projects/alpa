@@ -31,6 +31,9 @@ git checkout -qf FETCH_HEAD
 pip install /alpa-dist/jaxlib-alpa-ci/jaxlib-0.3.5+cuda111.cudnn805-cp38-none-manylinux2010_x86_64.whl
 pip install jax==0.3.5
 
+# install cupy
+pip install cupy-cuda111
+python -m cupyx.tools.install_library --library nccl --cuda 11.1
 pip install -e .[dev]
 ray start --head
 cd tests

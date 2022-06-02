@@ -3,7 +3,7 @@ from collections import namedtuple, defaultdict
 from dataclasses import dataclass
 import enum
 import logging
-from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Union
 
 from jax._src.tree_util import PyTreeDef, tree_unflatten
 from jax.core import Var
@@ -202,6 +202,7 @@ class PipelineInstEmitterHelper:
         return mesh_idx in self.env[key]
 
 
+# TODO(yonghao): use worker_idx as the dict's key
 @dataclass
 class PipeshardConfig:
     instruction_lists: Dict[Any, Sequence[PipelineInstruction]]
@@ -218,9 +219,12 @@ class PipeshardConfig:
     delete_after_shard: Sequence[Sequence[bool]]
     batch_invars: Sequence[Sequence[bool]]
     device_str_groups: Sequence[Sequence[OrderedSet]]
+    # Output configs
+    output_local_uuid_list: Sequence[Sequence]
     # Others
     outs_handler: Callable
     load_info: LoadInfo
+    resharding_task_iter: Iterator
 
 
 class PipelineInstEmitter:
@@ -252,8 +256,6 @@ class PipelineInstEmitter:
         self.num_mesh = len(mesh_group)
 
         ##### For handling outputs of the executable ####
-        # Dict[worker -> List[uuid]]
-        self.output_local_uuid_list = {}
         # List[arg_idx -> List[mesh_idx -> int]]
         self.mesh_output_indices = []
         # List[mesh_idx -> List[arg_idx -> sharding_spec]]
@@ -378,12 +380,13 @@ class PipelineInstEmitter:
                               concat_vars_mapping)
 
         # Compile information for outputs
-        self._compile_collect_outputs(concat_vars_mapping)
+        output_local_uuid_list = self._compile_collect_outputs(
+            concat_vars_mapping)
 
         # Insert buffer free instructions
         reduced_var_uuid_lists = {}
         for worker in instruction_lists:
-            used_outside = flatten_uuid_set(self.output_local_uuid_list[worker])
+            used_outside = flatten_uuid_set(output_local_uuid_list[worker])
             mesh_idx, worker_idx = worker_to_idx[worker]
             reduced_var_uuids = grad_uuids[mesh_idx]
             if len(reduced_var_uuids) > 0:
@@ -408,8 +411,9 @@ class PipelineInstEmitter:
                                grad_uuids, reduced_var_uuid_lists,
                                donate_invars, mesh_arg_indices,
                                input_shard_indices, delete_after_shard,
-                               batch_invars, device_str_groups, outs_handler,
-                               load_info)
+                               batch_invars, device_str_groups,
+                               output_local_uuid_list, outs_handler, load_info,
+                               self.resharding_task_iter())
 
     def resharding_task_iter(self):
         """An iterator over all resharding tasks."""
@@ -556,7 +560,8 @@ class PipelineInstEmitter:
         """Compile gradient buffer allocations."""
         num_mesh = len(self.mesh_group)
         mesh_grad_vars = [{} for _ in range(num_mesh)]
-        instruction_lists = defaultdict(list) # Dict[worker -> List[PipelineInstruction]]
+        instruction_lists = defaultdict(
+            list)  # Dict[worker -> List[PipelineInstruction]]
         # collect gradient accumulation buffers in each mesh
         for stage_idx, stage in enumerate(self.stages):
             mesh_indices = list(self.schedule.stage_placement(stage_idx))
@@ -784,10 +789,11 @@ class PipelineInstEmitter:
         indices, and output specs to each mesh.
         """
         num_mesh = len(self.mesh_group)
+        output_local_uuid_list = defaultdict(list)  # Dict[worker -> List[uuid]]
 
         for mesh in self.mesh_group:
             for worker in mesh.workers:
-                self.output_local_uuid_list[worker] = []
+                output_local_uuid_list[worker] = []
         # collect outvar specs
         var_to_spec_all_meshes = []
         global_outvar_set = OrderedSet(self.global_outvars)
@@ -822,13 +828,14 @@ class PipelineInstEmitter:
                 mesh = self.mesh_group[mesh_idx]
                 uuids = mesh_to_uuid[mesh_idx]
                 for worker_idx, worker in enumerate(mesh.workers):
-                    self.output_local_uuid_list[worker].append(
-                        uuids[worker_idx])
+                    output_local_uuid_list[worker].append(uuids[worker_idx])
                 mesh_out_indices[mesh_idx] = (
-                    len(self.output_local_uuid_list[worker]) - 1)
+                    len(output_local_uuid_list[worker]) - 1)
                 self.output_spec_list[mesh_idx].append(
                     var_to_spec_all_meshes[mesh_idx][outvar])
             self.mesh_output_indices.append(mesh_out_indices)
+
+        return output_local_uuid_list
 
     def _compile_alloc(self, variables, sharding_specs, mesh_idx, batch_idx,
                        preallocated, instruction_lists,

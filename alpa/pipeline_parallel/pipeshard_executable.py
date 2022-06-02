@@ -20,7 +20,7 @@ from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
 from alpa.pipeline_parallel.runtime_emitter import (
     AllocateZeroWorkerExecutableConfig, ConcatWorkerExecutableConfig,
     ExecutableConfig, MemZeroWorkerExecutableConfig,
-    PartialGradWorkerExecutableConfig, PipelineInstEmitter, PipelineInstType, PipelineInstruction)
+    PartialGradWorkerExecutableConfig, PipelineInstEmitter, PipelineInstType, PipelineInstruction, PipeshardConfig)
 from alpa.pipeline_parallel.schedules import PipelineSchedule
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.timer import timers
@@ -44,17 +44,12 @@ class PipeshardDriverExecutable:
     def __init__(self,
                  *,
                  stages: Sequence[XlaShardedPipelineComputation],
-                 global_invars: Sequence[Var],
-                 grad_dummy_invars,
-                 global_outvars: Sequence[Var],
                  mesh_group: PhysicalDeviceMeshGroup,
-                 dependency,
+                 pipeshard_config: PipeshardConfig,
                  schedule: PipelineSchedule,
                  is_batch: Sequence[bool],
                  num_batch: int,
-                 flop_count: int,
-                 concat_vars_mapping: Dict[Var, Var],
-                 in_tree: PyTreeDef):
+                 flop_count: int):
         ##### Input arguments #####
         self.stages = stages
         self.mesh_group = mesh_group
@@ -69,17 +64,6 @@ class PipeshardDriverExecutable:
         self.hlo_texts_after_spmd_partitioner = []
 
         # Compile pipeline instructions and configs of mesh executables
-        emitter = PipelineInstEmitter(stages=stages,
-                                      global_invars=global_invars,
-                                      grad_dummy_invars=grad_dummy_invars,
-                                      global_outvars=global_outvars,
-                                      mesh_group=mesh_group,
-                                      dependency=dependency,
-                                      schedule=schedule,
-                                      is_batch=is_batch,
-                                      num_batch=num_batch,
-                                      in_tree=in_tree)
-        pipeshard_config = emitter.compile(concat_vars_mapping)
         self._instantiate_nccl_groups(pipeshard_config.device_str_groups)
 
         ##### Internal states #####
@@ -104,7 +88,7 @@ class PipeshardDriverExecutable:
 
         ##### For handling outputs of the executable ####
         # Dict[worker -> List[uuid]]
-        self.output_local_uuid_list = emitter.output_local_uuid_list
+        self.output_local_uuid_list = pipeshard_config.output_local_uuid_list
 
         # For handling input/outputs
         self.outs_handler: Callable = pipeshard_config.outs_handler
@@ -133,7 +117,7 @@ class PipeshardDriverExecutable:
                 self.worker_executable_uuid_mapping[worker] = uuid
 
         if global_config.eagerly_create_communicators:
-            for task in emitter.resharding_task_iter():
+            for task in pipeshard_config.resharding_task_iter:
                 task.create_resharding_communicators()
 
     ##### Compilation Related Functions #####

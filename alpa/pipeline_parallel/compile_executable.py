@@ -3,6 +3,7 @@ import dataclasses
 import logging
 import time
 from typing import Callable, Sequence
+from alpa.pipeline_parallel.runtime_emitter import PipelineInstEmitter
 
 from jax import linear_util as lu
 from jax.core import gensym, AbstractValue
@@ -168,7 +169,8 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
         global_outvars, reduction_vector, microbatch_bound,
         post_microbatch_bound, gensym_func)
 
-    executable = PipeshardDriverExecutable(
+    # TODO(yonghao): use virtual mesh instead of launched physical group
+    pipeshard_config = PipelineInstEmitter(
         stages=xla_stages,
         global_invars=global_invars,
         grad_dummy_invars=grad_in_to_out,
@@ -178,9 +180,16 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
         schedule=schedule,
         is_batch=batch_invars,
         num_batch=num_microbatch,
-        flop_count=total_flops,
-        concat_vars_mapping=concat_vars_mapping,
-        in_tree=in_tree)
+        in_tree=in_tree).compile(concat_vars_mapping)
+
+    executable = PipeshardDriverExecutable(
+        stages=xla_stages,
+        mesh_group=virtual_mesh.launched_physical_mesh_group,
+        pipeshard_config=pipeshard_config,
+        schedule=schedule,
+        is_batch=batch_invars,
+        num_batch=num_microbatch,
+        flop_count=total_flops)
     debug_compilation_time("driver executable")
     return executable
 

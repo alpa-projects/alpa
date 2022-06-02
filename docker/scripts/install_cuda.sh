@@ -31,6 +31,16 @@ elif [ $CUDA_VERSION = "11.2" ]; then
   CUBLAS_DEV=libcublas-dev-11-2
   CUDNN_VERSION=8.1.0.77
   LIBCUDNN=libcudnn8
+elif [ $CUDA_VERSION = "11.3" ]; then
+  CUBLAS=libcublas-11-3
+  CUBLAS_DEV=libcublas-dev-11-3
+  CUDNN_VERSION=8.2.0.53
+  LIBCUDNN=libcudnn8
+elif [ $CUDA_VERSION = "11.4" ]; then
+  CUBLAS=libcublas-11-4
+  CUBLAS_DEV=libcublas-dev-11-4
+  CUDNN_VERSION=8.2.2.26
+  LIBCUDNN=libcudnn8
 else
   echo "Unsupported CUDA version: $CUDA_VERSION"
   exit 1

@@ -9,8 +9,8 @@ then
 fi
 
 source /python3.8-env/bin/activate
-pip install /alpa-dist/jaxlib-alpa-ci/jaxlib-0.3.5-cp38-none-manylinux2010_x86_64.whl
-pip install /alpa-dist/jax-alpa/jax-0.3.5.tar.gz
+pip install /alpa-dist/jaxlib-alpa-ci/jaxlib-0.3.5+cuda111.cudnn805-cp38-none-manylinux2010_x86_64.whl
+pip install jax==0.3.5
 
 git clone https://github.com/alpa-projects/alpa.git
 cd alpa

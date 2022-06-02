@@ -1783,32 +1783,16 @@ class PhysicalDeviceMeshGroup:
         dst_mesh = self.meshes[dst_mesh_id]
         device_strs = OrderedSet(src_mesh.device_strs + dst_mesh.device_strs)
         cg = CollectiveGroup(device_strs, src_mesh, dst_mesh)
-        if instantiate:
-            if global_config.eagerly_create_communicators:
-                cg.instantiate_now()
-            else:
-                cg.instantiate()
         self.collective_groups[src_mesh_id][dst_mesh_id] = cg
         self.collective_groups[dst_mesh_id][src_mesh_id] = cg
+        if instantiate:
+            self._instantiate_nccl_group(cg)
 
     def instantiate_nccl_group(self,
                                src_mesh_id: int,
                                dst_mesh_id: int):
         cg = self.collective_groups[src_mesh_id][dst_mesh_id]
-        if global_config.eagerly_create_communicators:
-            cg.instantiate_now()
-        else:
-            cg.instantiate()
-
-    def instantiate_all(self):
-        for src_id in range(len(self)):
-            for dst_id in range(src_id + 1, len(self)):
-                cg = self.collective_groups[src_id][dst_id]
-                if cg and not cg.instantiated:
-                    if global_config.eagerly_create_communicators:
-                        cg.instantiate_now()
-                    else:
-                        cg.instantiate()
+        self._instantiate_nccl_group(cg)
 
     def sync_workers(self):
         """Sync device activities on all workers."""
@@ -1861,6 +1845,13 @@ class PhysicalDeviceMeshGroup:
         # recycle info actors
         for mesh in self.meshes:
             mesh.shutdown(forced=True)
+
+    @staticmethod
+    def _instantiate_nccl_group(cg):
+        if global_config.eagerly_create_communicators:
+            cg.instantiate_now()
+        else:
+            cg.instantiate()
 
 
 class DeviceCluster:

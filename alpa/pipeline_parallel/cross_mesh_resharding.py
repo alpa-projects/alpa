@@ -949,7 +949,8 @@ class CollectiveGroup:
 
     def instantiate(self):
         """Instantiate the collective group in Ray lazily."""
-        assert not self.instantiated
+        if self.instantiated:
+            return
         options = {
             "group_name": self.group_name,
             "world_size": len(self.mesh_workers),
@@ -961,7 +962,8 @@ class CollectiveGroup:
 
     def instantiate_now(self):
         """Instantiate the collective group eagerly (but not communicators)."""
-        assert not self.instantiated
+        if self.instantiated:
+            return
         world_size = len(self.mesh_workers)
         task_dones = []
         logger.debug(

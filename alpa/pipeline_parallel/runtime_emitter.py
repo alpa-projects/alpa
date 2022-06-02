@@ -163,7 +163,7 @@ class PipelineInstEmitterHelper:
         self.schedule = schedule
         # Dict[var_key -> Dict[mesh_idx -> np.array of uuids]]
         # The shape of the numpy array is [num_hosts, num_devices_per_host]
-        self.env = defaultdict(dict)
+        self.env = {}
 
     def _get_var_key(self, var, batch_idx):
         if var in self.global_invars and var not in self.global_batch_invars:
@@ -189,15 +189,15 @@ class PipelineInstEmitterHelper:
 
     def get_var_meshes(self, var, batch_idx) -> Dict[int, np.ndarray]:
         key = self._get_var_key(var, batch_idx)
-        return dict(self.env[key])
+        return self.env.setdefault(key, {})
 
     def set_var_mesh_uuids(self, var, batch_idx, mesh_idx, uuids) -> None:
         key = self._get_var_key(var, batch_idx)
-        self.env[key][mesh_idx] = uuids
+        self.env.setdefault(key, {})[mesh_idx] = uuids
 
     def var_at(self, var, batch_idx, mesh_idx) -> bool:
         key = self._get_var_key(var, batch_idx)
-        return mesh_idx in self.env[key]
+        return mesh_idx in self.env.setdefault(key, {})
 
 
 @dataclass
@@ -258,17 +258,18 @@ class PipelineInstEmitter:
 
     def __init__(self, *, stages: Sequence[XlaShardedPipelineComputation],
                  global_invars: Sequence[Var], grad_dummy_invars: Sequence[Var],
+                 concat_vars_mapping: Dict[Var, Var],
                  global_outvars: Sequence[Var],
-                 mesh_group: PhysicalDeviceMeshGroup, dependency: np.ndarray,
+                 mesh_group: PhysicalDeviceMeshGroup,
                  schedule: PipelineSchedule, is_batch: Sequence[bool],
                  num_batch: int, in_tree: PyTreeDef):
         ##### Input arguments #####
         self.stages = stages
         self.global_invars = global_invars
         self.grad_dummy_invars = grad_dummy_invars
+        self.concat_vars_mapping = concat_vars_mapping
         self.global_outvars = global_outvars
         self.mesh_group = mesh_group
-        self.dependency = dependency
         self.schedule = schedule
         self.is_batch = is_batch
         self.num_batch = num_batch
@@ -366,7 +367,7 @@ class PipelineInstEmitter:
                 self.mesh_group.establish_nccl_group(i, j, instantiate=False)
         return device_str_groups
 
-    def compile(self, concat_vars_mapping):
+    def compile(self):
         """Compile pipeline instructions and executables for workers."""
         num_mesh = len(self.mesh_group)
         device_str_groups = self._establish_nccl_groups()
@@ -401,12 +402,10 @@ class PipelineInstEmitter:
                                         executable_config_lists)
 
         # Compile concate
-        self._compile_concate(instruction_lists, executable_config_lists,
-                              concat_vars_mapping)
+        self._compile_concate(instruction_lists, executable_config_lists)
 
         # Compile information for outputs
-        output_local_uuid_list = self._compile_collect_outputs(
-            concat_vars_mapping)
+        output_local_uuid_list = self._compile_collect_outputs()
 
         # Insert buffer free instructions
         reduced_var_uuid_lists = {}
@@ -769,18 +768,17 @@ class PipelineInstEmitter:
             var_to_spec_all_meshes.append(var_to_spec)
         return var_to_spec_all_meshes, output_at
 
-    def _compile_concate(self, instruction_lists, executable_config_lists,
-                         concat_vars_mapping):
+    def _compile_concate(self, instruction_lists, executable_config_lists):
         """
         Generate concate instruction for variables used in non-microbatch part,
         but are not reduced. They should be concated.
         """
         batch_dim = 0
-        to_concate_vars = set(concat_vars_mapping.values())
+        to_concate_vars = set(self.concat_vars_mapping.values())
         to_concate_specs, output_at = self._compile_concate_get_spec(
             to_concate_vars)
-        for var in concat_vars_mapping:
-            src_var = concat_vars_mapping[var]
+        for var in self.concat_vars_mapping:
+            src_var = self.concat_vars_mapping[var]
             dst_mesh_to_uuids = self.env.get_var_meshes(
                 var, self.schedule.last_backward_batch_index)
             for mesh_idx in output_at[src_var]:
@@ -818,7 +816,7 @@ class PipelineInstEmitter:
                                                 input_args[worker_idx],
                                                 outputs[worker_idx], kwargs))
 
-    def _compile_collect_outputs(self, concat_vars_mapping) -> None:
+    def _compile_collect_outputs(self) -> None:
         """
         Generate output information.
 
@@ -828,16 +826,13 @@ class PipelineInstEmitter:
         num_mesh = len(self.mesh_group)
         output_local_uuid_list = defaultdict(list)  # Dict[worker -> List[uuid]]
 
-        for mesh in self.mesh_group:
-            for worker in mesh.workers:
-                output_local_uuid_list[worker] = []
         # collect outvar specs
         var_to_spec_all_meshes = []
         global_outvar_set = OrderedSet(self.global_outvars)
         # This is only a patch. It will be deprecated after we move concat into a stage
         reversed_concat = {
             v: k
-            for k, v in concat_vars_mapping.items()
+            for k, v in self.concat_vars_mapping.items()
             if k in global_outvar_set
         }
         output_at = defaultdict(OrderedSet)
@@ -867,7 +862,7 @@ class PipelineInstEmitter:
                 for worker_idx, worker in enumerate(mesh.workers):
                     output_local_uuid_list[worker].append(uuids[worker_idx])
                 mesh_out_indices[mesh_idx] = (
-                    len(output_local_uuid_list[worker]) - 1)
+                    len(output_local_uuid_list[mesh.workers[0]]) - 1)
                 self.output_spec_list[mesh_idx].append(
                     var_to_spec_all_meshes[mesh_idx][outvar])
             self.mesh_output_indices.append(mesh_out_indices)

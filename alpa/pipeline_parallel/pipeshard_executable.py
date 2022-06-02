@@ -370,8 +370,8 @@ class PipeshardMeshWorkerExecuable:
         self.worker = worker
         self.global_buffers = worker.buffers
         self.acc_grad_buffers = {}
-        self.acc_in_uuids = [list(uuids) for uuids in list(acc_local_uuids)]
-        self.acc_out_uuids = [list(uuids) for uuids in list(acc_out_uuids)]
+        self.acc_in_uuids = acc_local_uuids
+        self.acc_out_uuids = acc_out_uuids
 
         # Executable management
         self._related_exec_uuids = []

@@ -174,13 +174,13 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
         stages=xla_stages,
         global_invars=global_invars,
         grad_dummy_invars=grad_in_to_out,
+        concat_vars_mapping=concat_vars_mapping,
         global_outvars=global_outvars,
         mesh_group=virtual_mesh.launched_physical_mesh_group,
-        dependency=dependency,
         schedule=schedule,
         is_batch=batch_invars,
         num_batch=num_microbatch,
-        in_tree=in_tree).compile(concat_vars_mapping)
+        in_tree=in_tree).compile()
 
     executable = PipeshardDriverExecutable(
         stages=xla_stages,

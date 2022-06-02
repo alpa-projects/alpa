@@ -73,13 +73,12 @@ class PipelineInstruction:
                    info=info)
 
     @classmethod
-    def Recv(
-            cls,  # noqa
-            task_uuid,
-            output_uuids,
-            set_empty_buffer,
-            allgather_uuid=None,
-            info=""):  # noqa
+    def Recv(cls,  # noqa
+             task_uuid,
+             output_uuids,
+             set_empty_buffer,
+             allgather_uuid=None,
+             info=""):  # noqa
         return cls(opcode=PipelineInstType.RECV,
                    task_uuid=task_uuid,
                    input_uuids=None,
@@ -91,12 +90,11 @@ class PipelineInstruction:
                    info=info)
 
     @classmethod
-    def Broadcast(
-            cls,  # noqa
-            task_uuid,
-            input_uuids,
-            output_uuids,
-            info="broadcast"):  # noqa
+    def Broadcast(cls,  # noqa
+                 task_uuid,
+                 input_uuids,
+                 output_uuids,
+                 info="broadcast"):  # noqa
         return cls(opcode=PipelineInstType.BROADCAST,
                    task_uuid=task_uuid,
                    input_uuids=input_uuids,
@@ -202,6 +200,16 @@ class PipelineInstEmitterHelper:
         return mesh_idx in self.env[key]
 
 
+@dataclass
+class PipeshardInputConfig:
+    input_local_uuid_lists: Dict[Any, Sequence[np.ndarray]]
+    donate_invars: Sequence[Sequence[bool]]
+    mesh_arg_indices: Sequence[Sequence[int]]
+    input_shard_indices: Sequence[Sequence[Any]]
+    delete_after_shard: Sequence[Sequence[bool]]
+    batch_invars: Sequence[Sequence[bool]]
+
+
 # TODO(yonghao): use worker_idx as the dict's key
 @dataclass
 class PipeshardConfig:
@@ -210,14 +218,9 @@ class PipeshardConfig:
     executable_configs: Dict[Any, Sequence[ExecutableConfig]]
     executable_uuids: Sequence[int]
     # Input configs
-    input_local_uuid_lists: Dict[Any, Sequence[np.ndarray]]
+    input_config: PipeshardInputConfig
     grad_uuids: Sequence[np.ndarray]
     reduced_var_uuid_lists: Dict[Any, np.ndarray]
-    donate_invars: Sequence[Sequence[bool]]
-    mesh_arg_indices: Sequence[Sequence[int]]
-    input_shard_indices: Sequence[Sequence[Any]]
-    delete_after_shard: Sequence[Sequence[bool]]
-    batch_invars: Sequence[Sequence[bool]]
     device_str_groups: Sequence[Sequence[OrderedSet]]
     # Output configs
     output_local_uuid_list: Sequence[Sequence]
@@ -225,6 +228,30 @@ class PipeshardConfig:
     outs_handler: Callable
     load_info: LoadInfo
     resharding_task_iter: Iterator
+
+    @property
+    def input_local_uuid_lists(self):
+        return self.input_config.input_local_uuid_lists
+
+    @property
+    def donate_invars(self):
+        return self.input_config.donate_invars
+
+    @property
+    def mesh_arg_indices(self):
+        return self.input_config.mesh_arg_indices
+
+    @property
+    def input_shard_indices(self):
+        return self.input_config.input_shard_indices
+
+    @property
+    def delete_after_shard(self):
+        return self.input_config.delete_after_shard
+
+    @property
+    def batch_invars(self):
+        return self.input_config.batch_invars
 
 
 class PipelineInstEmitter:
@@ -358,10 +385,8 @@ class PipelineInstEmitter:
             var for var, batch in zip(self.global_invars, self.is_batch)
             if batch
         ])
-        (input_local_uuid_lists, donate_invars, mesh_arg_indices,
-         input_shard_indices, input_shard_specs, delete_after_shard,
-         batch_invars
-        ) = self._compile_split_input_to_microbatches(global_batch_invar_set)
+        (input_config, input_shard_specs
+         ) = self._compile_split_input_to_microbatches(global_batch_invar_set)
 
         # Simulate the pipeline schedule and generate instructions
         donation_mapping = [DisjointDict() for _ in range(num_mesh)]
@@ -394,26 +419,33 @@ class PipelineInstEmitter:
             reduced_var_uuids = np.array([[
                 donation_mapping[mesh_idx].recursive_lookup(uuid)
                 for uuid in uuids
-            ]
-                                          for uuids in reduced_var_uuids])
+            ] for uuids in reduced_var_uuids])
             donated = set(donation_mapping[mesh_idx].keys())
             used_outside.update(flatten_uuid_set(reduced_var_uuids))
             reduced_var_uuid_lists[worker] = reduced_var_uuids
-            # pylint: disable=modified-iterating-dict
             instruction_lists[worker] = self._compile_free(
                 worker, used_outside, donated, instruction_lists)
 
         outs_handler = self._get_outs_handler()
 
-        load_info = self._compile_load_info(mesh_arg_indices, input_shard_specs)
-        return PipeshardConfig(instruction_lists, executable_config_lists,
-                               executable_uuids, input_local_uuid_lists,
-                               grad_uuids, reduced_var_uuid_lists,
-                               donate_invars, mesh_arg_indices,
-                               input_shard_indices, delete_after_shard,
-                               batch_invars, device_str_groups,
-                               output_local_uuid_list, outs_handler, load_info,
-                               self.resharding_task_iter())
+        load_info = self._compile_load_info(input_config.mesh_arg_indices,
+                                            input_shard_specs)
+        return PipeshardConfig(
+            instruction_lists=instruction_lists,
+            # Executable configs
+            executable_configs=executable_config_lists,
+            executable_uuids=executable_uuids,
+            # Input configs
+            input_config=input_config,
+            grad_uuids=grad_uuids,
+            reduced_var_uuid_lists=reduced_var_uuid_lists,
+            device_str_groups=device_str_groups,
+            # Output configs
+            output_local_uuid_list=output_local_uuid_list,
+            # Others
+            outs_handler=outs_handler,
+            load_info=load_info,
+            resharding_task_iter=self.resharding_task_iter())
 
     def resharding_task_iter(self):
         """An iterator over all resharding tasks."""
@@ -712,9 +744,14 @@ class PipelineInstEmitter:
                 for worker_idx, worker in enumerate(physical_mesh.workers):
                     input_local_uuid_lists[worker].append(arg_uuids[arg_idx,
                                                                     worker_idx])
-        return (input_local_uuid_lists, donate_invars, mesh_arg_indices,
-                input_shard_indices, input_shard_specs, delete_after_shard,
-                batch_invars)
+        input_config = PipeshardInputConfig(
+            input_local_uuid_lists=input_local_uuid_lists,
+            donate_invars=donate_invars,
+            mesh_arg_indices=mesh_arg_indices,
+            input_shard_indices=input_shard_indices,
+            delete_after_shard=delete_after_shard,
+            batch_invars=batch_invars)
+        return input_config, input_shard_specs
 
     def _compile_concate_get_spec(self, to_concate_vars):
         var_to_spec_all_meshes = []

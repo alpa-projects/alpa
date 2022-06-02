@@ -1,10 +1,8 @@
 """The dirver part and worker part of a pipeshard executable."""
 import logging
 import time
-from typing import Dict, Sequence, Callable
+from typing import Sequence, Callable
 
-from jax.core import Var
-from jax.tree_util import PyTreeDef
 import numpy as np
 import ray.exceptions
 
@@ -20,7 +18,8 @@ from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
 from alpa.pipeline_parallel.runtime_emitter import (
     AllocateZeroWorkerExecutableConfig, ConcatWorkerExecutableConfig,
     ExecutableConfig, MemZeroWorkerExecutableConfig,
-    PartialGradWorkerExecutableConfig, PipelineInstEmitter, PipelineInstType, PipelineInstruction, PipeshardConfig)
+    PartialGradWorkerExecutableConfig, PipelineInstType, PipelineInstruction,
+    PipeshardConfig)
 from alpa.pipeline_parallel.schedules import PipelineSchedule
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.timer import timers

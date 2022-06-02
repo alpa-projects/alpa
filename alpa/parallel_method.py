@@ -166,7 +166,8 @@ class PipeshardParallel(ParallelMethod):
         assert isinstance(mesh, VirtualPhysicalMesh)
 
         return compile_pipeshard_executable(
-            fun, in_tree, out_tree_thunk, donated_invars, batch_invars,
+            fun, in_tree, out_tree_thunk,
+            static_argnums, donated_invars, batch_invars,
             mesh, self.num_micro_batches, self.pipeline_schedule,
             self.as_option, self.stage_option, *avals)
 

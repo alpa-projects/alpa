@@ -78,59 +78,54 @@ class PipeshardDriverExecutable:
                                       schedule=schedule,
                                       is_batch=is_batch,
                                       num_batch=num_batch,
-                                      flop_count=flop_count,
                                       in_tree=in_tree)
-        (instruction_lists, executable_config_lists, executable_uuids,
-         input_local_uuid_lists, grad_uuids, reduced_var_uuid_lists,
-         outs_handler, load_info, donate_invars, mesh_arg_indices,
-         input_shard_indices, delete_after_shard, batch_invars,
-         device_str_groups) = emitter.compile(concat_vars_mapping)
-        self._instantiate_nccl_groups(device_str_groups)
+        pipeshard_config = emitter.compile(concat_vars_mapping)
+        self._instantiate_nccl_groups(pipeshard_config.device_str_groups)
 
         ##### Internal states #####
 
         # List[stage_idx -> executable_uuid]
-        self.executable_uuids = executable_uuids
+        self.executable_uuids = pipeshard_config.executable_uuids
         ##### For handling inputs of the executable ####
         # Whether the var should be donated
         # List[mesh_idx -> List[bool]]
-        self.donate_invars = donate_invars
+        self.donate_invars = pipeshard_config.donate_invars
         # List[mesh_idx -> List[arg_idx]]
-        self.mesh_arg_indices = mesh_arg_indices
+        self.mesh_arg_indices = pipeshard_config.mesh_arg_indices
         # Cached sharding indices for input arguments
         # List[mesh_idx -> List[sharding_indices]].
-        self.input_shard_indices = input_shard_indices
+        self.input_shard_indices = pipeshard_config.input_shard_indices
         # Whether the argument should be deleted after shard
         # List[mesh_idx -> List[bool]]
-        self.delete_after_shard = delete_after_shard
+        self.delete_after_shard = pipeshard_config.delete_after_shard
         # Whether the argument is a batch argument
         # List[mesh_idx -> List[bool]]
-        self.batch_invars = batch_invars
+        self.batch_invars = pipeshard_config.batch_invars
 
         ##### For handling outputs of the executable ####
         # Dict[worker -> List[uuid]]
         self.output_local_uuid_list = emitter.output_local_uuid_list
 
         # For handling input/outputs
-        self.outs_handler: Callable = outs_handler
+        self.outs_handler: Callable = pipeshard_config.outs_handler
 
         # For weight serialization
-        self.load_info = load_info
+        self.load_info = pipeshard_config.load_info
 
         # Create a PipeshardMeshWorkerExecuable for each MeshHostWorker
         self.worker_executable_uuid_mapping = {}  # Dict[
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
-            mesh_grad_uuids = grad_uuids[mesh_idx]
+            mesh_grad_uuids = pipeshard_config.grad_uuids[mesh_idx]
             for worker_idx, worker in enumerate(physical_mesh.workers):
                 acc_grad_local_uuids = []
                 if len(mesh_grad_uuids) > 0:
                     acc_grad_local_uuids = mesh_grad_uuids[worker_idx]
-                args = (instruction_lists[worker],
-                        input_local_uuid_lists[worker],
+                args = (pipeshard_config.instruction_lists[worker],
+                        pipeshard_config.input_local_uuid_lists[worker],
                         self.output_local_uuid_list[worker],
-                        executable_config_lists[worker],
+                        pipeshard_config.executable_configs[worker],
                         acc_grad_local_uuids,
-                        reduced_var_uuid_lists[worker],
+                        pipeshard_config.reduced_var_uuid_lists[worker],
                         self.donate_invars[mesh_idx])
                 uuid = next_mesh_executable_uuid()
                 worker.put_executable.remote(uuid, PipeshardMeshWorkerExecuable,
@@ -248,7 +243,7 @@ class PipeshardDriverExecutable:
         if global_config.pipeline_check_alive:
             self._check_alive()
 
-        return self.outs_handler(output_bufs)
+        return self.outs_handler(self.mesh_group, output_bufs)
 
     ##### Load/Store Related Functions #####
     def get_load_info(self):
@@ -379,7 +374,7 @@ class PipeshardMeshWorkerExecuable:
                  output_local_uuids: Sequence[int],
                  executable_configs: Sequence[ExecutableConfig],
                  acc_local_uuids: np.ndarray,
-                 acc_out_uuids: Sequence[Sequence[int]],
+                 acc_out_uuids: np.ndarray,
                  donate_invars: Sequence[bool]):
         # Instruction Lists
         self.my_uuid = uuid
@@ -393,7 +388,7 @@ class PipeshardMeshWorkerExecuable:
         self.global_buffers = worker.buffers
         self.acc_grad_buffers = {}
         self.acc_in_uuids = [list(uuids) for uuids in list(acc_local_uuids)]
-        self.acc_out_uuids = acc_out_uuids
+        self.acc_out_uuids = [list(uuids) for uuids in list(acc_out_uuids)]
 
         # Executable management
         self._related_exec_uuids = []

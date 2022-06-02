@@ -3,7 +3,7 @@ from collections import namedtuple, defaultdict
 from dataclasses import dataclass
 import enum
 import logging
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 
 from jax._src.tree_util import PyTreeDef, tree_unflatten
 from jax.core import Var
@@ -165,7 +165,7 @@ class PipelineInstEmitterHelper:
         self.schedule = schedule
         # Dict[var_key -> Dict[mesh_idx -> np.array of uuids]]
         # The shape of the numpy array is [num_hosts, num_devices_per_host]
-        self.env = {}
+        self.env = defaultdict(dict)
 
     def _get_var_key(self, var, batch_idx):
         if var in self.global_invars and var not in self.global_batch_invars:
@@ -195,11 +195,32 @@ class PipelineInstEmitterHelper:
 
     def set_var_mesh_uuids(self, var, batch_idx, mesh_idx, uuids) -> None:
         key = self._get_var_key(var, batch_idx)
-        self.env.setdefault(key, {})[mesh_idx] = uuids
+        self.env[key][mesh_idx] = uuids
 
     def var_at(self, var, batch_idx, mesh_idx) -> bool:
         key = self._get_var_key(var, batch_idx)
-        return mesh_idx in self.env.setdefault(key, {})
+        return mesh_idx in self.env[key]
+
+
+@dataclass
+class PipeshardConfig:
+    instruction_lists: Dict[Any, Sequence[PipelineInstruction]]
+    # Executable configs
+    executable_configs: Dict[Any, Sequence[ExecutableConfig]]
+    executable_uuids: Sequence[int]
+    # Input configs
+    input_local_uuid_lists: Dict[Any, Sequence[np.ndarray]]
+    grad_uuids: Sequence[np.ndarray]
+    reduced_var_uuid_lists: Dict[Any, np.ndarray]
+    donate_invars: Sequence[Sequence[bool]]
+    mesh_arg_indices: Sequence[Sequence[int]]
+    input_shard_indices: Sequence[Sequence[Any]]
+    delete_after_shard: Sequence[Sequence[bool]]
+    batch_invars: Sequence[Sequence[bool]]
+    device_str_groups: Sequence[Sequence[OrderedSet]]
+    # Others
+    outs_handler: Callable
+    load_info: LoadInfo
 
 
 class PipelineInstEmitter:
@@ -209,7 +230,7 @@ class PipelineInstEmitter:
                  global_outvars: Sequence[Var],
                  mesh_group: PhysicalDeviceMeshGroup, dependency: np.ndarray,
                  schedule: PipelineSchedule, is_batch: Sequence[bool],
-                 num_batch: int, flop_count: int, in_tree: PyTreeDef):
+                 num_batch: int, in_tree: PyTreeDef):
         ##### Input arguments #####
         self.stages = stages
         self.global_invars = global_invars
@@ -321,24 +342,14 @@ class PipelineInstEmitter:
         num_mesh = len(self.mesh_group)
         device_str_groups = self._establish_nccl_groups()
 
-        instruction_lists = {}  # Dict[worker -> List[PipelineInstruction]]
-        executable_config_lists = {}  # Dict[worker -> List[ExecutableConfig]]
-
-        # Initialize instruction lists for workers.
-        # Each worker has its own instruction list because resharding is not SPMD.
-        for physical_mesh in self.mesh_group:
-            for worker in physical_mesh.workers:
-                instruction_lists[worker] = []
-                executable_config_lists[worker] = []
-
         self._compile_resharding_tasks()
         # Compile forward, backward and apply_grad computations
-        executable_uuids = self._compile_computation_executables(
-            executable_config_lists)
+        (executable_uuids,
+         executable_config_lists) = self._compile_computation_executables()
 
         # Compile gradient buffer allocations
-        grad_uuids = self._compile_grad_buffer_allocations(
-            instruction_lists, executable_config_lists)
+        grad_uuids, instruction_lists = self._compile_grad_buffer_allocations(
+            executable_config_lists)
 
         # Split input into micro batches
         global_batch_invar_set = OrderedSet([
@@ -377,11 +388,11 @@ class PipelineInstEmitter:
             reduced_var_uuids = grad_uuids[mesh_idx]
             if len(reduced_var_uuids) > 0:
                 reduced_var_uuids = reduced_var_uuids[worker_idx]
-            reduced_var_uuids = [[
+            reduced_var_uuids = np.array([[
                 donation_mapping[mesh_idx].recursive_lookup(uuid)
                 for uuid in uuids
             ]
-                                 for uuids in reduced_var_uuids]
+                                          for uuids in reduced_var_uuids])
             donated = set(donation_mapping[mesh_idx].keys())
             used_outside.update(flatten_uuid_set(reduced_var_uuids))
             reduced_var_uuid_lists[worker] = reduced_var_uuids
@@ -392,12 +403,13 @@ class PipelineInstEmitter:
         outs_handler = self._get_outs_handler()
 
         load_info = self._compile_load_info(mesh_arg_indices, input_shard_specs)
-
-        return (instruction_lists, executable_config_lists, executable_uuids,
-                input_local_uuid_lists, grad_uuids, reduced_var_uuid_lists,
-                outs_handler, load_info, donate_invars, mesh_arg_indices,
-                input_shard_indices, delete_after_shard, batch_invars,
-                device_str_groups)
+        return PipeshardConfig(instruction_lists, executable_config_lists,
+                               executable_uuids, input_local_uuid_lists,
+                               grad_uuids, reduced_var_uuid_lists,
+                               donate_invars, mesh_arg_indices,
+                               input_shard_indices, delete_after_shard,
+                               batch_invars, device_str_groups, outs_handler,
+                               load_info)
 
     def resharding_task_iter(self):
         """An iterator over all resharding tasks."""
@@ -517,9 +529,11 @@ class PipelineInstEmitter:
         for worker, worker_instruction in worker_tmp_instructions.items():
             instruction_lists[worker].extend(worker_instruction)
 
-    def _compile_computation_executables(self, executable_config_lists):
+    def _compile_computation_executables(self):
         """Compile executables for forward, backward, and apply_grad compuations."""
         executable_uuids = []  # List[stage_idx -> executable_uuids]
+        executable_config_lists = defaultdict(
+            list)  # Dict[worker -> List[ExecutableConfig]]
 
         for stage_idx, stage in enumerate(self.stages):
             exec_uuid = next_mesh_executable_uuid()
@@ -536,14 +550,13 @@ class PipelineInstEmitter:
             for worker in self.mesh_group[mesh_idx].workers:
                 executable_config_lists[worker].append(exec_config)
 
-        return executable_uuids
+        return executable_uuids, executable_config_lists
 
-    def _compile_grad_buffer_allocations(self, instruction_lists,
-                                         executable_config_lists):
+    def _compile_grad_buffer_allocations(self, executable_config_lists):
         """Compile gradient buffer allocations."""
         num_mesh = len(self.mesh_group)
         mesh_grad_vars = [{} for _ in range(num_mesh)]
-        # TODO(yonghao): replicated code. abstract this part?
+        instruction_lists = defaultdict(list) # Dict[worker -> List[PipelineInstruction]]
         # collect gradient accumulation buffers in each mesh
         for stage_idx, stage in enumerate(self.stages):
             mesh_indices = list(self.schedule.stage_placement(stage_idx))
@@ -574,7 +587,7 @@ class PipelineInstEmitter:
                     global_config.use_memzero_for_gradient_accumulation,
                     instruction_lists, executable_config_lists)
 
-        return grad_uuids
+        return grad_uuids, instruction_lists
 
     def _compile_collect_mesh_input(self, mesh_idx, batch_vars):
         mesh_arg_set = OrderedSet()
@@ -700,7 +713,7 @@ class PipelineInstEmitter:
 
     def _compile_concate_get_spec(self, to_concate_vars):
         var_to_spec_all_meshes = []
-        output_at = {}
+        output_at = defaultdict(OrderedSet)
         num_mesh = len(self.mesh_group)
         for mesh_idx in range(num_mesh):
             var_to_spec = {}
@@ -710,7 +723,7 @@ class PipelineInstEmitter:
                                         stage.outvars):
                     if outvar in to_concate_vars:
                         var_to_spec[outvar] = spec
-                        output_at.setdefault(outvar, OrderedSet()).add(mesh_idx)
+                        output_at[outvar].add(mesh_idx)
             var_to_spec_all_meshes.append(var_to_spec)
         return var_to_spec_all_meshes, output_at
 
@@ -784,7 +797,7 @@ class PipelineInstEmitter:
             for k, v in concat_vars_mapping.items()
             if k in global_outvar_set
         }
-        output_at = {}
+        output_at = defaultdict(OrderedSet)
         for mesh_idx in range(num_mesh):
             var_to_spec = {}
             for stage_idx in self.schedule.mesh_stage_mapping[mesh_idx]:
@@ -793,12 +806,11 @@ class PipelineInstEmitter:
                                         stage.outvars):
                     if outvar in global_outvar_set:
                         var_to_spec[outvar] = spec
-                        output_at.setdefault(outvar, OrderedSet()).add(mesh_idx)
+                        output_at[outvar].add(mesh_idx)
                     if outvar in reversed_concat:
                         concat_outvar = reversed_concat[outvar]
                         var_to_spec[concat_outvar] = spec
-                        output_at.setdefault(concat_outvar,
-                                             OrderedSet()).add(mesh_idx)
+                        output_at[concat_outvar].add(mesh_idx)
             var_to_spec_all_meshes.append(var_to_spec)
         # assign indices and get specs
         for outvar in self.global_outvars:
@@ -875,14 +887,14 @@ class PipelineInstEmitter:
             for i, _ in enumerate(self.global_outvars)
         ]
 
-        def outs_handler(bufs):
+        def outs_handler(mesh_group, bufs):
             ret = []
             for i, _ in enumerate(avals):
                 aval = avals[i]
                 if not is_replicated[i]:
                     # construct DistributedArray
                     mesh_idx = self.outvar_index_to_mesh_index_mapping[i][0]
-                    device_mesh = self.mesh_group[mesh_idx]
+                    device_mesh = mesh_group[mesh_idx]
                     outvar_index_on_mesh = self.mesh_output_indices[i][mesh_idx]
                     spec = self.output_spec_list[mesh_idx][outvar_index_on_mesh]
                     arr = DistributedArray(
@@ -897,19 +909,19 @@ class PipelineInstEmitter:
                     distributed_arrays = []
                     for _, mesh_idx in enumerate(
                             self.outvar_index_to_mesh_index_mapping[i]):
-                        meshes.append(self.mesh_group[mesh_idx])
+                        meshes.append(mesh_group[mesh_idx])
                         outvar_index_on_mesh = self.mesh_output_indices[i][
                             mesh_idx]
                         spec = self.output_spec_list[mesh_idx][
                             outvar_index_on_mesh]
                         distributed_arrays.append(
-                            DistributedArray(
-                                device_mesh=self.mesh_group[mesh_idx],
-                                aval=aval,
-                                sharding_spec=spec,
-                                remote_buffers=bufs[mesh_idx]
-                                [outvar_index_on_mesh],
-                                indices=pxla.spec_to_indices(aval.shape, spec)))
+                            DistributedArray(device_mesh=mesh_group[mesh_idx],
+                                             aval=aval,
+                                             sharding_spec=spec,
+                                             remote_buffers=bufs[mesh_idx]
+                                             [outvar_index_on_mesh],
+                                             indices=pxla.spec_to_indices(
+                                                 aval.shape, spec)))
                     arr = ReplicatedDistributedArray(meshes, distributed_arrays)
                 ret.append(arr)
             return ret

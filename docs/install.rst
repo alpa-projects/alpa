@@ -147,7 +147,7 @@ Common issues of running Alpa on Slurm include:
 
 You might also find the discussion under `Issue #452 <https://github.com/alpa-projects/alpa/issues/452>`__ helpful.
 
-Jaxlib, Jax, FLAX Version Problems
+Jaxlib, Jax, Flax Version Problems
 ##################################
 Alpa is compatible with the following Jaxlib, Jax, and Flax versions:
 - Jax==0.3.5

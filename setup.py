@@ -89,7 +89,8 @@ dev_require_list = [
     "prospector",
     "yapf",
     "cmake",
-    "pybind11"
+    "pybind11",
+    f"cupy-cuda{get_cuda_version_str(no_dot=True)}"
 ]
 
 doc_require_list = [

@@ -1,6 +1,6 @@
 """Test cross-mesh resharding."""
-import time
 import unittest
+from alpa.pipeline_parallel.runtime_emitter import PipelineInstEmitter
 
 from jax import xla
 from jax.core import Var
@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from alpa import init
-from alpa.device_mesh import (DeviceCluster, DistributedArray,
+from alpa.device_mesh import (DistributedArray,
                               get_global_virtual_physical_mesh)
 from alpa.mesh_executable import (create_remote_buffer_refs, get_uuid_np_array,
                                   next_mesh_executable_uuid)
@@ -20,12 +20,11 @@ from alpa.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTaskSpec, CrossMeshCommunicator,
     SymbolicReshardingTask, SymbolicBroadcastReshardingTask)
 from alpa.pipeline_parallel.pipeshard_executable import (
-    AllocateZeroWorkerExecutableConfig, PipeshardDriverExecutable,
-    PipelineInstruction, PipeshardMeshWorkerExecuable)
+    AllocateZeroWorkerExecutableConfig, PipelineInstruction,
+    PipeshardMeshWorkerExecuable)
 from alpa.pipeline_parallel.resharding_tensor import VirtualDistributedArray
 from alpa.testing import assert_allclose
 from alpa.util import get_shard_shape
-from alpa.timer import timers
 
 
 def test_resharding(var,
@@ -45,8 +44,8 @@ def test_resharding(var,
     dst_loads = dst_loads or {dst: 0 for dst in dst_mesh.device_strs}
     if resharding_mode == "send_recv":
         (rewrite_dst_sharding_spec,
-        local_chunks) = CrossMeshCommunicator._rewrite_allgather_spec(
-            dst_sharding_spec, dst_mesh, var.aval.shape)
+         local_chunks) = CrossMeshCommunicator._rewrite_allgather_spec(
+             dst_sharding_spec, dst_mesh, var.aval.shape)
     else:
         rewrite_dst_sharding_spec = dst_sharding_spec
         local_chunks = None
@@ -76,7 +75,7 @@ def test_resharding(var,
         task = SymbolicReshardingTask(task_spec, collective_group, src_mesh,
                                       dst_mesh)
     else:
-        task = SymbolicBroadcastReshardingTask(task_spec, collective_group, 
+        task = SymbolicBroadcastReshardingTask(task_spec, collective_group,
                                                src_mesh, dst_mesh)
 
     # Compile pipeline instructions
@@ -106,10 +105,11 @@ def test_resharding(var,
                                     info="allocate zero for recv"))
     # Create resharding task
     if resharding_mode == "send_recv":
-        PipeshardDriverExecutable._compile_resharding_task(
-            src_mesh, dst_mesh, src_uuids, task, dst_uuids, instruction_lists)
+        PipelineInstEmitter._compile_resharding_task(src_mesh, dst_mesh,
+                                                     src_uuids, task, dst_uuids,
+                                                     instruction_lists)
     else:
-        PipeshardDriverExecutable._compile_broadcast_resharding_task(
+        PipelineInstEmitter._compile_broadcast_resharding_task(
             src_mesh, dst_mesh, src_uuids, task, dst_uuids, instruction_lists)
 
     exec_uuids = {}
@@ -148,12 +148,12 @@ def test_resharding(var,
     # timers("overall_resharding_time").start()
     for worker_idx, worker in enumerate(src_mesh.workers):
         worker.run_executable.remote(exec_uuids[worker],
-                                    [input_uuids[worker_idx]], [],
-                                    sync_for_timer=True)
+                                     [input_uuids[worker_idx]], [],
+                                     sync_for_timer=True)
     for worker_idx, worker in enumerate(dst_mesh.workers):
         worker.run_executable.remote(exec_uuids[worker], [],
-                                    [output_uuids[worker_idx]],
-                                    sync_for_timer=True)
+                                     [output_uuids[worker_idx]],
+                                     sync_for_timer=True)
     output_array = DistributedArray(dst_mesh, var.aval, dst_sharding_spec,
                                     output_refs)
 
@@ -271,7 +271,7 @@ class ReshardingTest(unittest.TestCase):
             [NoSharding(), NoSharding(),
              NoSharding()], [Replicated(4)])
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                  tensor_shape)
+                                 tensor_shape)
 
     def test_4gpu_broadcast(self):
         src_shape = (1, 2)
@@ -282,33 +282,57 @@ class ReshardingTest(unittest.TestCase):
              NoSharding()], [Replicated(2)])
         dst_spec = ShardingSpec([Chunked(
             [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
-        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape, resharding_mode="broadcast")
+        self.run_resharding_task(src_shape,
+                                 dst_shape,
+                                 src_spec,
+                                 dst_spec,
+                                 tensor_shape,
+                                 resharding_mode="broadcast")
         src_spec = ShardingSpec([Chunked(
             [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
-        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape, resharding_mode="broadcast")
+        self.run_resharding_task(src_shape,
+                                 dst_shape,
+                                 src_spec,
+                                 dst_spec,
+                                 tensor_shape,
+                                 resharding_mode="broadcast")
         src_spec = ShardingSpec(
             [NoSharding(), Chunked([2]),
              NoSharding()], [ShardedAxis(0)])
-        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape, resharding_mode="broadcast")
+        self.run_resharding_task(src_shape,
+                                 dst_shape,
+                                 src_spec,
+                                 dst_spec,
+                                 tensor_shape,
+                                 resharding_mode="broadcast")
 
     def test_8gpu_broadcast(self):
         src_shape = (1, 4)
         dst_shape = (1, 4)
         tensor_shape = (2, 64, 64)
 
-        src_spec = ShardingSpec([Chunked([2]), Chunked([2]), NoSharding()], [ShardedAxis(0), ShardedAxis(1)])
-        dst_spec = ShardingSpec([NoSharding(), NoSharding(), NoSharding()], [Replicated(4)])
-        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                  tensor_shape, resharding_mode="broadcast")
+        src_spec = ShardingSpec([Chunked([2]), Chunked([2]), NoSharding()],
+            [ShardedAxis(0), ShardedAxis(1)])
+        dst_spec = ShardingSpec([NoSharding(), NoSharding(), NoSharding()],
+            [Replicated(4)])
+        self.run_resharding_task(src_shape,
+                                 dst_shape,
+                                 src_spec,
+                                 dst_spec,
+                                 tensor_shape,
+                                 resharding_mode="broadcast")
 
         tensor_shape = (64, 64, 64)
-        src_spec = ShardingSpec([Chunked([2]), Chunked([2]), NoSharding()], [ShardedAxis(0), ShardedAxis(1)])
-        dst_spec = ShardingSpec([Chunked([2]), NoSharding(), Chunked([2])], [ShardedAxis(0), ShardedAxis(1)])
-        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                  tensor_shape, resharding_mode="broadcast")
+        src_spec = ShardingSpec([Chunked([2]), Chunked([2]), NoSharding()],
+            [ShardedAxis(0), ShardedAxis(1)])
+        dst_spec = ShardingSpec([Chunked([2]), NoSharding(), Chunked([2])],
+            [ShardedAxis(0), ShardedAxis(1)])
+        self.run_resharding_task(src_shape,
+                                 dst_shape,
+                                 src_spec,
+                                 dst_spec,
+                                 tensor_shape,
+                                 resharding_mode="broadcast")
 
 
 def suite():

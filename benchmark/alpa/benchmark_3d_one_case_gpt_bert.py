@@ -11,7 +11,7 @@ from alpa import (parallelize, global_config, get_global_cluster,
                   set_global_virtual_physical_mesh,
                   PipeshardParallel, ManualPipeshardParallel,
                   AutoShardingOption,
-                  mark_pipeline, manual_layer_construction,
+                  manual_layer_construction,
                   automatic_layer_construction, automatic_remat)
 from alpa.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from alpa.model.model_util import TrainState
@@ -108,8 +108,6 @@ def get_train_step(parallel_method,
 
         def loss_func(params):
             rngs = {"dropout": rng_key}
-            if not auto_layer:
-                mark_pipeline(name="0", mark_type="start")
             logits = state.apply_fn(params,
                                     batch["input_ids"],
                                     batch["attention_mask"],
@@ -121,8 +119,6 @@ def get_train_step(parallel_method,
             labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
             loss = - jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
             loss = (label_mask * loss).sum() / label_mask.sum()
-            if not auto_layer:
-                mark_pipeline(name=str(num_manual_pipeline_stages - 1), mark_type="end")
             return loss
 
         if not auto_layer:

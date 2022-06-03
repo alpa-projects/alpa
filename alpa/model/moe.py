@@ -16,7 +16,6 @@ from jax import lax
 import jax.numpy as jnp
 from jax.nn import one_hot
 
-from alpa import mark_pipeline
 from alpa.model.bert_model import (FlaxBaseModelOutput,
                                    FlaxBaseModelOutputWithPooling,
                                    FlaxBertAttention, FlaxBertEmbeddings,

@@ -11,15 +11,14 @@ import optax
 from flax import linen as nn
 from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 
-import alpa
-from alpa.api import init, shutdown, parallelize
+from alpa.api import init, shutdown, parallelize, grad, value_and_grad
 from alpa.model.bert_model import BertConfig, FlaxBertLayer
 from alpa.model.model_util import FlaxBaseModelOutput, TrainState
 from alpa.parallel_method import PipeshardParallel
 from alpa.pipeline_parallel.layer_construction import (
     automatic_layer_construction, manual_layer_construction)
+from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 from alpa.pipeline_parallel.stage_construction import UniformStageOption, StageOption
-from alpa.pipeline_parallel.primitive_def import mark_pipeline
 from alpa.shard_parallel.auto_sharding import AutoShardingOption
 
 
@@ -55,14 +54,11 @@ class MLPModel(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        if self.manual_pipeline_layer:
-            mark_pipeline(name='1', mark_type='start')
         x = nn.Dense(features=self.hidden_dim, use_bias=self.use_bias)(x)
         x = nn.relu(x)
         x = nn.Dense(features=self.hidden_dim, use_bias=self.use_bias)(x)
         if self.manual_pipeline_layer:
-            mark_pipeline(name='1', mark_type='end')
-            mark_pipeline(name='2', mark_type='start')
+            mark_pipeline_boundary()
         x = nn.Dense(features=self.hidden_dim, use_bias=self.use_bias)(x)
         x = nn.Dense(features=self.output_dim, use_bias=self.use_bias)(x)
         return x
@@ -82,12 +78,10 @@ class BertLayerModel(nn.Module):
 
     def __call__(self, x, attention_mask):
         for i, layer in enumerate(self.layers):
-            if self.manual_pipeline_layer:
-                mark_pipeline(name=str(i), mark_type='start')
             layer_outputs = layer(x, attention_mask)
             x = layer_outputs[0]
             if self.manual_pipeline_layer and i != len(self.layers) - 1:
-                mark_pipeline(name=str(i), mark_type='end')
+                mark_pipeline_boundary()
         return x
 
 
@@ -116,8 +110,7 @@ def create_dummy_train_state(rngkey, model, inputs, dtype=jnp.float16):
 def decorate_loss_fn(fn, manual_pipeline, use_remat, layer_num):
     if manual_pipeline:
         return manual_layer_construction(fn,
-                                         remat_layer=use_remat,
-                                         lift_markers=True)
+                                         remat_layer=use_remat)
     return automatic_layer_construction(fn,
                                         remat_layer=use_remat,
                                         layer_num=layer_num)
@@ -133,17 +126,15 @@ def get_mlp_train_step(parallel_method,
         def loss_func(params):
             out = state.apply_fn(params, batch["x"])
             loss = jnp.mean((out - batch["y"])**2)
-            if manual_pipeline_layer:
-                mark_pipeline(name='2', mark_type='end')
             return loss
 
         if parallel_method:
             loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
                                          use_remat, 2)
             if use_value_and_grad:
-                val, grads = alpa.value_and_grad(loss_func)(state.params)
+                val, grads = value_and_grad(loss_func)(state.params)
             else:
-                grads = alpa.grad(loss_func)(state.params)
+                grads = grad(loss_func)(state.params)
                 val = jax.tree_leaves(grads)[0]
         else:
             if use_value_and_grad:
@@ -168,10 +159,7 @@ def get_mlp_inference_step(parallel_method,
 
         def forward(params):
             out = state.apply_fn(params, batch["x"])
-            # TODO(zhuohan): Make inference_func work with outputs also
             loss = jnp.mean((out - batch["y"])**2)
-            if manual_pipeline_layer:
-                mark_pipeline(name='2', mark_type='end')
             return out, loss
 
         if parallel_method:
@@ -195,8 +183,6 @@ def get_bert_layer_collection_inference_step(parallel_method,
     def inference_step(state, batch):
 
         def forward(params):
-            if manual_pipeline_layer:
-                mark_pipeline(name='0', mark_type='start')
             out = state.apply_fn(params,
                                  batch["x"],
                                  batch["attention_mask"],
@@ -208,8 +194,6 @@ def get_bert_layer_collection_inference_step(parallel_method,
             out = FlaxBaseModelOutput(last_hidden_state=out.last_hidden_state,
                                       hidden_states=out.hidden_states[1:],
                                       attentions=out.attentions)
-            if manual_pipeline_layer:
-                mark_pipeline(name=str(n_layers - 1), mark_type='end')
             return out, loss
 
         if parallel_method:
@@ -239,17 +223,15 @@ def get_bert_layer_train_step(parallel_method,
         def loss_func(params):
             out = state.apply_fn(params, batch["x"], batch["attention_mask"])
             loss = jnp.mean((out - batch["y"])**2)
-            if manual_pipeline_layer:
-                mark_pipeline(name=str(num_layers - 1), mark_type='end')
             return loss
 
         if decorate_loss:
             loss_func = decorate_loss_fn(loss_func, manual_pipeline_layer,
                                          use_remat, num_layers)
             if use_value_and_grad:
-                val, grads = alpa.value_and_grad(loss_func)(state.params)
+                val, grads = value_and_grad(loss_func)(state.params)
             else:
-                grads = alpa.grad(loss_func)(state.params)
+                grads = grad(loss_func)(state.params)
                 val = jax.tree_leaves(grads)[0]
         else:
             if use_value_and_grad:

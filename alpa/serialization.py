@@ -121,9 +121,6 @@ def ts_store(ckpt_dir, data: Union[np.ndarray, jax.xla.DeviceArray]):
     else:
         dtype = np.dtype(dtype).str
     metadata = {
-        'compressor': {
-            'id': 'gzip'
-        },
         'shape': data.shape,
         'chunks': data.shape,
         'dtype': dtype,

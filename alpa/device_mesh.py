@@ -1409,13 +1409,11 @@ class DistributedArray:
                 buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
                 indices_per_host[buf_ref.host_id].append(indice)
                 device_ids_per_host[buf_ref.host_id].append(buf_ref.device_id)
-        obj_refs = []
         for host_id, uuids in buf_refs_per_host.items():
             if len(uuids) > 0:
-                obj_refs.append(
-                    device_mesh.workers[host_id].load_buffers_from_ts.remote(
-                        path, uuids, indices_per_host[host_id],
-                        device_ids_per_host[host_id]))
+                device_mesh.workers[host_id].load_buffers_from_ts.remote(
+                    path, uuids, indices_per_host[host_id],
+                    device_ids_per_host[host_id])
         return DistributedArray(device_mesh, aval, sharding_spec, buf_refs,
                                 indices)
 

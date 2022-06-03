@@ -149,6 +149,7 @@ class DistSaveLoadTest(unittest.TestCase):
             # Restore checkpoint
             state_ss, _ = executable.get_load_info()
             load_state = restore_checkpoint(ckpt_dir, 1, state_ss)
+            executable.sync()
 
         # Run after load
         serial_state = serial_train_step(jax_state, batch)[0]

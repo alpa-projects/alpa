@@ -4,7 +4,6 @@ import math
 import os
 import pickle
 import time
-import threading
 
 import numpy as np
 from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe

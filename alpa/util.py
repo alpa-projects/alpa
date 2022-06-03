@@ -8,6 +8,7 @@ import time
 from collections import OrderedDict
 from datetime import datetime
 from functools import partial, partialmethod
+import threading
 from typing import Sequence, Any
 from warnings import warn
 
@@ -919,6 +920,25 @@ def run_cmd(cmd: str):
     print(cmd)
     ret = os.system(cmd)
     return ret
+
+
+def run_with_timeout(func, args=(), kwargs=None, timeout=None):
+    """Run a function with timeout."""
+    ret_value = []
+
+    def _target_func():
+        ret_value.append(func(*args, **(kwargs or {})))
+
+    t = threading.Thread(target=_target_func)
+    t.start()
+    t.join(timeout=timeout)
+    if t.is_alive():
+        raise TimeoutError
+
+    if not ret_value:
+        raise RuntimeError
+
+    return ret_value[0]
 
 
 def list_gpu_info():

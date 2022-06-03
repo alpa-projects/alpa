@@ -16,6 +16,8 @@ import time
 from typing import Sequence
 import unittest
 
+from alpa.util import run_with_timeout
+
 
 slow_testcases = set([
     "test_pipeline_stage_construction.py",
@@ -36,12 +38,21 @@ def run_unittest_files(files, args):
 
         def func():
             ret = unittest.main(module=None, argv=["", "-vb"] + [filename])
-
         p = multiprocessing.Process(target=func)
-        p.start()
-        p.join()
 
-        if p.exitcode != 0:
+        def run_one_file():
+            p.start()
+            p.join()
+
+        try:
+            run_with_timeout(run_one_file, timeout=args.time_limit_per_file)
+            if p.exitcode != 0:
+                return False
+        except TimeoutError:
+            p.terminate()
+            time.sleep(5)
+            print(f"\nTimeout after {args.time_limit_per_file} seconds "
+                  f"when running {filename}")
             return False
 
     return True
@@ -55,14 +66,19 @@ if __name__ == "__main__":
         default=None,
         help="Run test cases whose names contain the filter string")
     arg_parser.add_argument(
-        "--enable_slow_tests",
+        "--enable-slow-tests",
         action="store_true",
         help="Run test cases including profiling, which takes a long time")
     arg_parser.add_argument(
-        "--xla_client_mem_fraction",
+        "--xla-client-mem-fraction",
         type=float,
         default=0.2,
         help="The fraction of GPU memory used to run unit tests")
+    arg_parser.add_argument(
+        "--time-limit-per-file",
+        type=int,
+        default=1000,
+        help="The time limit for running one file in seconds.")
     arg_parser.add_argument(
         "--order",
         type=str,

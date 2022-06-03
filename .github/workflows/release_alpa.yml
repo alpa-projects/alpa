@@ -7,7 +7,7 @@ on:
 
 env:
   TWINE_USERNAME: "__token__"
-  TWINE_PASSWORD: ${{ secrets.TEST_PYPI_TOKEN }}
+  TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
 
 jobs:
 
@@ -60,7 +60,7 @@ jobs:
         run: |
           echo "Publish to PyPI"
           ls -ltr dist/
-          twine upload --repository testpypi dist/*
+          python -m twine upload --verbose dist/*
 
   update-version:
     runs-on: [ubuntu-latest]

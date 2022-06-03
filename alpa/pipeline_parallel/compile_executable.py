@@ -38,6 +38,7 @@ logger.setLevel(logging.INFO)
 def compile_pipeshard_executable(fun: lu.WrappedFun,
                                  in_tree: PyTreeDef,
                                  out_tree_thunk: Callable[[], PyTreeDef],
+                                 static_argnums: Sequence[int],
                                  donated_invars: Sequence[bool],
                                  batch_invars: Sequence[bool],
                                  virtual_mesh: VirtualPhysicalMesh,
@@ -189,7 +190,9 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
         schedule=schedule,
         is_batch=batch_invars,
         num_batch=num_microbatch,
-        flop_count=total_flops)
+        flop_count=total_flops,
+        out_tree_thunk=out_tree_thunk,
+        static_argnums=static_argnums)
     debug_compilation_time("driver executable")
     return executable
 

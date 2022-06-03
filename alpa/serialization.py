@@ -121,9 +121,6 @@ def ts_store(ckpt_dir, data: Union[np.ndarray, jax.xla.DeviceArray]):
     else:
         dtype = np.dtype(dtype).str
     metadata = {
-        'compressor': {
-            'id': 'gzip'
-        },
         'shape': data.shape,
         'chunks': data.shape,
         'dtype': dtype,
@@ -191,6 +188,9 @@ class LoadInfo:
 
     def is_replicated(self):
         return len(self.avals) > 1
+
+    def __str__(self):
+        return f"{self.avals[0]}, {self.meshes[0].mesh_id}, {self.specs[0]}"
 
 
 def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, load_info: PyTree):

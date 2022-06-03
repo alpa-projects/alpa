@@ -400,7 +400,7 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
     jax.grad or alpa.grad. Also remove unused variables in the pipeline
     markers.
     """
-    assert len(computations) % 2 == 0
+    # assert len(computations) % 2 == 0.  TODO(zhuohan): fix this for inference schedule
     num_forward_computations = len(computations) // 2
 
     var_computation_id = {}

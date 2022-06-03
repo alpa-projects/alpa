@@ -1,5 +1,4 @@
 """Test auto sharding with simple computational graphs."""
-
 import unittest
 
 import jax
@@ -160,27 +159,24 @@ class AutoShardingBasicTest(unittest.TestCase):
         # But this seems too complicated.
 
         @parallelize(method=self.method)
-        def split(a):
+        def func(a):
             b = a.reshape((8, 18))
             #b = a.reshape((9, 16))
             return b
 
         a = jnp.ones(144)
-        split(a)
-
-        executable = split.get_executable(a)
+        executable = func.get_executable(a)
         assert_close(executable.auto_sharding_objective, 0)
 
     def test_argmax(self):
 
         @parallelize(method=self.method)
-        def split(a):
+        def func(a):
             b = jnp.argmax(a, axis=0)
             return b
 
         a = jnp.ones((144, 144))
-
-        executable = split.get_executable(a)
+        executable = func.get_executable(a)
 
         assert_close(executable.auto_sharding_objective, 0)
         hlo_ir = executable.get_hlo_text()
@@ -189,13 +185,24 @@ class AutoShardingBasicTest(unittest.TestCase):
     def test_sort(self):
 
         @parallelize(method=self.method)
-        def split(a):
+        def func(a):
             b = jnp.argsort(a)
             return b
 
         a = jnp.ones((1024,), dtype=jnp.int32)
+        executable = func.get_executable(a)
 
-        executable = split.get_executable(a)
+    def test_gemv(self):
+
+        @parallelize(method=self.method)
+        def func(a, b):
+            return a @ b
+
+        a = jnp.ones((128,), dtype=jnp.float32)
+        b = jnp.ones((128, 256), dtype=jnp.float32)
+        executable = func.get_executable(a, b)
+
+        assert "f32[128,64]" in executable.get_hlo_text()
 
     def test_fast_call(self):
 
@@ -221,6 +228,7 @@ def suite():
     suite.addTest(AutoShardingBasicTest("test_reshape_uneven_partition"))
     suite.addTest(AutoShardingBasicTest("test_argmax"))
     suite.addTest(AutoShardingBasicTest("test_sort"))
+    suite.addTest(AutoShardingBasicTest("test_gemv"))
     suite.addTest(AutoShardingBasicTest("test_fast_call"))
     return suite
 

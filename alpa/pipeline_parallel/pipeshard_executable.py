@@ -1,8 +1,9 @@
 """The dirver part and worker part of a pipeshard executable."""
 import logging
 import time
-from typing import Sequence, Callable
+from typing import Optional, Sequence, Callable
 
+from jax.tree_util import tree_flatten, tree_unflatten
 import numpy as np
 import ray.exceptions
 
@@ -48,7 +49,9 @@ class PipeshardDriverExecutable:
                  schedule: PipelineSchedule,
                  is_batch: Sequence[bool],
                  num_batch: int,
-                 flop_count: int):
+                 flop_count: int,
+                 static_argnums: Optional[Sequence[int]] = None,
+                 out_tree_thunk: Optional[Callable] = None):
         ##### Input arguments #####
         self.stages = stages
         self.mesh_group = mesh_group
@@ -57,6 +60,8 @@ class PipeshardDriverExecutable:
         self.num_batch = num_batch
         self.flop_count = flop_count
         self.num_mesh = len(mesh_group)
+        self.static_argnums = static_argnums
+        self.out_tree_thunk = out_tree_thunk
 
         ##### For debugging #####
         # List[stage_idx -> str]
@@ -152,10 +157,9 @@ class PipeshardDriverExecutable:
         Args:
             args: The original arguments of the parallelized function.
         """
-        num_mesh = len(self.mesh_group)
-        input_bufs = [None for _ in range(num_mesh)]
-        output_bufs = [None for _ in range(num_mesh)]
-        output_uuids = [None for _ in range(num_mesh)]
+        input_bufs = [None for _ in range(self.num_mesh)]
+        output_bufs = [None for _ in range(self.num_mesh)]
+        output_uuids = [None for _ in range(self.num_mesh)]
 
         num_outs = [
             len(self.output_local_uuid_list[mesh.workers[0]])
@@ -227,6 +231,19 @@ class PipeshardDriverExecutable:
             self._check_alive()
 
         return self.outs_handler(self.mesh_group, output_bufs)
+
+    def __call__(self, *args):
+        """Fast call without signature matching."""
+        if self.static_argnums:
+            dyn_args = [
+                args[i] for i in range(len(args))
+                if i not in self.static_argnums
+            ]
+        else:
+            dyn_args = args
+        args_flat, _ = tree_flatten(dyn_args)
+        out = self.launch_on_driver(*args_flat)
+        return tree_unflatten(self.out_tree_thunk(), out)
 
     ##### Load/Store Related Functions #####
     def get_load_info(self):

@@ -894,7 +894,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
                            donated_invars: Sequence[bool],
                            batch_invars: Sequence[bool],
                            num_micro_batches: int,
-                           args: Sequence):
+                           args: Sequence[Any]):
         bufs = []
         for arg, indices, donated, is_batch_var in zip(
                 args, shard_indices, donated_invars, batch_invars):
@@ -912,7 +912,8 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def shard_args_to_arrays(self, avals: Sequence[ShapedArray],
                              shard_indices: Sequence[Sequence[Index]],
-                             sharding_specs: Sequence[ShardingSpec], args):
+                             sharding_specs: Sequence[ShardingSpec],
+                             args: Sequence[Any]):
         arrays = []
         for i in range(len(avals)):
             shards = [
@@ -1169,7 +1170,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                            donated_invars: Sequence[bool],
                            batch_invars: Sequence[bool],
                            num_micro_batches: int,
-                           args: Sequence):
+                           args: Sequence[Any]):
         ret_bufs = []
         total_bytes = 0
         time_start = time.time()
@@ -1768,7 +1769,7 @@ class PhysicalDeviceMeshGroup:
         self.collective_groups[src_mesh_id][dst_mesh_id] = cg
         self.collective_groups[dst_mesh_id][src_mesh_id] = cg
 
-    def shard_args_to_arrays(self, load_infos, args):
+    def shard_args_to_arrays(self, load_infos: "LoadInfo", args: Sequence[Any]):
         rets = []
 
         for info, arg in zip(load_infos, args):

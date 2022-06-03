@@ -9,7 +9,7 @@ from typing import Any, Dict, Sequence, List, Callable, Optional, Union
 from jax.core import Var
 from jax.interpreters import pxla
 from jax.lib import xla_bridge as xb
-from jax.tree_util import tree_unflatten, PyTreeDef
+from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 import numpy as np
 import ray.exceptions
 

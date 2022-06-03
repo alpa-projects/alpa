@@ -9,7 +9,7 @@ from typing import Any, Dict, Sequence, List, Callable, Optional, Union
 from jax.core import Var
 from jax.interpreters import pxla
 from jax.lib import xla_bridge as xb
-from jax.tree_util import tree_unflatten, PyTreeDef
+from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 import numpy as np
 import ray.exceptions
 
@@ -186,7 +186,9 @@ class PipeshardDriverExecutable:
                  num_batch: int,
                  flop_count: int,
                  concat_vars_mapping: Dict[Var, Var],
-                 in_tree: PyTreeDef):
+                 in_tree: PyTreeDef,
+                 static_argnums: Optional[Sequence[int]] = None,
+                 out_tree_thunk: Optional[Callable] = None):
         ##### Input arguments #####
         self.stages = stages
         self.global_invars = global_invars
@@ -200,6 +202,8 @@ class PipeshardDriverExecutable:
         self.num_batch = num_batch
         self.flop_count = flop_count
         self.in_tree = in_tree
+        self.static_argnums = static_argnums
+        self.out_tree_thunk = out_tree_thunk
 
         ##### Internal states #####
         self.uuid_counter = 0  # counter for local buffer uuid
@@ -1152,6 +1156,19 @@ class PipeshardDriverExecutable:
             return ret
 
         self.outs_handler = outs_handler
+
+    def __call__(self, *args):
+        """Fast call without signature matching."""
+        if self.static_argnums:
+            dyn_args = [
+                args[i] for i in range(len(args))
+                if i not in self.static_argnums
+            ]
+        else:
+            dyn_args = args
+        args_flat, _ = tree_flatten(dyn_args)
+        out = self.launch_on_driver(*args_flat)
+        return tree_unflatten(self.out_tree_thunk(), out)
 
     ##### Load/Store Related Functions #####
     def get_load_info(self):

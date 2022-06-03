@@ -380,7 +380,7 @@ def layer_level_jaxpr_transformation(fn: Callable,
         if layer_construction:
             jaxpr = add_pipeline_marks_for_sliced_eqns(jaxpr, sliced_eqns)
         else:
-            jaxpr = clone_jaxpr(jaxpr, eqns=[x for x in eqns for eqns in sliced_eqns])
+            jaxpr = clone_jaxpr(jaxpr, eqns=[x for eqns in sliced_eqns for x in eqns])
 
         flatten_args, _ = tree_flatten(args)
         ans = jaxpr_as_fun(jaxpr)(*flatten_args)  # pylint: disable=not-callable

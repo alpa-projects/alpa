@@ -13,8 +13,6 @@ xc.register_custom_call_target(b'pipeline_marker',
                                platform='gpu')
 xc.register_custom_call_target(b'identity', identity(), platform='gpu')
 
-mark_pipeline = None
-
 ########## Public APIs ##########
 
 # Define a Jax primitive to mark start/end of a pipeline computation.

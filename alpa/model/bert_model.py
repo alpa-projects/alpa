@@ -39,7 +39,7 @@ class BertConfig:
                  use_cache=True,
                  tie_word_embeddings=True,
                  add_manual_pipeline_markers=False,
-                 pipeline_mp_size=None,
+                 pipeline_mp_size=0,
                  **kwargs):
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
@@ -382,8 +382,6 @@ class FlaxBertLayerCollection(nn.Module):
                                       dtype=self.dtype)
             for i in range(self.config.num_hidden_layers)
         ]
-
-
 
     def __call__(
         self,

@@ -67,4 +67,5 @@ shard_path = f"/home/ubuntu/parax-efs/pycharm/opt/raw_weights/175B/checkpoint_la
 shard = torch_load_cpu(shard_path)
 shard_flat_param = shard["model"]["decoder.layers.15.flat_param_0"]
 
-print(shard_flat_param[element_idx:element_idx + len(problem_positions)])
+for i, p in enumerate(problem_positions):
+    print(f"numpy at {p} is {mp5_weight[p]}, at shard position {element_idx + i} is {shard_flat_param[element_idx+i].numpy()}")

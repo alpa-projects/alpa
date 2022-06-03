@@ -1767,7 +1767,10 @@ class PhysicalDeviceMeshGroup:
     def index(self, *args, **kwargs):
         return self.meshes.index(*args, **kwargs)
 
-    def establish_nccl_group(self, src_mesh_id: int, dst_mesh_id: int):
+    def establish_nccl_group(self,
+                             src_mesh_id: int,
+                             dst_mesh_id: int,
+                             instantiate=True):
         """Establish NCCL group between two meshes."""
         # pylint: disable=import-outside-toplevel
         from alpa.pipeline_parallel.cross_mesh_resharding import CollectiveGroup
@@ -1780,12 +1783,16 @@ class PhysicalDeviceMeshGroup:
         dst_mesh = self.meshes[dst_mesh_id]
         device_strs = OrderedSet(src_mesh.device_strs + dst_mesh.device_strs)
         cg = CollectiveGroup(device_strs, src_mesh, dst_mesh)
-        if global_config.eagerly_create_communicators:
-            cg.instantiate_now()
-        else:
-            cg.instantiate()
         self.collective_groups[src_mesh_id][dst_mesh_id] = cg
         self.collective_groups[dst_mesh_id][src_mesh_id] = cg
+        if instantiate:
+            self._instantiate_nccl_group(cg)
+
+    def instantiate_nccl_group(self,
+                               src_mesh_id: int,
+                               dst_mesh_id: int):
+        cg = self.collective_groups[src_mesh_id][dst_mesh_id]
+        self._instantiate_nccl_group(cg)
 
     def shard_args_to_arrays(self, load_infos: "LoadInfo", args: Sequence[Any]):
         rets = []
@@ -1858,6 +1865,13 @@ class PhysicalDeviceMeshGroup:
         # recycle info actors
         for mesh in self.meshes:
             mesh.shutdown(forced=True)
+
+    @staticmethod
+    def _instantiate_nccl_group(cg):
+        if global_config.eagerly_create_communicators:
+            cg.instantiate_now()
+        else:
+            cg.instantiate()
 
 
 class DeviceCluster:

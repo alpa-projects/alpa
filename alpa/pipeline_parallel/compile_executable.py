@@ -11,6 +11,7 @@ from jax.tree_util import PyTreeDef
 from alpa.device_mesh import VirtualPhysicalMesh
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.pipeshard_executable import PipeshardDriverExecutable
+from alpa.pipeline_parallel.runtime_emitter import PipelineInstEmitter
 from alpa.pipeline_parallel.schedules import (GpipeSchedule, PipeDreamFlush,
                                               InferenceSchedule)
 from alpa.pipeline_parallel.computation import (
@@ -165,24 +166,31 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
     debug_compilation_time("launch meshes")
 
     # Wrap all things into a distributed runtime
-    grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}
     global_outvars, concat_vars_mapping = _rewrite_global_outvars_post_concate(
         global_outvars, reduction_vector, microbatch_bound,
         post_microbatch_bound, gensym_func)
 
-    executable = PipeshardDriverExecutable(
+    # TODO(yonghao): use virtual mesh instead of launched physical group
+    pipeshard_config = PipelineInstEmitter(
         stages=xla_stages,
         global_invars=global_invars,
         grad_dummy_invars=grad_in_to_out,
+        concat_vars_mapping=concat_vars_mapping,
         global_outvars=global_outvars,
         mesh_group=virtual_mesh.launched_physical_mesh_group,
-        dependency=dependency,
+        schedule=schedule,
+        is_batch=batch_invars,
+        num_batch=num_microbatch,
+        in_tree=in_tree).compile()
+
+    executable = PipeshardDriverExecutable(
+        stages=xla_stages,
+        mesh_group=virtual_mesh.launched_physical_mesh_group,
+        pipeshard_config=pipeshard_config,
         schedule=schedule,
         is_batch=batch_invars,
         num_batch=num_microbatch,
         flop_count=total_flops,
-        concat_vars_mapping=concat_vars_mapping,
-        in_tree=in_tree,
         out_tree_thunk=out_tree_thunk,
         static_argnums=static_argnums)
     debug_compilation_time("driver executable")

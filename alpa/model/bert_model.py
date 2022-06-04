@@ -15,8 +15,8 @@ from alpa.model.model_util import (FlaxBaseModelOutput,
                                    FlaxBaseModelOutputWithPooling,
                                    FlaxBertForPreTrainingOutput,
                                    FlaxMaskedLMOutput, TrainState)
-from alpa import mark_pipeline
 from alpa.model.model_util import TrainState
+from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 
 
 class BertConfig:
@@ -383,16 +383,6 @@ class FlaxBertLayerCollection(nn.Module):
             for i in range(self.config.num_hidden_layers)
         ]
 
-        num_layers = self.config.num_hidden_layers
-        pipeline_mp_size = self.config.pipeline_mp_size
-        self.pipeline_marker_positions = []
-        if self.config.add_manual_pipeline_markers:
-            num_layer_per_stage, remained = divmod(num_layers, pipeline_mp_size)
-            assert remained == 0
-            self.pipeline_marker_positions = [
-                num_layer_per_stage * i for i in range(1, pipeline_mp_size)
-            ]
-
     def __call__(
         self,
         hidden_states,
@@ -405,15 +395,7 @@ class FlaxBertLayerCollection(nn.Module):
         all_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
 
-        id = 0
         for i, layer in enumerate(self.layers):
-            if self.config.add_manual_pipeline_markers:
-                if (id < len(self.pipeline_marker_positions) and
-                        i == self.pipeline_marker_positions[id]):
-                    mark_pipeline(name=str(id), mark_type="end")
-                    mark_pipeline(name=str(id + 1), mark_type="start")
-                    id = id + 1
-
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -425,6 +407,12 @@ class FlaxBertLayerCollection(nn.Module):
 
             if output_attentions:
                 all_attentions += (layer_outputs[1],)
+
+            if self.config.add_manual_pipeline_markers:
+                layers_per_stage = self.config.num_hidden_layers // self.config.pipeline_mp_size
+                assert self.config.num_hidden_layers % self.config.pipeline_mp_size == 0
+                if i % layers_per_stage == layers_per_stage - 1 and i != len(self.layers) - 1:
+                    mark_pipeline_boundary()
 
         if output_hidden_states:
             all_hidden_states += (hidden_states,)

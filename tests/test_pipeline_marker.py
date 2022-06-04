@@ -5,7 +5,7 @@ import jax
 from jax.lib import xla_client as xc, xla_bridge as xb
 import jax.numpy as jnp
 
-from alpa.pipeline_parallel.primitive_def import mark_pipeline, xla_pipeline_marker
+from alpa.pipeline_parallel.primitive_def import xla_pipeline_marker, pipeline_p
 from alpa.testing import assert_allclose
 
 ops = xc.ops
@@ -63,9 +63,9 @@ class PipelineMarkerTest(unittest.TestCase):
         def f(x, y):
             a = x + y
             b = x * y
-            a, b = mark_pipeline(a, b, mark_type="start", name="1")
+            a, b = pipeline_p.bind(a, b, name="1", mark_type="start")
             z = a + b
-            z, = mark_pipeline(z, mark_type="end", name="1")
+            z, = pipeline_p.bind(z, name="1", mark_type="end")
             return z
 
         z_without_jit = f(x_np, y_np)
@@ -77,7 +77,7 @@ class PipelineMarkerTest(unittest.TestCase):
     def test_transpose(self):
 
         def f(x):
-            x, = mark_pipeline(x, mark_type="start", name="1")
+            x, = pipeline_p.bind(x, name="1", mark_type="start")
             x = jnp.transpose(x, axes=(1, 0))
             return x
 

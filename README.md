@@ -9,10 +9,13 @@ Alpa is a system for training large-scale neural networks.
 Scaling neural networks to hundreds of billions of parameters has enabled dramatic breakthroughs such as GPT-3, but training these large-scale neural networks requires complicated distributed training techniques.
 Alpa aims to automate large-scale distributed training with just a few lines of code.
 
-The key capabilities of Alpa include:
-💻 **Automatic Parallelization**. Alpa automatically parallelizes computational graphs with data, operator, and pipeline parallelism.
+The key features of Alpa include:  
+
+💻 **Automatic Parallelization**. Alpa automatically parallelizes users' single-device code on distributed clusters with data, operator, and pipeline parallelism. 
+
 🚀 **Excellent Performance**. Alpa achieves linear scaling on training models with billions of parameters on distributed clusters.
-✨ **Tight Integration with High-performance Deep Learning Ecosystem**. Alpa is backed by [Jax](https://github.com/google/jax), [XLA](https://www.tensorflow.org/xla) and [Ray](https://github.com/ray-project/ray)
+
+✨ **Tight Integration with Machine Learning Ecosystem**. Alpa is backed by open-source, high-performance, and production-ready libraries such as [Jax](https://github.com/google/jax), [XLA](https://www.tensorflow.org/xla), and [Ray](https://github.com/ray-project/ray)
 
 ## Quick Start
 Use Alpa's decorator ``@parallelize`` to scale your single-device training code to distributed clusters.
@@ -20,7 +23,7 @@ Use Alpa's decorator ``@parallelize`` to scale your single-device training code 
 ```python
 import alpa
 
-# Parallelize the training step in Jax
+# Parallelize the training step in Jax by simply using a decorator
 @alpa.parallelize
 def train_step(model_state, batch):
     def loss_func(params):
@@ -31,7 +34,7 @@ def train_step(model_state, batch):
     new_model_state = model_state.apply_gradient(grads)
     return new_model_state
 
-# The training loop now runs on your designated cluster
+# The training loop now automatically runs on your designated cluster
 model_state = create_train_state()
 for batch in data_loader:
     model_state = train_step(model_state, batch)

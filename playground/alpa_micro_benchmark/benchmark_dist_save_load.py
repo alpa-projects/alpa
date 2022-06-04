@@ -180,16 +180,15 @@ def benchmark_mlp_save(mode="flax", to_efs=True):
         print(f"loop {i}, time: {duration} seconds, throughput: {throughput} Gbps")
     print(f"average run time: {tot_duration/LOOP_CNT}, average throughput: {tot_throughput/LOOP_CNT} Gbps")
 
-def benchmark_dist_arr_save_load(to_efs=False):
+def benchmark_dist_arr_save(to_efs=False):
     """
-    Benchmark results on local disk:
+    TensorStore Benchmark results on local disk:
     - one host:
-        save average run time: 28.0506 seconds, save average throughput: 0.2852 Gbps
-        load average run time: 2.3506 seconds, load average throughput: 3.4035 Gbps
+        save average run time: 9.9292 seconds, save average throughput: 0.8057 Gbps
 
     - two hosts:
-        save average run time: 16.3754 seconds, save average throughput: 0.4885 Gbps
-        load average run time: 1.2287 seconds, load average throughput: 6.5110 Gbps
+        save average run time: 6.6622 seconds, save average throughput: 1.2008 Gbps
+
     """
     device_cluster = get_global_cluster()
     physical_mesh = device_cluster.get_physical_mesh()
@@ -205,36 +204,58 @@ def benchmark_dist_arr_save_load(to_efs=False):
         (jax.ShapedArray(arr.shape, jnp.int32),),
         (input_indices,), (sharding_spec,), (arr,))
 
-    save_prefix = _get_save_prefix(to_efs)
     save_tot_duration = 0.0
     save_tot_throughput = 0.0
-    load_tot_duration = 0.0
-    load_tot_throughput = 0.0
+    outdir = "/tmp/benchmark_save"
     for i in range(LOOP_CNT):
         # Save the DistributedArray (one replica only)
-        outdir = TemporaryDirectory(prefix=save_prefix)
-        subprocess.run(["rm", "-rf", outdir.name])
+        subprocess.run(["rm", "-rf", outdir])
         print(f"save to {outdir}")
 
-        # save benchmark
         start = time.time()
-        dist_arr.save(outdir.name)
+        dist_arr.save(outdir)
         duration = time.time() - start
         throughput = arr.size * 32 / 1024 / 1024 / 1024 / duration
         save_tot_duration += duration
         save_tot_throughput += throughput
         print(f"loop {i} save, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
+    print(f"save average run time: {save_tot_duration/LOOP_CNT:.4f} seconds, save average throughput: {save_tot_throughput/LOOP_CNT:.4f} Gbps")
+
+def benchmark_dist_arr_load():
+    """
+    TensorStore Benchmark results on local disk:
+    - one host:
+        load average run time: 4.0709 seconds, load average throughput: 1.9651 Gbps
+    
+    - two hosts:
+        load average run time: 3.6650 seconds, load average throughput: 2.1828 Gbps
+    """
+    device_cluster = get_global_cluster()
+    physical_mesh = device_cluster.get_physical_mesh()
+    logical_mesh = physical_mesh.get_logical_mesh()
+
+    rngkey = random.PRNGKey(0)
+    arr_shape = (16*1024, 16*1024) #1GB
+    arr = random.normal(rngkey, arr_shape)
+
+    sharding_spec = logical_mesh.make_tile_spec(arr, [0, 1], [0, 1])
+
+    load_tot_duration = 0.0
+    load_tot_throughput = 0.0
+    outdir = "/tmp/benchmark_save"
+    for i in range(LOOP_CNT):
+        print(f"load from {outdir}")
 
         # load benchmark
         start = time.time()
-        _ = DistributedArray.load(outdir.name, jax.ShapedArray(arr.shape, jnp.int32), physical_mesh, sharding_spec)
+        _ = DistributedArray.load(outdir, jax.ShapedArray(arr.shape, jnp.int32), physical_mesh, sharding_spec)
         duration = time.time() - start
         throughput = arr.size * 32 / 1024 / 1024 / 1024 / duration
         load_tot_duration += duration
         load_tot_throughput += throughput
         print(f"loop {i} load, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
-    print(f"save average run time: {save_tot_duration/LOOP_CNT:.4f} seconds, save average throughput: {save_tot_throughput/LOOP_CNT:.4f} Gbps")
     print(f"load average run time: {load_tot_duration/LOOP_CNT:.4f} seconds, load average throughput: {load_tot_throughput/LOOP_CNT:.4f} Gbps")
+
 
 def benchmark_mlp_dist_save_load():
     """
@@ -331,7 +352,8 @@ if __name__ == "__main__":
     # print("mlp dist save/load benchmark:")
     # benchmark_mlp_dist_save_load()
 
-    benchmark_dist_arr_save_load()
+    # benchmark_dist_arr_save()
+    benchmark_dist_arr_load()
     alpa.shutdown()
     
 

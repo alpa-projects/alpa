@@ -30,14 +30,3 @@ for i, shard_path in enumerate(weight_shard_path):
     metadata = shard["shard_metadata"]
     save_path = f"/home/ubuntu/dataset/175B-resharded/metadata_part-{i}"
     torch.save(metadata, save_path)
-
-# m = torch_load_cpu(weight_path[0])
-# with open("./cfg", "w") as f:
-#     # json.dump(m["cfg"], f)
-#     f.write(str(m["cfg"]))
-#
-# weight1 = torch_load_cpu(weight_shard_path1)
-# weight2 = torch_load_cpu(weight_shard_path2)
-#
-# print(weight1)
-# print(weight2)

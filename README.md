@@ -10,9 +10,9 @@ Scaling neural networks to hundreds of billions of parameters has enabled dramat
 Alpa aims to automate large-scale distributed training with just a few lines of code.
 
 The key capabilities of Alpa include:
-- 💻 Automatic Parallelization. Alpa automatically parallelizes computational graphs with data, operator, and pipeline parallelism.
-- 🚀 Excellent Performance. Alpa achieves linear scaling on training models with billions of parameters on distributed clusters.
-- ✨ Tight Integration with High-performance Deep Learning Ecosystem. Alpa is backed by [Jax](https://github.com/google/jax), [XLA](https://www.tensorflow.org/xla) and [Ray](https://github.com/ray-project/ray)
+💻 **Automatic Parallelization**. Alpa automatically parallelizes computational graphs with data, operator, and pipeline parallelism.
+🚀 **Excellent Performance**. Alpa achieves linear scaling on training models with billions of parameters on distributed clusters.
+✨ **Tight Integration with High-performance Deep Learning Ecosystem**. Alpa is backed by [Jax](https://github.com/google/jax), [XLA](https://www.tensorflow.org/xla) and [Ray](https://github.com/ray-project/ray)
 
 ## Quick Start
 Use Alpa's decorator ``@parallelize`` to scale your single-device training code to distributed clusters.

@@ -40,6 +40,8 @@ class GlobalConfig:
         self.use_memzero_for_gradient_accumulation = False
         # Cross mesh resharding mode. Possible choices: {"send_recv", "broadcast"}
         self.resharding_mode = "send_recv"
+        # Cross mesh resharding load balancing mode. Possible choices: {"normal", "with_order"}
+        self.resharding_load_balancing_mode = "normal"
 
         ########## Options of XLA compilation ##########
         self.build_random_seed = 42

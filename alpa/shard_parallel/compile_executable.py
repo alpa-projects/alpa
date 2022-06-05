@@ -5,12 +5,11 @@ from typing import Callable, Sequence, Optional, Union
 
 import numpy as np
 from jax import linear_util as lu
-from jax._src.lib import xla_bridge as xb
+from jax._src.lib import xla_bridge as xb, xla_extension as xe
 from jax.core import (Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym,
                       get_aval, raise_to_shaped, AbstractValue)
 from jax.interpreters import partial_eval as pe
 from jax.lax import add_p, div_p
-from jax.lib import xla_client as xc, xla_extension as xe
 from jax.tree_util import PyTreeDef
 
 from alpa.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh

@@ -211,6 +211,7 @@ class CompileWorker:
         """Run auto-sharding pass on a proto."""
         hlo_module = xe.HloModule.from_serialized_hlo_module_proto(proto)
         assert other_kwargs["return_mode"] == "stages"
+        # pylint: disable=unbalanced-tuple-unpacking
         hlo_stage_names, hlo_stages, strategy_config = run_auto_sharding_pass(
             hlo_module, *jaxpr_args, **other_kwargs)
         hlo_stages = [x.as_serialized_hlo_module_proto() for x in hlo_stages]

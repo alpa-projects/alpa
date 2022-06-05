@@ -280,7 +280,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
             mesh_idx, (computation_names, computation_modules,
                        strategy_config) = compile_workers.get_next_unordered()
             computation_modules = [xe.HloModule.from_serialized_hlo_module_proto(x)
-                for x in computation_modules]
+                                   for x in computation_modules]
             jax_computations, computation_donate_invars = compile_intermediate[
                 mesh_idx]
             sharded_xla_stages = generate_computations_from_modules(

@@ -274,8 +274,9 @@ def benchmark_mlp_dist_save():
     
     Benchmark results on local disk:
     - Two hosts:
-        TensorStore: save average run time: 19.9880 seconds, save average throughput: 1.2009 Gbps
-        np.save:     save average run time:  2.4631 seconds, save average throughput: 9.7452 Gbps
+        TensorStore:            save average run time: 19.9880 seconds, save average throughput: 1.2009 Gbps
+        np.save:                save average run time:  2.4631 seconds, save average throughput: 9.7452 Gbps
+        np.save (batch version) save average run time: 1.2081 seconds, save average throughput: 19.8683 Gbps
     """
     # Init model and optimizer
     batch_size = 64
@@ -322,8 +323,9 @@ def benchmark_mlp_dist_load():
     """
     Benchmark results on local disk:
     - two hosts:
-        TensorStore: load average run time: 4.4443 seconds, load average throughput: 5.4008 Gbps
-        np.load:     load average run time: 3.2214 seconds, load average throughput: 7.4511 Gbps
+        TensorStore:            load average run time: 4.4443 seconds, load average throughput: 5.4008 Gbps
+        np.load:                load average run time: 3.2214 seconds, load average throughput: 7.4511 Gbps
+        np.load (batch version) load average run time: 1.6163 seconds, load average throughput: 14.8510 Gbps
     """
     # Init model and optimizer
     batch_size = 64

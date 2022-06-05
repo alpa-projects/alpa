@@ -1454,8 +1454,11 @@ class DistributedArray:
         self._npy_value = None
 
     ##### distributed save/load #####
-    def save(self, path: str):
-        """Save one replica of the array to `path` distributedly."""
+    def save(self, path: str, synchronized=True):
+        """
+            Save one replica of the array to `path` distributedly.
+            If set synchronized to False, it will return the futures.
+        """
         one_replica_buffers = [
             self.remote_buffers[i] for i in self.one_replica_buffer_indices
         ]
@@ -1477,14 +1480,18 @@ class DistributedArray:
                 obj_refs.append(
                     self.device_mesh.workers[host_id].save_buffers.remote(
                         path, uuids, indices_per_host[host_id], self.shape))
-        ray.get(obj_refs)
-        return 
+        if synchronized:
+            ray.get(obj_refs)
+        else:
+            return obj_refs
 
     @classmethod
     def load(cls, path: str, aval: ShapedArray, device_mesh: PhysicalDeviceMesh,
-             sharding_spec: ShardingSpec):
-        """Load the data from `path` distributedly with `aval` and return a new
-        DistributedArray"""
+             sharding_spec: ShardingSpec, synchronized=True):
+        """
+            Load the data from `path` distributedly with `aval` and return a new DistributedArray
+            If set synchronized to False, it will also return the futures.
+        """
         # pylint: disable=import-outside-toplevel
         from alpa.mesh_executable import create_remote_buffer_refs
         buf_refs, _ = create_remote_buffer_refs(device_mesh, 1)
@@ -1502,13 +1509,21 @@ class DistributedArray:
                 buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
                 indices_per_host[buf_ref.host_id].append(indice)
                 device_ids_per_host[buf_ref.host_id].append(buf_ref.device_id)
+        obj_refs = []
         for host_id, uuids in buf_refs_per_host.items():
             if len(uuids) > 0:
-                device_mesh.workers[host_id].load_buffers_from_ts.remote(
-                    path, uuids, indices_per_host[host_id],
-                    device_ids_per_host[host_id])
-        return DistributedArray(device_mesh, aval, sharding_spec, buf_refs,
+                obj_refs.append(
+                    device_mesh.workers[host_id].load_buffers.remote(
+                        path, uuids, indices_per_host[host_id],
+                        device_ids_per_host[host_id]))
+        if synchronized:
+            ray.get(obj_refs)
+            return DistributedArray(device_mesh, aval, sharding_spec, buf_refs,
                                 indices)
+        else:
+            return obj_refs, DistributedArray(device_mesh, aval, sharding_spec, 
+                                buf_refs, indices)
+
 
     @property
     def one_replica_buffer_indices(self):

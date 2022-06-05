@@ -21,6 +21,7 @@ from flax.serialization import (to_state_dict, from_state_dict,
 import msgpack
 import numpy as np
 import pickle
+import ray
 
 from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
                               PhysicalDeviceMesh)
@@ -79,10 +80,11 @@ def save_checkpoint(nfs_dir: Union[str, os.PathLike], target: PyTree,
     flat_target, target_tree = tree_flatten(target)
     flat_metadata = []
     background_proc_pool = []
+    obj_refs = []
     for x in flat_target:
         if isinstance(x, DistributedArray):
             arr_dir = _get_save_path()
-            x.save(os.path.join(save_dir, arr_dir))
+            obj_refs.extend(x.save(os.path.join(save_dir, arr_dir), False))
             flat_metadata.append(arr_dir)
             ## TODO: background process
             # if local_cache_dir is not None:
@@ -92,7 +94,7 @@ def save_checkpoint(nfs_dir: Union[str, os.PathLike], target: PyTree,
 
         elif isinstance(x, ReplicatedDistributedArray):
             arr_dir = _get_save_path()
-            x.replica.save(os.path.join(save_dir, arr_dir))
+            obj_refs.extend(x.replica.save(os.path.join(save_dir, arr_dir), False))
             flat_metadata.append(arr_dir)
             ## TODO: background process
         elif isinstance(x, (np.ndarray, jax.xla.DeviceArray)):
@@ -106,6 +108,7 @@ def save_checkpoint(nfs_dir: Union[str, os.PathLike], target: PyTree,
     metadata = tree_unflatten(target_tree, flat_metadata)
     with open(metapath, "wb") as metafile:
         metafile.write(msgpack.packb(to_state_dict(metadata)))
+    ray.get(obj_refs)
         
 
 class LoadInfo:
@@ -161,6 +164,7 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
     state_paths, state_tree = tree_flatten(metadata)
     flat_info = tree_leaves(load_info)
     flat_load_state = []
+    obj_refs = []
     for path, info in zip(state_paths, flat_info):
         if info is None:
             logger.warning('Variable is not used, skip loading it')
@@ -169,9 +173,14 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
             meshes, arrays = [], []
             for aval, mesh, spec in info.get_info():
                 meshes.append(mesh)
-                arrays.append(DistributedArray.load(os.path.join(ckpt_dir, path), aval, mesh, spec))
+                obj_ref, dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path), aval, mesh, spec, False)
+                obj_refs.extend(obj_ref)
+                arrays.append(dist_arr)
             flat_load_state.append(ReplicatedDistributedArray(meshes, arrays)) 
         else:
             aval, mesh, spec = info.get_info()
-            flat_load_state.append(DistributedArray.load(os.path.join(ckpt_dir, path), aval, mesh, spec))
+            obj_ref, dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path), aval, mesh, spec, False)
+            obj_refs.extend(obj_ref)
+            flat_load_state.append(dist_arr)
+    ray.get(obj_refs)
     return tree_unflatten(state_tree, flat_load_state)

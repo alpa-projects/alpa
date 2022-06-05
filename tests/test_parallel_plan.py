@@ -5,23 +5,7 @@ from jax._src.api import make_jaxpr
 import jax.numpy as jnp
 import optax
 
-from alpa import parallelize, ShardParallel
-
-
-def create_distributed_train_state(create_state_fn, train_step, train_step_args):
-    jaxpr, state_avals = make_jaxpr(create_state_fn, return_shape=True)()
-    executable = train_step.get_executable(state_avals, *train_step_args)
-    state_placement_info = executable.get_placement_info()[0]
-
-    jaxprs, load_infos = slice_jaxpr(jaxpr, state_load_info)
-
-    executables = compile_executables(jaxprs, load_infos)
-
-    for executable in executables:
-        arrays = executable()
-
-    return arrays
-
+from alpa import parallelize, ShardParallel, CreateStateParallel
 
 def test_parallel_plan():
     use_bias = False
@@ -50,7 +34,8 @@ def test_parallel_plan():
 
     def create_state():
         model = Model()
-        params = model.init(rngkey, x)
+        rngkey = jax.random.PRNGKey(0)
+        params = model.init(rngkey, jnp.ones((1, input_dim)))
         tx = optax.adam(learning_rate=1e-2)
         return TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
@@ -63,7 +48,7 @@ def test_parallel_plan():
     create_state = parallelize(create_state, method=CreateStateParallel(train_step, batch))
 
     state = create_state()
-    state = train_step(state, {"x": x, "y": y})
+    state = train_step(state, batch)
 
 
 if __name__ == "__main__":

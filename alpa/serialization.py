@@ -31,6 +31,19 @@ PyTree = Any
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+def _dfs_pytree(tree, prefix, paths):
+    if isinstance(tree, dict):
+        for k, v in tree.items():
+            _dfs_pytree(v, prefix + "." + str(k), paths)
+    elif isinstance(tree, (tuple, list)):
+        for i, v in enumerate(tree):
+            _dfs_pytree(v, prefix + "." + str(i), paths)
+    elif tree is None:
+        return
+    else:
+        # Leaf node
+        paths.append(prefix)
+
 
 def _save_arr(ckpt_dir, arr):
     os.makedirs(ckpt_dir, exist_ok=True)
@@ -65,10 +78,6 @@ def save_checkpoint(nfs_dir: Union[str, os.PathLike], target: PyTree,
            its part of the model into this cache directory. There will be background processes moving these
            local data into `nfs_dir`.
     """
-    def _get_save_path():
-        # TODO: remove random path
-        return uuid.uuid4().hex
-
     # create directories if not exist
     os.makedirs(nfs_dir, exist_ok=True)
 
@@ -77,13 +86,16 @@ def save_checkpoint(nfs_dir: Union[str, os.PathLike], target: PyTree,
     else:
         save_dir = nfs_dir
 
+    target = to_state_dict(target)
+    flat_dirs = []
+    _dfs_pytree(target, "state", flat_dirs)
     flat_target, target_tree = tree_flatten(target)
     flat_metadata = []
     background_proc_pool = []
     obj_refs = []
-    for x in flat_target:
+    assert(len(flat_dirs) == len(flat_target))
+    for arr_dir, x in zip(flat_dirs, flat_target):
         if isinstance(x, DistributedArray):
-            arr_dir = _get_save_path()
             obj_refs.extend(x.save(os.path.join(save_dir, arr_dir), False))
             flat_metadata.append(arr_dir)
             ## TODO: background process
@@ -91,14 +103,11 @@ def save_checkpoint(nfs_dir: Union[str, os.PathLike], target: PyTree,
             #     p = subprocess.Popen(["mv", save_dir, nfs_dir], stdin=None, 
             #                           stdout=None, stderr=None, shell=False)
             #     background_proc_pool.append(p)
-
         elif isinstance(x, ReplicatedDistributedArray):
-            arr_dir = _get_save_path()
             obj_refs.extend(x.replica.save(os.path.join(save_dir, arr_dir), False))
             flat_metadata.append(arr_dir)
             ## TODO: background process
         elif isinstance(x, (np.ndarray, jax.xla.DeviceArray)):
-            arr_dir = _get_save_path()
             _save_arr(os.path.join(save_dir, arr_dir), x)
             flat_metadata.append(arr_dir)
         else:
@@ -107,7 +116,7 @@ def save_checkpoint(nfs_dir: Union[str, os.PathLike], target: PyTree,
     metapath = os.path.join(nfs_dir, f"checkpoint_{step}")
     metadata = tree_unflatten(target_tree, flat_metadata)
     with open(metapath, "wb") as metafile:
-        metafile.write(msgpack.packb(to_state_dict(metadata)))
+        metafile.write(msgpack.packb(metadata))
     ray.get(obj_refs)
         
 
@@ -153,7 +162,9 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
         https://flax.readthedocs.io/en/latest/_modules/flax/training/checkpoints.html#restore_checkpoint
 
         Args:
-            ckpt_dir: directory of checkpoints to restore from.
+            ckpt_dir: directory of checkpoints to restore from. If you do not have a shared filesystem, 
+            each host needs a copy of the checkpoint on its local disk at the same path.
+            at the same path.
             step: step number to load.
             load_info: shardingSpec and deviceMesh allocation info for loading.
     """

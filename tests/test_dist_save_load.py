@@ -95,26 +95,25 @@ class DistSaveLoadTest(unittest.TestCase):
                                      [[5], [7]]])
         self.check_dist_array_eq(desired_buffers1, dist_input_data1)
 
-        # Save the DistributedArray (one replica only)
-        tmpdir = tempfile.TemporaryDirectory(prefix=save_prefix)
-        subprocess.run(["rm", "-rf", tmpdir.name])
-        dist_input_data1.save(tmpdir.name)
+        with tempfile.TemporaryDirectory(prefix=save_prefix) as tmpdir:
+            # Save the DistributedArray (one replica only)
+            dist_input_data1.save(tmpdir)
 
-        # Load previously saved DistributedArray with a different shardingSpec
-        # [[0,1],          [[0,1],  [[0,1],
-        #  [2,3],  shard    [2,3]]   [2,3]]
-        #  [4,5],  ====>   [[4,5],  [[4,5],
-        #  [6,7]]           [6,7]]   [6,7]]
-        load_sharding_spec = logical_mesh.make_tile_spec(
-            global_input_data1, [0, 1], [0])
-        dist_load_data1 = DistributedArray.load(
-            tmpdir.name, jax.ShapedArray(global_input_data1.shape, jnp.int32),
-            physical_mesh, load_sharding_spec)
+            # Load previously saved DistributedArray with a different shardingSpec
+            # [[0,1],          [[0,1],  [[0,1],
+            #  [2,3],  shard    [2,3]]   [2,3]]
+            #  [4,5],  ====>   [[4,5],  [[4,5],
+            #  [6,7]]           [6,7]]   [6,7]]
+            load_sharding_spec = logical_mesh.make_tile_spec(
+                global_input_data1, [0, 1], [0])
+            dist_load_data1 = DistributedArray.load(
+                tmpdir, jax.ShapedArray(global_input_data1.shape, jnp.int32),
+                physical_mesh, load_sharding_spec)
 
-        # Check the DistributedArray's remote buffers
-        desired_buffers2 = np.array([[[0, 1], [2, 3]], [[0, 1], [2, 3]],
-                                     [[4, 5], [6, 7]], [[4, 5], [6, 7]]])
-        self.check_dist_array_eq(desired_buffers2, dist_load_data1)
+            # Check the DistributedArray's remote buffers
+            desired_buffers2 = np.array([[[0, 1], [2, 3]], [[0, 1], [2, 3]],
+                                        [[4, 5], [6, 7]], [[4, 5], [6, 7]]])
+            self.check_dist_array_eq(desired_buffers2, dist_load_data1)
 
         # Cleanup
         physical_mesh.shutdown()

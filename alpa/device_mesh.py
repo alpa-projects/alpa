@@ -24,7 +24,6 @@ import logging
 from operator import attrgetter
 import os
 import pickle
-import re
 import threading
 import time
 from typing import Any, List, Union, Sequence, Tuple, Optional, Callable
@@ -45,7 +44,6 @@ import numpy as np
 import cupy
 from cupy.cuda import nccl
 import ray
-import tensorstore as ts
 
 from alpa import mesh_profiling
 import alpa.collective as col
@@ -259,8 +257,8 @@ class MeshHostWorker:
         assert len(uuids) > 0
         for uuid in uuids:
             assert uuid in self.buffers
-        
-        shard_names = [str(self.host_id)+"."+str(i) for i in range(len(uuids))]
+
+        shard_names = [str(self.host_id) + "." + str(i) for i in range(len(uuids))]
 
         metadata = {
             'global_shape': global_shape,
@@ -273,99 +271,21 @@ class MeshHostWorker:
         for shard_name, uuid in zip(shard_names, uuids):
             with open(os.path.join(ckpt_dir, shard_name), "wb") as datafile:
                 np.save(datafile, self.buffers[uuid])
-        
+
         with open(os.path.join(ckpt_dir, f".metadata{self.host_id}"), "wb") as metafile:
             pickle.dump(metadata, metafile)
 
-    def _load_entire_arr(self, ckpt_dir, metadatas):
-        assert len(metadatas) > 0
-        with open(os.path.join(ckpt_dir, metadatas[0]), "rb") as metafile:
-            meta = pickle.load(metafile)
-        if meta["shard_indices"] is None:
-            return np.load(os.path.join(ckpt_dir, meta["shard_names"][0]))
-        entire_arr = np.empty(meta["global_shape"], meta['dtype'])
-        for metadata in metadatas:
-            with open(os.path.join(ckpt_dir, metadata), "rb") as metafile:
-                meta = pickle.load(metafile)
-            for shard_name, shard_indice in zip(meta["shard_names"], meta["shard_indices"]):
-                entire_arr[shard_indice] = np.load(os.path.join(ckpt_dir, shard_name))
-        return entire_arr
-
     def load_buffers(self, ckpt_dir: str, uuids: Sequence[int],
-                             shard_indices: Sequence[Index],
-                             device_ids: Sequence[int]):
+                     shard_indices: Sequence[Index],
+                     device_ids: Sequence[int]):
         assert len(uuids) > 0
-        metadatas = list(filter(lambda fname: fname[:9]==".metadata", os.listdir(ckpt_dir)))
-        entire_arr = self._load_entire_arr(ckpt_dir, metadatas)
+        metadatas = list(filter(lambda fname: fname[:9] == ".metadata", os.listdir(ckpt_dir)))
+        # pylint: disable=import-outside-toplevel
+        from alpa.serialization import load_entire_arr
+        entire_arr = load_entire_arr(ckpt_dir, metadatas)
         for index, uuid, device_id in zip(shard_indices, uuids, device_ids):
             data = entire_arr[index]
             self.put_buffer(uuid, device_id, data)
-
-    ##### TensorStore Related Functions #####
-    def get_ts_spec(self, ckpt_path: str):
-        spec = {
-            "driver": "zarr",
-            "kvstore": {},
-            "metadata_key": f".zarray{self.host_id}"
-        }
-        if ckpt_path.startswith("gs://"):
-            m = re.fullmatch("^gs://([^/]*)/(.*)$", ckpt_path, re.DOTALL)
-            if m is None:
-                raise ValueError(
-                    "The ckpt_path should contain the bucket name and the "
-                    f"file path inside the bucket. Got: {ckpt_path}")
-            gcs_bucket = m.group(1)
-            path_without_bucket = m.group(2)
-            spec["kvstore"] = {
-                "driver": "gcs",
-                "bucket": gcs_bucket,
-                "path": path_without_bucket
-            }
-        else:
-            spec["kvstore"] = {"driver": "file", "path": ckpt_path}
-        return spec
-
-    def load_buffers_from_ts(self, ckpt_dir: str, uuids: Sequence[int],
-                             shard_indices: Sequence[Index],
-                             device_ids: Sequence[int]):
-        assert len(uuids) > 0
-        ts_spec = self.get_ts_spec(ckpt_dir)
-        t = ts.open(ts.Spec(ts_spec), open=True).result()
-
-        for index, uuid, device_id in zip(shard_indices, uuids, device_ids):
-            data = t[index].read().result()
-            self.put_buffer(uuid, device_id, data)
-
-    def save_buffers_to_ts(self, ckpt_dir: str, uuids: Sequence[int],
-                           shard_indices: Sequence[Index],
-                           global_shape: Sequence[int]):
-        assert len(uuids) > 0
-        for uuid in uuids:
-            assert uuid in self.buffers
-
-        ts_spec = self.get_ts_spec(ckpt_dir)
-        dtype = self.buffers[uuids[0]].dtype
-        if dtype == jnp.bfloat16:
-            # Tensorstore uses "bfloat16", not "<V2".
-            dtype = "bfloat16"
-        else:
-            dtype = np.dtype(dtype).str
-        metadata = {
-            'shape': global_shape,
-            'chunks': self.buffers[uuids[0]].shape,
-            'dtype': dtype,
-            'compressor': None,
-        }
-        ts_spec["metadata"] = metadata
-        t = ts.open(ts.Spec(ts_spec),
-                    create=True,
-                    open=True,
-                    context=ts.Context({"file_io_concurrency": {
-                        "limit": 128
-                    }})).result()
-
-        for index, uuid in zip(shard_indices, uuids):
-            t[index].write(self.buffers[uuid]).result()
 
     ##### Data loader Related Functions #####
     def put_data_loader(self, uuid: int, *args):

@@ -7,9 +7,8 @@ in Alpa.
 
 import logging
 import os
-import subprocess
+import pickle
 from typing import Union, Any, Sequence
-import uuid
 
 from flax.serialization import to_state_dict, from_state_dict
 import jax
@@ -20,7 +19,6 @@ from flax.serialization import (to_state_dict, from_state_dict,
                                 _ndarray_from_bytes, _ndarray_to_bytes)
 import msgpack
 import numpy as np
-import pickle
 import ray
 
 from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
@@ -30,6 +28,7 @@ PyTree = Any
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
 
 def _dfs_pytree(tree, prefix, paths):
     if isinstance(tree, dict):
@@ -55,11 +54,25 @@ def _save_arr(ckpt_dir, arr):
         'shard_indices': None,
     }
     with open(os.path.join(ckpt_dir, shard_name), "wb") as datafile:
-            np.save(datafile, arr)
-    
-    with open(os.path.join(ckpt_dir, f".metadata0"), "wb") as metafile:
+        np.save(datafile, arr)
+    with open(os.path.join(ckpt_dir, ".metadata0"), "wb") as metafile:
         pickle.dump(metadata, metafile)
-    
+
+
+def load_entire_arr(ckpt_dir, metadatas):
+    assert len(metadatas) > 0
+    with open(os.path.join(ckpt_dir, metadatas[0]), "rb") as metafile:
+        meta = pickle.load(metafile)
+    if meta["shard_indices"] is None:
+        return np.load(os.path.join(ckpt_dir, meta["shard_names"][0]))
+    entire_arr = np.empty(meta["global_shape"], meta['dtype'])
+    for metadata in metadatas:
+        with open(os.path.join(ckpt_dir, metadata), "rb") as metafile:
+            meta = pickle.load(metafile)
+        for shard_name, shard_indice in zip(meta["shard_names"], meta["shard_indices"]):
+            entire_arr[shard_indice] = np.load(os.path.join(ckpt_dir, shard_name))
+    return entire_arr
+
 
 def save_checkpoint(nfs_dir: Union[str, os.PathLike], target: PyTree,
                     step: int, local_cache_dir=None):
@@ -75,13 +88,14 @@ def save_checkpoint(nfs_dir: Union[str, os.PathLike], target: PyTree,
            target: serializable flax object, usually a trainState.
            step: training step number or other metric number
            local_cache_dir: If not None, `save_checkpoint` will return immediately after each host saving
-           its part of the model into this cache directory. There will be background processes moving these
-           local data into `nfs_dir`.
+           its part of the model into this cache directory, and only the metadata file will be saved into
+           the `nfs_dir`. You can then use `rsync` to easily merge these these local data into `nfs_dir`.
     """
     # create directories if not exist
     os.makedirs(nfs_dir, exist_ok=True)
 
     if local_cache_dir is not None:
+        os.makedirs(local_cache_dir, exist_ok=True)
         save_dir = local_cache_dir
     else:
         save_dir = nfs_dir
@@ -91,24 +105,16 @@ def save_checkpoint(nfs_dir: Union[str, os.PathLike], target: PyTree,
     _dfs_pytree(target, "state", flat_dirs)
     flat_target, target_tree = tree_flatten(target)
     flat_metadata = []
-    background_proc_pool = []
     obj_refs = []
     assert(len(flat_dirs) == len(flat_target))
     for arr_dir, x in zip(flat_dirs, flat_target):
-        if isinstance(x, DistributedArray):
-            obj_refs.extend(x.save(os.path.join(save_dir, arr_dir), False))
-            flat_metadata.append(arr_dir)
-            ## TODO: background process
-            # if local_cache_dir is not None:
-            #     p = subprocess.Popen(["mv", save_dir, nfs_dir], stdin=None, 
-            #                           stdout=None, stderr=None, shell=False)
-            #     background_proc_pool.append(p)
-        elif isinstance(x, ReplicatedDistributedArray):
-            obj_refs.extend(x.replica.save(os.path.join(save_dir, arr_dir), False))
-            flat_metadata.append(arr_dir)
-            ## TODO: background process
-        elif isinstance(x, (np.ndarray, jax.xla.DeviceArray)):
-            _save_arr(os.path.join(save_dir, arr_dir), x)
+        if isinstance(x, (DistributedArray, ReplicatedDistributedArray, np.ndarray, jax.xla.DeviceArray)):
+            if isinstance(x, DistributedArray):
+                obj_refs.extend(x.save(os.path.join(save_dir, arr_dir), False))
+            elif isinstance(x, ReplicatedDistributedArray):
+                obj_refs.extend(x.replica.save(os.path.join(save_dir, arr_dir), False))
+            elif isinstance(x, (np.ndarray, jax.xla.DeviceArray)):
+                _save_arr(os.path.join(save_dir, arr_dir), x)
             flat_metadata.append(arr_dir)
         else:
             flat_metadata.append(x)
@@ -118,7 +124,11 @@ def save_checkpoint(nfs_dir: Union[str, os.PathLike], target: PyTree,
     with open(metapath, "wb") as metafile:
         metafile.write(msgpack.packb(metadata))
     ray.get(obj_refs)
-        
+    if local_cache_dir is not None:
+        logger.warning("Only the metadata has been saved into the shared filesystem, and the other data has\
+                        only been saved into the local cache directory. You can use rsync to merge them into\
+                        the shared filesystem easily.")
+
 
 class LoadInfo:
     """

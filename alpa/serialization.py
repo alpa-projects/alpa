@@ -12,6 +12,7 @@ from typing import Union, Any, Sequence
 import uuid
 
 from flax.serialization import to_state_dict, from_state_dict
+import jax
 from jax.interpreters.pxla import ShardingSpec
 from jax.core import ShapedArray
 from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
@@ -19,6 +20,7 @@ from flax.serialization import (to_state_dict, from_state_dict,
                                 _ndarray_from_bytes, _ndarray_to_bytes)
 import msgpack
 import numpy as np
+import pickle
 
 from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
                               PhysicalDeviceMesh)
@@ -28,6 +30,22 @@ PyTree = Any
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+
+def _save_arr(ckpt_dir, arr):
+    os.makedirs(ckpt_dir, exist_ok=True)
+    shard_name = "0.0"
+    metadata = {
+        'global_shape': arr.shape,
+        'dtype': arr.dtype,
+        'shard_names': [shard_name],
+        'shard_indices': None,
+    }
+    with open(os.path.join(ckpt_dir, shard_name), "wb") as datafile:
+            np.save(datafile, arr)
+    
+    with open(os.path.join(ckpt_dir, f".metadata0"), "wb") as metafile:
+        pickle.dump(metadata, metafile)
+    
 
 def save_checkpoint(nfs_dir: Union[str, os.PathLike], target: PyTree,
                     step: int, local_cache_dir=None):
@@ -77,6 +95,10 @@ def save_checkpoint(nfs_dir: Union[str, os.PathLike], target: PyTree,
             x.replica.save(os.path.join(save_dir, arr_dir))
             flat_metadata.append(arr_dir)
             ## TODO: background process
+        elif isinstance(x, (np.ndarray, jax.xla.DeviceArray)):
+            arr_dir = _get_save_path()
+            _save_arr(os.path.join(save_dir, arr_dir), x)
+            flat_metadata.append(arr_dir)
         else:
             flat_metadata.append(x)
 

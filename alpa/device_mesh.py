@@ -281,6 +281,8 @@ class MeshHostWorker:
         assert len(metadatas) > 0
         with open(os.path.join(ckpt_dir, metadatas[0]), "rb") as metafile:
             meta = pickle.load(metafile)
+        if meta["shard_indices"] is None:
+            return np.load(os.path.join(ckpt_dir, meta["shard_names"][0]))
         entire_arr = np.empty(meta["global_shape"], meta['dtype'])
         for metadata in metadatas:
             with open(os.path.join(ckpt_dir, metadata), "rb") as metafile:

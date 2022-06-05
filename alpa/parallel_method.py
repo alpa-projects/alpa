@@ -30,6 +30,7 @@ from alpa.pipeline_parallel.stage_construction import (AutoStageOption,
                                                        UniformStageOption)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption, LogicalDeviceMesh
 from alpa.shard_parallel.compile_executable import compile_shard_executable
+from alpa.create_state_parallel import compile_create_state_executable
 
 
 class ParallelMethod(ABC):
@@ -243,3 +244,29 @@ class LocalPipelineParallel(ParallelMethod):
         *avals: Sequence[AbstractValue],
     ):
         return compile_local_pipeline_executable(fun, *avals)
+
+
+class CreateStateParallel(ParallelMethod):
+    """
+    Parallelize the state initialization.
+    """
+    def __init__(self, train_step: Callable, other_args: Sequence):
+        from alpa.api import ParallelizedFunc
+        assert isinstance(train_step, ParallelizedFunc)
+
+        self.train_step = train_step
+        self.other_args = other_args
+
+    def compile_executable(
+        self,
+        fun: lu.WrappedFun,
+        in_tree: PyTreeDef,
+        out_tree_thunk: Callable[[], PyTreeDef],
+        static_argnums: Sequence[int],
+        donated_invars: Sequence[bool],
+        batch_invars: Sequence[bool],
+        *avals: Sequence[AbstractValue],
+    ):
+        return compile_create_state_executable(fun, in_tree, out_tree_thunk, static_argnums,
+                                               donated_invars, batch_invars, self.train_step,
+                                               self.other_args, *avals)

@@ -257,7 +257,7 @@ def get_all_submesh_autosharding_config_choices(virtual_mesh, submesh_choices,
 
     # Pad all submesh to the maximum number of configs
     max_num_autosharding_configs = max(
-        [len(configs) for configs in autosharding_configs])
+        len(configs) for configs in autosharding_configs)
     for configs in autosharding_configs:
         configs += [None] * (max_num_autosharding_configs - len(configs))
 
@@ -350,7 +350,7 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
 def _get_layer_flops_prefix_sum(layers):
     layer_flops_prefix_sum = [0]
     for layer in layers:
-        layer_flops = sum([eqn_flops(eqn) for eqn in layer.eqns])
+        layer_flops = sum(eqn_flops(eqn) for eqn in layer.eqns)
         layer_flops_prefix_sum.append(layer_flops_prefix_sum[-1] + layer_flops)
     return layer_flops_prefix_sum
 

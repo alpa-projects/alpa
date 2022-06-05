@@ -19,7 +19,7 @@ class PipelineInferenceTest(unittest.TestCase):
     def tearDown(self):
         shutdown()
 
-    def run_mlp_inference(self, manual_pipeline_layer=True):
+    def run_mlp_inference(self, manual_pipeline_layer):
         method = PipeshardParallel(num_micro_batches=4,
                                    pipeline_schedule="inference")
 
@@ -51,7 +51,7 @@ class PipelineInferenceTest(unittest.TestCase):
         hlo_text = executable.get_hlo_text()
         return hlo_text
 
-    def run_bert_layer_collection_inference(self, manual_pipeline_layer=True):
+    def run_bert_layer_collection_inference(self, manual_pipeline_layer):
         method = PipeshardParallel(num_micro_batches=4,
                                    pipeline_schedule="inference")
 
@@ -93,14 +93,17 @@ class PipelineInferenceTest(unittest.TestCase):
         hlo_text = executable.get_hlo_text()
         return hlo_text
 
-    def test_pipeline_inference_only(self):
-        self.run_mlp_inference()
-        self.run_bert_layer_collection_inference()
+    def test_mlp(self):
+        self.run_mlp_inference(True)
+
+    def test_bert(self):
+        self.run_bert_layer_collection_inference(True)
 
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(PipelineInferenceTest("test_pipeline_inference_only"))
+    suite.addTest(PipelineInferenceTest("test_mlp"))
+    suite.addTest(PipelineInferenceTest("test_bert"))
     return suite
 
 

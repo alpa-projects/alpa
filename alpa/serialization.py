@@ -10,14 +10,14 @@ import re
 from typing import Union, Any, Sequence
 import uuid
 
-from flax.serialization import to_state_dict, from_state_dict, _ndarray_from_bytes, _ndarray_to_bytes
+import numpy as np
 import jax
 from jax.interpreters.pxla import ShardingSpec
 from jax.core import ShapedArray
 import jax.numpy as jnp
 from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
+from flax.serialization import to_state_dict, from_state_dict, _ndarray_from_bytes, _ndarray_to_bytes
 import msgpack
-import numpy as np
 import tensorstore as ts
 
 from alpa.device_mesh import DistributedArray, ReplicatedDistributedArray, PhysicalDeviceMesh
@@ -121,9 +121,6 @@ def ts_store(ckpt_dir, data: Union[np.ndarray, jax.xla.DeviceArray]):
     else:
         dtype = np.dtype(dtype).str
     metadata = {
-        'compressor': {
-            'id': 'gzip'
-        },
         'shape': data.shape,
         'chunks': data.shape,
         'dtype': dtype,
@@ -191,6 +188,9 @@ class LoadInfo:
 
     def is_replicated(self):
         return len(self.avals) > 1
+
+    def __str__(self):
+        return f"{self.avals[0]}, {self.meshes[0].mesh_id}, {self.specs[0]}"
 
 
 def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, load_info: PyTree):

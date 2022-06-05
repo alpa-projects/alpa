@@ -4,13 +4,13 @@ import math
 import os
 import pickle
 import time
-import threading
 
 import numpy as np
 from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 import ray
 
-from alpa.util import GB, print_used_time, XlaPassContext, to_str_round
+from alpa.util import (GB, print_used_time, XlaPassContext,
+                       to_str_round, run_with_timeout)
 
 ops = xc.ops
 
@@ -571,24 +571,6 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices, op_info):
         # Return
         mean_time = (toc - tic) / number
         return mean_time
-
-
-def run_with_timeout(func, args=(), kwargs=None, timeout=None):
-    ret_value = []
-
-    def _target_func():
-        ret_value.append(func(*args, **(kwargs or {})))
-
-    t = threading.Thread(target=_target_func)
-    t.start()
-    t.join(timeout=timeout)
-    if t.is_alive():
-        raise TimeoutError
-
-    if not ret_value:
-        raise RuntimeError
-
-    return ret_value[0]
 
 
 def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,

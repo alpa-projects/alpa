@@ -79,7 +79,6 @@ install_require_list = [
     "ray[default]",
     "jax==0.3.5",
     "flax==0.4.1",
-    f"cupy-cuda{get_cuda_version_str(no_dot=True)}",
     "pulp",
     "tensorstore",
     "numpy<1.22",
@@ -89,7 +88,6 @@ install_require_list = [
 dev_require_list = [
     "prospector",
     "yapf",
-    "coverage",
     "cmake",
     "pybind11"
 ]

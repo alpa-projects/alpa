@@ -1401,7 +1401,7 @@ class DistributedArray:
                     self.device_mesh.workers[host_id].save_buffers.remote(
                         path, uuids, indices_per_host[host_id], self.shape))
         if synchronized:
-            ray.get(obj_refs)
+            return ray.get(obj_refs)
         else:
             return obj_refs
 
@@ -1438,11 +1438,9 @@ class DistributedArray:
                         device_ids_per_host[host_id]))
         if synchronized:
             ray.get(obj_refs)
-            return DistributedArray(device_mesh, aval, sharding_spec, buf_refs,
-                                indices)
+            return DistributedArray(device_mesh, aval, sharding_spec, buf_refs, indices)
         else:
-            return obj_refs, DistributedArray(device_mesh, aval, sharding_spec, 
-                                buf_refs, indices)
+            return obj_refs, DistributedArray(device_mesh, aval, sharding_spec, buf_refs, indices)
 
 
     @property

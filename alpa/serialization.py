@@ -15,8 +15,7 @@ import jax
 from jax.interpreters.pxla import ShardingSpec
 from jax.core import ShapedArray
 from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
-from flax.serialization import (to_state_dict, from_state_dict,
-                                _ndarray_from_bytes, _ndarray_to_bytes)
+from flax.serialization import to_state_dict, from_state_dict
 import msgpack
 import numpy as np
 import ray

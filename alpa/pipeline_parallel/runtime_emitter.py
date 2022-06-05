@@ -3,7 +3,7 @@ from collections import namedtuple, defaultdict
 from dataclasses import dataclass
 import enum
 import logging
-from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 
 from jax._src.tree_util import PyTreeDef, tree_unflatten
 from jax.core import Var
@@ -18,7 +18,7 @@ from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.pipeline_parallel.schedules import PipelineSchedule
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     CrossMeshCommunicator, SymbolicBroadcastReshardingTask,
-    SymbolicReshardingTask)
+    SymbolicReshardingTask, ReshardingTask)
 from alpa.serialization import LoadInfo
 from alpa.util import (DisjointDict, OrderedSet, cached_property,
                        get_shard_shape, get_microbatch_sharding_spec,
@@ -227,7 +227,7 @@ class PipeshardConfig:
     # Others
     outs_handler: Callable
     load_info: LoadInfo
-    resharding_task_iter: Iterator
+    resharding_tasks: Sequence[ReshardingTask]
 
     @property
     def input_local_uuid_lists(self):
@@ -330,6 +330,14 @@ class PipelineInstEmitter:
                     self._resharding_tasks[src_mesh_idx][dst_mesh_idx][
                         var] = SymbolicBroadcastReshardingTask(
                             spec, cg, src_mesh, dst_mesh)
+
+    def _gather_resharding_tasks(self):
+        """Gather all resharding tasks into a list."""
+        tasks = []
+        for src_idx in range(self.num_mesh):
+            for dst_idx in range(self.num_mesh):
+                tasks.extend(self._resharding_tasks[src_idx][dst_idx].values())
+        return tasks
 
     def _establish_nccl_groups(self):
         """
@@ -444,15 +452,7 @@ class PipelineInstEmitter:
             # Others
             outs_handler=outs_handler,
             load_info=load_info,
-            resharding_task_iter=self.resharding_task_iter())
-
-    def resharding_task_iter(self):
-        """An iterator over all resharding tasks."""
-        for src_idx in range(self.num_mesh):
-            for dst_idx in range(self.num_mesh):
-                tasks = self._resharding_tasks[src_idx][dst_idx].values()
-                for task in tasks:
-                    yield task
+            resharding_tasks=self._gather_resharding_tasks())
 
     def _compile_get_vars_from_mesh(self, invars, dst_specs, mesh_idx,
                                     batch_idx, instruction_lists,

@@ -100,6 +100,12 @@ class PipeshardDriverExecutable:
         # For weight serialization
         self.load_info = pipeshard_config.load_info
 
+        self.resharding_tasks = pipeshard_config.resharding_tasks
+
+        if global_config.eagerly_create_communicators:
+            for task in self.resharding_tasks:
+                task.create_resharding_communicators()
+
         # Create a PipeshardMeshWorkerExecuable for each MeshHostWorker
         self.worker_executable_uuid_mapping = {}  # Dict[
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
@@ -119,10 +125,6 @@ class PipeshardDriverExecutable:
                 worker.put_executable.remote(uuid, PipeshardMeshWorkerExecuable,
                                              *args)
                 self.worker_executable_uuid_mapping[worker] = uuid
-
-        if global_config.eagerly_create_communicators:
-            for task in pipeshard_config.resharding_task_iter:
-                task.create_resharding_communicators()
 
     ##### Compilation Related Functions #####
 
@@ -328,11 +330,8 @@ class PipeshardDriverExecutable:
     def print_resharding_tasks(self):
         """Pretty print all compiled resharding tasks."""
         ret = ""
-        for src_idx in range(len(self._resharding_tasks)):
-            for dst_idx in range(len(self._resharding_tasks)):
-                for var, task in self._resharding_tasks[src_idx][dst_idx].items(
-                ):
-                    ret += f"{var}: Mesh {src_idx}->{dst_idx}, {task}\n\n"
+        for task in self.resharding_tasks:
+            ret += str(task) + "\n\n"
         return ret
 
     def _debug_check(self):

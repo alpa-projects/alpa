@@ -700,7 +700,8 @@ class SymbolicReshardingTask(ReshardingTask):
         return dst_array
 
     def __str__(self):
-        return (f"ReshardingTask(shape:{self.task_spec.aval.shape},\n"
+        return (f"ReshardingTask(shape: {self.task_spec.aval.shape}, "
+                f"mesh_id: {self.src_mesh.mesh_id}->{self.dst_mesh.mesh_id},\n"
                 f"{self.task_spec.src_sharding_spec} ->\n"
                 f"{self.task_spec.dst_sharding_spec})")
 
@@ -885,10 +886,10 @@ class SymbolicBroadcastReshardingTask(ReshardingTask):
             ray.get(task_dones)
 
     def __str__(self):
-        return (
-            f"Broadcast based ReshardingTask(shape:{self.task_spec.aval.shape},\n"
-            f"{self.task_spec.src_sharding_spec} ->\n"
-            f"{self.task_spec.dst_sharding_spec})")
+        return (f"B-ReshardingTask(shape: {self.task_spec.aval.shape}, "
+                f"mesh_id: {self.src_mesh.mesh_id}->{self.dst_mesh.mesh_id},\n"
+                f"{self.task_spec.src_sharding_spec} ->\n"
+                f"{self.task_spec.dst_sharding_spec})")
 
 
 class CollectiveGroup:

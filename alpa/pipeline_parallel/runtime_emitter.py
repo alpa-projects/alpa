@@ -3,7 +3,7 @@ from collections import namedtuple, defaultdict
 from dataclasses import dataclass
 import enum
 import logging
-from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 
 from jax._src.tree_util import PyTreeDef, tree_unflatten
 from jax.core import Var

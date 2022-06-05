@@ -37,7 +37,7 @@ def _get_save_prefix(to_efs):
         save_prefix = "/tmp/"
     return save_prefix
 
-LOOP_CNT=1
+LOOP_CNT=2
 
 def benchmark_ndarray_save_load(mode="flax", to_efs=True):
     """
@@ -182,13 +182,13 @@ def benchmark_mlp_save(mode="flax", to_efs=True):
 
 def benchmark_dist_arr_save(to_efs=False):
     """
-    TensorStore Benchmark results on local disk:
+    Benchmark results on local disk:
     - one host:
-        save average run time: 9.9292 seconds, save average throughput: 0.8057 Gbps
+        - TensorStore: save average run time: 9.9292 seconds, save average throughput: 0.8057 Gbps
 
     - two hosts:
-        save average run time: 6.6622 seconds, save average throughput: 1.2008 Gbps
-
+        - TensorStore: save average run time: 3.9092 seconds, save average throughput: 2.0465 Gbps
+        - np.save:     save average run time: 0.4702 seconds, save average throughput: 17.0149 Gbps
     """
     device_cluster = get_global_cluster()
     physical_mesh = device_cluster.get_physical_mesh()
@@ -216,19 +216,23 @@ def benchmark_dist_arr_save(to_efs=False):
         dist_arr.save(outdir)
         duration = time.time() - start
         throughput = arr.size * 32 / 1024 / 1024 / 1024 / duration
-        save_tot_duration += duration
-        save_tot_throughput += throughput
+        if i >= 1:
+            save_tot_duration += duration
+            save_tot_throughput += throughput
         print(f"loop {i} save, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
-    print(f"save average run time: {save_tot_duration/LOOP_CNT:.4f} seconds, save average throughput: {save_tot_throughput/LOOP_CNT:.4f} Gbps")
+    print(f"save average run time: {save_tot_duration/(LOOP_CNT - 1):.4f} seconds, save average throughput: {save_tot_throughput/(LOOP_CNT - 1):.4f} Gbps")
 
 def benchmark_dist_arr_load():
     """
-    TensorStore Benchmark results on local disk:
+    Benchmark results on local disk:
     - one host:
-        load average run time: 4.0709 seconds, load average throughput: 1.9651 Gbps
+        TensorStore: load average run time: 4.0709 seconds, load average throughput: 1.9651 Gbps
+        np.load:     
     
     - two hosts:
-        load average run time: 3.6650 seconds, load average throughput: 2.1828 Gbps
+        TensorStore: load average run time: 3.6650 seconds, load average throughput: 2.1828 Gbps
+        np.load:        
+
     """
     device_cluster = get_global_cluster()
     physical_mesh = device_cluster.get_physical_mesh()
@@ -251,18 +255,72 @@ def benchmark_dist_arr_load():
         _ = DistributedArray.load(outdir, jax.ShapedArray(arr.shape, jnp.int32), physical_mesh, sharding_spec)
         duration = time.time() - start
         throughput = arr.size * 32 / 1024 / 1024 / 1024 / duration
-        load_tot_duration += duration
-        load_tot_throughput += throughput
+        if i >= 1:
+            load_tot_duration += duration
+            load_tot_throughput += throughput
         print(f"loop {i} load, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
-    print(f"load average run time: {load_tot_duration/LOOP_CNT:.4f} seconds, load average throughput: {load_tot_throughput/LOOP_CNT:.4f} Gbps")
+    print(f"load average run time: {load_tot_duration/(LOOP_CNT - 1):.4f} seconds, load average throughput: {load_tot_throughput/(LOOP_CNT - 1):.4f} Gbps")
 
 
-def benchmark_mlp_dist_save_load():
+def benchmark_mlp_dist_save():
     """
     Benchmark results on EFS:
     - alpa.save_checkpoint:
         save average run time: 161.8653 seconds, save average throughput: 0.1483 Gbps
         load average run time:  40.2772 seconds, load average throughput: 0.5965 Gbps
+    
+    Benchmark results on local disk:
+    - Two hosts:
+        TensorStore: save average run time: 19.9880 seconds, save average throughput: 1.2009 Gbps
+        np.save:    
+    """
+    # Init model and optimizer
+    batch_size = 64
+    hidden_dim = 8192 # 3072M
+    input_dim = output_dim = hidden_dim
+    model = MLPModel(hidden_dim=hidden_dim,
+                        output_dim=output_dim,
+                        manual_pipeline_layer=True)
+
+    # Init batch args
+    rngkey = random.PRNGKey(0)
+    x = random.normal(rngkey, (batch_size, input_dim), jnp.float32)
+    y = jax.random.normal(rngkey, (batch_size, output_dim), jnp.float32)
+    batch = {'x': x, 'y': y}
+ 
+    state = create_train_state(rngkey, model, [x])
+    model_size = count_params(state)
+    print(f"model size: {model_size * 4 / 1024 / 1024} MB")
+
+    # Compile
+    method = PipeshardParallel(num_micro_batches=2)
+    parallel_train_step = get_mlp_train_step(method, True, False, False)
+    parallel_state = parallel_train_step(state, batch)[0]
+
+    save_tot_duration = 0.0
+    save_tot_throughput = 0.0
+    outdir = "/tmp/benchmark_mlp_save"
+    for i in range(LOOP_CNT):
+        print(f"save to {outdir}")
+        # benchmark saving
+        start = time.time()
+        alpa_save_checkpoint(outdir, parallel_state, 1)
+        duration = time.time() - start
+        throughput = model_size * 32 / 1024 / 1024 / 1024 / duration
+        if i >= 1:
+            save_tot_duration += duration
+            save_tot_throughput += throughput
+        print(f"loop {i} save, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
+
+    print(f"save average run time: {save_tot_duration/(LOOP_CNT - 1):.4f} seconds, save average throughput: {save_tot_throughput/(LOOP_CNT - 1):.4f} Gbps")
+
+
+def benchmark_mlp_dist_load():
+    """
+    Benchmark results on local disk:
+    - two hosts:
+        TensorStore: load average run time: 4.4443 seconds, load average throughput: 5.4008 Gbps
+        np.load:    
     """
     # Init model and optimizer
     batch_size = 64
@@ -287,38 +345,24 @@ def benchmark_mlp_dist_save_load():
     parallel_train_step = get_mlp_train_step(method, True, False, False)
     executable = parallel_train_step.get_executable(state, batch) 
     state_ss, _ = executable.get_load_info()
-    parallel_state = parallel_train_step(state, batch)[0]
+    _ = parallel_train_step(state, batch)[0]
 
-    save_tot_duration = 0.0
-    save_tot_throughput = 0.0
     load_tot_duration = 0.0
     load_tot_throughput = 0.0
-    prefix = _get_save_prefix(True) # must save to/load from EFS
-    assert(prefix is not None)
+    outdir = "/tmp/benchmark_mlp_save"
     for i in range(LOOP_CNT):
-        with TemporaryDirectory(prefix=prefix) as outdir:
-            print(f"save to {outdir}")
-            # benchmark saving
-            start = time.time()
-            alpa_save_checkpoint(outdir, parallel_state, 1)
-            duration = time.time() - start
-            throughput = model_size * 32 / 1024 / 1024 / 1024 / duration
-            save_tot_duration += duration
-            save_tot_throughput += throughput
-            print(f"loop {i} save, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
-
-            # benchmark loading
-            start = time.time()
-            _ = alpa_restore_checkpoint(outdir, 1, state_ss)
-            duration = time.time() - start
-            throughput = model_size * 32 / 1024 / 1024 / 1024 / duration
+        print(f"load from {outdir}")
+        # benchmark loading
+        start = time.time()
+        _ = alpa_restore_checkpoint(outdir, 1, state_ss)
+        duration = time.time() - start
+        throughput = model_size * 32 / 1024 / 1024 / 1024 / duration
+        if i >= 1: # first loop for warmup
             load_tot_duration += duration
             load_tot_throughput += throughput
-            print(f"loop {i} load, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
+        print(f"loop {i} load, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
 
-    print(f"save average run time: {save_tot_duration/LOOP_CNT:.4f} seconds, save average throughput: {save_tot_throughput/LOOP_CNT:.4f} Gbps")
-    print(f"load average run time: {load_tot_duration/LOOP_CNT:.4f} seconds, load average throughput: {load_tot_throughput/LOOP_CNT:.4f} Gbps")
-
+    print(f"load average run time: {load_tot_duration/(LOOP_CNT - 1):.4f} seconds, load average throughput: {load_tot_throughput/(LOOP_CNT - 1):.4f} Gbps")
 
 
 if __name__ == "__main__":
@@ -349,11 +393,15 @@ if __name__ == "__main__":
     # benchmark_mlp_save(mode="alpa", to_efs=False)
     # benchmark_mlp_save(mode="numpy", to_efs=False)
 
-    # print("mlp dist save/load benchmark:")
-    # benchmark_mlp_dist_save_load()
-
+    # print("dist array save/load benchmark:")
     # benchmark_dist_arr_save()
-    benchmark_dist_arr_load()
+    # benchmark_dist_arr_load()
+
+    # print("mlp dist save/load benchmark:")
+    # benchmark_mlp_dist_save()
+    benchmark_mlp_dist_load()
+
+
     alpa.shutdown()
     
 

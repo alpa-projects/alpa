@@ -134,32 +134,30 @@ class LoadInfo:
     """
     A wrapper for the loading information.
     """
-
-    def __init__(self, avals: Sequence[ShapedArray],
-                 meshes: Sequence[PhysicalDeviceMesh],
+    def __init__(self, 
+                 aval: ShapedArray, 
+                 meshes: Sequence[PhysicalDeviceMesh], 
                  specs: Sequence[ShardingSpec]):
-        assert len(avals) == len(meshes)
         assert len(meshes) == len(specs)
-        self.avals = avals
+        self.aval = aval
         self.meshes = meshes
         self.specs = specs
 
-    def add_replica(self, aval, mesh, spec):
-        self.avals.append(aval)
+    def add_replica(self, mesh, spec):
         self.meshes.append(mesh)
         self.specs.append(spec)
 
     def get_info(self):
         if self.is_replicated():
-            return zip(self.avals, self.meshes, self.specs)
+            return zip(self.meshes, self.specs)
         else:
-            return self.avals[0], self.meshes[0], self.specs[0]
+            return self.meshes[0], self.specs[0]
 
     def is_replicated(self):
-        return len(self.avals) > 1
+        return len(self.meshes) > 1
 
     def __str__(self):
-        return f'{self.avals[0]}, {self.meshes[0].mesh_id}, {self.specs[0]}'
+        return f"{self.aval}, {self.meshes[0].mesh_id}, {self.specs[0]}"
 
 
 def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
@@ -192,15 +190,15 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
             flat_load_state.append(None)
         if info.is_replicated():
             meshes, arrays = [], []
-            for aval, mesh, spec in info.get_info():
+            for mesh, spec in info.get_info():
                 meshes.append(mesh)
-                obj_ref, dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path), aval, mesh, spec, False)
+                obj_ref, dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path), info.aval, mesh, spec, False)
                 obj_refs.extend(obj_ref)
                 arrays.append(dist_arr)
             flat_load_state.append(ReplicatedDistributedArray(meshes, arrays)) 
         else:
-            aval, mesh, spec = info.get_info()
-            obj_ref, dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path), aval, mesh, spec, False)
+            mesh, spec = info.get_info()
+            obj_ref, dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path), info.aval, mesh, spec, False)
             obj_refs.extend(obj_ref)
             flat_load_state.append(dist_arr)
     ray.get(obj_refs)

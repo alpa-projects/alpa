@@ -155,7 +155,7 @@ class AutoShardingOption:
 
 
 def run_auto_sharding_pass(
-        xla_computation: xe.XlaComputation,
+        hlo_module: xe.HloModule,
         avals: Sequence[ShapedArray],
         out_avals: Sequence[ShapedArray],
         donated_invars: Sequence[bool],
@@ -169,18 +169,18 @@ def run_auto_sharding_pass(
     """Run the auto-sharding pass to annotate sharding specs for an XLA Computation.
 
     Args:
-      xla_computation: The xla computation got by tracing the jax function,
+      hlo_module: The hlo module got by tracing the jax function,
         whose status should be UNOPTIMIZED.
       avals: The abstract values of input arguments.
       out_avals: The abstract values of outputs.
       donated_invars: Whether the arguments are donated.
       logical_mesh: The logical device mesh.
       return_mode: The mode of return value.
-        The choices are {"single", "stage_protos", "stage_and_hook_protos"}.
-        If it is "single", return a single HLO Module proto, whose status is SPMD_PARTITIONED.
-        If it is "stage_protos", return HLO Module protos of multiple pipeline stages,
+        The choices are {"single", "stages", "stage_and_hook_protos"}.
+        If it is "single", return a single HLO module, whose status is SPMD_PARTITIONED.
+        If it is "stages", return HLO modules of multiple pipeline stages,
           whose statuses are SHARDING_ANNOTATED.
-        If it is "stage_and_hook_protos", return HLO Module protos of multiple pipeline stages
+        If it is "stages_and_hook", return HLO modules of multiple pipeline stages
           and the hooked hlo sharding. The statuses of the returned protos are SHARDING_ANNOTATED.
       num_micro_batches: The number of micro batches
         if gradient accumulation is used. If this is set, the cost of all-reduce
@@ -194,7 +194,7 @@ def run_auto_sharding_pass(
     if memory_budget_per_device is None:
         memory_budget_per_device = -1
 
-    multiple_stages = return_mode in ["stage_protos", "stage_and_hook_protos"]
+    multiple_stages = return_mode in ["stages", "stages_and_hook"]
     num_devices = logical_mesh.num_devices
     build_random_seed = global_config.build_random_seed
     compile_options = get_compile_options(
@@ -257,7 +257,7 @@ def run_auto_sharding_pass(
     if rewrite_for_grad_acc and rewrite_grad_acc_indices is None:
         rewrite_grad_acc_indices = tuple(
             range(
-                len(xla_computation.program_shape().result_shape().tuple_shapes(
+                len(hlo_module.program_shape().result_shape().tuple_shapes(
                 ))))
 
     # Temporarily disable this.
@@ -306,7 +306,7 @@ def run_auto_sharding_pass(
             "auto_sharding::force_strategy_stra_names": [],
     }):
         timers("auto-sharding").start()
-        compiled_module = xe.run_auto_sharding(xla_computation, compile_options)
+        xe.run_auto_sharding(hlo_module, compile_options)
         timers("auto-sharding").stop()
 
     if multiple_stages:
@@ -319,24 +319,24 @@ def run_auto_sharding_pass(
                                      last_objective)
 
     if return_mode == "single":
-        return compiled_module, strategy_config
-    elif return_mode == "stage_protos":
+        return hlo_module, strategy_config
+    elif return_mode == "stages":
         return hlo_stage_names, hlo_stages, strategy_config
-    elif return_mode == "stage_and_hook_protos":
+    elif return_mode == "stages_and_hook":
         return hlo_stage_names, hlo_stages, hooked_proto, strategy_config
     else:
         raise ValueError("Invalid return mode:" + return_mode)
 
 
 def run_spmd_partitioner_pass(
-        xla_computation: xe.XlaComputation,
+        hlo_module: xe.HloModule,
         num_devices: int,
         rewrite_for_grad_acc: bool = False,
         rewrite_grad_acc_indices: Optional[Sequence[int]] = None):
     """Run SPMD partitioner pass on a sharding annotated HLO Module.
 
     Args:
-      xla_computation: The input HLO Module. The status should be SHARDING_ANNOTATED.
+      hlo_module: The input HLO module, whose status should be SHARDING_ANNOTATED.
       num_devices: The total number of devices.
       rewrite_for_grad_acc: Whether to do rewriting for gradient accumulation.
       rewrite_grad_acc_indices: The indices of tensors in output that are gradients.
@@ -352,7 +352,7 @@ def run_spmd_partitioner_pass(
     if rewrite_for_grad_acc and rewrite_grad_acc_indices is None:
         rewrite_grad_acc_indices = tuple(
             range(
-                len(xla_computation.program_shape().result_shape().tuple_shapes(
+                len(hlo_module.program_shape().result_shape().tuple_shapes(
                 ))))
 
     with XlaPassContext({
@@ -360,15 +360,13 @@ def run_spmd_partitioner_pass(
             "auto_sharding::rewrite_for_grad_acc": rewrite_for_grad_acc,
             "auto_sharding::rewrite_indices": rewrite_grad_acc_indices,
     }):
-        compiled_module = xe.run_spmd_partitioner(xla_computation,
-                                                  compile_options)
+        xe.run_spmd_partitioner(hlo_module, compile_options)
 
-    return compiled_module
+    return hlo_module
 
 
 def run_backend_compilation(backend: xe.Client,
-                            xla_computation: Union[xe.XlaComputation,
-                                                   xe.HloModule, bytes],
+                            hlo_module: Union[xe.HloModule, xe.XlaComputation, bytes],
                             strategy_config: StrategyConfig,
                             num_devices: int,
                             bypass_device_assignment_check: bool = False):
@@ -376,7 +374,7 @@ def run_backend_compilation(backend: xe.Client,
 
     Args:
       backend: The XLA backend client.
-      xla_computation: The input HLO Module. The status should be SPMD_PARTITIONED.
+      hlo_module: The input HLO Module, whose status should be SPMD_PARTITIONED.
       strategy_config: The auto-sharding strategy solution.
       num_devices: The total number of devices.
       bypass_device_assignment_check: Whether to compile without exact devices.
@@ -389,13 +387,13 @@ def run_backend_compilation(backend: xe.Client,
         parameter_is_tupled_arguments=False,
         build_random_seed=strategy_config.build_random_seed)
 
-    if isinstance(xla_computation, xe.HloModule):
-        xla_computation = xe.XlaComputation(
-            xla_computation.as_serialized_hlo_module_proto())
-    elif isinstance(xla_computation, bytes):  # protobuf
-        xla_computation = xe.XlaComputation(xla_computation)
+    if isinstance(hlo_module, xe.HloModule):
+        xla_computation = xe.XlaComputation(hlo_module.as_serialized_hlo_module_proto())
+    elif isinstance(hlo_module, bytes):  # protobuf
+        xla_computation = xe.XlaComputation(hlo_module)
     else:
-        assert isinstance(xla_computation, xe.XlaComputation)
+        assert isinstance(hlo_module, xe.XlaComputation)
+        xla_computation = hlo_module
 
     with XlaPassContext({
             # Build options
@@ -841,18 +839,18 @@ def _call_solver_serialized_args(
 
 # Auto-sharded pipeline stages.
 # These global variables are used to receive values from XLA c++ passes.
-auto_sharded_hlo_stage_names = None
-auto_sharded_hlo_stages = None
+auto_sharded_hlo_stage_names: Sequence[str] = []
+auto_sharded_hlo_stages: Sequence[xe.HloModule] = []
 
 hooked_sharding_protos = None
 
 
-def set_auto_sharded_hlo_stages(stages: Tuple[Sequence[str], Sequence[bytes]]):
+def set_auto_sharded_hlo_stages(stages: Tuple[Sequence[str], Sequence[xe.HloModule]]):
     """Set the sliced auto-sharded stages. This is called in XLA SliceAutoShardedStages pass."""
-    hlo_module_names, hlo_module_protos = stages
+    hlo_module_names, hlo_modules = stages
     global auto_sharded_hlo_stage_names, auto_sharded_hlo_stages
     auto_sharded_hlo_stage_names = hlo_module_names
-    auto_sharded_hlo_stages = hlo_module_protos
+    auto_sharded_hlo_stages = hlo_modules
 
 
 def set_hooked_sharding_protos(protos: Sequence[bytes]):
@@ -860,7 +858,7 @@ def set_hooked_sharding_protos(protos: Sequence[bytes]):
     hooked_sharding_protos = protos
 
 
-def get_auto_sharded_hlo_stages() -> Sequence[bytes]:
+def get_auto_sharded_hlo_stages() -> Tuple[Sequence[str], Sequence[xe.HloModule]]:
     """Get the sliced hlo stages from the SliceAutoShardedStages pass."""
     return auto_sharded_hlo_stage_names, auto_sharded_hlo_stages
 

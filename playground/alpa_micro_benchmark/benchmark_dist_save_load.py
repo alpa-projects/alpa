@@ -1,8 +1,6 @@
 import os
 import subprocess
 import time
-import timeit
-from tempfile import TemporaryFile, TemporaryDirectory
 
 from flax.training.checkpoints import save_checkpoint, restore_checkpoint
 import jax
@@ -10,14 +8,11 @@ import jax.numpy as jnp
 from jax import random
 import numpy as np
 
-
 import alpa
 from alpa import save_checkpoint as alpa_save_checkpoint
 from alpa import restore_checkpoint as alpa_restore_checkpoint
 from alpa import PipeshardParallel, DistributedArray
-from alpa.testing import (MLPModel, BertLayerModel, create_train_state,
-                          get_bert_layer_train_step, get_mlp_train_step,
-                          assert_allclose)
+from alpa.testing import (MLPModel, create_train_state, get_mlp_train_step)
 from alpa.device_mesh import get_global_cluster
 
 def _get_efs_mount_point():
@@ -233,7 +228,6 @@ def benchmark_dist_arr_load():
     - two hosts:
         TensorStore: load average run time: 3.6650 seconds, load average throughput: 2.1828 Gbps
         np.load:     load average run time: 0.7644 seconds, load average throughput: 10.4655 Gbps
-
     """
     device_cluster = get_global_cluster()
     physical_mesh = device_cluster.get_physical_mesh()
@@ -273,14 +267,20 @@ def benchmark_mlp_dist_save():
         load average run time:  40.2772 seconds, load average throughput: 0.5965 Gbps
     
     Benchmark results on local disk:
-    - Two hosts:
+    - one host:
+        np.save (batch version) save average run time: 1.3313 seconds, save average throughput: 18.0300 Gbps
+
+    - two hosts:
         TensorStore:            save average run time: 19.9880 seconds, save average throughput: 1.2009 Gbps
         np.save:                save average run time:  2.4631 seconds, save average throughput: 9.7452 Gbps
         np.save (batch version) save average run time: 1.2081 seconds, save average throughput: 19.8683 Gbps
+    
+    - four hosts:
+        np.save (batch version) 
     """
     # Init model and optimizer
     batch_size = 64
-    hidden_dim = 8192 # 3072M
+    hidden_dim = 2*8192 # 3072M
     input_dim = output_dim = hidden_dim
     model = MLPModel(hidden_dim=hidden_dim,
                         output_dim=output_dim,
@@ -303,12 +303,18 @@ def benchmark_mlp_dist_save():
 
     save_tot_duration = 0.0
     save_tot_throughput = 0.0
-    outdir = "/tmp/benchmark_mlp_save"
+    outdir = "/home/ubuntu/efs/benchmark_mlp_save"
+    cachedir = "/tmp/benchmark_mlp_save"
     for i in range(LOOP_CNT):
+        subprocess.run(["rm", "-rf", outdir])
+        subprocess.run(["rm", "-rf", cachedir])
         print(f"save to {outdir}")
         # benchmark saving
         start = time.time()
-        alpa_save_checkpoint(outdir, parallel_state, 1)
+        if i == 0:
+            alpa_save_checkpoint("/tmp/warmup", parallel_state, 1)
+        else:
+            alpa_save_checkpoint(outdir, parallel_state, 1, cachedir)
         duration = time.time() - start
         throughput = model_size * 32 / 1024 / 1024 / 1024 / duration
         if i >= 1:
@@ -322,10 +328,16 @@ def benchmark_mlp_dist_save():
 def benchmark_mlp_dist_load():
     """
     Benchmark results on local disk:
+    - one hosts:
+        np.load (batch version) load average run time: 1.6670 seconds, load average throughput: 14.3985 Gbps
+
     - two hosts:
         TensorStore:            load average run time: 4.4443 seconds, load average throughput: 5.4008 Gbps
         np.load:                load average run time: 3.2214 seconds, load average throughput: 7.4511 Gbps
         np.load (batch version) load average run time: 1.6163 seconds, load average throughput: 14.8510 Gbps
+    
+    - four hosts:
+        np.load (batch version) 
     """
     # Init model and optimizer
     batch_size = 64
@@ -354,7 +366,7 @@ def benchmark_mlp_dist_load():
 
     load_tot_duration = 0.0
     load_tot_throughput = 0.0
-    outdir = "/tmp/benchmark_mlp_save"
+    outdir = "/tmp/benchmark_mlp_load"
     for i in range(LOOP_CNT):
         print(f"load from {outdir}")
         # benchmark loading
@@ -402,11 +414,9 @@ if __name__ == "__main__":
     # benchmark_dist_arr_save()
     # benchmark_dist_arr_load()
 
-    # print("mlp dist save/load benchmark:")
-    # benchmark_mlp_dist_save()
-    benchmark_mlp_dist_load()
-
-
+    print("mlp dist save/load benchmark:")
+    benchmark_mlp_dist_save()
+    # benchmark_mlp_dist_load()
     alpa.shutdown()
     
 

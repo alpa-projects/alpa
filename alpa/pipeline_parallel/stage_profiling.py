@@ -9,7 +9,7 @@ from typing import Dict, Sequence
 import jax.numpy as jnp
 from jax.core import (ClosedJaxpr, Var, gensym)
 from jax.interpreters import pxla
-from jax.lib import xla_bridge, xla_client, xla_extension as _xla
+from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 import numpy as np
 import tqdm
 import ray
@@ -160,25 +160,25 @@ class CompileWorker:
         try:
             computation = xla_client.XlaComputation(config.model_proto)
             # pylint: disable=unbalanced-tuple-unpacking
-            proto_names, protos, hooked_proto, strategy_config = run_auto_sharding_pass(
+            module_names, modules, hooked_proto, strategy_config = run_auto_sharding_pass(
                 computation, *jaxpr_args, **other_kwargs)
         except RuntimeError as e:
             logger.warning(f"Compilation error (auto-sharding pass) "
                            f"for stage {stage_id} : {e}")
             return stage_id, None
 
-        assert (len(protos) <=
+        assert (len(modules) <=
                 2), "Can only compile no more than two stages (compute+(apply))"
 
         # Read input/output shardings
 
-        if len(protos) > 1:
-            if proto_names[0].endswith(APPLY_GRAD_MARKER_SUFFIX):
-                proto_names[0], proto_names[1] = proto_names[1], proto_names[0]
-                protos[0], protos[1] = protos[1], protos[0]
-            assert proto_names[1].endswith(APPLY_GRAD_MARKER_SUFFIX)
+        if len(modules) > 1:
+            if module_names[0].endswith(APPLY_GRAD_MARKER_SUFFIX):
+                module_names[0], module_names[1] = module_names[1], module_names[0]
+                modules[0], modules[1] = modules[1], modules[0]
+            assert module_names[1].endswith(APPLY_GRAD_MARKER_SUFFIX)
 
-        acc_grad_proto = protos[0]
+        acc_grad_module = modules[0]
         sharding_annotated_computation = xla_client.XlaComputation(
             acc_grad_proto)
         (input_sharding_protos,
@@ -214,9 +214,12 @@ class CompileWorker:
     @staticmethod
     def run_auto_sharding_pass(stage_id, proto, jaxpr_args, other_kwargs):
         """Run auto-sharding pass on a proto."""
-        computation = xla_client.XlaComputation(proto)
-        return stage_id, run_auto_sharding_pass(computation, *jaxpr_args,
-                                                **other_kwargs)
+        hlo_module = xe.HloModule.from_serialized_hlo_module_proto(proto)
+        assert other_kwargs["return_mode"] == "stages"
+        hlo_stage_names, hlo_stages, strategy_config = run_auto_sharding_pass(
+            hlo_module, *jaxpr_args, **other_kwargs)
+        hlo_stages = [x.as_serialized_hlo_module_proto() for x in hlo_stages]
+        return stage_id, (hlo_stage_names, hlo_stages, strategy_config)
 
 
 class CompileWorkerPool(BaseWorkerPoolWrapper):
@@ -284,9 +287,9 @@ class ProfileWorker:
             compiled_output.model_proto).as_hlo_module()
         if input_shardings is not None:
             hlo_module.set_spmd_parameters_shardings(
-                [_xla.HloSharding(x) for x in input_shardings])
+                [xe.HloSharding(x) for x in input_shardings])
             hlo_module.set_spmd_output_sharding(
-                _xla.HloSharding(output_sharding))
+                xe.HloSharding(output_sharding))
         executable = PartialGradAccMeshDriverExecutable(
             self.mesh, hlo_module, compiled_output.strategy_config, avals,
             out_avals, donated_invars, output_acc_grad_indices)
@@ -815,7 +818,7 @@ def compute_intermediate_size(serialized_proto, intermediate_vars,
     if np.prod(logical_mesh_shape) == 1:
         sharding_specs = None
     else:
-        hlo_sharding = _xla.HloSharding(serialized_proto[0])
+        hlo_sharding = xe.HloSharding(serialized_proto[0])
         sharding_specs = hlo_sharding_to_sharding_spec(hlo_sharding, avals,
                                                        logical_mesh_shape)
     return _compute_vars_size(sharding_specs, intermediate_vars,
@@ -839,7 +842,7 @@ def compute_apply_grad_invar_size(input_sharding_protos,
     else:
         assert len(input_sharding_protos) == len(config.invars)
         sharding_specs = [
-            hlo_sharding_to_sharding_spec(_xla.HloSharding(sharding_proto),
+            hlo_sharding_to_sharding_spec(xe.HloSharding(sharding_proto),
                                           aval, logical_mesh_shape)
             for sharding_proto, aval in zip(input_sharding_protos, avals)
         ]

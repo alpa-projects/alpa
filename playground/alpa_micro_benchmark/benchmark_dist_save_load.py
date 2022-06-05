@@ -110,7 +110,8 @@ def benchmark_ndarray_save_load(mode="flax", to_efs=True):
                 print("alpa skip load array benchmark")
                 continue
             else:
-                np.load(ckpt_path)
+                _ = jax.device_put(np.load(ckpt_path))
+                
             duration = time.time() - start
             throughput = arr.size * 32 / 1024 / 1024 / 1024 / duration
             load_tot_duration += duration
@@ -231,7 +232,7 @@ def benchmark_dist_arr_load():
     
     - two hosts:
         TensorStore: load average run time: 3.6650 seconds, load average throughput: 2.1828 Gbps
-        np.load:        
+        np.load:     load average run time: 0.7644 seconds, load average throughput: 10.4655 Gbps
 
     """
     device_cluster = get_global_cluster()
@@ -252,7 +253,9 @@ def benchmark_dist_arr_load():
 
         # load benchmark
         start = time.time()
+        print("start", time.time())
         _ = DistributedArray.load(outdir, jax.ShapedArray(arr.shape, jnp.int32), physical_mesh, sharding_spec)
+        print("end", time.time())
         duration = time.time() - start
         throughput = arr.size * 32 / 1024 / 1024 / 1024 / duration
         if i >= 1:
@@ -272,7 +275,7 @@ def benchmark_mlp_dist_save():
     Benchmark results on local disk:
     - Two hosts:
         TensorStore: save average run time: 19.9880 seconds, save average throughput: 1.2009 Gbps
-        np.save:    
+        np.save:     save average run time:  2.4631 seconds, save average throughput: 9.7452 Gbps
     """
     # Init model and optimizer
     batch_size = 64
@@ -320,7 +323,7 @@ def benchmark_mlp_dist_load():
     Benchmark results on local disk:
     - two hosts:
         TensorStore: load average run time: 4.4443 seconds, load average throughput: 5.4008 Gbps
-        np.load:    
+        np.load:     load average run time: 3.2214 seconds, load average throughput: 7.4511 Gbps
     """
     # Init model and optimizer
     batch_size = 64

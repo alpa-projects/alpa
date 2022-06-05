@@ -23,6 +23,7 @@ from itertools import chain
 import logging
 from operator import attrgetter
 import os
+import pickle
 import re
 import threading
 import time
@@ -251,6 +252,53 @@ class MeshHostWorker:
     def get_exec_grad_sync_channel_ids(self, uuid: int):
         return self.executables[uuid].grad_sync_channel_ids
 
+    ##### Serialization Related Functions #####
+    def save_buffers(self, ckpt_dir: str, uuids: Sequence[int],
+                     shard_indices: Sequence[Index],
+                     global_shape: Sequence[int]):
+        assert len(uuids) > 0
+        for uuid in uuids:
+            assert uuid in self.buffers
+        
+        shard_names = [str(self.host_id)+"."+str(i) for i in range(len(uuids))]
+
+        metadata = {
+            'global_shape': global_shape,
+            'dtype': self.buffers[uuids[0]].dtype,
+            'shard_names': shard_names,
+            'shard_indices': shard_indices,
+        }
+
+        os.makedirs(ckpt_dir, exist_ok=True)
+        for shard_name, uuid in zip(shard_names, uuids):
+            with open(os.path.join(ckpt_dir, shard_name), "wb") as datafile:
+                np.save(datafile, self.buffers[uuid])
+        
+        with open(os.path.join(ckpt_dir, f".metadata{self.host_id}"), "wb") as metafile:
+            pickle.dump(metadata, metafile)
+
+    def _load_entire_arr(self, ckpt_dir, metadatas):
+        assert len(metadatas) > 0
+        with open(os.path.join(ckpt_dir, metadatas[0]), "rb") as metafile:
+            meta = pickle.load(metafile)
+        entire_arr = np.empty(meta["global_shape"], meta['dtype'])
+        for metadata in metadatas:
+            with open(os.path.join(ckpt_dir, metadata), "rb") as metafile:
+                meta = pickle.load(metafile)
+            for shard_name, shard_indice in zip(meta["shard_names"], meta["shard_indices"]):
+                entire_arr[shard_indice] = np.load(os.path.join(ckpt_dir, shard_name))
+        return entire_arr
+
+    def load_buffers(self, ckpt_dir: str, uuids: Sequence[int],
+                             shard_indices: Sequence[Index],
+                             device_ids: Sequence[int]):
+        assert len(uuids) > 0
+        metadatas = list(filter(lambda fname: fname[:9]==".metadata", os.listdir(ckpt_dir)))
+        entire_arr = self._load_entire_arr(ckpt_dir, metadatas)
+        for index, uuid, device_id in zip(shard_indices, uuids, device_ids):
+            data = entire_arr[index]
+            self.put_buffer(uuid, device_id, data)
+
     ##### TensorStore Related Functions #####
     def get_ts_spec(self, ckpt_path: str):
         spec = {
@@ -301,9 +349,10 @@ class MeshHostWorker:
         else:
             dtype = np.dtype(dtype).str
         metadata = {
-            "shape": global_shape,
-            "chunks": self.buffers[uuids[0]].shape,
-            "dtype": dtype,
+            'shape': global_shape,
+            'chunks': self.buffers[uuids[0]].shape,
+            'dtype': dtype,
+            'compressor': None,
         }
         ts_spec["metadata"] = metadata
         t = ts.open(ts.Spec(ts_spec),
@@ -1424,7 +1473,7 @@ class DistributedArray:
         for host_id, uuids in buf_refs_per_host.items():
             if len(uuids) > 0:
                 obj_refs.append(
-                    self.device_mesh.workers[host_id].save_buffers_to_ts.remote(
+                    self.device_mesh.workers[host_id].save_buffers.remote(
                         path, uuids, indices_per_host[host_id], self.shape))
         ray.get(obj_refs)
         return 

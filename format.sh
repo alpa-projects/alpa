@@ -94,9 +94,9 @@ fi
 
 # Run Pylint
 echo 'Alpa Pylint:'
-pylint --load-plugins pylint_quotes alpa
+pylint alpa
 echo 'Alpa Tests Pylint:'
-pylint --load-plugins pylint_quotes tests
+pylint tests
 
 if ! git diff --quiet &>/dev/null; then
     echo 'Reformatted files. Please review and stage the changes.'

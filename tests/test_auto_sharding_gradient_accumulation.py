@@ -59,9 +59,11 @@ class GradAccumulationTest(unittest.TestCase):
                 return x
 
         batch = {
-            "x": jnp.ones(
-                (batch_size, hidden_size)) * jnp.arange(batch_size)[:, None],
-            "y": jnp.ones((batch_size, hidden_size)),
+            "x":
+                jnp.ones((batch_size, hidden_size)) *
+                jnp.arange(batch_size)[:, None],
+            "y":
+                jnp.ones((batch_size, hidden_size)),
         }
 
         # Init model and optimizer

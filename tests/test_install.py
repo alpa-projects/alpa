@@ -32,10 +32,12 @@ def create_train_state_and_batch(batch_size, hidden_size):
 
     rngkey = jax.random.PRNGKey(0)
     batch = {
-        "x": jax.random.normal(rngkey, (batch_size, hidden_size),
-                               dtype=jnp.float32),
-        "y": jax.random.normal(rngkey, (batch_size, hidden_size),
-                               dtype=jnp.float32)
+        "x":
+            jax.random.normal(rngkey, (batch_size, hidden_size),
+                              dtype=jnp.float32),
+        "y":
+            jax.random.normal(rngkey, (batch_size, hidden_size),
+                              dtype=jnp.float32)
     }
 
     # Init model and optimizer

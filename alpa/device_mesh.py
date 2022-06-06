@@ -1071,10 +1071,12 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         for i in range(self.num_hosts):
             # Set XLA environment variables
             env_vars = {
-                "ALPA_IS_WORKER": "True",
-                "NCCL_USE_MULTISTREAM": "False",
-                "XLA_PYTHON_CLIENT_MEM_FRACTION": str(
-                    global_config.xla_client_mem_fraction),
+                "ALPA_IS_WORKER":
+                    "True",
+                "NCCL_USE_MULTISTREAM":
+                    "False",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION":
+                    str(global_config.xla_client_mem_fraction),
                 "XLA_FLAGS": (os.environ.get("XLA_FLAGS", "") +
                               f" --xla_gpu_autotune_level"
                               f"={global_config.xla_gpu_autotune_level}"),

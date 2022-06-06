@@ -27,7 +27,7 @@ def get_compute_key(fun: lu.WrappedFun, in_tree: PyTreeDef,
                     donated_invars: Sequence[bool],
                     *aval: Sequence[AbstractValue]):
     """Return a unique string as the query key of a computation definition."""
-
+    # pylint: disable=unused-argument
     # Algorithm:
     # Concatenate the definition location, source code,
     # input arguments specification to a string.
@@ -95,11 +95,12 @@ def shard_parallel_internal(
       donated_invars: Whether to donate input parameters.
       physical_mesh: The physical device mesh.
       logical_mesh_choices: The candidates of logical mesh shape.
-        If there is only one choice, use the given one. If there are multiple choices,
-        we will try all of them and pick the best.
+        If there is only one choice, use the given one. If there are multiple
+        choices, we will try all of them and pick the best.
       as_option: The options of auto-sharding solver.
       avals: The input abstract values.
     """
+    # pylint: disable=unused-argument
     # Trace to get jaxpr
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
 
@@ -141,17 +142,19 @@ def shard_parallel_internal_gradient_accumulation(
         num_micro_batches: int, as_option: AutoShardingOption,
         *raw_avals: Sequence[AbstractValue]):
     """Compile a gradient accumulation executable with auto-sharding pass."""
+    # pylint: disable=unused-argument
     # Split the batch dimension
     closed_jaxpr, avals, _ = trace_jaxpr_with_micro_batch(
         fun, batch_invars, num_micro_batches, raw_avals)
 
-    closed_jaxpr, accumulate_grad_invar_indices, apply_grad_invar_indices, num_grads = (
-        add_gradient_accumulation(closed_jaxpr, num_micro_batches))
+    (closed_jaxpr, accumulate_grad_invar_indices, apply_grad_invar_indices,
+     num_grads) = (add_gradient_accumulation(closed_jaxpr, num_micro_batches))
     in_avals = [x.aval for x in closed_jaxpr.jaxpr.invars[:-num_grads]]
     out_avals = [x.aval for x in closed_jaxpr.jaxpr.outvars]
     grad_avals = [x.aval for x in closed_jaxpr.jaxpr.invars[-num_grads:]]
 
-    # Run auto-sharding and slice the combined HLO into two HLO: accumulate_grad and apply_grad
+    # Run auto-sharding and slice the combined HLO into two HLO: accumulate_grad
+    # and apply_grad
     backend = xb.get_backend("gpu")
     donated_invars = donated_invars + (False,) * num_grads
     name = f"{fun.__name__}_shard_parallel"
@@ -237,11 +240,11 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
         raw_jaxpr(opt_state, param, batch) -> [new_opt_state, new_param]
 
         The original_jaxpr can be split into:
-        'compute_grad(param, batch) -> out_grad'
-        'apply_grad(opt_state, param, in_grad) -> [new_opt_state, new_param]'
+        "compute_grad(param, batch) -> out_grad"
+        "apply_grad(opt_state, param, in_grad) -> [new_opt_state, new_param]"
 
         We then derive accumulate_grad from compute_grad:
-        'accumulate_grad(old_grad, param, batch) -> new_grad'
+        "accumulate_grad(old_grad, param, batch) -> new_grad"
 
         The returned jaxpr is composed by [
             pipeline_marker_start
@@ -265,7 +268,7 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     marker_eqn = None
     marker_pos = 0
     for pos, eqn in enumerate(raw_jaxpr.jaxpr.eqns):
-        if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'grad':
+        if eqn.primitive is pipeline_p and eqn.params["mark_type"] == "grad":
             marker_eqn = eqn
             marker_pos = pos
             break
@@ -350,12 +353,12 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
 
     # Append eqns of apply_grad
     combined_eqns.extend(apply_grad_eqns)
-    # TODO(lmzheng): The param vars are used in both compute_grad and apply_grad,
-    # so there will be some duplicated intermediate vars in compute_grad_eqns
-    # and apply_grad_eqns. This breaks the SSA form of the combined_eqns.
-    # But I find jax can convert this non-SSA jaxpr to HLO correctly,
-    # so I leave this issue as todo. To fix this, we should substitute
-    # all param vars in these equations with new vars.
+    # TODO(lmzheng): The param vars are used in both compute_grad and
+    #   apply_grad, so there will be some duplicated intermediate vars in
+    #   compute_grad_eqns and apply_grad_eqns. This breaks the SSA form of the
+    #   combined_eqns. But I find jax can convert this non-SSA jaxpr to HLO
+    #   correctly, so I leave this issue as todo. To fix this, we should
+    #   substitute all param vars in these equations with new vars.
 
     # Wrap all outvars of apply_grad
     old_outvars = raw_jaxpr.jaxpr.outvars

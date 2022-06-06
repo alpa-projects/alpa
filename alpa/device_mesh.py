@@ -758,6 +758,7 @@ class PhysicalDeviceMesh(ABC):
 
     num_hosts: int
     num_devices_per_host: int
+    mesh_id: int
 
     def get_signature(self) -> str:
         """Return a signature string that contains the mesh shape and GPU
@@ -937,6 +938,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.devices = devices if devices is not None else xb.local_devices()
         self.num_hosts = 1
         self.num_devices_per_host = len(self.devices)
+        self.mesh_id = 0
         self.device_strs = []
 
     ##### Executable Related Functions #####

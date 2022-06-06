@@ -15,7 +15,6 @@ import jax
 from jax.interpreters.pxla import ShardingSpec
 from jax.core import ShapedArray
 from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
-from flax.serialization import to_state_dict, from_state_dict
 import msgpack
 import numpy as np
 import ray
@@ -29,21 +28,21 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def _dfs_pytree(tree, prefix, paths):
+def _dfs_pytree(tree, prefix):
+    paths = []
     if isinstance(tree, dict):
         for k, v in tree.items():
-            _dfs_pytree(v, prefix + "." + str(k), paths)
+            paths += _dfs_pytree(v, prefix + "." + str(k))
     elif isinstance(tree, (tuple, list)):
         for i, v in enumerate(tree):
-            _dfs_pytree(v, prefix + "." + str(i), paths)
-    elif tree is None:
-        return
-    else:
+            paths += _dfs_pytree(v, prefix + "." + str(i))
+    elif tree is not None:
         # Leaf node
         paths.append(prefix)
+    return paths
 
 
-def _save_arr(ckpt_dir, arr):
+def _save_unsharded_array(ckpt_dir, arr):
     os.makedirs(ckpt_dir, exist_ok=True)
     shard_name = "0.0"
     metadata = {
@@ -58,19 +57,23 @@ def _save_arr(ckpt_dir, arr):
         pickle.dump(metadata, metafile)
 
 
-def load_entire_arr(ckpt_dir, metadatas):
+def load_sharded_array(ckpt_dir, metadatas):
+    """
+        Used by MeshHostWorker.load_buffers to first load the entire shared array
+        from disk.
+    """
     assert len(metadatas) > 0
     with open(os.path.join(ckpt_dir, metadatas[0]), "rb") as metafile:
         meta = pickle.load(metafile)
     if meta["shard_indices"] is None:
         return np.load(os.path.join(ckpt_dir, meta["shard_names"][0]))
-    entire_arr = np.empty(meta["global_shape"], meta['dtype'])
+    entire_array = np.empty(meta["global_shape"], meta['dtype'])
     for metadata in metadatas:
         with open(os.path.join(ckpt_dir, metadata), "rb") as metafile:
             meta = pickle.load(metafile)
         for shard_name, shard_indice in zip(meta["shard_names"], meta["shard_indices"]):
-            entire_arr[shard_indice] = np.load(os.path.join(ckpt_dir, shard_name))
-    return entire_arr
+            entire_array[shard_indice] = np.load(os.path.join(ckpt_dir, shard_name))
+    return entire_array
 
 
 def save_checkpoint(nfs_dir: Union[str, os.PathLike], target: PyTree,
@@ -100,8 +103,7 @@ def save_checkpoint(nfs_dir: Union[str, os.PathLike], target: PyTree,
         save_dir = nfs_dir
 
     target = to_state_dict(target)
-    flat_dirs = []
-    _dfs_pytree(target, "state", flat_dirs)
+    flat_dirs = _dfs_pytree(target, "state")
     flat_target, target_tree = tree_flatten(target)
     flat_metadata = []
     obj_refs = []
@@ -113,7 +115,7 @@ def save_checkpoint(nfs_dir: Union[str, os.PathLike], target: PyTree,
             elif isinstance(x, ReplicatedDistributedArray):
                 obj_refs.extend(x.replica.save(os.path.join(save_dir, arr_dir), False))
             elif isinstance(x, (np.ndarray, jax.xla.DeviceArray)):
-                _save_arr(os.path.join(save_dir, arr_dir), x)
+                _save_unsharded_array(os.path.join(save_dir, arr_dir), x)
             flat_metadata.append(arr_dir)
         else:
             flat_metadata.append(x)

@@ -279,10 +279,10 @@ class MeshHostWorker:
                      shard_indices: Sequence[Index],
                      device_ids: Sequence[int]):
         assert len(uuids) > 0
-        metadatas = list(filter(lambda fname: fname[:9] == ".metadata", os.listdir(ckpt_dir)))
+        metadatas = list(filter(lambda fname: fname.startswith(".metadata"), os.listdir(ckpt_dir)))
         # pylint: disable=import-outside-toplevel
-        from alpa.serialization import load_entire_arr
-        entire_arr = load_entire_arr(ckpt_dir, metadatas)
+        from alpa.serialization import load_sharded_array
+        entire_arr = load_sharded_array(ckpt_dir, metadatas)
         for index, uuid, device_id in zip(shard_indices, uuids, device_ids):
             data = entire_arr[index]
             self.put_buffer(uuid, device_id, data)
@@ -1401,7 +1401,7 @@ class DistributedArray:
                     self.device_mesh.workers[host_id].save_buffers.remote(
                         path, uuids, indices_per_host[host_id], self.shape))
         if synchronized:
-            return ray.get(obj_refs)
+            return None
         else:
             return obj_refs
 
@@ -1436,12 +1436,12 @@ class DistributedArray:
                     device_mesh.workers[host_id].load_buffers.remote(
                         path, uuids, indices_per_host[host_id],
                         device_ids_per_host[host_id]))
+        loaded_array = DistributedArray(device_mesh, aval, sharding_spec, buf_refs, indices)
         if synchronized:
             ray.get(obj_refs)
-            return DistributedArray(device_mesh, aval, sharding_spec, buf_refs, indices)
+            return loaded_array
         else:
-            return obj_refs, DistributedArray(device_mesh, aval, sharding_spec, buf_refs, indices)
-
+            return obj_refs, loaded_array
 
     @property
     def one_replica_buffer_indices(self):

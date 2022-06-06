@@ -1,3 +1,5 @@
+"""Alpa is a system for training large-scale neural networks."""
+
 from alpa.api import (init, shutdown, parallelize, grad, value_and_grad,
                       clear_executable_cache, set_parallelize_options)
 from alpa.data_loader import DataLoader, MeshDriverDataLoader

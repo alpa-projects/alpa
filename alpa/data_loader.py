@@ -104,8 +104,9 @@ def get_num_devices_for_whole_batch(sharding_spec, batch_dim=0):
 
 
 class MeshDriverDataLoader:
-    """The driver part of a distributed data loader. The driver part creates distributed
-    arrays and sends commands to let workers load the data in parallel."""
+    """The driver part of a distributed data loader. The driver part creates
+    distributed arrays and sends commands to let workers load the data in
+    parallel."""
 
     def __init__(self,
                  batch_size,
@@ -206,8 +207,9 @@ class MeshDriverDataLoader:
 
 
 class MeshWorkerDataLoader:
-    """The worker part of a distributed data loader. The driver part creates distributed
-    arrays and sends commands to let workers load the data in parallel."""
+    """The worker part of a distributed data loader. The driver part creates
+    distributed arrays and sends commands to let workers load the data in
+    parallel."""
 
     def __init__(self, mesh_host_worker, input_iter_func, input_iter_args,
                  output_uuids, shard_indices, prefetch_size):

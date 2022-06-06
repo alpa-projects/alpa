@@ -1,11 +1,12 @@
 """Methods for parallelzing a function.
 
 Alpa classifies common parallel techniques into two categories:
-1. Shard parallelism or intra-operator parallelism. This includes data parallelism,
-   operator parallelism (or tensor model parallelism), expert parallelism,
-   zero optimizer and their combinations.
+1. Shard parallelism or intra-operator parallelism. This includes data
+   parallelism, operator parallelism (or tensor model parallelism), expert
+   parallelism, zero optimizer and their combinations.
 2. Pipeline parallelism or inter-operator parallleism.
-Please refer to the Alpa paper (https://arxiv.org/abs/2201.12023) for more details.
+Please refer to the Alpa paper (https://arxiv.org/abs/2201.12023) for more
+details.
 
 Based on this, alpa provides two base parallel methods:
 - ShardParallel: which only uses shard parallelsim.
@@ -55,7 +56,8 @@ class ShardParallel(ParallelMethod):
     Args:
         devices: Specify the devices to use. If it is None, use all the devices
           in the cluster.
-        num_micro_batches: The number of micro batches for gradient accumulation.
+        num_micro_batches: The number of micro batches for gradient
+          accumulation.
         auto_sharding_option: The options of the auto-sharding solver.
     """
 
@@ -96,27 +98,32 @@ class ShardParallel(ParallelMethod):
 
 
 class PipeshardParallel(ParallelMethod):
-    """Use pipeshard parallelism which combines pipeline parallelism and shard parallelism.
+    """Use pipeshard parallelism which combines pipeline parallelism and shard
+    parallelism.
 
     Args:
         devices: Specify the devices to use. If it is None, use all the devices
           in the cluster.
-        num_micro_batches: The number of micro batches for gradient accumulation.
-        default_auto_sharding_option: The default options of the auto-sharding solver.
+        num_micro_batches: The number of micro batches for gradient
+          accumulation.
+        default_auto_sharding_option: The default options of the auto-sharding
+          solver.
         pipeline_schedule: The pipieline schedules.
           Possible choices: {"1f1b", "gpipe", "inference"}
         stage_mode: How to construct stages.
           Possible choices: {"uniform", "auto"}
-        submesh_physical_shape_space: The search space of the physical submesh shapes. 
+        submesh_physical_shape_space: The search space of the physical submesh
+          shapes.
           Possible choices: {"power_of_two", "small_power_of_two", "all"}.
-        submesh_logical_shape_space: The search space of the logical mesh shapes.
+        submesh_logical_shape_space: The search space of the logical mesh
+          shapes.
           Possible choices: {"default", "single_node_model_parallel", "all"}.
         auto_stage_imbalance_tolerance: The tolerance of imbalance
           in the auto-stage construction.
         use_hlo_cost_model: Whether to use the Hlo instruction cost model for
           pipeline profiling.
         profiling_database_filename: The filename of profiling result database.
-        cache_compute_cost: The file name of the cached compute cost.
+        cached_compute_cost: The file name of the cached compute cost.
     """
 
     def __init__(
@@ -161,7 +168,8 @@ class PipeshardParallel(ParallelMethod):
         # Resolve the polymorphism in arguments
         if self.devices is None:
             mesh = get_global_virtual_physical_mesh()
-            assert mesh is not None, "Please run `alpa.init()` to initialize alpa."
+            assert mesh is not None, (
+                "Please run `alpa.init()` to initialize alpa.")
         else:
             mesh = self.devices
 
@@ -176,17 +184,21 @@ class PipeshardParallel(ParallelMethod):
 class ManualPipeshardParallel(PipeshardParallel):
     """Use pipeshard parallelism with manual assignment.
 
-    This method can be used to load the solution found by auto PipeshardParallel.
+    This method can be used to load the solution found by auto
+    PipeshardParallel.
 
     Args:
         forward_stage_layer_ids: Layer IDs of each forward stage.
         submesh_physical_shapes: The physical shapes of submeshes of each stage.
         submesh_logical_shapes: The logical shapes of submeshes of each stage.
-        submesh_autosharding_option_dicts: The auto-sharding options of each stage.
+        submesh_autosharding_option_dicts: The auto-sharding options of each
+          stage.
         devices: Specify the devices to use. If it is None, use all the devices
           in the cluster.
-        num_micro_batches: The number of micro batches for gradient accumulation.
-        default_auto_sharding_option: The default options of the auto-sharding solver.
+        num_micro_batches: The number of micro batches for gradient
+          accumulation.
+        default_auto_sharding_option: The default options of the auto-sharding
+          solver.
         pipeline_schedule: The pipieline schedules.
           Possible choices: {"1f1b", "gpipe", "inference"}
     """

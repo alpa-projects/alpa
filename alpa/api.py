@@ -59,14 +59,14 @@ def parallelize(fun: Optional[Callable] = None,
         donate_argnums: The same as the donate_argnums argument of jax.jit.
           If it is "auto", alpa uses heuristic rules to infer this.
         batch_argnums: The indices of arguments that are the data batch.
-          This information is used to split the original data batch into micro batches
-          to perform gradient accumulation or pipeline parallelism.
+          This information is used to split the original data batch into micro
+          batches to perform gradient accumulation or pipeline parallelism.
           Alpa assumes the 0-th dimension of the tensor is the batch dimension.
         method: The parallelization method.
     """
 
     def decorate_fun(fun):
-        api._check_callable(fun)
+        api._check_callable(fun)  # pylint: disable=protected-access
         nonlocal method
         method = method or ShardParallel()
         return ParallelizedFunc(fun, static_argnums, donate_argnums,
@@ -94,8 +94,8 @@ class ParallelizedFunc:
 
     def __call__(self, *args):
         """Launch the computation on the driver."""
-        executable, _, out_tree, args_flat = self._decode_args_and_get_executable(
-            *args)
+        executable, _, out_tree, args_flat = (
+            self._decode_args_and_get_executable(*args))
         out = executable.launch_on_driver(*args_flat)
         return tree_unflatten(out_tree(), out)
 
@@ -106,8 +106,8 @@ class ParallelizedFunc:
 
     def preshard_dynamic_args(self, *args):
         """Shard the dynamic arguments."""
-        executable, in_tree, _, args_flat = self._decode_args_and_get_executable(
-            *args)
+        executable, in_tree, _, args_flat = (
+            self._decode_args_and_get_executable(*args))
         sharded_args = executable.preshard_dynamic_args(*args_flat)
         return tree_unflatten(in_tree, sharded_args)
 
@@ -210,12 +210,13 @@ def clear_executable_cache():
 
 
 def grad(*args, **kwargs):
-    """The same as jax.grad, but inserts a gradient marker after the gradient computation.
+    """The same as jax.grad, but inserts a gradient marker after the gradient
+    computation.
 
-    This function annotates all gradient tensors. This information is used to perform
-    gradient accumulation transformation.
-    If any auxiliary tensors are returned, they are averaged over mini batches in the same
-    way as how the gradients are averaged.
+    This function annotates all gradient tensors. This information is used to
+    perform gradient accumulation transformation.
+    If any auxiliary tensors are returned, they are averaged over mini batches
+    in the same way as how the gradients are averaged.
     """
 
     def ret(*call_args, **call_kwargs):
@@ -226,12 +227,13 @@ def grad(*args, **kwargs):
 
 
 def value_and_grad(*args, **kwargs):
-    """The same as jax.value_and_grad, but inserts a gradient marker after the gradient computation.
+    """The same as jax.value_and_grad, but inserts a gradient marker after the
+    gradient computation.
 
-    This function annotates all gradient tensors. This information is used to perform
-    gradient accumulation transformation.
-    If any auxiliary tensors are returned, they are averaged over mini batches in the same
-    way as how the gradients are averaged.
+    This function annotates all gradient tensors. This information is used to
+    perform gradient accumulation transformation.
+    If any auxiliary tensors are returned, they are averaged over mini batches
+    in the same way as how the gradients are averaged.
     """
 
     def ret(*call_args, **call_kwargs):

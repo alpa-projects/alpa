@@ -87,7 +87,7 @@ install_require_list = [
 
 dev_require_list = [
     "yapf==0.32.0",
-    "pylint==2.8.2",
+    "pylint==2.14.0",
     "coverage",
     "cmake",
     "pybind11"

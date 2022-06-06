@@ -34,8 +34,7 @@ tool_version_check() {
 }
 
 tool_version_check "yapf" $YAPF_VERSION "0.32.0"
-tool_version_check "pylint" $PYLINT_VERSION "2.8.2"
-tool_version_check "pylint-quotes" $PYLINT_QUOTES_VERSION "0.2.3"
+tool_version_check "pylint" $PYLINT_VERSION "2.14.0"
 
 YAPF_FLAGS=(
     '--style' "$ROOT/.style.yapf"

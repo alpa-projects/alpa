@@ -1,11 +1,12 @@
 # pylint: disable=arguments-differ
-"""
-A mesh executable encapsulates all compiled binary and meta information of a distributed executable.
+"""A mesh executable encapsulates all compiled binary and meta information of
+a distributed executable.
 
 A mesh executable contains one or several XLA executables.
 For each type of mesh executable, there is a driver part and a worker part.
-The driver part runs on the user script and the worker parts run on distributed workers.
-The driver part sends control commands to launch the worker parts on workers.
+The driver part runs on the user script and the worker parts run on distributed
+workers. The driver part sends control commands to launch the worker parts on
+workers.
 """
 from abc import ABC, abstractmethod
 import logging
@@ -129,8 +130,8 @@ class RemoteBufferRef:
         Set the buffer as deleted on workers.
 
         For some buffers (e.g., donated buffers), if we know the workers has
-        already deleted them, then we do not need to do the remote call "delete_remote_buffers"
-        again.
+        already deleted them, then we do not need to do the remote call
+        "delete_remote_buffers" again.
         """
         self.is_deleted_on_workers = True
 
@@ -165,7 +166,8 @@ def create_remote_buffer_refs(device_mesh,
                               num_batches=1,
                               host_indices=None,
                               device_indices=None):
-    """Create remote buffer references for an distribued array on a device mesh."""
+    """Create remote buffer references for an distribued array on a device
+    mesh. """
     if host_indices is None:
         host_indices = range(device_mesh.num_hosts)
     if device_indices is None:
@@ -243,9 +245,10 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         self.auto_sharding_objective = strategy_config.auto_sharding_objective
 
         # Read sharding specs
-        self.input_sharding_specs, self.output_sharding_specs = get_input_output_sharding_specs(
-            hlo_module, avals, out_avals, physical_mesh.num_devices,
-            strategy_config.logical_mesh_shape)
+        self.input_sharding_specs, self.output_sharding_specs = (
+            get_input_output_sharding_specs(hlo_module, avals, out_avals,
+                                            physical_mesh.num_devices,
+                                            strategy_config.logical_mesh_shape))
 
         # Cache results for input and output sharding
         self.input_indices = [
@@ -305,13 +308,13 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             # Shape: (num_hosts, num_args, num_devices_per_host)
             input_uuids = (get_uuid_np_array(input_bufs).reshape(
-                len(args), num_hosts, num_devices_per_host).transpose([1, 0,
-                                                                       2]))
+                (len(args), num_hosts,
+                 num_devices_per_host)).transpose([1, 0, 2]))
 
             # Shape: (num_hosts, num_outs, num_devices_per_host)
             output_uuids = (next_remote_buffer_uuid(
                 num_hosts * num_outs * num_devices_per_host).reshape(
-                    num_hosts, num_outs, num_devices_per_host))
+                    (num_hosts, num_outs, num_devices_per_host)))
 
             if "sync_before" not in kwargs:
                 kwargs["sync_before"] = kwargs["sync_after"] = (
@@ -397,7 +400,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         return costs
 
     def get_execution_time_costs(self, warmup):
-        """Return the pure execution time costs recorded by an internal timer."""
+        """Return the pure execution time costs recorded by an internal
+        timer."""
         return self.physical_mesh.get_remote_timer(
             self.timer_name).costs[warmup:]
 
@@ -499,18 +503,19 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
 
 
 def get_grad_sync_channel_ids(hlo_module: xe.HloModule) -> str:
-    """Return the channel ids of all-reduces that are used for gradient synchronization.
+    """Return the channel ids of all-reduces that are used for gradient
+    synchronization.
 
-    The return value is a string containing all channel ids separated by periods.
-    (e.g., ".0.12." means channel id 0 and 12)
+    The return value is a string containing all channel ids separated by
+    periods. (e.g., ".0.12." means channel id 0 and 12)
     """
     return xe.get_grad_sync_channel_ids(hlo_module)
 
 
 def get_grad_sync_channel_ids_with_hint(hlo_module: xe.HloModule,
                                         hint: Sequence[int]) -> str:
-    """Return the channel ids of all-reduces that are used for gradient synchronization.
-    see also get_grad_sync_channel_ids.
+    """Return the channel ids of all-reduces that are used for gradient
+    synchronization. see also get_grad_sync_channel_ids.
     """
     return xe.get_grad_sync_channel_ids(hlo_module, hint)
 
@@ -646,7 +651,8 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             self.allocate_zero_buffers = compile_allocate_zero_buffers(
                 backend, physical_mesh.num_devices, grad_shard_shapes,
                 grad_shard_dtypes)
-            self.accumulate_grad_batch_arg_indices = accumulate_grad_batch_arg_indices
+            self.accumulate_grad_batch_arg_indices = (
+                accumulate_grad_batch_arg_indices)
 
             self.hlo_text = (self.accumulate_grad.hlo_modules()[0].to_string() +
                              self.apply_grad.hlo_modules()[0].to_string())
@@ -684,21 +690,21 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             # Shape: (num_hosts, num_args, num_devices_per_host)
             first_batch_uuids = (get_uuid_np_array(first_batch_bufs).reshape(
-                len(first_batch_bufs), num_hosts,
-                num_devices_per_host).transpose([1, 0, 2]))
+                (len(first_batch_bufs), num_hosts,
+                 num_devices_per_host)).transpose([1, 0, 2]))
 
             if next_batches_bufs:
                 next_batches_uuids = (
                     get_uuid_np_array(next_batches_bufs).reshape(
-                        len(next_batches_bufs), num_hosts,
-                        num_devices_per_host).transpose([1, 0, 2]))
+                        (len(next_batches_bufs), num_hosts,
+                         num_devices_per_host)).transpose([1, 0, 2]))
             else:
                 next_batches_uuids = (None,) * num_hosts
 
             # Shape: (num_hosts, num_outs, num_devices_per_host)
             output_uuids = (next_remote_buffer_uuid(
                 num_hosts * num_outs * num_devices_per_host).reshape(
-                    num_hosts, num_outs, num_devices_per_host))
+                    (num_hosts, num_outs, num_devices_per_host)))
 
             # Execute SPMD binary
             for i in range(num_hosts):
@@ -740,8 +746,8 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
 
             # Prepare gradient buffers
             timers(self.timer_name).start(sync_func)
-            grad_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(
-                [])
+            grad_bufs = (
+                self.allocate_zero_buffers.execute_sharded_on_local_devices([]))
 
             # Call accumulate_grad multiple times
             tmp_input_bufs = ([
@@ -759,8 +765,8 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                             j * (num_micro_batches - 1) + (i - 1)]
                 if i == num_micro_batches - 1:
                     os.environ[self.skip_allreduce_env_name] = ""
-                grad_bufs = self.accumulate_grad.execute_sharded_on_local_devices(
-                    tmp_input_bufs)
+                grad_bufs = (self.accumulate_grad.
+                             execute_sharded_on_local_devices(tmp_input_bufs))
 
             # Call apply_grad
             tmp_input_bufs = (
@@ -774,7 +780,8 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         return self.outs_handler(output_bufs)
 
     def get_execution_time_costs(self, warmup):
-        """Return the pure execution time costs recorded by an internal timer."""
+        """Return the pure execution time costs recorded by an internal
+        timer."""
         return self.physical_mesh.get_remote_timer(
             self.timer_name).costs[warmup:]
 
@@ -830,7 +837,8 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
             worker.backend, num_devices, grad_shard_shapes, grad_shard_dtypes)
         self.accumulate_grad_invar_indices = accumulate_grad_invar_indices
         self.apply_grad_invar_indices = apply_grad_invar_indices
-        self.accumulate_grad_batch_arg_indices = accumulate_grad_batch_arg_indices
+        self.accumulate_grad_batch_arg_indices = (
+            accumulate_grad_batch_arg_indices)
         self.donated_invars = donated_invars
         self.batch_invars = batch_invars
         self.num_grads = num_grads
@@ -964,7 +972,7 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
 
     def launch_on_driver(self, *args, **kwargs):
         """Launch the executable on the driver."""
-        assert 'skip_grad_sync' in kwargs, (
+        assert "skip_grad_sync" in kwargs, (
             'Partial grad acc mesh executable missing kwargs "skip_grad_sync"')
         skip_grad_sync = kwargs["skip_grad_sync"]
         os.environ[self.skip_allreduce_env_name] = (self.grad_sync_channel_ids
@@ -1052,7 +1060,7 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
             # Get output uuids
             output_uuids = (next_remote_buffer_uuid(
                 num_hosts * num_outs * num_devices_per_host).reshape(
-                    num_hosts, num_outs, num_devices_per_host))
+                    (num_hosts, num_outs, num_devices_per_host)))
 
             # Execute SPMD binary
             for i in range(num_hosts):
@@ -1074,8 +1082,8 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             timers(self.timer_name).start(self.sync_func)
-            output_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(
-                [])
+            output_bufs = (
+                self.allocate_zero_buffers.execute_sharded_on_local_devices([]))
             timers(self.timer_name).stop(self.sync_func)
 
         return self.outs_handler(output_bufs)
@@ -1099,12 +1107,13 @@ class AllocZeroBufferWorkerExecutable(MeshWorkerExecutable):
                           output_uuids: Sequence[Sequence[int]],
                           sync_before: bool, sync_after: bool):
         """Run the executable on the worker."""
+        # pylint: disable=unused-argument
         buffer_dict = self.worker.buffers
 
         # Execute
         timers(self.timer_name).start(self.sync_func if sync_before else None)
-        output_bufs = self.allocate_zero_buffers.execute_sharded_on_local_devices(
-            [])
+        output_bufs = (
+            self.allocate_zero_buffers.execute_sharded_on_local_devices([]))
         timers(self.timer_name).stop(self.sync_func if sync_after else None)
         for i in range(len(output_uuids)):
             set_buffers(buffer_dict, output_uuids[i], output_bufs[i])
@@ -1132,6 +1141,7 @@ class MemzeroWorkerExecutable(MeshWorkerExecutable):
                           output_uuids: Sequence[Sequence[int]],
                           sync_before: bool, sync_after: bool):
         """Run the executable on the worker."""
+        # pylint: disable=unused-argument
         buffer_dict = self.worker.buffers
 
         # Get input
@@ -1147,7 +1157,9 @@ class MemzeroWorkerExecutable(MeshWorkerExecutable):
 
 
 class ConcatMeshWorkerExecutable(MeshWorkerExecutable):
-    # This is only a patch. It will be deprecated when we move concat into apply_grad
+    """Temporary worker executable that concatenates tensors. It will be
+    deprecated when we move concat into apply_grad"""
+
     def __init__(self, worker, uuid, hlo_proto):
         num_devices = len(worker.backend.devices())
         compile_options = get_compile_options(

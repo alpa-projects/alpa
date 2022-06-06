@@ -9,7 +9,7 @@ from collections import OrderedDict
 from datetime import datetime
 from functools import partial, partialmethod
 import threading
-from typing import Sequence, Any
+from typing import Sequence, Any, Union
 from warnings import warn
 
 import jax
@@ -321,9 +321,9 @@ def get_compile_options(num_replicas: int, num_partitions: int,
     return compile_options
 
 
-def jaxpr_to_hlo_computation(name: str, closed_jaxpr: ClosedJaxpr,
-                             donated_invars: Sequence[bool], backend):
-    """Convert a jaxpr to a XLA HLO computation.
+def jaxpr_to_hlo_module(name: str, closed_jaxpr: ClosedJaxpr,
+                        donated_invars: Sequence[bool], backend):
+    """Convert a jaxpr to an XLA HloModule.
 
     Reference code: jax/jax/_src/dispatch.py::lower_xla_callable
     """
@@ -361,10 +361,10 @@ def jaxpr_to_hlo_computation(name: str, closed_jaxpr: ClosedJaxpr,
             warn_msg = ", ".join(unused_donations)
             warn(f"Some donated buffers were not usable: {warn_msg}")
 
-    return c.build(out_tuple)
+    return c.build(out_tuple).as_hlo_module()
 
 
-def setup_computation_alias(xla_computation: xc.XlaComputation,
+def setup_computation_alias(xla_computation: Union[xc.XlaComputation, xe.HloModule],
                             donated_invars: Sequence[bool]):
     """Set input/output alias in xla computation.
 

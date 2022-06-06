@@ -5,12 +5,11 @@ from typing import Callable, Sequence, Optional, Union
 
 import numpy as np
 from jax import linear_util as lu
-from jax._src.lib import xla_bridge as xb
+from jax._src.lib import xla_bridge as xb, xla_extension as xe
 from jax.core import (Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym,
                       get_aval, raise_to_shaped, AbstractValue)
 from jax.interpreters import partial_eval as pe
 from jax.lax import add_p, div_p
-from jax.lib import xla_client as xc, xla_extension
 from jax.tree_util import PyTreeDef
 
 from alpa.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh
@@ -20,7 +19,7 @@ from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                run_spmd_partitioner_pass,
                                                AutoShardingOption)
-from alpa.util import (jaxpr_to_hlo_computation, trace_jaxpr_with_micro_batch,
+from alpa.util import (jaxpr_to_hlo_module, trace_jaxpr_with_micro_batch,
                        setup_computation_alias, OrderedSet)
 
 
@@ -105,14 +104,13 @@ def shard_parallel_internal(
     # Convert jaxpr to XLA HLO
     name = f"{fun.__name__}_shard_parallel"
     backend = xb.get_backend("gpu")
-    built = jaxpr_to_hlo_computation(name, ClosedJaxpr(jaxpr, consts),
+    hlo_module = jaxpr_to_hlo_module(name, ClosedJaxpr(jaxpr, consts),
                                      donated_invars, backend)
-    flop_count = xla_extension.hlo_module_count_flop_dot_conv_only(
-        built.as_hlo_module())
+    flop_count = xe.hlo_module_count_flop_dot_conv_only(hlo_module)
 
     # Compile a XLA executable
     hlo_module, strategy_config = run_auto_sharding_pass(
-        built,
+        hlo_module,
         avals,
         out_avals,
         donated_invars,
@@ -155,33 +153,31 @@ def shard_parallel_internal_gradient_accumulation(
     backend = xb.get_backend("gpu")
     donated_invars = donated_invars + (False,) * num_grads
     name = f"{fun.__name__}_shard_parallel"
-    built = jaxpr_to_hlo_computation(name, closed_jaxpr, donated_invars,
+    hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, donated_invars,
                                      backend)
-    flop_count = xla_extension.hlo_module_count_flop_dot_conv_only(
-        built.as_hlo_module())
+    flop_count = xe.hlo_module_count_flop_dot_conv_only(hlo_module)
     flop_count *= num_micro_batches
 
     # pylint: disable=unbalanced-tuple-unpacking
-    hlo_proto_names, hlo_protos, strategy_config = run_auto_sharding_pass(
-        built,
+    hlo_stage_names, hlo_stages, strategy_config = run_auto_sharding_pass(
+        hlo_module,
         avals,
         out_avals,
         donated_invars,
         logical_mesh_choices[0],
-        "stage_protos",
+        "stages",
         num_micro_batches,
         as_option)
-    assert len(hlo_protos) == 2
+    assert len(hlo_stages) == 2
 
-    if hlo_proto_names[0].endswith(APPLY_GRAD_MARKER_SUFFIX):
-        hlo_proto_names[0], hlo_protos[0], hlo_proto_names[1], hlo_protos[1] = (
-            hlo_proto_names[1], hlo_protos[1], hlo_proto_names[0],
-            hlo_protos[0])
-    assert hlo_proto_names[1].endswith(APPLY_GRAD_MARKER_SUFFIX)
+    if hlo_stage_names[0].endswith(APPLY_GRAD_MARKER_SUFFIX):
+        hlo_stage_names[0], hlo_stages[0], hlo_stage_names[1], hlo_stages[1] = (
+            hlo_stage_names[1], hlo_stages[1], hlo_stage_names[0],
+            hlo_stages[0])
+    assert hlo_stage_names[1].endswith(APPLY_GRAD_MARKER_SUFFIX)
 
     # Compile these two HLOs separately to get two XLA executables
-    accumulate_grad = xc.XlaComputation(hlo_protos[0])
-    apply_grad = xc.XlaComputation(hlo_protos[1])
+    accumulate_grad, apply_grad = hlo_stages
 
     ## donate old_grad to make the gradient accumulation in-place
     tmp_donate_invars = ((False,) * len(accumulate_grad_invar_indices) +

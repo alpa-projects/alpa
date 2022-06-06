@@ -35,7 +35,8 @@ def slice_eqns_by_layer_boundary(closed_jaxpr: ClosedJaxpr):
     current_computation_eqns = []
 
     for eqn in closed_jaxpr.jaxpr.eqns:
-        if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'boundary':
+        if (eqn.primitive is pipeline_p and
+                eqn.params["mark_type"] == "boundary"):
             sliced_eqns.append(current_computation_eqns)
             current_computation_eqns = []
         else:
@@ -91,7 +92,7 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
             computation_var_mapping[var] = new_var
         new_eqns.append(
             mark_pipeline_jaxpreqn(pipeline_start_invars,
-                                   pipeline_start_outvars, str(i), 'start'))
+                                   pipeline_start_outvars, str(i), "start"))
         # all other eqns
         for eqn in eqns:
             new_invars = [
@@ -112,7 +113,7 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
             var_mapping[var] = new_var
         new_eqns.append(
             mark_pipeline_jaxpreqn(pipeline_end_invars, pipeline_end_outvars,
-                                   str(i), 'end'))
+                                   str(i), "end"))
     new_outvars = [
         get_var_mapping(var_mapping, var) for var in closed_jaxpr.jaxpr.outvars
     ]
@@ -294,20 +295,22 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
                     if r == -1 else "unknown error")
     solution = list(reversed(reversed_sliced_eqns))
 
-    #print("dp solution")
-    #for i, eqns in enumerate(solution):
+    # print("dp solution")
+    # for i, eqns in enumerate(solution):
     #    invars = OrderedSet()
     #    for eqn in eqns:
     #        invars.update([var for var in eqn.invars if isinstance(var, Var)])
     #    invars.intersection_update(jaxpr.jaxpr.invars)
-    #    print(f"mesh: {i},  set_shapes: {[x.aval.shape for x in invars if len(x.aval.shape) > 1]}")
-
+    #    print(f"mesh: {i},  set_shapes: "
+    #          f"{[x.aval.shape for x in invars if len(x.aval.shape) > 1]}")
+    #
     #    invars = []
     #    for eqn in eqns:
     #        tmp_set = set([var for var in eqn.invars if isinstance(var, Var)])
     #        tmp_set.intersection_update(jaxpr.jaxpr.invars)
     #        invars.extend(list(tmp_set))
-    #    print(f"mesh: {i}, list_shapes: {[x.aval.shape for x in invars if len(x.aval.shape) > 1]}")
+    #    print(f"mesh: {i}, list_shapes: "
+    #          f"{[x.aval.shape for x in invars if len(x.aval.shape) > 1]}")
 
     solution_info = {
         "total_cost": value,

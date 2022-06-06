@@ -133,9 +133,10 @@ class PipeshardDriverExecutable:
         Instantiate NCCL groups between two physical meshes.
 
         Args:
-            device_str_groups (List[List[set]]): a num_mesh x num_mesh matrix. Only entries at
-                device_str_groups[i][j] (i < j) are filled, entries with i > j are None, because
-                (spec[i][j], spec[j][i]) will share collective groups.
+            device_str_groups (List[List[set]]): a num_mesh x num_mesh matrix.
+                Only entries at device_str_groups[i][j] (i < j) are filled,
+                entries with i > j are None, because (spec[i][j], spec[j][i])
+                will share collective groups.
         """
 
         # construct groups
@@ -189,7 +190,7 @@ class PipeshardDriverExecutable:
             num_hosts = physical_mesh.num_hosts
             num_devices_per_host = physical_mesh.num_devices_per_host
             input_uuids = get_uuid_np_array(input_bufs[mesh_idx]).reshape(
-                -1, num_hosts, num_devices_per_host).transpose([1, 0, 2])
+                (-1, num_hosts, num_devices_per_host)).transpose([1, 0, 2])
             output_uuids[mesh_idx] = next_remote_buffer_uuid(
                 num_hosts * num_outs[mesh_idx] * num_devices_per_host).reshape(
                     num_hosts, num_outs[mesh_idx], num_devices_per_host)
@@ -362,7 +363,8 @@ class PipeshardDriverExecutable:
 
 
 class PipeshardMeshWorkerExecuable:
-    """An executable that executes static pipeline runtime instructions on a worker."""
+    """An executable that executes static pipeline runtime instructions on a
+    worker."""
 
     def __init__(self, worker: MeshHostWorker, uuid: int,
                  instructions: Sequence[PipelineInstruction],
@@ -454,8 +456,10 @@ class PipeshardMeshWorkerExecuable:
         # Execute
         timers("overall").start(sync_func=sync_func)
         for instruction in self.instructions:
-            # print(f"memory_allocated: {self.worker.get_memory_allocated()/1024**3:.3f} GB  "
-            #       f"max_memory_allocated: {self.worker.get_max_memory_allocated()/1024**3:.3f} GB "
+            # print(f"memory_allocated: "
+            #       f"{self.worker.get_memory_allocated()/1024**3:.3f} GB  "
+            #       f"max_memory_allocated: "
+            #       f"{self.worker.get_max_memory_allocated()/1024**3:.3f} GB "
             #       f"next instruction: {instruction}")
             if instruction.opcode == PipelineInstType.RUN:
                 timers("compute").start()

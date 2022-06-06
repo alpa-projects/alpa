@@ -18,7 +18,8 @@ from alpa.pipeline_parallel.computation import (
 from alpa.pipeline_parallel.layer_stats import eqn_flops
 from alpa.pipeline_parallel.stage_profiling import (generate_stage_info,
                                                     compile_all, profile_all)
-from alpa.shard_parallel.auto_sharding import AutoShardingOption, LogicalDeviceMesh
+from alpa.shard_parallel.auto_sharding import (AutoShardingOption,
+                                               LogicalDeviceMesh)
 from alpa.timer import timers
 from alpa.util import OrderedSet
 
@@ -208,7 +209,8 @@ def get_one_submesh_autosharding_config_choices(
 
     Args:
         virtual_submesh: a submesh.
-        space: possible choices: {"default", "single_node_model_parallel", "all"}.
+        space: possible choices: {"default", "single_node_model_parallel",
+            "all"}.
         batch_size: the batch size used.
     """
     results = []
@@ -239,9 +241,11 @@ def get_one_submesh_autosharding_config_choices(
 
 def get_all_submesh_autosharding_config_choices(virtual_mesh, submesh_choices,
                                                 space, batch_size):
-    """Get all possible auto sharding config choices for all possible submesh shapes."""
+    """Get all possible auto sharding config choices for all possible submesh
+    shapes."""
     # A config is: Tuple(logical_mesh_shape, autosharding_option_dict).
-    # Enumerate all (2D Mesh with force batch dim) + one (1D Mesh with mix batch dim).
+    # Enumerate all (2D Mesh with force batch dim) + one (1D Mesh with mix batch
+    # dim).
     autosharding_configs = []
     for submesh in submesh_choices:
         num_hosts, num_devices = submesh
@@ -377,7 +381,8 @@ def get_compute_cost(
             profiling.
         submesh_choices: All available submesh shape choices.
         autosharding_configs: All auto sharding configs for each submesh.
-        layers: Layers for computing and accumulating gradients (forward + backward).
+        layers: Layers for computing and accumulating gradients (forward +
+            backward).
         donation_mapping: Donation mapping for all layers.
         global_outvars: Global output variables for all layers.
         apply_grad_layers: Apply gradient computations corresponding to each
@@ -454,19 +459,19 @@ def get_compute_cost(
         max_n_succ_stages[:, :, mesh_id, :] = mesh_max_n_succ_stages
         is_profiled[:, :, mesh_id, :] = mesh_profiled
         toc = time()
-        print(f'Profiling for submesh {mesh_id} {submesh} takes {toc - tic}'
-              f' seconds')
-        print(f'Profiled costs are: {mesh_compute_cost}')
-        print(f'Profiled max_n_succ_stages are: {mesh_max_n_succ_stages}')
-        print('-' * 50)
+        print(f"Profiling for submesh {mesh_id} {submesh} takes {toc - tic}"
+              f" seconds")
+        print(f"Profiled costs are: {mesh_compute_cost}")
+        print(f"Profiled max_n_succ_stages are: {mesh_max_n_succ_stages}")
+        print("-" * 50)
 
-    timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+    timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     compute_cost_file_name = (f"compute-cost-{timestamp}.npy")
     np.save(compute_cost_file_name,
             (compute_cost, max_n_succ_stages, is_profiled))
     global last_compute_cost_file_name
     last_compute_cost_file_name = compute_cost_file_name
-    print(f'Compute cost saved to: {compute_cost_file_name}')
+    print(f"Compute cost saved to: {compute_cost_file_name}")
     print("-" * 70)
     return compute_cost, max_n_succ_stages
 
@@ -625,7 +630,8 @@ def cluster_layers_and_slice_mesh(
         submesh_shapes = stage_option.submesh_physical_shapes
         logical_mesh_shapes = (stage_option.submesh_logical_shapes or
                                submesh_shapes)
-        autosharding_option_dicts = stage_option.submesh_autosharding_option_dicts
+        autosharding_option_dicts = (
+            stage_option.submesh_autosharding_option_dicts)
     elif isinstance(stage_option, UniformStageOption):
         if given_mesh:
             num_stages = num_layers
@@ -642,12 +648,14 @@ def cluster_layers_and_slice_mesh(
             assert num_devices % num_stages == 0
             num_devices_per_mesh = num_devices // num_stages
             if num_devices_per_mesh > virtual_mesh.num_devices_per_host:
-                assert num_devices_per_mesh % virtual_mesh.num_devices_per_host == 0
+                assert (num_devices_per_mesh %
+                        virtual_mesh.num_devices_per_host == 0)
                 submesh_shape = (num_devices_per_mesh //
                                  virtual_mesh.num_devices_per_host,
                                  virtual_mesh.num_devices_per_host)
             else:
-                assert virtual_mesh.num_devices_per_host % num_devices_per_mesh == 0
+                assert (virtual_mesh.num_devices_per_host %
+                        num_devices_per_mesh == 0)
                 submesh_shape = (1, num_devices_per_mesh)
             submesh_shapes = [submesh_shape] * num_stages
             logical_mesh_shapes = [submesh_shape] * num_stages

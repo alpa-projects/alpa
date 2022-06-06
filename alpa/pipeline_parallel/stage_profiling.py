@@ -19,8 +19,10 @@ from ray.util import ActorPool
 from alpa.device_mesh import (DistributedArray, PhysicalDeviceMesh,
                               VirtualPhysicalMesh, _shard_device_array)
 from alpa.global_env import global_config
-from alpa.mesh_executable import PartialGradAccMeshDriverExecutable, get_grad_sync_channel_ids_with_hint
-from alpa.mesh_profiling import ProfilingResultDatabase, estimate_hlo_module_cost
+from alpa.mesh_executable import (PartialGradAccMeshDriverExecutable,
+                                  get_grad_sync_channel_ids_with_hint)
+from alpa.mesh_profiling import (ProfilingResultDatabase,
+                                 estimate_hlo_module_cost)
 from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from alpa.pipeline_parallel.computation import (
     JaxPipelineComputation, get_donation_mapping_and_modify,
@@ -136,7 +138,8 @@ class CompileWorker:
             stage_id: the index of the input stage.
             config: configs for compilation.
             logical_mesh: the logical mesh for compilation.
-            autosharding_option: the global config dictionary for compilation setting.
+            autosharding_option: the global config dictionary for compilation
+                setting.
             num_micro_batches: the number of microbatches.
 
         Returns:
@@ -464,6 +467,7 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
 
     This function launches a profile worker pool and submits given tasks.
     """
+    # pylint: disable=unused-argument
     compute_cost, max_n_succ_stages, is_profiled = mesh_cached_result
 
     if auto_stage_option.use_hlo_cost_model:
@@ -528,14 +532,14 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
         compute_cost[start, end, config_idx] = np.mean(cost)
         max_n_succ_stages[start, end, config_idx] = max_stage
         is_profiled[start, end, config_idx] = 1
-        pbar.write(
-            f"cost[{start}, {end}, {config_idx}]={compute_cost[start, end, config_idx]:.3f},"
-            f" max_n_succ_stage={max_stage},"
-            f" Mem: avail={available_memory / GB:.3f}GB,"
-            f" peak={peak_memory / GB:.3f}GB,"
-            f" intermediate={intermediate_size / GB:.3f}GB,"
-            f" init={initial_size / GB:.3f}GB,"
-            f" as_config={(logical_mesh.shape, auto_sharding_dict)}")
+        pbar.write(f"cost[{start}, {end}, {config_idx}]"
+                   f"={compute_cost[start, end, config_idx]:.3f},"
+                   f" max_n_succ_stage={max_stage},"
+                   f" Mem: avail={available_memory / GB:.3f}GB,"
+                   f" peak={peak_memory / GB:.3f}GB,"
+                   f" intermediate={intermediate_size / GB:.3f}GB,"
+                   f" init={initial_size / GB:.3f}GB,"
+                   f" as_config={(logical_mesh.shape, auto_sharding_dict)}")
     profile_workers.shutdown()
     return compute_cost, max_n_succ_stages, is_profiled
 
@@ -547,8 +551,9 @@ def split_global_use_and_donate(layers: Sequence[JaxPipelineComputation],
     """
     Obtains donation_mapping and global_use of each selected layer.
 
-    It picks some layers (no need to be consecutive) and assumes they are on a mesh,
-    it then returns `donation_mapping` and `global_use` of each selected layer.
+    It picks some layers (no need to be consecutive) and assumes they are on a
+    mesh, it then returns `donation_mapping` and `global_use` of each selected
+    layer.
 
     Args:
         layers: all layers
@@ -701,16 +706,18 @@ def dummy_resharding_send_recv_strategy(spec: ReshardingTaskSpec):
     """Generates a dummy sharding strategy for profiling."""
     src_loads = {src: 0 for src in spec.src.device_mesh.device_strs}
     dst_loads = {dst: 0 for dst in spec.dst.device_mesh.device_strs}
-    return CrossMeshCommunicator._generate_send_recv_resharding_strategy_by_loads(
-        spec, src_loads, dst_loads)
+    return (
+        CrossMeshCommunicator._generate_send_recv_resharding_strategy_by_loads(  # pylint: disable=protected-access
+            spec, src_loads, dst_loads))
 
 
 def dummy_resharding_broadcast_strategy(spec: ReshardingTaskSpec):
     """Generates a dummy sharding strategy for profiling."""
     src_loads = {src: 0 for src in spec.src.device_mesh.device_strs}
     dst_loads = {dst: 0 for dst in spec.dst.device_mesh.device_strs}
-    return CrossMeshCommunicator._generate_broadcast_resharding_strategy_by_loads(
-        spec, src_loads, dst_loads)
+    return (
+        CrossMeshCommunicator._generate_broadcast_resharding_strategy_by_loads(  # pylint: disable=protected-access
+            spec, src_loads, dst_loads))
 
 
 # FIXME(Hao): this function is broken by recent updates. Use with caution.
@@ -780,7 +787,8 @@ def profile_layer_communication_cost(
 
 
 def _compute_vars_size(sharding_specs, selected_vars, logical_mesh_shape):
-    """Compute bytes of selected_vars with given sharding proto and logical mesh."""
+    """Compute bytes of selected_vars with given sharding proto and logical
+    mesh."""
 
     def get_byte(shape, dtype):
         return np.prod(shape) * np.dtype(dtype).itemsize

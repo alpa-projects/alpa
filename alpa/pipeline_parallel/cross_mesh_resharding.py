@@ -200,6 +200,7 @@ def _signle_tensor_dim_allgather_groups(mesh_shape, allgather_dims):
 
 
 class _AllgatherSpec:
+    """Specification for optimized allgather tasks."""
 
     def __init__(self, allgather_chunk_indices):
         """allgather chunk indices: a list of (tensor_dim, chunk_index, _)"""
@@ -243,8 +244,8 @@ class _AllgatherSpec:
 
     def post_allgather(self, tensor_dim):
         ret = _AllgatherSpec([])
-        ret._allgather_chunk_num = dict(self._allgather_chunk_num)
-        ret._allgather_chunk_num.pop(tensor_dim)
+        ret._allgather_chunk_num = dict(self._allgather_chunk_num)  # pylint: disable=protected-access
+        ret._allgather_chunk_num.pop(tensor_dim)  # pylint: disable=protected-access
         return ret
 
 
@@ -300,7 +301,8 @@ class EagerReshardingTask(ReshardingTask):
             # strategy is len(dst_tile.device_strs) by len(src_tiles)
             for replica_index, receiver in enumerate(
                     dst_tile.replica_device_strs):
-                # loop over this replica (hence a specific destination gpu device)
+                # loop over this replica (hence a specific destination gpu
+                # device)
                 senders = [
                     s[replica_index][src_tile_index]
                     for src_tile_index, src_tile in enumerate(src_tiles)
@@ -325,7 +327,8 @@ class EagerReshardingTask(ReshardingTask):
     def same_destination_group_send_recv(self, src_array, senders, src_tiles,
                                          dst_tile, indices_in_dst_tiles,
                                          receiver):
-        """P2P Communication accounting for multiple senders and one receiver (a destination tile)."""
+        """P2P Communication accounting for multiple senders and one receiver
+        (a destination tile)."""
         receiver_host_id = self.collective_group.device_str_to_host_id_map[
             receiver]
         receiver_device_id = self.collective_group.device_str_to_device_id_map[
@@ -340,18 +343,19 @@ class EagerReshardingTask(ReshardingTask):
                                                        result_buf.device_id,
                                                        dst_tile.tile_shape,
                                                        result_buf.dtype))
-        receiver_rank, receiver_gpu_idx = self.collective_group.device_str_to_rank_map[
-            receiver]
+        receiver_rank, receiver_gpu_idx = (
+            self.collective_group.device_str_to_rank_map[receiver])
         for i, sender in enumerate(senders):
             # send is a device_str in src_mesh
-            # we need to find out its mesh_worker, and the corresponded sender remotebuf (uuid-indexed).
+            # we need to find out its mesh_worker, and the corresponded sender
+            # remotebuf (uuid-indexed).
             sender_buf = src_array.remote_buffers[
                 self.task_spec.src.device_str_to_flat_index[sender]]
             sender_worker = self.collective_group.device_str_to_mesh_worker_map[
                 sender]
             # assert sender_buf.device_id == i
-            sender_rank, sender_gpu_idx = self.collective_group.device_str_to_rank_map[
-                sender]
+            sender_rank, sender_gpu_idx = (
+                self.collective_group.device_str_to_rank_map[sender])
             # launch NCCL send/recv
             tile = src_tiles[i]
             indices_in_dst_tile = indices_in_dst_tiles[i]
@@ -555,8 +559,8 @@ class SymbolicReshardingTask(ReshardingTask):
                     receiver, logical_mesh_shape)
                 for sender_idx, sender in enumerate(senders):
                     # Sender's task
-                    sender_worker = self.collective_group.device_str_to_mesh_worker_map[
-                        sender]
+                    sender_worker = (self.collective_group.
+                                     device_str_to_mesh_worker_map[sender])
                     self._sender_tasks[sender_worker].append(
                         ReshardingTileSpec(src_tiles[sender_idx].offset,
                                            receiver_rank, receiver_gpu_idx))
@@ -606,7 +610,8 @@ class SymbolicReshardingTask(ReshardingTask):
             allgather_groups = _signle_tensor_dim_allgather_groups(
                 mesh_shape, mesh_dims)
             post_dst_spec = _reduce_chunk(dst_spec, tensor_dim, len(mesh_dims))
-            # For each group, get device ids, tensor slices and other allgather config
+            # For each group, get device ids, tensor slices and other allgather
+            # config
             for group_ids in allgather_groups:
                 host_idx = group_ids[0] // self.dst_mesh.num_devices_per_host
                 host = self.dst_mesh.workers[host_idx]
@@ -648,20 +653,20 @@ class SymbolicReshardingTask(ReshardingTask):
         device_str_to_buf_map = {}
 
         for receiver in self.receiver_uuid_plan:
-            receiver_host_id = self.collective_group.device_str_to_host_id_map[
-                receiver]
-            receiver_device_id = self.collective_group.device_str_to_device_id_map[
-                receiver]
-            receiver_worker = self.collective_group.device_str_to_mesh_worker_map[
-                receiver]
+            receiver_host_id = (
+                self.collective_group.device_str_to_host_id_map[receiver])
+            receiver_device_id = (
+                self.collective_group.device_str_to_device_id_map[receiver])
+            receiver_worker = (
+                self.collective_group.device_str_to_mesh_worker_map[receiver])
             result_buf = RemoteBufferRef(self.dst_mesh, receiver_host_id,
                                          receiver_device_id)
             recv_buf_uuids[receiver_worker].append(result_buf.uuid)
             device_str_to_buf_map[receiver] = result_buf
 
         for sender in self.sender_uuid_plan:
-            sender_worker = self.collective_group.device_str_to_mesh_worker_map[
-                sender]
+            sender_worker = (
+                self.collective_group.device_str_to_mesh_worker_map[sender])
             send_buf = src_array.remote_buffers[
                 self.task_spec.src.device_str_to_flat_index[sender]]
             send_buf_uuids[sender_worker].append(send_buf.uuid)
@@ -739,7 +744,8 @@ class CommunicatorConfig:
 
 
 class SymbolicBroadcastReshardingTask(ReshardingTask):
-    """A Broadcast based symbolic resharding task that puts task info in remote workers."""
+    """A Broadcast based symbolic resharding task that puts task info in remote
+    workers."""
 
     def __init__(self, task_spec, collective_group, src_mesh, dst_mesh):
         super().__init__(task_spec, collective_group, src_mesh, dst_mesh)
@@ -794,8 +800,8 @@ class SymbolicBroadcastReshardingTask(ReshardingTask):
             for src_tile_index, (src_tile, indices_in_dst_tile) in enumerate(
                     zip(src_tiles, indices_in_dst_tiles)):
                 sender = spec_plan[src_tile_index]
-                sender_worker = self.collective_group.device_str_to_mesh_worker_map[
-                    sender]
+                sender_worker = (
+                    self.collective_group.device_str_to_mesh_worker_map[sender])
                 broadcast_group = (i, src_tile_index)
                 devices = [sender] + dst_tile.replica_device_strs
                 comm_key = "$".join(devices)
@@ -871,8 +877,8 @@ class SymbolicBroadcastReshardingTask(ReshardingTask):
             nccl_uid = ray.get(
                 sender_worker.generate_nccl_uid.remote(group_name))
 
-            for worker, devices_info in worker_to_devices_and_global_ranks.items(
-            ):
+            for worker, devices_info in (
+                    worker_to_devices_and_global_ranks.items()):
                 task_dones.append(
                     worker.init_broadcast_communicator.remote(
                         group_name, config.comm_key, world_size,
@@ -981,7 +987,8 @@ class CollectiveGroup:
         """Destroy the NCCL collective group at exit."""
         logger.debug(f"Recycling the collective group: {self.group_name}.")
         for worker in self.mesh_workers:
-            # This remote call will remove ray named actors (hence it is necessary)
+            # This remote call will remove ray named actors (hence it is
+            # necessary)
             ray.get(worker.destroy_collective_group.remote(self.group_name))
         # Destroy the declared named actor in ray
         self._destroy_info_actor()
@@ -998,11 +1005,13 @@ class CollectiveGroup:
 
 class ReshardingTaskSpec:
     """
-    A helper class specifies how to perform cross-mesh resharding for two arrays.
+    A helper class specifies how to perform cross-mesh resharding for two
+    arrays.
 
     Args:
         src_array (VirtualDistributedArray): the source VirtualDistributedArray.
-        dst_array (VirtualDistributedArray): the destination VirtualDistributedArray.
+        dst_array (VirtualDistributedArray): the destination
+            VirtualDistributedArray.
     """
 
     def __init__(self, src_array, dst_array, local_chunks):
@@ -1047,9 +1056,12 @@ class ReshardingTaskSpec:
         It is a list of length len(dst.tiles), each element is a 3-element tuple
         (dst_tile, src_tile_slices, indices_in_dst_tile):
         - dst_tile: a tile from dst.tiles
-        - src_tile_slices: a list of TileSlice objects from src, corresponding to this dst_tile
-        - indices_in_dst_tile: a list of slicers. Each slicer is a list of slice objects, corresponding to
-            a TileSlice in src_tile_slices, representing the indices of this TileSlice in dst_tile.
+        - src_tile_slices: a list of TileSlice objects from src, corresponding
+            to this dst_tile
+        - indices_in_dst_tile: a list of slicers. Each slicer is a list of slice
+            objects, corresponding to
+            a TileSlice in src_tile_slices, representing the indices of this
+            TileSlice in dst_tile.
         """
         if not self._dst_tile_to_src_tiles_map:
             self._dst_tile_to_src_tiles_map = self.generate_src_dst_map()
@@ -1057,7 +1069,8 @@ class ReshardingTaskSpec:
 
     def generate_src_dst_map(self):
         """
-        Analyzes the src and dst array and generate the dst_tile_to_src_tiles_map.
+        Analyzes the src and dst array and generate the
+        dst_tile_to_src_tiles_map.
 
         It aims to tell the needed collective group and communication pattern.
 
@@ -1068,25 +1081,29 @@ class ReshardingTaskSpec:
         dst_tile_to_src_tiles_map = []
         for tile in self.dst.tiles.flatten():
             # loop over each tile
-            src_tile_slices, indices_in_dst_tile = self._look_up_dst_tile_from_src(
-                tile)
+            src_tile_slices, indices_in_dst_tile = (
+                self._look_up_dst_tile_from_src(tile))
             dst_tile_to_src_tiles_map.append(
                 (tile, src_tile_slices, indices_in_dst_tile))
         return dst_tile_to_src_tiles_map
 
     def _look_up_dst_tile_from_src(self, tile):
         """
-        Look up all related tiles from the source array for a given destination tile.
+        Look up all related tiles from the source array for a given destination
+        tile.
 
         See the docstring in dst_tile_to_src_tiles_map() for more details.
         """
-        # For each dim in the dst tile, find all the related tiles, and ragged values on that dim in src_tiles.
-        # To record that, for each dim, we make a tuple containing the first and last index of tiles in src array
-        # that intersects with the dst tile: Shards between [start, end) are involved; Left included, right not
+        # For each dim in the dst tile, find all the related tiles, and ragged
+        # values on that dim in src_tiles.
+        # To record that, for each dim, we make a tuple containing the first and
+        # last index of tiles in src array that intersects with the dst tile:
+        # Shards between [start, end) are involved; Left included, right not
         # included.
         related_tile_start_end = [tuple()] * self.src.tensor_rank
 
-        # Meanwhile, for each dim, for the first and end tile, we make a tuple recording the slicing offset:
+        # Meanwhile, for each dim, for the first and end tile, we make a tuple
+        # recording the slicing offset:
         # - start_shard_offset: [start_shard_offset: ] on that dim is activated.
         # - end_shard_offset: [:end_sharding_offset] on that dim is activated.
         related_tile_offset = [tuple()] * self.src.tensor_rank
@@ -1098,10 +1115,12 @@ class ReshardingTaskSpec:
                                                    tile_length)
             end_tile, end_tile_offset = divmod(tile.indices[i].stop,
                                                tile_length)
-            # if falling on the middle a src tile, increase the index of the final tile by 1.
+            # if falling on the middle a src tile, increase the index of the
+            # final tile by 1.
             if end_tile_offset:
                 end_tile = end_tile + 1
-            # if falling on the end of a src tile, the offset should be [0: tile_length]
+            # if falling on the end of a src tile, the offset should be
+            # [0: tile_length]
             if end_tile_offset == 0:
                 end_tile_offset = tile_length
             related_tile_start_end[i] = (start_tile, end_tile)
@@ -1154,7 +1173,8 @@ class ReshardingTaskSpec:
                     left_in_dst_tile = (
                         tile_length_on_this_dim - offset +
                         (tile_index_relative[i] - 1) * tile_length_on_this_dim)
-                    right_in_dst_tile = left_in_dst_tile + tile_length_on_this_dim
+                    right_in_dst_tile = (left_in_dst_tile +
+                                         tile_length_on_this_dim)
                     indices.append(slice(left_in_dst_tile, right_in_dst_tile))
             # construct a new tile slice
             this_tileslice = TileSlice(
@@ -1164,7 +1184,8 @@ class ReshardingTaskSpec:
         return src_tileslices, indices_in_dst_tile
 
     def set_resharding_strategy(self, strategy):
-        """Now the strategy is np.array(dtype=str) to specify connections between src tiles and dst tile."""
+        """Now the strategy is np.array(dtype=str) to specify connections
+        between src tiles and dst tile."""
         self._strategy = strategy
 
     @property
@@ -1172,12 +1193,13 @@ class ReshardingTaskSpec:
         """Return the communication strategy for this resharding task spec."""
         if not self._strategy:
             raise RuntimeError(
-                "Generate and set strategy in the cross-mesh communicator first."
-            )
+                "Generate and set strategy in the cross-mesh communicator "
+                "first.")
         return self._strategy
 
     def get_participant_device_strs(self):
-        """Identify all participant device strs (for NCCL setup) in this task spec."""
+        """Identify all participant device strs (for NCCL setup) in this task
+        spec."""
         if not self._strategy:
             raise RuntimeError("Generate and set strategy first.")
         device_strs = OrderedSet()
@@ -1197,10 +1219,9 @@ class ReshardingTaskSpec:
             ret_str += " allgather: "
             for allgather_chunk_info in self._local_chunks:
                 shard_dim, shard_axis, extra_sharding = allgather_chunk_info
-                ret_str += (
-                    f"(shard at tensor dim {shard_dim}, " +
-                    f"shard at mesh axis {shard_axis}, chunked value {extra_sharding}), "
-                )
+                ret_str += (f"(shard at tensor dim {shard_dim}, "
+                            f"shard at mesh axis {shard_axis}, chunked value "
+                            f"{extra_sharding}), ")
         return ret_str
 
 
@@ -1208,11 +1229,13 @@ class ReshardingStrategy:
     """A data class for storing resharding communication information.
 
     Args:
-        per_spec_plans (List[np.ndarray]): `per_spec_plan` is a list a np array, with
-            length as len(spec.dst_tile_to_src_tiles_map), each array is with shape
-            [len(dst_tile.devices), len(src_tiles)]; it specifies for each replica of
-            a dst tile, how it should get the data from src_tiles (src tile replicas).
-        is_local_allgather (bool): if this strategy involves post allgather operations.
+        per_spec_plans (List[np.ndarray]): `per_spec_plan` is a list a np array,
+            with length as len(spec.dst_tile_to_src_tiles_map), each array is
+            with shape [len(dst_tile.devices), len(src_tiles)]; it specifies for
+            each replica of a dst tile, how it should get the data from
+            src_tiles (src tile replicas).
+        is_local_allgather (bool): if this strategy involves post allgather
+            operations.
     """
 
     def __init__(self, per_spec_plans, is_local_allgather):
@@ -1224,15 +1247,16 @@ class CrossMeshCommunicator:
     """
     Communicator for cross-mesh resharding.
 
-    Given the pipeline schedule and stages, the class analyzes them and generates:
+    Given the pipeline schedule and stages, the class analyzes them and
+    generates:
     - resharding specs (see docstring of `ReshardingTaskSpec`),
     - resharding strategies (see docstring of `ReshardingStrategy`).
-    This communicator only takes care of compilation-time work, and does not get involved
-    with physical meshes, buffer creations, or other runtime work.
+    This communicator only takes care of compilation-time work, and does not
+    get involved with physical meshes, buffer creations, or other runtime work.
 
     Args:
-        sharded_stages (Sequence[XlaShardedPipelineComputation]): list of stages to
-            form the pipeline.
+        sharded_stages (Sequence[XlaShardedPipelineComputation]): list of stages
+            to form the pipeline.
         schedule (Any): the pipelining schedule for these stages.
     """
 
@@ -1259,15 +1283,18 @@ class CrossMeshCommunicator:
 
         # Initialize all resharding specs
         self._create_resharding_specs()
-        # Generate a send/recv strategies for all resharding tasks by looking at their load.
+        # Generate a send/recv strategies for all resharding tasks by looking
+        # at their load.
         for _, _, var_spec_map in self.task_spec_iter():
             for _, spec in var_spec_map.items():
                 if global_config.resharding_mode == "send_recv":
-                    strategy = self._generate_send_recv_resharding_strategy_by_loads(
-                        spec, self._sender_loads, self._receiver_loads)
+                    strategy = (
+                        self._generate_send_recv_resharding_strategy_by_loads(
+                            spec, self._sender_loads, self._receiver_loads))
                 else:
-                    strategy = self._generate_broadcast_resharding_strategy_by_loads(
-                        spec, self._sender_loads, self._receiver_loads)
+                    strategy = (
+                        self._generate_broadcast_resharding_strategy_by_loads(
+                            spec, self._sender_loads, self._receiver_loads))
                 spec.set_resharding_strategy(strategy)
 
     @property
@@ -1350,8 +1377,8 @@ class CrossMeshCommunicator:
                     break
             if replica != 1:
                 logger.warning(
-                    "ReshardingTask is not fully sharded, this causes redundant communication."
-                )
+                    "ReshardingTask is not fully sharded, this causes "
+                    "redundant communication.")
             if len(dim_local_mapping) != 0:
                 squeezed_mesh_mapping[mesh_dim] = dim_local_mapping
 
@@ -1373,7 +1400,8 @@ class CrossMeshCommunicator:
         assert deps.shape[1] == num_stage
 
         # Note(Hao): resharding_specs is num_mesh x num_mesh matrix
-        # Each element is a dict: the name of variables are keys, ReshardingSpec are values.
+        # Each element is a dict: the name of variables are keys, ReshardingSpec
+        # are values.
         self.resharding_specs = [
             [{} for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
         ]
@@ -1413,8 +1441,9 @@ class CrossMeshCommunicator:
                 # dst sharding spec before and after allgather
 
                 if global_config.resharding_mode == "send_recv":
-                    dst_sharding_spec, local_chunks = self._rewrite_allgather_spec(
-                        dst_sharding_spec, dst_mesh, var.aval.shape)
+                    dst_sharding_spec, local_chunks = (
+                        self._rewrite_allgather_spec(dst_sharding_spec,
+                                                     dst_mesh, var.aval.shape))
                 else:
                     local_chunks = None
 
@@ -1474,6 +1503,7 @@ class CrossMeshCommunicator:
             Generate the broadcast-based resharding strategy by balancing loads.
             For each tile, I not only allow one source to provide the tile.
         """
+        # pylint: disable=unused-argument
         #TODO(hexu): (1) allow for multiple sources. (2) update load on the fly.
         per_spec_plans = []
         dst_loads = None

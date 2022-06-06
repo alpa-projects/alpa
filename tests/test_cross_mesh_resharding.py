@@ -96,7 +96,7 @@ def test_resharding(var,
         in_uuids = []
         out_uuids = output_uuids[worker_idx]
         instruction_lists[worker].append(
-            PipelineInstruction.Run(config.exec_uuid,
+            PipelineInstruction.run(config.exec_uuid,
                                     in_uuids,
                                     out_uuids, {
                                         "sync_before": False,

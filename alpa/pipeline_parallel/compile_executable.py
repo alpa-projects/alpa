@@ -62,9 +62,8 @@ def compile_pipeshard_executable(
     # FIXME(yonghao): use apply grad jaxpr returned by this function
     batch_dim = 0
     (reduction_vector, post_microbatch_bound,
-     _apply_grad_jaxpr) = _get_full_batch_apply_grad(fun, avals, batch_invars,
-                                                     microbatch_bound,
-                                                     num_microbatch, batch_dim)
+     _) = _get_full_batch_apply_grad(fun, avals, batch_invars, microbatch_bound,
+                                     num_microbatch, batch_dim)
 
     if num_microbatch > 1:
         (acc_grad_jaxpr, acc_grad_dict,
@@ -84,8 +83,10 @@ def compile_pipeshard_executable(
     assert (len(jax_pipeline_layers) == len(
         set(layer.name for layer in jax_pipeline_layers))), \
         "All layers must have unique names."
-    jax_pipeline_layers = mark_missing_vars_in_backward_computation_pipeline_marks(
-        jax_pipeline_layers, acc_grad_invars, acc_grad_outvars, gensym_func)
+    jax_pipeline_layers = (
+        mark_missing_vars_in_backward_computation_pipeline_marks(
+            jax_pipeline_layers, acc_grad_invars, acc_grad_outvars,
+            gensym_func))
     # TODO(yonghao): remove this pass. we can clear these vars when rewriting
     # compute grad to accumulate grad
     jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
@@ -226,7 +227,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
     xla_stages = [None] * n_stages
     if distributed_compile:
         compile_workers = CompileWorkerPool(num_meshes)
-        compile_fn = lambda w, v: w.run_auto_sharding_pass.remote(*v)  # noqa
+        compile_fn = lambda w, v: w.run_auto_sharding_pass.remote(*v)  # pylint: disable=unnecessary-lambda-assignment
         compile_intermediate = [None] * num_meshes
     total_flops = 0
     for mesh_idx in range(num_meshes):
@@ -321,7 +322,8 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
     return wrap_layers, apply_grad_global_info
 
 
-# TODO(yonghao): the reduction vector should be created by a more careful analysis.
+# TODO(yonghao): the reduction vector should be created by a more careful
+#  analysis.
 def _get_full_batch_apply_grad(fun: lu.WrappedFun, avals, batch_invars,
                                microbatch_bound, num_microbatch, batch_dim):
     # Trace and split a non-microbatch version for the correct shape of
@@ -347,8 +349,8 @@ def _get_full_batch_apply_grad(fun: lu.WrappedFun, avals, batch_invars,
             assert tuple(expected_microbatched_shape) == microbatch_shape
             if len(apply_grad_jaxpr.eqns) > 0:
                 raise NotImplementedError(
-                    "apply gradient with not reduced input is not supported yet."
-                )
+                    "apply gradient with not reduced input is not supported "
+                    "yet.")
         reduced_vector.append(microbatch_shape == batch_shape)
 
     return reduced_vector, dummy_microbatch_bound, apply_grad_jaxpr

@@ -211,7 +211,7 @@ if __name__ == "__main__":
         tic = time.time()
         torch.manual_seed(8)
         input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(args.device)
-        output = model.generate(input_ids=input_ids, max_length=20, do_sample=True,
+        output = model.generate(input_ids=input_ids, max_length=256, do_sample=False,
                                 return_dict_in_generate=True, output_hidden_states=False)
         generated_ids = output.sequences
         generated_string = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)

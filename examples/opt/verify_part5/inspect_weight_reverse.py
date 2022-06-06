@@ -69,3 +69,13 @@ shard_flat_param = shard["model"]["decoder.layers.15.flat_param_0"]
 
 for i, p in enumerate(problem_positions):
     print(f"numpy at {p} is {mp5_weight[p]}, at shard position {element_idx + i} is {shard_flat_param[element_idx+i].numpy()}")
+
+
+print("separate==============================")
+p = problem_positions[0]
+for i in range(len(problem_positions) + 20):
+    if i == 18:
+        print("separate==============================")
+    s = (p[0], p[1] - i)
+    print(f"numpy at {s} is {mp5_weight[s]}, at shard position {element_idx - i} is {shard_flat_param[element_idx - i].numpy()}")
+

@@ -33,10 +33,17 @@ problem_positions = [
 (1537, 5189),
 ]
 
-for p in problem_positions:
+
+correct_shard_path = "/home/ubuntu/parax-efs/pycharm/opt/raw_weights/175B/checkpoint_last-model_part-5-shard51.pt"
+correct_shard = torch_load_cpu(correct_shard_path)
+correct_flat_params = correct_shard["model"]["decoder.layers.15.flat_param_0"]
+
+start_idx = 1241838
+for i, p in enumerate(problem_positions):
     dim0, dim1 = p
-    print(full_weight[5*s+dim0, dim1])
-    full_weight[5*s+dim0, dim1] = np.float16(0.0)
+    correct_val = correct_flat_params[start_idx + i]
+    print(f"position: {p}, wrong value: {full_weight[5*s+dim0, dim1]}, correct value: {correct_val}")
+    full_weight[5*s+dim0, dim1] = correct_val
 
 with open(os.path.join(save_path, weight_name), "wb") as f:
     np.save(f, full_weight)

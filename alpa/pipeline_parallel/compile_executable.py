@@ -1,5 +1,5 @@
 """Compile executables for pipeshard parallelism."""
-import dataclasses 
+import dataclasses
 import logging
 import time
 from typing import Callable, Sequence
@@ -22,10 +22,10 @@ from alpa.pipeline_parallel.computation import (
     mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
     pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
     split_donate_invars, XlaShardedPipelineComputation)
-from alpa.pipeline_parallel.apply_grad import (
-    compute_grad_to_accumulate_grad,
-    process_apply_gradient,
-    split_compute_grad_and_apply_grad)
+from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
+                                               process_apply_gradient,
+                                               split_compute_grad_and_apply_grad
+                                              )
 from alpa.pipeline_parallel.stage_construction import (
     cluster_layers_and_slice_mesh, StageOption)
 from alpa.pipeline_parallel.stage_profiling import CompileWorkerPool
@@ -36,18 +36,13 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def compile_pipeshard_executable(fun: lu.WrappedFun,
-                                 in_tree: PyTreeDef,
-                                 out_tree_thunk: Callable[[], PyTreeDef],
-                                 static_argnums: Sequence[int],
-                                 donated_invars: Sequence[bool],
-                                 batch_invars: Sequence[bool],
-                                 virtual_mesh: VirtualPhysicalMesh,
-                                 num_microbatch: int,
-                                 pipeline_schedule: str,
-                                 default_as_option: AutoShardingOption,
-                                 stage_option: StageOption,
-                                 *avals: Sequence[AbstractValue]):
+def compile_pipeshard_executable(
+        fun: lu.WrappedFun, in_tree: PyTreeDef,
+        out_tree_thunk: Callable[[], PyTreeDef], static_argnums: Sequence[int],
+        donated_invars: Sequence[bool], batch_invars: Sequence[bool],
+        virtual_mesh: VirtualPhysicalMesh, num_microbatch: int,
+        pipeline_schedule: str, default_as_option: AutoShardingOption,
+        stage_option: StageOption, *avals: Sequence[AbstractValue]):
     """
     Compile a callable for pipeshard parallel which combines
     pipeline parallelism and 2d shard parallelsim.
@@ -111,11 +106,11 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
 
     # Construct pipeline stages by merging layers
     (jax_pipeline_stages, stage_to_mesh, sliced_virtual_meshes,
-     logical_mesh_shapes, autosharding_option_dicts) = cluster_layers_and_slice_mesh(
-         jax_pipeline_layers, virtual_mesh, donation_mapping,
-         acc_grad_outvars, num_microbatch, batch_size,
-         jax_apply_layers, apply_grad_global_info, pipeline_schedule,
-         default_as_option, stage_option)
+     logical_mesh_shapes,
+     autosharding_option_dicts) = cluster_layers_and_slice_mesh(
+         jax_pipeline_layers, virtual_mesh, donation_mapping, acc_grad_outvars,
+         num_microbatch, batch_size, jax_apply_layers, apply_grad_global_info,
+         pipeline_schedule, default_as_option, stage_option)
     num_meshes = len(sliced_virtual_meshes)
     debug_compilation_time("stage construction")
 

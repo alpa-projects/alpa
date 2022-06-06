@@ -4,8 +4,9 @@ import numpy
 try:
     import pygloo
 except ImportError as ie:
-    raise ImportError("Can not import pygloo."
-                      "Please run 'pip install pygloo' to install pygloo.") from ie
+    raise ImportError(
+        "Can not import pygloo."
+        "Please run 'pip install pygloo' to install pygloo.") from ie
 
 import ray
 from ray.util.queue import _QueueActor
@@ -95,8 +96,7 @@ def get_gloo_reduce_op(reduce_op):
         (pygloo.ReduceOp): the mapped GLOO reduce op.
     """
     if reduce_op not in GLOO_REDUCE_OP_MAP:
-        raise RuntimeError(
-            f"Gloo does not support reduce op: '{reduce_op}'.")
+        raise RuntimeError(f"Gloo does not support reduce op: '{reduce_op}'.")
     return GLOO_REDUCE_OP_MAP[reduce_op]
 
 

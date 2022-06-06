@@ -12,9 +12,8 @@ class GlobalConfig:
         self.xla_gpu_autotune_level = 4
         self.delete_remote_buffers_threshold = 200
         # use AWS EFA network interface
-        self.use_aws_efa = os.environ.get("ALPA_USE_AWS_EFA", "").lower() in [
-            "true", "1"
-        ]
+        self.use_aws_efa = os.environ.get("ALPA_USE_AWS_EFA",
+                                          "").lower() in ["true", "1"]
 
         ########## Options of shard_parallel ##########
         self.shard_parallel_sync_for_timer = False

@@ -10,13 +10,11 @@ from jax.core import AbstractValue
 from jax.experimental.maps import FrozenDict
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 
-from alpa.device_mesh import (init_global_cluster,
-                              shutdown_global_cluster)
+from alpa.device_mesh import (init_global_cluster, shutdown_global_cluster)
 from alpa.parallel_method import ParallelMethod, ShardParallel
 from alpa.pipeline_parallel.primitive_def import mark_gradient
 from alpa.util import (auto_donate_argnums, auto_static_argnums,
                        abstractify_with_aval)
-
 
 is_initialized = False
 
@@ -66,6 +64,7 @@ def parallelize(fun: Optional[Callable] = None,
           Alpa assumes the 0-th dimension of the tensor is the batch dimension.
         method: The parallelization method.
     """
+
     def decorate_fun(fun):
         api._check_callable(fun)
         nonlocal method
@@ -81,12 +80,10 @@ def parallelize(fun: Optional[Callable] = None,
 class ParallelizedFunc:
     """The function after being transformed by alpa.parallelize."""
 
-    def __init__(self,
-                 fun: Callable,
-                 static_argnums: Union[Sequence[int], str],
+    def __init__(self, fun: Callable, static_argnums: Union[Sequence[int], str],
                  donate_argnums: Union[Sequence[int], str],
-                 batch_argnums: Union[Sequence[int], str],
-                 method: ParallelMethod):
+                 batch_argnums: Union[Sequence[int],
+                                      str], method: ParallelMethod):
         self.fun = fun
         self.static_argnums = static_argnums
         self.donate_argnums = donate_argnums
@@ -97,7 +94,8 @@ class ParallelizedFunc:
 
     def __call__(self, *args):
         """Launch the computation on the driver."""
-        executable, _, out_tree, args_flat = self._decode_args_and_get_executable(*args)
+        executable, _, out_tree, args_flat = self._decode_args_and_get_executable(
+            *args)
         out = executable.launch_on_driver(*args_flat)
         return tree_unflatten(out_tree(), out)
 
@@ -108,7 +106,8 @@ class ParallelizedFunc:
 
     def preshard_dynamic_args(self, *args):
         """Shard the dynamic arguments."""
-        executable, in_tree, _, args_flat = self._decode_args_and_get_executable(*args)
+        executable, in_tree, _, args_flat = self._decode_args_and_get_executable(
+            *args)
         sharded_args = executable.preshard_dynamic_args(*args_flat)
         return tree_unflatten(in_tree, sharded_args)
 
@@ -118,8 +117,9 @@ class ParallelizedFunc:
 
     def _decode_args_and_get_executable(self, *args):
         """Flatten PyTree arguments and get the executable."""
-        static_argnums, donate_argnums, batch_argnums = (
-            self.static_argnums, self.donate_argnums, self.batch_argnums)
+        static_argnums, donate_argnums, batch_argnums = (self.static_argnums,
+                                                         self.donate_argnums,
+                                                         self.batch_argnums)
         kwargs = {}
 
         f = lu.wrap_init(self.fun)
@@ -163,11 +163,12 @@ class ParallelizedFunc:
         batch_tuple = rebase_donate_argnums(batch_argnums, static_argnums)
         batch_invars = donation_vector(batch_tuple, dyn_args, kwargs)
 
-        # Compile 
+        # Compile
         abstract_args = map(abstractify_with_aval, args_flat)
-        executable = _compile_parallel_executable(
-            f, in_tree, out_tree_hashable, static_argnums, donated_invars,
-            batch_invars, self.method, *abstract_args)
+        executable = _compile_parallel_executable(f, in_tree, out_tree_hashable,
+                                                  static_argnums,
+                                                  donated_invars, batch_invars,
+                                                  self.method, *abstract_args)
 
         self.last_executable = executable
         return executable, in_tree, out_tree, args_flat

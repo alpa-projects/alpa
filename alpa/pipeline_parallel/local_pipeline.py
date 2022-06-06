@@ -56,11 +56,8 @@ class LocalPipelineExecutable:
         global_outvars (Sequence[Var]): Global output variables.
     """
 
-    def __init__(self,
-                 *,
-                 stages: Sequence[PipelineComputation],
-                 global_invars: Sequence[Var],
-                 global_outvars: Sequence[Var]):
+    def __init__(self, *, stages: Sequence[PipelineComputation],
+                 global_invars: Sequence[Var], global_outvars: Sequence[Var]):
         self.stages = stages
         self.global_invars = global_invars
         self.global_outvars = global_outvars
@@ -137,7 +134,6 @@ def compile_local_pipeline_executable(fun: lu.WrappedFun, *avals):
         for stage in jax_pipeline_stages
     ]
 
-    return LocalPipelineExecutable(
-        stages=xla_pipeline_stages,
-        global_invars=global_invars,
-        global_outvars=global_outvars)
+    return LocalPipelineExecutable(stages=xla_pipeline_stages,
+                                   global_invars=global_invars,
+                                   global_outvars=global_outvars)

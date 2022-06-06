@@ -311,10 +311,12 @@ class ReshardingTest(unittest.TestCase):
         dst_shape = (1, 4)
         tensor_shape = (2, 64, 64)
 
-        src_spec = ShardingSpec([Chunked([2]), Chunked([2]), NoSharding()],
-            [ShardedAxis(0), ShardedAxis(1)])
-        dst_spec = ShardingSpec([NoSharding(), NoSharding(), NoSharding()],
-            [Replicated(4)])
+        src_spec = ShardingSpec([Chunked(
+            [2]), Chunked([2]), NoSharding()],
+                                [ShardedAxis(0), ShardedAxis(1)])
+        dst_spec = ShardingSpec(
+            [NoSharding(), NoSharding(),
+             NoSharding()], [Replicated(4)])
         self.run_resharding_task(src_shape,
                                  dst_shape,
                                  src_spec,
@@ -323,10 +325,12 @@ class ReshardingTest(unittest.TestCase):
                                  resharding_mode="broadcast")
 
         tensor_shape = (64, 64, 64)
-        src_spec = ShardingSpec([Chunked([2]), Chunked([2]), NoSharding()],
-            [ShardedAxis(0), ShardedAxis(1)])
-        dst_spec = ShardingSpec([Chunked([2]), NoSharding(), Chunked([2])],
-            [ShardedAxis(0), ShardedAxis(1)])
+        src_spec = ShardingSpec([Chunked(
+            [2]), Chunked([2]), NoSharding()],
+                                [ShardedAxis(0), ShardedAxis(1)])
+        dst_spec = ShardingSpec([Chunked(
+            [2]), NoSharding(), Chunked([2])],
+                                [ShardedAxis(0), ShardedAxis(1)])
         self.run_resharding_task(src_shape,
                                  dst_shape,
                                  src_spec,

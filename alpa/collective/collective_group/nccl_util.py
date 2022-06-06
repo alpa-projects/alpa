@@ -118,8 +118,7 @@ def get_nccl_reduce_op(reduce_op):
         (nccl.ncclRedOp_t): the mapped NCCL reduce op.
     """
     if reduce_op not in NCCL_REDUCE_OP_MAP:
-        raise RuntimeError(
-            f"NCCL does not support reduce op: '{reduce_op}'.")
+        raise RuntimeError(f"NCCL does not support reduce op: '{reduce_op}'.")
     return NCCL_REDUCE_OP_MAP[reduce_op]
 
 

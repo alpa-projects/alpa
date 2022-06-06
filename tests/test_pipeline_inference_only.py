@@ -62,13 +62,13 @@ class PipelineInferenceTest(unittest.TestCase):
         num_heads = 512 // 64
         n_layers = 2
 
-        model = FlaxBertLayerCollection(config=BertConfig(
-            hidden_size=hidden_size,
-            intermediate_size=hidden_size * 4,
-            num_attention_heads=num_heads,
-            num_hidden_layers=n_layers,
-            add_manual_pipeline_markers=manual_pipeline_layer,
-            pipeline_mp_size=n_layers))
+        model = FlaxBertLayerCollection(
+            config=BertConfig(hidden_size=hidden_size,
+                              intermediate_size=hidden_size * 4,
+                              num_attention_heads=num_heads,
+                              num_hidden_layers=n_layers,
+                              add_manual_pipeline_markers=manual_pipeline_layer,
+                              pipeline_mp_size=n_layers))
         rngkey = jax.random.PRNGKey(0)
         x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
                               dtype=jnp.float32)

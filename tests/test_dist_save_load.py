@@ -18,6 +18,7 @@ from alpa.testing import (MLPModel, BertLayerModel, create_train_state,
                           get_bert_layer_train_step, get_mlp_train_step,
                           assert_allclose)
 
+
 class DistSaveLoadTest(unittest.TestCase):
 
     def setUp(self):
@@ -39,10 +40,11 @@ class DistSaveLoadTest(unittest.TestCase):
 
     def _get_efs_mount_point(self):
         # Hacky function to get the EFS mount point
-        for line in subprocess.check_output("df -h", shell=True).decode().split('\n'):
+        for line in subprocess.check_output("df -h",
+                                            shell=True).decode().split('\n'):
             cols = line.split(' ')
             if "efs" in cols[0]:
-                return cols[-1]+"/"
+                return cols[-1] + "/"
         return None
 
     def _get_save_prefix(self):
@@ -116,7 +118,7 @@ class DistSaveLoadTest(unittest.TestCase):
 
         # Cleanup
         physical_mesh.shutdown()
-    
+
     def test_jax_mlp_save_dist_load(self):
         save_prefix = self._get_save_prefix()
 
@@ -135,7 +137,6 @@ class DistSaveLoadTest(unittest.TestCase):
         batch = {'x': x, 'y': y}
         jax_state = create_train_state(rngkey, model, [x])
 
-
         with tempfile.TemporaryDirectory(prefix=save_prefix) as ckpt_dir:
             # save normal jax model using tensorstore for distributed loading
             save_checkpoint(ckpt_dir, jax_state, 1)
@@ -144,7 +145,7 @@ class DistSaveLoadTest(unittest.TestCase):
             method = PipeshardParallel(num_micro_batches=2)
             serial_train_step = get_mlp_train_step(None, None, None, False)
             parallel_train_step = get_mlp_train_step(method, True, False, False)
-            executable = parallel_train_step.get_executable(jax_state, batch) 
+            executable = parallel_train_step.get_executable(jax_state, batch)
 
             # Restore checkpoint
             state_ss, _ = executable.get_load_info()
@@ -156,7 +157,6 @@ class DistSaveLoadTest(unittest.TestCase):
 
         # Check results
         assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)
-
 
     def test_distributed_mlp_save_load(self):
         save_prefix = self._get_save_prefix()

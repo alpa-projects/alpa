@@ -35,7 +35,6 @@ import cupy as cp
 
 from alpa.global_env import global_config, is_worker
 
-
 ########################################
 ##### Alpa API Utilities
 ########################################

@@ -439,8 +439,8 @@ def compile_all(stages, num_micro_batches, default_as_option):
         compile_workers.submit(
             lambda w, v: w.compile_stage_for_profiling.remote(*v),
             (stage_id, stage_config.compile_config, logical_mesh,
-             dataclasses.replace(default_as_option, **autosharding_option_dict),
-             num_micro_batches))
+             dataclasses.replace(default_as_option, **
+                                 autosharding_option_dict), num_micro_batches))
 
     compiled_outputs = [None] * len(stages)
     for _ in tqdm.tqdm(stages):
@@ -458,8 +458,8 @@ def compile_all(stages, num_micro_batches, default_as_option):
 
 
 def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
-                num_layers, num_auto_sharding_configs,
-                num_micro_batches, auto_stage_option, mesh_cached_result):
+                num_layers, num_auto_sharding_configs, num_micro_batches,
+                auto_stage_option, mesh_cached_result):
     """Profile all compiled outputs on given meshes.
 
     This function launches a profile worker pool and submits given tasks.
@@ -474,9 +474,10 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
         prof_database = ProfilingResultDatabase()
         prof_database.load(auto_stage_option.profiling_database_filename)
         prof_result = prof_database.query("default", meshes[0].shape)
-        profile_workers = HloCostModelProfileWorkerPool(
-            num_cpus, num_gpus, prof_result, mesh_num_devices,
-            num_micro_batches)
+        profile_workers = HloCostModelProfileWorkerPool(num_cpus, num_gpus,
+                                                        prof_result,
+                                                        mesh_num_devices,
+                                                        num_micro_batches)
     else:
         profile_workers = ProfileWorkerPool(meshes)
 
@@ -755,15 +756,13 @@ def profile_layer_communication_cost(
             DistributedArray(src_phy_mesh, invar.aval, in_sharding_spec,
                              remote_buffers, input_indices)
             if global_config.resharding_mode == "send_recv":
-                task = SymbolicReshardingTask(task_spec,
-                                              collective_group,
+                task = SymbolicReshardingTask(task_spec, collective_group,
                                               collective_group.src_mesh,
                                               collective_group.dst_mesh)
             else:
-                task = SymbolicBroadcastReshardingTask(task_spec,
-                                                       collective_group,
-                                                       collective_group.src_mesh,
-                                                       collective_group.dst_mesh)
+                task = SymbolicBroadcastReshardingTask(
+                    task_spec, collective_group, collective_group.src_mesh,
+                    collective_group.dst_mesh)
             tasks.append(task)
 
     for task in tasks:
@@ -800,8 +799,7 @@ def _compute_vars_size(sharding_specs, selected_vars, logical_mesh_shape):
 
     return sum(
         get_byte(shape, aval.dtype)
-        for shape, aval in zip(sharded_shapes, avals)
-    )
+        for shape, aval in zip(sharded_shapes, avals))
 
 
 def compute_intermediate_size(serialized_proto, intermediate_vars,

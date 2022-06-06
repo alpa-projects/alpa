@@ -9,8 +9,8 @@ import numpy as np
 from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 import ray
 
-from alpa.util import (GB, print_used_time, XlaPassContext,
-                       to_str_round, run_with_timeout)
+from alpa.util import (GB, print_used_time, XlaPassContext, to_str_round,
+                       run_with_timeout)
 
 ops = xc.ops
 
@@ -151,9 +151,8 @@ class MeshProfilingResult:
             num_devices = len(key[0][0])
             sizes = np.array([x[0] for x in value])
             times = np.array([x[1] for x in value])
-            comm_bytes = (
-                (num_devices - 1) / (num_devices ** 2) 
-                * sizes * to_np_dtype(key[1]).itemsize)
+            comm_bytes = ((num_devices - 1) / (num_devices**2) * sizes *
+                          to_np_dtype(key[1]).itemsize)
             bandwidth = comm_bytes / times / GB
             ret += f"Key: {key}\nBandwidth: {to_str_round(bandwidth, 2)}\n\n"
         return ret
@@ -715,8 +714,12 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
     return list(all_specs)
 
 
-def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
-                max_comm_size_inter_node, max_fail_retry, cache_filename,
+def profile_all(device_cluster,
+                cluster_key,
+                max_comm_size_intra_node,
+                max_comm_size_inter_node,
+                max_fail_retry,
+                cache_filename,
                 dot_range=(0, 1024)):
     """Profile costs for all dot and communication primitives."""
     #  pylint: disable=import-outside-toplevel

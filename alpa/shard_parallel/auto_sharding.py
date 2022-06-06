@@ -251,7 +251,8 @@ def run_auto_sharding_pass(
             force_batch_dim_to_mesh_dim = as_option.force_batch_dim_to_mesh_dim
 
     # Set configs for reduce-scatter
-    reduce_scatter_grad_acc_friendly = (num_micro_batches is not None and num_micro_batches > 1)
+    reduce_scatter_grad_acc_friendly = (num_micro_batches is not None and
+                                        num_micro_batches > 1)
 
     # Set configs for gradient accumulation rewrite pass
     if rewrite_for_grad_acc and rewrite_grad_acc_indices is None:
@@ -270,23 +271,31 @@ def run_auto_sharding_pass(
             "auto_sharding::all_gather_cost": INFINITY_COST,
             "auto_sharding::force_all_to_all_cost": not allow_all_to_all,
             "auto_sharding::all_to_all_cost": INFINITY_COST,
-            "auto_sharding::allow_replicated_parameters": as_option.allow_replicated_parameters,
+            "auto_sharding::allow_replicated_parameters":
+                as_option.allow_replicated_parameters,
             "auto_sharding::prefer_reduce_scatter": prefer_reduce_scatter,
             "auto_sharding::reduce_scatter_grad_acc_friendly": reduce_scatter_grad_acc_friendly,
             "auto_sharding::reduce_scatter_aggressive_partition": reduce_scatter_aggressive_partition,
             "auto_sharding::batch_matmul_always_split_batch": True,
-            "auto_sharding::allow_recompute_heavy_op": as_option.allow_recompute_heavy_op,
-            "auto_sharding::allow_mixed_mesh_shape": as_option.allow_mixed_mesh_shape,
-            "auto_sharding::grad_acc_num_micro_batches": grad_acc_num_micro_batches or 1,
+            "auto_sharding::allow_recompute_heavy_op":
+                as_option.allow_recompute_heavy_op,
+            "auto_sharding::allow_mixed_mesh_shape":
+                as_option.allow_mixed_mesh_shape,
+            "auto_sharding::grad_acc_num_micro_batches":
+                grad_acc_num_micro_batches or 1,
             "auto_sharding::force_batch_dim_to_mesh_dim": force_batch_dim_to_mesh_dim,
-            "auto_sharding::force_simple_heuristic": as_option.force_simple_heuristic,
+            "auto_sharding::force_simple_heuristic":
+                as_option.force_simple_heuristic,
 
             # Device mesh
             "auto_sharding::device_mesh_ids": logical_mesh.flatten_ids,
             "auto_sharding::device_mesh_shape": tuple(logical_mesh.shape),
-            "auto_sharding::device_mesh_alpha": tuple(float(x) for x in logical_mesh.mesh_alpha),
-            "auto_sharding::device_mesh_beta": tuple(float(x) for x in logical_mesh.mesh_beta),
-            "auto_sharding::device_mesh_prof_result": getattr(logical_mesh.physical_mesh, "prof_result", None),
+            "auto_sharding::device_mesh_alpha": tuple(
+                float(x) for x in logical_mesh.mesh_alpha),
+            "auto_sharding::device_mesh_beta": tuple(
+                float(x) for x in logical_mesh.mesh_beta),
+            "auto_sharding::device_mesh_prof_result": getattr(
+                logical_mesh.physical_mesh, "prof_result", None),
 
             # Gradient accumulation rewrite
             "auto_sharding::rewrite_for_grad_acc": rewrite_for_grad_acc,
@@ -300,7 +309,8 @@ def run_auto_sharding_pass(
             # Debug options
             "auto_sharding::simplify_graph": True,
             "auto_sharding::print_strategy": os.environ.get(
-                "ALPA_DEBUG_PRINT_AS_STRATEGY", "False").lower() in ["true", "1"],
+                "ALPA_DEBUG_PRINT_AS_STRATEGY", "False").lower() in
+                                             ["true", "1"],
             "auto_sharding::force_strategy": False,
             "auto_sharding::force_strategy_inst_indices": [],
             "auto_sharding::force_strategy_stra_names": [],
@@ -400,8 +410,10 @@ def run_backend_compilation(backend: xe.Client,
             "build_option::bypass_device_assignment_check": bypass_device_assignment_check,
 
             # Communication combiner options
-            "combiner::all_gather_threshold": strategy_config.all_gather_threshold,
-            "combiner::all_reduce_threshold": strategy_config.all_reduce_threshold,
+            "combiner::all_gather_threshold":
+                strategy_config.all_gather_threshold,
+            "combiner::all_reduce_threshold":
+                strategy_config.all_reduce_threshold,
             "combiner::use_continuous_buffer": True,
     }):
         compiled = backend.compile(xla_computation, compile_options)
@@ -788,8 +800,7 @@ def _call_solver_serialized_args(
     msg = verbose
     time_limit = 600
     assert "COIN_CMD" in pulp.listSolvers(onlyAvailable=True), (
-        "Please install ILP solvers by 'sudo apt install coinor-cbc'"
-    )
+        "Please install ILP solvers by 'sudo apt install coinor-cbc'")
 
     with warnings.catch_warnings():  # disable CBC warnings
         warnings.simplefilter("ignore")

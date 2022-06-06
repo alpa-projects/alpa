@@ -10,8 +10,8 @@ from jax.interpreters import pxla
 
 from alpa import init, MeshDriverDataLoader
 from alpa.device_mesh import get_global_physical_mesh
-from alpa.testing import (assert_allclose,
-                          data_loader_test_input_iter_func as input_iter_func)
+from alpa.testing import (assert_allclose, data_loader_test_input_iter_func as
+                          input_iter_func)
 
 
 class DataLoaderTest(unittest.TestCase):

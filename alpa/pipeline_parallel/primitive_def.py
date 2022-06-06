@@ -128,7 +128,9 @@ def _pipeline_value_and_jvp(arg_values, arg_tangents, name, mark_type):
         else:
             tan_marker_id.append(len(marker_inputs))
             marker_inputs.append(tan)
-    res = pipeline_p.bind(*marker_inputs, name=name, mark_type=tangent_mark_type)
+    res = pipeline_p.bind(*marker_inputs,
+                          name=name,
+                          mark_type=tangent_mark_type)
     tangent_outs = []
     for i, (val, tan) in enumerate(zip(arg_values, arg_tangents)):
         if tan_marker_id[i] == -1:

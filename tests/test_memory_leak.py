@@ -5,10 +5,12 @@ import jax.numpy as jnp
 import ray
 
 from alpa import (init, shutdown, parallelize, grad, global_config,
-                  ShardParallel, PipeshardParallel, automatic_layer_construction)
+                  ShardParallel, PipeshardParallel,
+                  automatic_layer_construction)
 from alpa.device_mesh import get_global_cluster
 
 from test_install import create_train_state_and_batch
+
 
 class MemoryLeakTest(unittest.TestCase):
 
@@ -20,6 +22,7 @@ class MemoryLeakTest(unittest.TestCase):
         shutdown()
 
     def test_shard_parallel(self):
+
         @parallelize(method=ShardParallel(num_micro_batches=2))
         def train_step(state, batch):
 

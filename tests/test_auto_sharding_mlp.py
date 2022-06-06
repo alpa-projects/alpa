@@ -182,6 +182,7 @@ class AutoShardingMLPTest(unittest.TestCase):
                         hidden_dim,
                         device_mesh,
                         use_bias=True):
+
         class Model(nn.Module):
 
             @nn.compact
@@ -341,8 +342,8 @@ class AutoShardingMLPTest(unittest.TestCase):
                 num_layers, batch_size, hidden_dim, hidden_dim, hidden_dim,
                 device_mesh)
 
-            assert_data_parallel_cost(state, hlo_ir, objective,
-                                      device_mesh, self.as_option, i)
+            assert_data_parallel_cost(state, hlo_ir, objective, device_mesh,
+                                      self.as_option, i)
 
     def test_n_layer_mlp_force_batch_dim_mapping(self):
         num_layers = 6
@@ -355,8 +356,8 @@ class AutoShardingMLPTest(unittest.TestCase):
         state, hlo_ir, objective = self.run_n_layer_mlp(num_layers, batch_size,
                                                         hidden_dim, hidden_dim,
                                                         hidden_dim, device_mesh)
-        assert_data_parallel_cost(state, hlo_ir, objective,
-                                  device_mesh, self.as_option, 0)
+        assert_data_parallel_cost(state, hlo_ir, objective, device_mesh,
+                                  self.as_option, 0)
 
         # Model parallel
         device_mesh = self.get_device_mesh([1, 4], [1, 1], [1, 1])
@@ -428,6 +429,7 @@ class AutoShardingMLPTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
+
     def add(name):
         suite.addTest(AutoShardingMLPTest(name))
 

@@ -79,8 +79,10 @@ def _rng_normal_abstract_eval(mu, sigma, *, shape):
         )
     if mu.shape != () or sigma.shape != ():
         raise ValueError(
-            f"Arguments to rng_normal must be scalars; got shapes {mu.shape} and {sigma.shape}.")
-    return mu.update(shape=shape, dtype=mu.dtype,
+            f"Arguments to rng_normal must be scalars; got shapes {mu.shape} and {sigma.shape}."
+        )
+    return mu.update(shape=shape,
+                     dtype=mu.dtype,
                      weak_type=(mu.weak_type and sigma.weak_type))
 
 

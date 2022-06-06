@@ -52,6 +52,7 @@ class DeviceMeshTest(unittest.TestCase):
         assert_allclose(array, dis_a)
 
     def test_preshard_args(self):
+
         @parallelize
         def add_one(x):
             return x + 1

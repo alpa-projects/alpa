@@ -13,8 +13,9 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def gen_dependency_with_stages(compute_stages: List[PipelineComputation],
-                               apply_grad_stages: List[PipelineComputation] = ()):
+def gen_dependency_with_stages(
+    compute_stages: List[PipelineComputation],
+    apply_grad_stages: List[PipelineComputation] = ()):
     """Generate the dependency matrix for a list of pipeline stages."""
     n_stages = len(compute_stages) + len(apply_grad_stages)
     d = np.zeros([n_stages, n_stages], dtype=int)

@@ -73,12 +73,13 @@ class PipelineInstruction:
                    info=info)
 
     @classmethod
-    def Recv(cls,  # noqa
-             task_uuid,
-             output_uuids,
-             set_empty_buffer,
-             allgather_uuid=None,
-             info=""):  # noqa
+    def Recv(
+            cls,  # noqa
+            task_uuid,
+            output_uuids,
+            set_empty_buffer,
+            allgather_uuid=None,
+            info=""):  # noqa
         return cls(opcode=PipelineInstType.RECV,
                    task_uuid=task_uuid,
                    input_uuids=None,
@@ -90,11 +91,12 @@ class PipelineInstruction:
                    info=info)
 
     @classmethod
-    def Broadcast(cls,  # noqa
-                 task_uuid,
-                 input_uuids,
-                 output_uuids,
-                 info="broadcast"):  # noqa
+    def Broadcast(
+            cls,  # noqa
+            task_uuid,
+            input_uuids,
+            output_uuids,
+            info="broadcast"):  # noqa
         return cls(opcode=PipelineInstType.BROADCAST,
                    task_uuid=task_uuid,
                    input_uuids=input_uuids,
@@ -258,8 +260,8 @@ class PipelineInstEmitter:
 
     def __init__(self, *, stages: Sequence[XlaShardedPipelineComputation],
                  global_invars: Sequence[Var], grad_dummy_invars: Sequence[Var],
-                 concat_vars_mapping: Dict[Var, Var],
-                 global_outvars: Sequence[Var],
+                 concat_vars_mapping: Dict[Var,
+                                           Var], global_outvars: Sequence[Var],
                  mesh_group: PhysicalDeviceMeshGroup,
                  schedule: PipelineSchedule, is_batch: Sequence[bool],
                  num_batch: int, in_tree: PyTreeDef):
@@ -395,7 +397,7 @@ class PipelineInstEmitter:
             if batch
         ])
         (input_config, input_shard_specs
-         ) = self._compile_split_input_to_microbatches(global_batch_invar_set)
+        ) = self._compile_split_input_to_microbatches(global_batch_invar_set)
 
         # Simulate the pipeline schedule and generate instructions
         donation_mapping = [DisjointDict() for _ in range(num_mesh)]
@@ -426,7 +428,8 @@ class PipelineInstEmitter:
             reduced_var_uuids = np.array([[
                 donation_mapping[mesh_idx].recursive_lookup(uuid)
                 for uuid in uuids
-            ] for uuids in reduced_var_uuids])
+            ]
+                                          for uuids in reduced_var_uuids])
             donated = set(donation_mapping[mesh_idx].keys())
             used_outside.update(flatten_uuid_set(reduced_var_uuids))
             reduced_var_uuid_lists[worker] = reduced_var_uuids

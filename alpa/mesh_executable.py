@@ -344,8 +344,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                         buf.set_deleted_on_workers()
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
-            sync_func = (self.sync_func
-                         if global_config.shard_parallel_sync_for_timer else None)
+            sync_func = (self.sync_func if
+                         global_config.shard_parallel_sync_for_timer else None)
 
             timers(self.timer_name).start(sync_func)
             output_bufs = self.compiled.execute_sharded_on_local_devices(
@@ -357,8 +357,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
     def preshard_dynamic_args(self, *args):
         """Pre-shard the input arguments."""
         input_bufs = self.physical_mesh.shard_args_to_bufs(
-            self.input_indices, self.donated_invars,
-            (False,) * len(args), None, args)
+            self.input_indices, self.donated_invars, (False,) * len(args), None,
+            args)
         outs_handler = self.physical_mesh.get_outputs_handler(
             self.avals, self.input_sharding_specs)
         return outs_handler(input_bufs)
@@ -459,11 +459,9 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
         self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_sync_func_worker(worker)
 
-    def execute_on_worker(self,
-                          input_uuids: Sequence[Sequence[int]],
+    def execute_on_worker(self, input_uuids: Sequence[Sequence[int]],
                           output_uuids: Sequence[Sequence[int]],
-                          sync_before: bool,
-                          sync_after: bool):
+                          sync_before: bool, sync_after: bool):
         """Run the executable on the worker."""
         buffer_dict = self.worker.buffers
 
@@ -596,14 +594,16 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                 # The handling of micro batches is different for
                 # distributed device mesh.
                 batch_dim = 0
-                new_shape = (num_micro_batches * aval.shape[0],) + aval.shape[1:]
-                new_spec = get_microbatch_sharding_spec(global_arg_sharding_specs[i],
-                                                        batch_dim, num_micro_batches)
+                new_shape = (num_micro_batches *
+                             aval.shape[0],) + aval.shape[1:]
+                new_spec = get_microbatch_sharding_spec(
+                    global_arg_sharding_specs[i], batch_dim, num_micro_batches)
                 global_arg_shard_indices.append(
                     pxla.spec_to_indices(new_shape, new_spec))
             else:
                 global_arg_shard_indices.append(
-                    pxla.spec_to_indices(aval.shape, global_arg_sharding_specs[i]))
+                    pxla.spec_to_indices(aval.shape,
+                                         global_arg_sharding_specs[i]))
 
         accumulate_grad_batch_arg_indices = [
             i for i, j in enumerate(accumulate_grad_invar_indices)
@@ -671,9 +671,8 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         num_outs = len(self.out_avals)
 
         input_bufs = physical_mesh.shard_args_to_bufs(
-            self.global_arg_shard_indices,
-            self.donated_invars, self.batch_invars,
-            num_micro_batches, args)
+            self.global_arg_shard_indices, self.donated_invars,
+            self.batch_invars, num_micro_batches, args)
 
         first_batch_bufs = input_bufs
         next_batches_bufs = []
@@ -689,9 +688,10 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                 num_devices_per_host).transpose([1, 0, 2]))
 
             if next_batches_bufs:
-                next_batches_uuids = (get_uuid_np_array(next_batches_bufs).reshape(
-                    len(next_batches_bufs), num_hosts,
-                    num_devices_per_host).transpose([1, 0, 2]))
+                next_batches_uuids = (
+                    get_uuid_np_array(next_batches_bufs).reshape(
+                        len(next_batches_bufs), num_hosts,
+                        num_devices_per_host).transpose([1, 0, 2]))
             else:
                 next_batches_uuids = (None,) * num_hosts
 
@@ -735,8 +735,8 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                     buf.set_deleted_on_workers()
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
-            sync_func = (self.sync_func
-                         if global_config.shard_parallel_sync_for_timer else None)
+            sync_func = (self.sync_func if
+                         global_config.shard_parallel_sync_for_timer else None)
 
             # Prepare gradient buffers
             timers(self.timer_name).start(sync_func)
@@ -744,9 +744,9 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                 [])
 
             # Call accumulate_grad multiple times
-            tmp_input_bufs = (
-                [first_batch_bufs[i] for i in self.accumulate_grad_invar_indices] +
-                grad_bufs)
+            tmp_input_bufs = ([
+                first_batch_bufs[i] for i in self.accumulate_grad_invar_indices
+            ] + grad_bufs)
             os.environ[
                 self.skip_allreduce_env_name] = self.grad_sync_channel_ids
             for i in range(num_micro_batches):
@@ -846,12 +846,10 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
         self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_sync_func_worker(worker)
 
-    def execute_on_worker(self,
-                          first_batch_uuids: Sequence[Sequence[int]],
+    def execute_on_worker(self, first_batch_uuids: Sequence[Sequence[int]],
                           next_batches_uuids: Sequence[Sequence[int]],
                           output_uuids: Sequence[Sequence[int]],
-                          sync_before: bool,
-                          sync_after: bool):
+                          sync_before: bool, sync_after: bool):
         """Run the executable on the worker."""
         buffer_dict = self.buffer_dict
         num_micro_batches = self.num_micro_batches
@@ -876,7 +874,8 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
                 for j, idx in enumerate(self.accumulate_grad_batch_arg_indices):
                     tmp_input_bufs[idx] = get_buffers(
                         buffer_dict,
-                        next_batches_uuids[j * (num_micro_batches - 1) + (i - 1)])
+                        next_batches_uuids[j * (num_micro_batches - 1) +
+                                           (i - 1)])
             if i == num_micro_batches - 1:
                 os.environ[self.skip_allreduce_env_name] = ""
             grad_bufs = self.accumulate_grad.execute_sharded_on_local_devices(
@@ -991,17 +990,15 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
                                         "XLA_SKIP_NCCL_COLLECTIVE_IDS")
 
     # pylint: disable=arguments-differ
-    def execute_on_worker(self,
-                          input_uuids: Sequence[Sequence[int]],
+    def execute_on_worker(self, input_uuids: Sequence[Sequence[int]],
                           output_uuids: Sequence[Sequence[int]],
-                          sync_before: bool,
-                          sync_after: bool,
+                          sync_before: bool, sync_after: bool,
                           skip_grad_sync: bool):
         """Run the executable on the worker."""
         os.environ[self.skip_allreduce_env_name] = (self.grad_sync_channel_ids
                                                     if skip_grad_sync else "")
-        return super().execute_on_worker(input_uuids, output_uuids,
-                                         sync_before, sync_after)
+        return super().execute_on_worker(input_uuids, output_uuids, sync_before,
+                                         sync_after)
 
     def profile_with_dummy_inputs(self, backend, local_devices, skip_grad_sync):
         """Profile the time cost of this executable with dummy inputs."""
@@ -1098,11 +1095,9 @@ class AllocZeroBufferWorkerExecutable(MeshWorkerExecutable):
         self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_sync_func_worker(worker)
 
-    def execute_on_worker(self,
-                          input_uuids: Sequence[Sequence[int]],
+    def execute_on_worker(self, input_uuids: Sequence[Sequence[int]],
                           output_uuids: Sequence[Sequence[int]],
-                          sync_before: bool,
-                          sync_after: bool):
+                          sync_before: bool, sync_after: bool):
         """Run the executable on the worker."""
         buffer_dict = self.worker.buffers
 
@@ -1133,11 +1128,9 @@ class MemzeroWorkerExecutable(MeshWorkerExecutable):
         self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_sync_func_worker(worker)
 
-    def execute_on_worker(self,
-                          input_uuids: Sequence[Sequence[int]],
+    def execute_on_worker(self, input_uuids: Sequence[Sequence[int]],
                           output_uuids: Sequence[Sequence[int]],
-                          sync_before: bool,
-                          sync_after: bool):
+                          sync_before: bool, sync_after: bool):
         """Run the executable on the worker."""
         buffer_dict = self.worker.buffers
 
@@ -1172,11 +1165,9 @@ class ConcatMeshWorkerExecutable(MeshWorkerExecutable):
         self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_sync_func_worker(worker)
 
-    def execute_on_worker(self,
-                          input_uuids: Sequence[Sequence[int]],
+    def execute_on_worker(self, input_uuids: Sequence[Sequence[int]],
                           output_uuids: Sequence[Sequence[int]],
-                          sync_before: bool,
-                          sync_after: bool):
+                          sync_before: bool, sync_after: bool):
         """Run the executable on the worker."""
         buffer_dict = self.worker.buffers
 

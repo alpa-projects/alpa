@@ -51,13 +51,12 @@ from alpa.global_env import global_config
 from alpa.monkey_patch import set_override_backend
 from alpa.shard_parallel.auto_sharding import LogicalDeviceMesh
 from alpa.timer import timers
-from alpa.util import (benchmark_func, list_gpu_info,
-                       jax_tensor_to_cupy, cupy_to_jax_tensor,
-                       jax_tensor_set, xla_buffer_to_jax_tensor,
-                       jax_tensor_to_xla_buffer, xla_buffer_to_cupy,
-                       cupy_to_xla_buffer, is_continuous_subset,
-                       infer_offset_and_n_elements, jax_tensor_index,
-                       OrderedSet, update_jax_platform)
+from alpa.util import (benchmark_func, list_gpu_info, jax_tensor_to_cupy,
+                       cupy_to_jax_tensor, jax_tensor_set,
+                       xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
+                       xla_buffer_to_cupy, cupy_to_xla_buffer,
+                       is_continuous_subset, infer_offset_and_n_elements,
+                       jax_tensor_index, OrderedSet, update_jax_platform)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -74,10 +73,10 @@ ReshardingAllGatherSpec = namedtuple(
     "ReshardingAllGatherSpec", ["device_ids", "tensor_slices", "output_slice"])
 ReshardingAllGatherTask = namedtuple("ReshardingAllGatherTask",
                                      ["allgather_specs"])
-ReshardingBroadcastSpec = namedtuple("ReshardingBroadcastSpec",
-                                     ["comm_key", "world_size", "devices_ids",
-                                      "devices_global_rank", "tensor_slices",
-                                      "recv_tile_shape", "dtype"])
+ReshardingBroadcastSpec = namedtuple("ReshardingBroadcastSpec", [
+    "comm_key", "world_size", "devices_ids", "devices_global_rank",
+    "tensor_slices", "recv_tile_shape", "dtype"
+])
 ReshardingBroadcastTask = namedtuple("ReshardingBroadcastTask",
                                      ["broadcast_specs", "group_name"])
 
@@ -85,7 +84,8 @@ ReshardingBroadcastTask = namedtuple("ReshardingBroadcastTask",
 class MeshHostWorker:
     """A ray actor that manages the xla computation and buffers on a single host."""
 
-    def __init__(self, server_address: str, num_hosts: int, host_id: int, mesh_id: int):
+    def __init__(self, server_address: str, num_hosts: int, host_id: int,
+                 mesh_id: int):
         self.num_hosts = num_hosts
         self.host_id = host_id
         self.mesh_id = mesh_id
@@ -123,7 +123,7 @@ class MeshHostWorker:
                 self.signal_tensors.append(
                     jax_tensor_to_cupy(device_put(
                         jnp.ones((1,), dtype=jnp.int8), d),
-                        take_ownership=True))
+                                       take_ownership=True))
 
     ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
@@ -162,12 +162,9 @@ class MeshHostWorker:
         self.buffers[uuid] = (self.backend.buffer_from_pyval(
             np.full(shape, 1e-8, dtype), self.local_devices[device_id]))
 
-    def shard_and_put_non_zero_buffer(self,
-                                      uuids: Sequence[int],
-                                      shape: Sequence[int],
-                                      dtype: np.dtype,
-                                      indices: Sequence,
-                                      num_batch: int):
+    def shard_and_put_non_zero_buffer(self, uuids: Sequence[int],
+                                      shape: Sequence[int], dtype: np.dtype,
+                                      indices: Sequence, num_batch: int):
         assert len(uuids) == len(indices) == len(self.local_devices) * num_batch
         for i in range(len(self.local_devices)):
             for b in range(num_batch):
@@ -179,15 +176,10 @@ class MeshHostWorker:
                     shard_shape.append(dim_size)
                 self.put_non_zero_buffer(uuids[idx], i, shard_shape, dtype)
 
-    def shard_and_apply_func_on_buffer(self,
-                                       uuids: Sequence[int],
-                                       shape: Sequence[int],
-                                       dtype: np.dtype,
-                                       indices: Sequence,
-                                       num_batch: int,
-                                       apply_func: Callable[
-                                           ["MeshHostWorker", int, int, Sequence[int], np.dtype], None
-                                       ]):
+    def shard_and_apply_func_on_buffer(
+        self, uuids: Sequence[int], shape: Sequence[int], dtype: np.dtype,
+        indices: Sequence, num_batch: int, apply_func: Callable[
+            ["MeshHostWorker", int, int, Sequence[int], np.dtype], None]):
         assert len(uuids) == len(indices) == len(self.local_devices) * num_batch
         for i in range(len(self.local_devices)):
             for b in range(num_batch):
@@ -236,7 +228,8 @@ class MeshHostWorker:
             device.clear_memory_stats()
 
     ##### Executable Related Functions #####
-    def put_executable(self, uuid: int, executable_class: "MeshWorkerExecutable", *args):
+    def put_executable(self, uuid: int,
+                       executable_class: "MeshWorkerExecutable", *args):
         self.executables[uuid] = executable_class(self, uuid, *args)
 
     def delete_executable(self, uuid: int):
@@ -342,11 +335,13 @@ class MeshHostWorker:
                                   group_name=group_name)
 
     @staticmethod
-    def init_broadcast_communicator(group_name, comm_key, world_size, device_ids, devices_global_rank, nccl_uid):
+    def init_broadcast_communicator(group_name, comm_key, world_size,
+                                    device_ids, devices_global_rank, nccl_uid):
         """Initialize the P2P communicator from within the mesh workers."""
         assert col.is_group_initialized(group_name)
         g = col.check_and_get_group(group_name)
-        g._get_nccl_broadcast_communicator(comm_key, world_size, device_ids, devices_global_rank, nccl_uid)
+        g._get_nccl_broadcast_communicator(comm_key, world_size, device_ids,
+                                           devices_global_rank, nccl_uid)
 
     # Note: in this device mesh code, we will use 3 types of tensors:
     # (1) JAX high-level _DeviceArray, which is index-able, has __cuda_array__ interface
@@ -556,17 +551,21 @@ class MeshHostWorker:
             self.buffers[uuid] = buf
 
     def put_resharding_broadcast_task(self, uuid, tasks, group_name):
-        self.broadcast_tasks[uuid] = ReshardingBroadcastTask(broadcast_specs=tasks,
-                                                             group_name=group_name)
+        self.broadcast_tasks[uuid] = ReshardingBroadcastTask(
+            broadcast_specs=tasks, group_name=group_name)
 
-    def run_resharding_broadcast_task(self, uuid, buffer_uuids, set_empty_buffer=True):
+    def run_resharding_broadcast_task(self,
+                                      uuid,
+                                      buffer_uuids,
+                                      set_empty_buffer=True):
         task: ReshardingBroadcastTask = self.broadcast_tasks[uuid]
         broadcast_specs = task.broadcast_specs
         for group_idx in broadcast_specs:
             broadcast_spec: ReshardingBroadcastSpec = broadcast_specs[group_idx]
             if set_empty_buffer:
-                for device_id, global_rank in zip(broadcast_spec.devices_ids,
-                                                  broadcast_spec.devices_global_rank):
+                for device_id, global_rank in zip(
+                        broadcast_spec.devices_ids,
+                        broadcast_spec.devices_global_rank):
                     if global_rank == 0:
                         continue
                     buf_uuid = buffer_uuids[device_id]
@@ -575,19 +574,20 @@ class MeshHostWorker:
                                                  broadcast_spec.recv_tile_shape,
                                                  broadcast_spec.dtype)
 
-            self.broadcast(buffer_uuids,
-                           broadcast_spec.comm_key,
+            self.broadcast(buffer_uuids, broadcast_spec.comm_key,
                            broadcast_spec.world_size,
                            broadcast_spec.devices_ids,
                            broadcast_spec.devices_global_rank,
-                           broadcast_spec.tensor_slices,
-                           task.group_name)
+                           broadcast_spec.tensor_slices, task.group_name)
 
-    def broadcast(self, uuids, comm_key, world_size, devices_ids, devices_global_rank, tensor_slices, group_name):
+    def broadcast(self, uuids, comm_key, world_size, devices_ids,
+                  devices_global_rank, tensor_slices, group_name):
         to_use = []
         for_buffer = []
         is_bool = self.buffers[uuids[devices_ids[0]]].dtype == np.bool_
-        for device_id, global_rank, tensor_slice in zip(devices_ids, devices_global_rank, tensor_slices):
+        for device_id, global_rank, tensor_slice in zip(devices_ids,
+                                                        devices_global_rank,
+                                                        tensor_slices):
             uuid = uuids[device_id]
             tensor_shape = self.buffers[uuid].shape
             slice_shape = tuple(ind.stop - ind.start for ind in tensor_slice)
@@ -605,8 +605,8 @@ class MeshHostWorker:
                 if global_rank == 0:
                     start_indices = tuple(o.start for o in tensor_slice)
                     tmp = jax_tensor_index(
-                        xla_buffer_to_jax_tensor(self.buffers[uuid]), start_indices,
-                        slice_shape)
+                        xla_buffer_to_jax_tensor(self.buffers[uuid]),
+                        start_indices, slice_shape)
                     tmp = jax_tensor_to_cupy(tmp)
                 else:
                     tmp = device_put(
@@ -620,10 +620,8 @@ class MeshHostWorker:
         col.broadcast_partialgpu(to_use, n_elements, comm_key, world_size,
                                  devices_ids, devices_global_rank, group_name)
 
-        for for_buffer_tensor, device_id, global_rank, tensor_slice in zip(for_buffer,
-                                                                           devices_ids,
-                                                                           devices_global_rank,
-                                                                           tensor_slices):
+        for for_buffer_tensor, device_id, global_rank, tensor_slice in zip(
+                for_buffer, devices_ids, devices_global_rank, tensor_slices):
             if global_rank == 0:
                 continue
             uuid = uuids[device_id]
@@ -633,7 +631,8 @@ class MeshHostWorker:
                 self.buffers[uuid] = cupy_to_xla_buffer(for_buffer_tensor)
             else:
                 recv_tensor = cupy_to_jax_tensor(for_buffer_tensor)
-                start_indices = tuple(ind_in_dst.start for ind_in_dst in tensor_slice)
+                start_indices = tuple(
+                    ind_in_dst.start for ind_in_dst in tensor_slice)
                 new_buffer = jax_tensor_set(
                     xla_buffer_to_jax_tensor(self.buffers[uuid]), recv_tensor,
                     start_indices)
@@ -840,8 +839,7 @@ class PhysicalDeviceMesh(ABC):
     @abstractmethod
     def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
                            donated_invars: Sequence[bool],
-                           batch_invars: Sequence[bool],
-                           num_micro_batches: int,
+                           batch_invars: Sequence[bool], num_micro_batches: int,
                            args: Sequence[Any]):
         """Shard high-level arguments as low-level buffers."""
         raise NotImplementedError()
@@ -912,16 +910,18 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
     ##### Executable Related Functions #####
     def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
                            donated_invars: Sequence[bool],
-                           batch_invars: Sequence[bool],
-                           num_micro_batches: int,
+                           batch_invars: Sequence[bool], num_micro_batches: int,
                            args: Sequence[Any]):
         bufs = []
-        for arg, indices, donated, is_batch_var in zip(
-                args, shard_indices, donated_invars, batch_invars):
+        for arg, indices, donated, is_batch_var in zip(args, shard_indices,
+                                                       donated_invars,
+                                                       batch_invars):
             if is_batch_var:
                 micro_batches = jnp.split(arg, num_micro_batches)
-                bufs.append([pxla._shard_arg(x, self.devices, indices)
-                             for x in micro_batches])
+                bufs.append([
+                    pxla._shard_arg(x, self.devices, indices)
+                    for x in micro_batches
+                ])
             else:
                 bufs.append(pxla._shard_arg(arg, self.devices, indices))
 
@@ -1157,7 +1157,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def delete_remote_buffers(self, buf_refs: List["RemoteBufferRef"]):
         """Delete remote buffers."""
-        if self.workers is None or not ray or not ray.worker or not ray.is_initialized():
+        if self.workers is None or not ray or not ray.worker or not ray.is_initialized(
+        ):
             return
 
         # Put delete requests into per-host buffers
@@ -1188,15 +1189,15 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
     ##### Executable Related Functions #####
     def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
                            donated_invars: Sequence[bool],
-                           batch_invars: Sequence[bool],
-                           num_micro_batches: int,
+                           batch_invars: Sequence[bool], num_micro_batches: int,
                            args: Sequence[Any]):
         ret_bufs = []
         total_bytes = 0
         time_start = time.time()
 
-        for arg, indices, donated, is_batch_var in zip(
-                args, shard_indices, donated_invars, batch_invars):
+        for arg, indices, donated, is_batch_var in zip(args, shard_indices,
+                                                       donated_invars,
+                                                       batch_invars):
             tic = time.time()
             slow_path = False
 
@@ -1205,10 +1206,12 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 if not isinstance(arg, ShapedArray):
                     arg = np.asarray(arg)
                 bufs = _shard_array(arg, self, indices, num_micro_batches)
-                bufs = np.array(bufs).reshape(self.num_hosts, self.num_devices_per_host,
+                bufs = np.array(bufs).reshape(self.num_hosts,
+                                              self.num_devices_per_host,
                                               num_micro_batches)
                 bufs = bufs.transpose([2, 0, 1]).reshape(
-                    (num_micro_batches, self.num_hosts * self.num_devices_per_host))
+                    (num_micro_batches,
+                     self.num_hosts * self.num_devices_per_host))
                 ret_bufs.append(bufs)
             else:
                 if isinstance(arg, DistributedArray) and arg.indices == indices:
@@ -1308,7 +1311,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def get_max_memory_allocated(self):
         return max(
-            ray.get([w.get_max_memory_allocated.remote() for w in self.workers]))
+            ray.get([w.get_max_memory_allocated.remote() for w in self.workers
+                    ]))
 
     def get_available_memory(self):
         return min(
@@ -1788,9 +1792,7 @@ class PhysicalDeviceMeshGroup:
         if instantiate:
             self._instantiate_nccl_group(cg)
 
-    def instantiate_nccl_group(self,
-                               src_mesh_id: int,
-                               dst_mesh_id: int):
+    def instantiate_nccl_group(self, src_mesh_id: int, dst_mesh_id: int):
         cg = self.collective_groups[src_mesh_id][dst_mesh_id]
         self._instantiate_nccl_group(cg)
 
@@ -1803,14 +1805,16 @@ class PhysicalDeviceMeshGroup:
                 for aval, mesh, spec in info.get_info():
                     meshes.append(mesh)
                     indices = pxla.spec_to_indices(aval.shape, spec)
-                    arrays.append(mesh.shard_args_to_arrays(
-                        (aval,), (indices,), (spec,), (arg,))[0])
+                    arrays.append(
+                        mesh.shard_args_to_arrays((aval,), (indices,), (spec,),
+                                                  (arg,))[0])
                 rets.append(ReplicatedDistributedArray(meshes, arrays))
             else:
                 aval, mesh, spec = info.get_info()
                 indices = pxla.spec_to_indices(aval.shape, spec)
-                rets.append(mesh.shard_args_to_arrays(
-                    (aval,), (indices,), (spec,), (arg,))[0])
+                rets.append(
+                    mesh.shard_args_to_arrays((aval,), (indices,), (spec,),
+                                              (arg,))[0])
 
         return rets
 
@@ -1993,7 +1997,8 @@ def init_global_cluster(cluster: str):
             ray.init(address="auto", ignore_reinit_error=True)
         update_jax_platform("cpu")
         global_cluster = DeviceCluster()
-        global_virtual_physical_mesh = global_cluster.get_virtual_physical_mesh()
+        global_virtual_physical_mesh = global_cluster.get_virtual_physical_mesh(
+        )
 
 
 def shutdown_global_cluster():
@@ -2061,9 +2066,9 @@ def _device_mesh_put(device_mesh, shards, num_batch, batch_dim):
     shard_step = device_mesh.num_devices_per_host
     for host_id in range(device_mesh.num_hosts):
         device_mesh.workers[host_id].put_buffers.remote(
-            buf_uuids[host_id * uuid_step:(host_id + 1) * uuid_step], device_ids,
-            shards[host_id * shard_step:(host_id + 1) * shard_step], num_batch,
-            batch_dim)
+            buf_uuids[host_id * uuid_step:(host_id + 1) * uuid_step],
+            device_ids, shards[host_id * shard_step:(host_id + 1) * shard_step],
+            num_batch, batch_dim)
     return buf_refs
 
 

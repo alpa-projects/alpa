@@ -138,7 +138,8 @@ def remat_sliced_eqns(origin_jaxpr, sliced_eqns):
                      name=str(i),
                      call_jaxpr=new_jaxpr,
                      prevent_cse=True,
-                     policy=None))])
+                     policy=None))
+        ])
     return ret_eqns
 
 
@@ -180,12 +181,14 @@ def get_layer_construction_costs(jaxpr, cost_criteria="flops"):
         compute_costs = np.array([
             eqn_flops(eqn) if nt else 0
             for nt, eqn in zip(nontrivial, jaxpr.eqns)
-        ], dtype=np.float64)
+        ],
+                                 dtype=np.float64)
     elif cost_criteria == "count":
         compute_costs = np.array([
             heavy_count(eqn) if nt else 0
             for nt, eqn in zip(nontrivial, jaxpr.eqns)
-        ], dtype=np.float64)
+        ],
+                                 dtype=np.float64)
     elif cost_criteria == "input_memory":
         cost_fn = partial(global_invar_size, set(jaxpr.jaxpr.invars))
         compute_costs = np.array([cost_fn(eqn) for eqn in jaxpr.eqns],
@@ -380,7 +383,8 @@ def layer_level_jaxpr_transformation(fn: Callable,
         if layer_construction:
             jaxpr = add_pipeline_marks_for_sliced_eqns(jaxpr, sliced_eqns)
         else:
-            jaxpr = clone_jaxpr(jaxpr, eqns=[x for eqns in sliced_eqns for x in eqns])
+            jaxpr = clone_jaxpr(jaxpr,
+                                eqns=[x for eqns in sliced_eqns for x in eqns])
 
         flatten_args, _ = tree_flatten(args)
         ans = jaxpr_as_fun(jaxpr)(*flatten_args)  # pylint: disable=not-callable
@@ -390,9 +394,7 @@ def layer_level_jaxpr_transformation(fn: Callable,
     return wrapped
 
 
-def manual_remat(fun: Callable = None,
-                 *,
-                 static_argnums: Sequence[int] = ()):
+def manual_remat(fun: Callable = None, *, static_argnums: Sequence[int] = ()):
     """Rematerialize an input function with manually selected layer boundaries.
 
     Rematerialize each layer of an input function with manually selected layer

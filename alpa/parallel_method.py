@@ -20,13 +20,13 @@ from jax.tree_util import PyTreeDef
 import numpy as np
 
 from alpa.device_mesh import (PhysicalDeviceMesh, VirtualPhysicalMesh,
-                              LocalPhysicalDeviceMesh,
-                              get_global_physical_mesh,
+                              LocalPhysicalDeviceMesh, get_global_physical_mesh,
                               get_global_virtual_physical_mesh)
 from alpa.pipeline_parallel.compile_executable import compile_pipeshard_executable
 from alpa.pipeline_parallel.local_pipeline import compile_local_pipeline_executable
-from alpa.pipeline_parallel.stage_construction import (
-    AutoStageOption, ManualStageOption, UniformStageOption)
+from alpa.pipeline_parallel.stage_construction import (AutoStageOption,
+                                                       ManualStageOption,
+                                                       UniformStageOption)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption, LogicalDeviceMesh
 from alpa.shard_parallel.compile_executable import compile_shard_executable
 
@@ -60,7 +60,8 @@ class ShardParallel(ParallelMethod):
     """
 
     def __init__(self,
-                 devices: Optional[Union[LogicalDeviceMesh, PhysicalDeviceMesh]] = None,
+                 devices: Optional[Union[LogicalDeviceMesh,
+                                         PhysicalDeviceMesh]] = None,
                  num_micro_batches: Optional[int] = None,
                  auto_sharding_option: Optional[AutoShardingOption] = None):
         self.devices = devices
@@ -88,9 +89,10 @@ class ShardParallel(ParallelMethod):
         assert isinstance(mesh, (PhysicalDeviceMesh, LogicalDeviceMesh))
 
         return compile_shard_executable(fun, in_tree, out_tree_thunk,
-                                        static_argnums, donated_invars, batch_invars,
-                                        mesh, self.num_micro_batches,
-                                        self.as_option, *avals)
+                                        static_argnums, donated_invars,
+                                        batch_invars, mesh,
+                                        self.num_micro_batches, self.as_option,
+                                        *avals)
 
 
 class PipeshardParallel(ParallelMethod):
@@ -117,30 +119,30 @@ class PipeshardParallel(ParallelMethod):
         cache_compute_cost: The file name of the cached compute cost.
     """
 
-    def __init__(self,
-                 devices: Optional[VirtualPhysicalMesh] = None,
-                 num_micro_batches: int = 1,
-                 default_auto_sharding_option: Optional[AutoShardingOption] = None,
-                 pipeline_schedule: str = "1f1b",
-                 stage_mode: str = "uniform",
-                 submesh_physical_shape_space: str = "power_of_two",
-                 submesh_logical_shape_space: str = "default",
-                 auto_stage_imbalance_tolerance: float = np.inf,
-                 use_hlo_cost_model: bool = False,
-                 profiling_database_filename: Optional[str] = None,
-                 cached_compute_cost: Optional[str] = None):
+    def __init__(
+            self,
+            devices: Optional[VirtualPhysicalMesh] = None,
+            num_micro_batches: int = 1,
+            default_auto_sharding_option: Optional[AutoShardingOption] = None,
+            pipeline_schedule: str = "1f1b",
+            stage_mode: str = "uniform",
+            submesh_physical_shape_space: str = "power_of_two",
+            submesh_logical_shape_space: str = "default",
+            auto_stage_imbalance_tolerance: float = np.inf,
+            use_hlo_cost_model: bool = False,
+            profiling_database_filename: Optional[str] = None,
+            cached_compute_cost: Optional[str] = None):
         self.devices = devices
         self.num_micro_batches = num_micro_batches
         self.as_option = default_auto_sharding_option or AutoShardingOption()
         self.pipeline_schedule = pipeline_schedule
         if stage_mode == "auto":
-            self.stage_option = AutoStageOption(
-                submesh_physical_shape_space,
-                submesh_logical_shape_space,
-                auto_stage_imbalance_tolerance,
-                use_hlo_cost_model,
-                profiling_database_filename,
-                cached_compute_cost)
+            self.stage_option = AutoStageOption(submesh_physical_shape_space,
+                                                submesh_logical_shape_space,
+                                                auto_stage_imbalance_tolerance,
+                                                use_hlo_cost_model,
+                                                profiling_database_filename,
+                                                cached_compute_cost)
         elif stage_mode == "uniform":
             self.stage_option = UniformStageOption()
         else:
@@ -166,9 +168,8 @@ class PipeshardParallel(ParallelMethod):
         assert isinstance(mesh, VirtualPhysicalMesh)
 
         return compile_pipeshard_executable(
-            fun, in_tree, out_tree_thunk,
-            static_argnums, donated_invars, batch_invars,
-            mesh, self.num_micro_batches, self.pipeline_schedule,
+            fun, in_tree, out_tree_thunk, static_argnums, donated_invars,
+            batch_invars, mesh, self.num_micro_batches, self.pipeline_schedule,
             self.as_option, self.stage_option, *avals)
 
 
@@ -190,15 +191,16 @@ class ManualPipeshardParallel(PipeshardParallel):
           Possible choices: {"1f1b", "gpipe", "inference"}
     """
 
-    def __init__(self,
-                 forward_stage_layer_ids: Sequence[Sequence[int]],
-                 submesh_physical_shapes: Sequence[Sequence[int]],
-                 submesh_logical_shapes: Sequence[Sequence[int]],
-                 submesh_autosharding_option_dicts: Sequence[dict],
-                 devices: Optional[VirtualPhysicalMesh] = None,
-                 num_micro_batches: int = 1,
-                 default_auto_sharding_option: Optional[AutoShardingOption] = None,
-                 pipeline_schedule: str = "1f1b"):
+    def __init__(
+            self,
+            forward_stage_layer_ids: Sequence[Sequence[int]],
+            submesh_physical_shapes: Sequence[Sequence[int]],
+            submesh_logical_shapes: Sequence[Sequence[int]],
+            submesh_autosharding_option_dicts: Sequence[dict],
+            devices: Optional[VirtualPhysicalMesh] = None,
+            num_micro_batches: int = 1,
+            default_auto_sharding_option: Optional[AutoShardingOption] = None,
+            pipeline_schedule: str = "1f1b"):
         # pylint: disable=super-init-not-called
         self.devices = devices
         self.num_micro_batches = num_micro_batches
@@ -217,6 +219,7 @@ class LocalPipelineParallel(ParallelMethod):
     Run pipeline parallel on a single device.
     This is only used for debugging.
     """
+
     def compile_executable(
         self,
         fun: lu.WrappedFun,

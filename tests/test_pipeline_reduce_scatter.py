@@ -5,7 +5,6 @@ from alpa.testing import PipelineBasicTest
 from alpa.util import count_communication_primitives
 
 
-
 class PipelineReduceScatterTest(PipelineBasicTest):
 
     def test_mlp_grad_acc_friendly(self):

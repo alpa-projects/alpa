@@ -2024,8 +2024,8 @@ def init_global_cluster(cluster: str):
             ray.init(address="auto", ignore_reinit_error=True)
         update_jax_platform("cpu")
         global_cluster = DeviceCluster()
-        global_virtual_physical_mesh = global_cluster.get_virtual_physical_mesh(
-        )
+        global_virtual_physical_mesh = (
+            global_cluster.get_virtual_physical_mesh())
 
 
 def shutdown_global_cluster():

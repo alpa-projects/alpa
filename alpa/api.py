@@ -80,10 +80,14 @@ def parallelize(fun: Optional[Callable] = None,
 class ParallelizedFunc:
     """The function after being transformed by alpa.parallelize."""
 
-    def __init__(self, fun: Callable, static_argnums: Union[Sequence[int], str],
-                 donate_argnums: Union[Sequence[int], str],
-                 batch_argnums: Union[Sequence[int],
-                                      str], method: ParallelMethod):
+    def __init__(
+        self,
+        fun: Callable,
+        static_argnums: Union[Sequence[int], str],
+        donate_argnums: Union[Sequence[int], str],
+        batch_argnums: Union[Sequence[int], str],
+        method: ParallelMethod,
+    ):
         self.fun = fun
         self.static_argnums = static_argnums
         self.donate_argnums = donate_argnums

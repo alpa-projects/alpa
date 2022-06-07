@@ -7,7 +7,7 @@ import os
 from typing import Callable, Optional, Tuple, Dict
 
 import alpa
-from alpa import mark_pipeline
+from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 from alpa.model.model_util import ModelOutput
 from alpa.mesh_executable import create_remote_buffer_refs
 from alpa.device_mesh import DistributedArray, ReplicatedDistributedArray
@@ -310,8 +310,7 @@ class OPTTransformerLayerCollection(nn.Module):
             if self.config.num_pp_stages is not None:
                 if i % layers_per_stage == 0 and i != 0:
                     stage_id = i // layers_per_stage
-                    mark_pipeline(name=str(stage_id - 1), mark_type="end")
-                    mark_pipeline(name=str(stage_id), mark_type="start")
+                    mark_pipeline_boundary()
 
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -661,14 +660,12 @@ def get_pipeshard_executable(config, support_output_attentions=False,
     def inference_step_with_cache(params, batch):
         @alpa.manual_layer_construction
         def forward(params):
-            alpa.mark_pipeline(name="0", mark_type="start")
             output = model.apply(params,
                                  batch["input_ids"],
                                  batch["position_ids"],
                                  attention_cache=batch["cache"],
                                  output_attentions=support_output_attentions,
                                  output_hidden_states=support_output_hidden_states)
-            alpa.mark_pipeline(name=f"{config.num_pp_stages - 1}", mark_type="end")
             return output
 
         output = forward(params)

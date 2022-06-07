@@ -61,7 +61,7 @@ def benchmark_ndarray_save_load(mode="flax", to_efs=True):
     - alpa.restore_checkpoint: N/A
 
     - np.save:                 save average run time: 0.8104 seconds, save average throughput:  9.8718 Gbps
-    - np.load:                 load average run time: 0.5116 seconds, load average throughput: 15.6365 Gbps
+    - np.load:                 load average run time: 0.7327 seconds, load average throughput: 10.9179 Gbps
     """
     rngkey = random.PRNGKey(0)
     #arr_sizes = [1024*1024, 4*1024*1024, 16*1024*1024, 32*1024*1024] # 4M, 16M, 64M, 128M
@@ -93,10 +93,12 @@ def benchmark_ndarray_save_load(mode="flax", to_efs=True):
                 np.save(ckpt_path, arr)
             duration = time.time() - start
             throughput = arr.size * 32 / 1024 / 1024 / 1024 / duration
-            save_tot_duration += duration
-            save_tot_throughput += throughput
+            if i >= 1:
+                save_tot_duration += duration
+                save_tot_throughput += throughput
             print(f"loop {i} save, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
 
+            gpus = jax.devices("gpu")
             # load benchmark
             start = time.time()
             if mode == "flax":
@@ -105,16 +107,17 @@ def benchmark_ndarray_save_load(mode="flax", to_efs=True):
                 print("alpa skip load array benchmark")
                 continue
             else:
-                _ = jax.device_put(np.load(ckpt_path))
+                jax.block_until_ready(jax.device_put(np.load(ckpt_path), gpus[0]))
                 
             duration = time.time() - start
             throughput = arr.size * 32 / 1024 / 1024 / 1024 / duration
-            load_tot_duration += duration
-            load_tot_throughput += throughput
+            if i >= 1:
+                load_tot_duration += duration
+                load_tot_throughput += throughput
             print(f"loop {i} load, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
 
-        print(f"save average run time: {save_tot_duration/LOOP_CNT:.4f} seconds, save average throughput: {save_tot_throughput/LOOP_CNT:.4f} Gbps")
-        print(f"load average run time: {load_tot_duration/LOOP_CNT:.4f} seconds, load average throughput: {load_tot_throughput/LOOP_CNT:.4f} Gbps")
+        print(f"save average run time: {save_tot_duration/(LOOP_CNT - 1):.4f} seconds, save average throughput: {save_tot_throughput/(LOOP_CNT - 1):.4f} Gbps")
+        print(f"load average run time: {load_tot_duration/(LOOP_CNT - 1):.4f} seconds, load average throughput: {load_tot_throughput/(LOOP_CNT - 1):.4f} Gbps")
 
 def count_params(model):
     return sum(x.size for x in jax.tree_leaves(model))
@@ -181,6 +184,7 @@ def benchmark_dist_arr_save(to_efs=False):
     Benchmark results on local disk:
     - one host:
         - TensorStore: save average run time: 9.9292 seconds, save average throughput: 0.8057 Gbps
+        - np.save      save average run time: 0.8113 seconds, save average throughput: 9.8601 Gbps
 
     - two hosts:
         - TensorStore: save average run time: 3.9092 seconds, save average throughput: 2.0465 Gbps
@@ -191,7 +195,7 @@ def benchmark_dist_arr_save(to_efs=False):
     logical_mesh = physical_mesh.get_logical_mesh()
 
     rngkey = random.PRNGKey(0)
-    arr_shape = (16*1024, 16*1024) #1GB
+    arr_shape = (64*1024, 16*1024) #1GB
     arr = random.normal(rngkey, arr_shape)
 
     sharding_spec = logical_mesh.make_tile_spec(arr, [0, 1], [0, 1])
@@ -209,7 +213,7 @@ def benchmark_dist_arr_save(to_efs=False):
         print(f"save to {outdir}")
 
         start = time.time()
-        dist_arr.save(outdir)
+        jax.block_until_ready(dist_arr.save(outdir))
         duration = time.time() - start
         throughput = arr.size * 32 / 1024 / 1024 / 1024 / duration
         if i >= 1:
@@ -223,7 +227,7 @@ def benchmark_dist_arr_load():
     Benchmark results on local disk:
     - one host:
         TensorStore: load average run time: 4.0709 seconds, load average throughput: 1.9651 Gbps
-        np.load:     
+        np.load:     load average run time: 1.5235 seconds, load average throughput: 5.2512 Gbps
     
     - two hosts:
         TensorStore: load average run time: 3.6650 seconds, load average throughput: 2.1828 Gbps
@@ -234,7 +238,7 @@ def benchmark_dist_arr_load():
     logical_mesh = physical_mesh.get_logical_mesh()
 
     rngkey = random.PRNGKey(0)
-    arr_shape = (16*1024, 16*1024) #1GB
+    arr_shape = (64*1024, 16*1024) #1GB
     arr = random.normal(rngkey, arr_shape)
 
     sharding_spec = logical_mesh.make_tile_spec(arr, [0, 1], [0, 1])
@@ -248,7 +252,7 @@ def benchmark_dist_arr_load():
         # load benchmark
         start = time.time()
         print("start", time.time())
-        _ = DistributedArray.load(outdir, jax.ShapedArray(arr.shape, jnp.int32), physical_mesh, sharding_spec)
+        jax.block_until_ready(DistributedArray.load(outdir, jax.ShapedArray(arr.shape, jnp.int32), physical_mesh, sharding_spec))
         print("end", time.time())
         duration = time.time() - start
         throughput = arr.size * 32 / 1024 / 1024 / 1024 / duration
@@ -280,7 +284,7 @@ def benchmark_mlp_dist_save():
     """
     # Init model and optimizer
     batch_size = 64
-    hidden_dim = 2*8192 # 3072M
+    hidden_dim = 8192 # 3072M
     input_dim = output_dim = hidden_dim
     model = MLPModel(hidden_dim=hidden_dim,
                         output_dim=output_dim,
@@ -313,8 +317,11 @@ def benchmark_mlp_dist_save():
         start = time.time()
         if i == 0:
             alpa_save_checkpoint("/tmp/warmup", parallel_state, 1)
+            jax.block_until_ready(parallel_state)
         else:
-            alpa_save_checkpoint(outdir, parallel_state, 1, cachedir)
+            #alpa_save_checkpoint(outdir, parallel_state, 1, cachedir)
+            alpa_save_checkpoint("/tmp/warmup", parallel_state, 1)
+            jax.block_until_ready(parallel_state)
         duration = time.time() - start
         throughput = model_size * 32 / 1024 / 1024 / 1024 / duration
         if i >= 1:
@@ -371,7 +378,8 @@ def benchmark_mlp_dist_load():
         print(f"load from {outdir}")
         # benchmark loading
         start = time.time()
-        _ = alpa_restore_checkpoint(outdir, 1, state_ss)
+        load_state = alpa_restore_checkpoint(outdir, 1, state_ss)
+        jax.block_until_ready(load_state)
         duration = time.time() - start
         throughput = model_size * 32 / 1024 / 1024 / 1024 / duration
         if i >= 1: # first loop for warmup
@@ -414,7 +422,7 @@ if __name__ == "__main__":
     # benchmark_dist_arr_save()
     # benchmark_dist_arr_load()
 
-    print("mlp dist save/load benchmark:")
+    # print("mlp dist save/load benchmark:")
     benchmark_mlp_dist_save()
     # benchmark_mlp_dist_load()
     alpa.shutdown()

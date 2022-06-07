@@ -1,8 +1,6 @@
-"""Serialization utilities for Alpa.
-Adapted from
-https://flax.readthedocs.io/en/latest/_modules/flax/serialization.html
-Add support for DistributedArray and ReplicatedDistributedArray serialization
-in Alpa.
+"""
+Serialization utilities for Alpa.
+Support DistributedArray and ReplicatedDistributedArray serialization in Alpa.
 """
 
 import logging

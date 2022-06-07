@@ -24,6 +24,7 @@ import logging
 from operator import attrgetter
 import os
 import pickle
+import subprocess
 import threading
 import time
 from typing import Any, List, Union, Sequence, Tuple, Optional, Callable
@@ -84,13 +85,20 @@ ReshardingBroadcastTask = namedtuple("ReshardingBroadcastTask",
 
 class DaemonMoveWorker:
     """A ray actor that moves local checkpoint into EFS in the background."""
-    def __init__(self, server_address: str):
-        print(server_address, "launch move worker successfully")
-    
-    def move(self, local_path, nfs_path):
+    def move(self, from_dir: str, to_dir: str):
+        os.makedirs(to_dir, exist_ok=True)
+        process_pool = []
+        for file in os.listdir(from_dir):
+            from_path = os.path.join(from_dir, file)
+            to_path = os.path.join(to_dir, file)
+            process_pool.append(subprocess.Popen(["mv", from_path, to_path], 
+                                            stdin=None, stdout=None, stderr=None))
+        for p in process_pool:
+            p.wait()
+
+    def shutdown(self):
+        """Noop function used to synchronized."""
         pass
-
-
 
 
 class MeshHostWorker:
@@ -106,6 +114,7 @@ class MeshHostWorker:
         self.num_hosts = num_hosts
         self.host_id = host_id
         self.mesh_id = mesh_id
+        self.launched = False
         self.distributed_client = (
             xla_client._xla.get_distributed_runtime_client(
                 server_address, host_id))
@@ -144,7 +153,8 @@ class MeshHostWorker:
 
         # Launch the DaemonMoveWorker
         cls = ray.remote(resources={node_resource: 1e-3})(DaemonMoveWorker)
-        self.move_worker = cls.remote(server_address)
+        self.move_worker = cls.remote()
+        self.launched = True
 
     ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
@@ -301,6 +311,8 @@ class MeshHostWorker:
             pickle.dump(metadata, metafile)
         
         # move data
+        if local_cache_dir is not None:
+            self.move_worker.move.remote(local_cache_dir, ckpt_dir)
 
     def load_buffers(self, ckpt_dir: str, uuids: Sequence[int],
                      shard_indices: Sequence[Index],
@@ -721,11 +733,18 @@ class MeshHostWorker:
     def check_alive():
         return True
 
-    def shutdown(self):
+    def shutdown(self, forced=False):
+        if not self.launched:
+            return
         self.sync()
         self.buffers.clear()
         self.executables.clear()
         self.distributed_client.shutdown()
+        # shutdown DaemonMoveWorker
+        if not forced:
+            ray.get(self.move_worker.shutdown.remote())
+        ray.kill(self.move_worker)
+        self.move_worker = None
 
 
 class PhysicalDeviceMesh(ABC):

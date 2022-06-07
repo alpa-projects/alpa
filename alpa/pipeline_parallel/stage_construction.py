@@ -7,7 +7,6 @@ from typing import Sequence, List, Tuple, Dict, Union
 
 from jax.core import Var
 import numpy as np
-import numba
 from ray.exceptions import RayActorError
 import tqdm
 
@@ -21,7 +20,7 @@ from alpa.pipeline_parallel.stage_profiling import (generate_stage_info,
 from alpa.shard_parallel.auto_sharding import (AutoShardingOption,
                                                LogicalDeviceMesh)
 from alpa.timer import timers
-from alpa.util import OrderedSet
+from alpa.util import OrderedSet, maybe_numba_jit
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -55,7 +54,7 @@ def get_last_dp_result():
             last_autosharding_option_dicts)
 
 
-@numba.jit(nopython=True)
+@maybe_numba_jit
 def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
             num_autosharding_configs, compute_cost, max_n_succ_stages,
             max_stage_cost):

@@ -2,6 +2,7 @@
 """Common utilities."""
 import functools
 import itertools as it
+import logging
 import os
 import subprocess
 import time
@@ -39,6 +40,7 @@ from alpa.global_env import global_config, is_worker
 ##### Alpa API Utilities
 ########################################
 
+logger = logging.getLogger(__name__)
 
 def freeze_dict(pytree: PyTreeDef):
     """Convert a pytree to a FrozenDict."""
@@ -1084,3 +1086,13 @@ def get_var_mapping(mapping, var):
         return mapping[var]
     else:
         return var
+
+
+def maybe_numba_jit(func):
+    """Decorator to mark a function as numba jitted if numba is available."""
+    try:
+        from numba import jit  # pylint: disable=import-outside-toplevel
+        return jit(nopython=True)(func)
+    except ImportError:
+        logger.warning("Install numba to jit and accelerate the function.")
+        return func

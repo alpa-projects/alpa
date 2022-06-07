@@ -86,7 +86,6 @@ install_require_list = [
     "pulp",
     "tensorstore",
     "numpy<1.22",
-    "numba",
 ]
 
 dev_require_list = [

@@ -87,18 +87,13 @@ class DaemonMoveWorker:
     """A ray actor that moves local checkpoint into EFS in the background."""
     def move(self, from_dir: str, to_dir: str):
         os.makedirs(to_dir, exist_ok=True)
-        process_pool = []
         for file in os.listdir(from_dir):
             from_path = os.path.join(from_dir, file)
             to_path = os.path.join(to_dir, file)
-            process_pool.append(subprocess.Popen(["mv", from_path, to_path], 
-                                            stdin=None, stdout=None, stderr=None))
-        for p in process_pool:
-            p.wait()
+            subprocess.run(["mv", from_path, to_path])
 
     def shutdown(self):
         """Noop function used to synchronized."""
-        pass
 
 
 class MeshHostWorker:
@@ -309,7 +304,7 @@ class MeshHostWorker:
 
         with open(os.path.join(save_dir, f".metadata{self.host_id}"), "wb") as metafile:
             pickle.dump(metadata, metafile)
-        
+
         # move data
         if local_cache_dir is not None:
             self.move_worker.move.remote(local_cache_dir, ckpt_dir)
@@ -1420,7 +1415,7 @@ class DistributedArray:
         self._npy_value = None
 
     ##### distributed save/load #####
-    def save(self, ckpt_dir: str, local_cache_dir: Union[str, None]=None):
+    def save(self, ckpt_dir: str, local_cache_dir: Union[str, None] = None):
         """
             Save one replica of the array to `ckpt_dir` distributedly.
 
@@ -1449,7 +1444,7 @@ class DistributedArray:
         for host_id, uuids in buf_refs_per_host.items():
             if len(uuids) > 0:
                 self.device_mesh.workers[host_id].save_buffers.remote(
-                ckpt_dir, local_cache_dir, uuids, indices_per_host[host_id], self.shape)
+                    ckpt_dir, local_cache_dir, uuids, indices_per_host[host_id], self.shape)
 
     @classmethod
     def load(cls, path: str, aval: ShapedArray, device_mesh: PhysicalDeviceMesh,
@@ -1476,9 +1471,8 @@ class DistributedArray:
                 device_ids_per_host[buf_ref.host_id].append(buf_ref.device_id)
         for host_id, uuids in buf_refs_per_host.items():
             if len(uuids) > 0:
-                    device_mesh.workers[host_id].load_buffers.remote(
-                        path, uuids, indices_per_host[host_id],
-                        device_ids_per_host[host_id])
+                device_mesh.workers[host_id].load_buffers.remote(
+                    path, uuids, indices_per_host[host_id], device_ids_per_host[host_id])
         return DistributedArray(device_mesh, aval, sharding_spec, buf_refs, indices)
 
     @property

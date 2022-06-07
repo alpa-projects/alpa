@@ -15,7 +15,6 @@ from jax.core import ShapedArray
 from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
 import msgpack
 import numpy as np
-import ray
 
 from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
                               PhysicalDeviceMesh)
@@ -75,7 +74,7 @@ def load_sharded_array(ckpt_dir, metadatas):
 
 
 def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
-                    step: int, local_cache_dir: Union[str, os.PathLike, None]=None):
+                    step: int, local_cache_dir: Union[str, os.PathLike, None] = None):
     """
         Save a checkpoint of the `target` to `ckpt_dir`. 
 

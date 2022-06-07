@@ -24,7 +24,7 @@ import logging
 from operator import attrgetter
 import os
 import pickle
-import subprocess
+import shutil
 import threading
 import time
 from typing import Any, List, Union, Sequence, Tuple, Optional, Callable
@@ -84,13 +84,13 @@ ReshardingBroadcastTask = namedtuple("ReshardingBroadcastTask",
 
 
 class DaemonMoveWorker:
-    """A ray actor that moves local checkpoint into EFS in the background."""
+    """A ray actor that moves local checkpoint into the shared filesystem in the background."""
     def move(self, from_dir: str, to_dir: str):
         os.makedirs(to_dir, exist_ok=True)
         for file in os.listdir(from_dir):
             from_path = os.path.join(from_dir, file)
             to_path = os.path.join(to_dir, file)
-            subprocess.run(["mv", from_path, to_path], check=True)
+            shutil.move(from_path, to_path)
 
     def shutdown(self):
         """Noop function used to synchronized."""

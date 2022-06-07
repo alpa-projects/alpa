@@ -42,6 +42,7 @@ from alpa.global_env import global_config, is_worker
 
 logger = logging.getLogger(__name__)
 
+
 def freeze_dict(pytree: PyTreeDef):
     """Convert a pytree to a FrozenDict."""
 

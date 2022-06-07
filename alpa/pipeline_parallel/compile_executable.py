@@ -5,16 +5,18 @@ import time
 from typing import Callable, Sequence
 
 from jax import linear_util as lu
+from jax._src.lib import xla_extension as xe
 from jax.core import gensym, AbstractValue
 from jax.tree_util import PyTreeDef
 
 from alpa.device_mesh import VirtualPhysicalMesh
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.pipeshard_executable import PipeshardDriverExecutable
+from alpa.pipeline_parallel.runtime_emitter import PipelineInstEmitter
 from alpa.pipeline_parallel.schedules import (GpipeSchedule, PipeDreamFlush,
                                               InferenceSchedule)
 from alpa.pipeline_parallel.computation import (
-    create_donation_mapping, generate_computations_from_protos,
+    create_donation_mapping, generate_computations_from_modules,
     generate_sharded_xla_computations,
     generate_sharded_xla_computations_arguments, get_donatable_intermediate,
     mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
@@ -165,24 +167,31 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
     debug_compilation_time("launch meshes")
 
     # Wrap all things into a distributed runtime
-    grad_in_to_out = {k: repr(v) for k, v in grad_in_to_out.items()}
     global_outvars, concat_vars_mapping = _rewrite_global_outvars_post_concate(
         global_outvars, reduction_vector, microbatch_bound,
         post_microbatch_bound, gensym_func)
 
-    executable = PipeshardDriverExecutable(
+    # TODO(yonghao): use virtual mesh instead of launched physical group
+    pipeshard_config = PipelineInstEmitter(
         stages=xla_stages,
         global_invars=global_invars,
         grad_dummy_invars=grad_in_to_out,
+        concat_vars_mapping=concat_vars_mapping,
         global_outvars=global_outvars,
         mesh_group=virtual_mesh.launched_physical_mesh_group,
-        dependency=dependency,
+        schedule=schedule,
+        is_batch=batch_invars,
+        num_batch=num_microbatch,
+        in_tree=in_tree).compile()
+
+    executable = PipeshardDriverExecutable(
+        stages=xla_stages,
+        mesh_group=virtual_mesh.launched_physical_mesh_group,
+        pipeshard_config=pipeshard_config,
         schedule=schedule,
         is_batch=batch_invars,
         num_batch=num_microbatch,
         flop_count=total_flops,
-        concat_vars_mapping=concat_vars_mapping,
-        in_tree=in_tree,
         out_tree_thunk=out_tree_thunk,
         static_argnums=static_argnums)
     debug_compilation_time("driver executable")
@@ -242,14 +251,15 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
             for stage_idx in stage_id_dict[mesh_idx]
         ]
         if distributed_compile:
-            proto, jaxpr_args, flops = generate_sharded_xla_computations_arguments(
+            module, jaxpr_args, flops = generate_sharded_xla_computations_arguments(
                 str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars)
             other_kwargs = {
                 "logical_mesh": logical_mesh,
-                "return_mode": "stage_protos",
+                "return_mode": "stages",
                 "as_option": autosharding_option,
                 "num_micro_batches": num_microbatch,
             }
+            proto = module.as_serialized_hlo_module_proto()
             compile_workers.submit(compile_fn,
                                    (mesh_idx, proto, jaxpr_args, other_kwargs))
             compile_intermediate[mesh_idx] = (stage_dict[mesh_idx],
@@ -267,12 +277,14 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
 
     if distributed_compile:
         for _ in range(num_meshes):
-            mesh_idx, (computation_names, computation_protos,
+            mesh_idx, (computation_names, computation_modules,
                        strategy_config) = compile_workers.get_next_unordered()
+            computation_modules = [xe.HloModule.from_serialized_hlo_module_proto(x)
+                                   for x in computation_modules]
             jax_computations, computation_donate_invars = compile_intermediate[
                 mesh_idx]
-            sharded_xla_stages = generate_computations_from_protos(
-                jax_computations, computation_names, computation_protos,
+            sharded_xla_stages = generate_computations_from_modules(
+                jax_computations, computation_names, computation_modules,
                 computation_donate_invars, donatable_dict[mesh_idx],
                 acc_grad_outvars, strategy_config)
             for i, xla_stage in zip(stage_id_dict[mesh_idx],

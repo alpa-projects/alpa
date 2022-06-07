@@ -93,7 +93,6 @@ class ParallelizedFunc:
         self.batch_argnums = batch_argnums
         self.method = method
 
-        # Store the last executable for debugging
         self.last_executable = None
 
     def __call__(self, *args):
@@ -112,6 +111,10 @@ class ParallelizedFunc:
         executable, in_tree, _, args_flat = self._decode_args_and_get_executable(*args)
         sharded_args = executable.preshard_dynamic_args(*args_flat)
         return tree_unflatten(in_tree, sharded_args)
+
+    def get_last_executable(self):
+        """Return the last compiled executable for this function."""
+        return self.last_executable
 
     def _decode_args_and_get_executable(self, *args):
         """Flatten PyTree arguments and get the executable."""
@@ -165,6 +168,7 @@ class ParallelizedFunc:
         executable = _compile_parallel_executable(
             f, in_tree, out_tree_hashable, static_argnums, donated_invars,
             batch_invars, self.method, *abstract_args)
+
         self.last_executable = executable
         return executable, in_tree, out_tree, args_flat
 

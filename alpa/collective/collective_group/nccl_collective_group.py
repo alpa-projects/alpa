@@ -782,8 +782,8 @@ class NCCLGroup(BaseGroup):
 
         # We have made sure that self.rank != peer_rank during API check.
         peer_p2p_rank = 0 if self.rank > peer_rank else 1
-        for i, _ in enumerate(tensors):
-            p2p_fn(tensors[i], comms[i], streams[i], peer_p2p_rank)
+        for i, t in enumerate(tensors):
+            p2p_fn(t, comms[i], streams[i], peer_p2p_rank)
 
 
 def _flatten_for_scatter_gather(tensor_list, copy=False):
@@ -821,7 +821,7 @@ def _check_inputs_compatibility_for_scatter_gather(tensors, tensor_lists):
                            "expects a list of tensor list.")
     dtype = nccl_util.get_nccl_tensor_dtype(tensors[0])
     shape = nccl_util.get_tensor_shape(tensors[0])
-    for i, _ in enumerate(tensor_lists):
+    for i, tl in enumerate(tensor_lists):
         # check all tensor in `tensors` match.
         dt = nccl_util.get_nccl_tensor_dtype(tensors[i])
         if dt != dtype:
@@ -835,7 +835,7 @@ def _check_inputs_compatibility_for_scatter_gather(tensors, tensor_lists):
             raise RuntimeError("All tensor operands to scatter/gather must "
                                f"have the same shape. Got '{s}' and '{shape}'.")
         # check all tensors in `tensor_lists` match.
-        for t in tensor_lists[i]:
+        for t in tl:
             # check dtype
             dt = nccl_util.get_nccl_tensor_dtype(t)
             if dt != dtype:

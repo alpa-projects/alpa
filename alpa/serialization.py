@@ -10,14 +10,14 @@ import re
 from typing import Union, Any, Sequence
 import uuid
 
-from flax.serialization import to_state_dict, from_state_dict, _ndarray_from_bytes, _ndarray_to_bytes
+import numpy as np
 import jax
 from jax.interpreters.pxla import ShardingSpec
 from jax.core import ShapedArray
 import jax.numpy as jnp
 from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
+from flax.serialization import to_state_dict, from_state_dict, _ndarray_from_bytes, _ndarray_to_bytes
 import msgpack
-import numpy as np
 import tensorstore as ts
 
 from alpa.device_mesh import DistributedArray, ReplicatedDistributedArray, PhysicalDeviceMesh
@@ -200,7 +200,7 @@ class LoadInfo:
         return f"{self.avals[0]}, {self.meshes[0].mesh_id}, {self.specs[0]}"
 
 
-def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, target: PyTree, load_info: PyTree):
+def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, load_info: PyTree):
     """Restore the specified checkpoint from `path`. 
 
         Similar to flax.training.checkpoints.load_checkpoint, 
@@ -211,7 +211,6 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, target: PyT
         Args:
             ckpt_dir: directory of checkpoints to restore from.
             step: step number to load.
-            target: matching object to rebuild via deserialized state-dict.
             load_info: shardingSpec and deviceMesh allocation info for loading.
     """
     ckpt_path = os.path.join(ckpt_dir, f"checkpoint_{step}")
@@ -220,7 +219,7 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, target: PyT
     state_dict_content = msgpack.unpackb(ckpt_contents,
                                          ext_hook=_msgpack_ext_unpack,
                                          raw=False)
-    state_paths, state_tree = tree_flatten(from_state_dict(target, state_dict_content))
+    state_paths, state_tree = tree_flatten(from_state_dict(load_info, state_dict_content))
     flat_info = tree_leaves(load_info)
     flat_load_state = []
     for path, info in zip(state_paths, flat_info):

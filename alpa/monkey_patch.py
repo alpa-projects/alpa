@@ -114,6 +114,11 @@ def fast_normal(key, shape=(), dtype=dtypes.float_, mu=0.0, sigma=1.0):
     return rng_normal(mu, sigma, shape.positional)
 
 
+def fast_bernoulli(key, p=0.5, shape=None):
+    dtype = dtypes.float_
+    return jax.random.uniform(key, shape, dtype) < p
+
+
 def remove_fold_in(key, data):
     return key
 
@@ -122,6 +127,8 @@ jax._src.random.uniform = fast_uniform
 jax.random.uniform = fast_uniform
 jax._src.random.normal = fast_normal
 jax.random.normal = fast_normal
+jax._src.random.bernoulli = fast_bernoulli
+jax.random.bernoulli = fast_bernoulli
 jax._src.random.fold_in = remove_fold_in
 jax.random.fold_in = remove_fold_in
 

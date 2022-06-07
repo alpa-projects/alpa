@@ -52,22 +52,3 @@ jobs:
         run: |
           echo "Move the Jaxlib binary"
           mv dist/*.whl /data/alpa-dist/jaxlib-alpa-ci/
-
-  build_jax:
-    name: Build Jax
-    runs-on: [self-hosted]
-
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          repository: 'alpa-projects/jax-alpa'
-          ref: 'main'
-
-      - name: Jax source dist
-        run: |
-          python setup.py sdist
-
-      - name: Move to local
-        run: |
-          echo "Move the JAX binary"
-          mv dist/*.tar.gz /data/alpa-dist/jax-alpa/*.tar.gz

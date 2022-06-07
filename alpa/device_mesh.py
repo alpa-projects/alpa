@@ -24,7 +24,7 @@ import os
 import re
 import threading
 import time
-from typing import Any, List, Union, Sequence, Tuple, Optional
+from typing import Any, List, Union, Sequence, Tuple, Optional, Callable
 
 import jax
 from jax import core, xla, device_put
@@ -179,6 +179,26 @@ class MeshHostWorker:
                     dim_size = len(range(*filled_slice))
                     shard_shape.append(dim_size)
                 self.put_non_zero_buffer(uuids[idx], i, shard_shape, dtype)
+
+    def shard_and_apply_func_on_buffer(self,
+                                       uuids: Sequence[int],
+                                       shape: Sequence[int],
+                                       dtype: np.dtype,
+                                       indices: Sequence,
+                                       num_batch: int,
+                                       apply_func: Callable[
+                                           ["MeshHostWorker", int, int, Sequence[int], np.dtype], None
+                                       ]):
+        assert len(uuids) == len(indices) == len(self.local_devices) * num_batch
+        for i in range(len(self.local_devices)):
+            for b in range(num_batch):
+                shard_shape = []
+                idx = i * num_batch + b
+                for j, s in enumerate(indices[idx]):
+                    filled_slice = s.indices(shape[j])
+                    dim_size = len(range(*filled_slice))
+                    shard_shape.append(dim_size)
+                apply_func(self, uuids[idx], i, shard_shape, dtype)
 
     def get_buffers(self, uuids: Union[Sequence[int], int]):
         if isinstance(uuids, Iterable):
@@ -896,14 +916,15 @@ class PhysicalDeviceMesh(ABC):
                            donated_invars: Sequence[bool],
                            batch_invars: Sequence[bool],
                            num_micro_batches: int,
-                           args: Sequence):
+                           args: Sequence[Any]):
         """Shard high-level arguments as low-level buffers."""
         raise NotImplementedError()
 
     @abstractmethod
     def shard_args_to_arrays(self, avals: Sequence[ShapedArray],
                              shard_indices: Sequence[Sequence[Index]],
-                             sharding_specs: Sequence[ShardingSpec], args):
+                             sharding_specs: Sequence[ShardingSpec],
+                             args: Sequence[Any]):
         """Shard arguments (np.ndarray) as distributed arrays."""
         raise NotImplementedError()
 
@@ -967,7 +988,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
                            donated_invars: Sequence[bool],
                            batch_invars: Sequence[bool],
                            num_micro_batches: int,
-                           args: Sequence):
+                           args: Sequence[Any]):
         bufs = []
         for arg, indices, donated, is_batch_var in zip(
                 args, shard_indices, donated_invars, batch_invars):
@@ -985,7 +1006,8 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def shard_args_to_arrays(self, avals: Sequence[ShapedArray],
                              shard_indices: Sequence[Sequence[Index]],
-                             sharding_specs: Sequence[ShardingSpec], args):
+                             sharding_specs: Sequence[ShardingSpec],
+                             args: Sequence[Any]):
         arrays = []
         for i in range(len(avals)):
             shards = [
@@ -1013,13 +1035,13 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
         timers(timer_name).reset()
 
     def get_memory_allocated(self):
-        return max([d.memory_allocated() for d in self.devices])
+        return max(d.memory_allocated() for d in self.devices)
 
     def get_max_memory_allocated(self):
-        return max([d.max_memory_allocated() for d in self.devices])
+        return max(d.max_memory_allocated() for d in self.devices)
 
     def get_available_memory(self):
-        return min([device.available_memory() for device in self.devices])
+        return min(device.available_memory() for device in self.devices)
 
     def reset_memory_stats(self):
         for device in self.devices:
@@ -1242,7 +1264,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                            donated_invars: Sequence[bool],
                            batch_invars: Sequence[bool],
                            num_micro_batches: int,
-                           args: Sequence):
+                           args: Sequence[Any]):
         ret_bufs = []
         total_bytes = 0
         time_start = time.time()
@@ -1319,9 +1341,9 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
         def outs_handler(bufs):
             ret = []
-            for i, _ in enumerate(avals):
+            for i, aval in enumerate(avals):
                 dis_array = DistributedArray(device_mesh=self,
-                                             aval=avals[i],
+                                             aval=aval,
                                              sharding_spec=sharding_specs[i],
                                              remote_buffers=bufs[i],
                                              indices=indices[i])
@@ -1485,13 +1507,11 @@ class DistributedArray:
                 buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
                 indices_per_host[buf_ref.host_id].append(indice)
                 device_ids_per_host[buf_ref.host_id].append(buf_ref.device_id)
-        obj_refs = []
         for host_id, uuids in buf_refs_per_host.items():
             if len(uuids) > 0:
-                obj_refs.append(
-                    device_mesh.workers[host_id].load_buffers_from_ts.remote(
-                        path, uuids, indices_per_host[host_id],
-                        device_ids_per_host[host_id]))
+                device_mesh.workers[host_id].load_buffers_from_ts.remote(
+                    path, uuids, indices_per_host[host_id],
+                    device_ids_per_host[host_id])
         return DistributedArray(device_mesh, aval, sharding_spec, buf_refs,
                                 indices)
 
@@ -1768,7 +1788,7 @@ class VirtualPhysicalMesh:
         mesh_beta = mesh_beta or (1, 0.1)
         return LogicalDeviceMesh(None, id_mesh, mesh_alpha, mesh_beta)
 
-    def get_physical_mesh(self, mesh_id=0):
+    def get_physical_mesh(self, mesh_id: int = 0):
         """Launch a physical mesh (which will request resources from Ray)."""
         assert self.launched_physical_mesh is None, \
             "Physical mesh can only be launched once."
@@ -1825,7 +1845,10 @@ class PhysicalDeviceMeshGroup:
     def index(self, *args, **kwargs):
         return self.meshes.index(*args, **kwargs)
 
-    def establish_nccl_group(self, src_mesh_id: int, dst_mesh_id: int):
+    def establish_nccl_group(self,
+                             src_mesh_id: int,
+                             dst_mesh_id: int,
+                             instantiate=True):
         """Establish NCCL group between two meshes."""
         # pylint: disable=import-outside-toplevel
         from alpa.pipeline_parallel.cross_mesh_resharding import CollectiveGroup
@@ -1838,14 +1861,18 @@ class PhysicalDeviceMeshGroup:
         dst_mesh = self.meshes[dst_mesh_id]
         device_strs = OrderedSet(src_mesh.device_strs + dst_mesh.device_strs)
         cg = CollectiveGroup(device_strs, src_mesh, dst_mesh)
-        if global_config.eagerly_create_communicators:
-            cg.instantiate_now()
-        else:
-            cg.instantiate()
         self.collective_groups[src_mesh_id][dst_mesh_id] = cg
         self.collective_groups[dst_mesh_id][src_mesh_id] = cg
+        if instantiate:
+            self._instantiate_nccl_group(cg)
 
-    def shard_args_to_arrays(self, load_infos, args):
+    def instantiate_nccl_group(self,
+                               src_mesh_id: int,
+                               dst_mesh_id: int):
+        cg = self.collective_groups[src_mesh_id][dst_mesh_id]
+        self._instantiate_nccl_group(cg)
+
+    def shard_args_to_arrays(self, load_infos: "LoadInfo", args: Sequence[Any]):
         rets = []
 
         for info, arg in zip(load_infos, args):
@@ -1854,12 +1881,14 @@ class PhysicalDeviceMeshGroup:
                 for aval, mesh, spec in info.get_info():
                     meshes.append(mesh)
                     indices = pxla.spec_to_indices(aval.shape, spec)
-                    arrays.append(mesh.shard_args_to_arrays((aval,), (indices,), (spec,), (arg,))[0])
+                    arrays.append(mesh.shard_args_to_arrays(
+                        (aval,), (indices,), (spec,), (arg,))[0])
                 rets.append(ReplicatedDistributedArray(meshes, arrays))
             else:
                 aval, mesh, spec = info.get_info()
                 indices = pxla.spec_to_indices(aval.shape, spec)
-                rets.append(mesh.shard_args_to_arrays((aval,), (indices,), (spec,), (arg,))[0])
+                rets.append(mesh.shard_args_to_arrays(
+                    (aval,), (indices,), (spec,), (arg,))[0])
 
         return rets
 
@@ -1915,6 +1944,13 @@ class PhysicalDeviceMeshGroup:
         for mesh in self.meshes:
             mesh.shutdown(forced=True)
 
+    @staticmethod
+    def _instantiate_nccl_group(cg):
+        if global_config.eagerly_create_communicators:
+            cg.instantiate_now()
+        else:
+            cg.instantiate()
+
 
 class DeviceCluster:
     """
@@ -1954,12 +1990,12 @@ class DeviceCluster:
             map(lambda info: int(info["Resources"]["CPU"]), self.host_info))
 
     @property
-    def num_hosts(self):
-        return len(self.host_info)
-
-    @property
     def num_devices(self):
         return sum(self.host_num_devices)
+
+    @property
+    def num_hosts(self):
+        return sum(self.host_info)
 
     def get_physical_mesh(self,
                           host_ids: Sequence[int] = None,

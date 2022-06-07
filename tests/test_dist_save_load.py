@@ -148,11 +148,11 @@ class DistSaveLoadTest(unittest.TestCase):
 
             # Restore checkpoint
             state_ss, _ = executable.get_load_info()
-            load_state = restore_checkpoint(ckpt_dir, 1, jax_state, state_ss)
+            load_state = restore_checkpoint(ckpt_dir, 1, state_ss)
 
-        # Run after load
-        serial_state = serial_train_step(jax_state, batch)[0]
-        load_state = parallel_train_step(load_state, batch)[0]
+            # Run after load
+            serial_state = serial_train_step(jax_state, batch)[0]
+            load_state = parallel_train_step(load_state, batch)[0]
 
         # Check results
         assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)
@@ -195,11 +195,11 @@ class DistSaveLoadTest(unittest.TestCase):
 
             # Restore checkpoint
             state_ss, _ = executable.get_load_info()
-            load_state = restore_checkpoint(ckpt_dir, 1, state, state_ss)
+            load_state = restore_checkpoint(ckpt_dir, 1, state_ss)
 
-        # Run after load
-        serial_state = serial_train_step(serial_state, batch)[0]
-        load_state = parallel_train_step(load_state, batch)[0]
+            # Run after load
+            serial_state = serial_train_step(serial_state, batch)[0]
+            load_state = parallel_train_step(load_state, batch)[0]
 
         # Check results
         assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)
@@ -259,11 +259,11 @@ class DistSaveLoadTest(unittest.TestCase):
 
             # Restore checkpoint
             state_ss, _ = executable.get_load_info()
-            load_state = restore_checkpoint(ckpt_dir, 1, state, state_ss)
+            load_state = restore_checkpoint(ckpt_dir, 1, state_ss)
 
-        # Run after load
-        serial_state = serial_train_step(serial_state, batch)[0]
-        load_state = parallel_train_step(load_state, batch)[0]
+            # Run after load
+            serial_state = serial_train_step(serial_state, batch)[0]
+            load_state = parallel_train_step(load_state, batch)[0]
 
         # Check results
         assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)

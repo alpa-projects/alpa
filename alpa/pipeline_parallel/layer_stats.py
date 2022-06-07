@@ -133,8 +133,8 @@ def log_layer_slicing_stats(origin_jaxpr, slices):
     stage_flops = []
     stage_heavy_ops = []
     for eqns in slices:
-        stage_flops.append(sum([eqn_flops(eqn) for eqn in eqns]))
-        stage_heavy_ops.append(sum([heavy_count(eqn) for eqn in eqns]))
+        stage_flops.append(sum(eqn_flops(eqn) for eqn in eqns))
+        stage_heavy_ops.append(sum(heavy_count(eqn) for eqn in eqns))
 
     print("-" * 20, "Layer slicing stats", "-" * 20)
     print(f"layer_num: {len(slices)}")
@@ -150,6 +150,6 @@ def log_layer_slicing_stats(origin_jaxpr, slices):
 
 def global_invar_size(invars: Set[Var], eqn: JaxprEqn):
     input_vars = {v for v in eqn.invars if isinstance(v, Var)}
-    size = sum([(var.aval.size * var.aval.dtype.itemsize)
-                for var in invars.intersection(input_vars)])
+    size = sum((var.aval.size * var.aval.dtype.itemsize)
+               for var in invars.intersection(input_vars))
     return size

@@ -49,7 +49,7 @@ jobs:
         pip install pylint-quotes==0.2.3
     - name: Analysing the code with pylint
       run: |
-        pylint --load-plugins pylint_quotes alpa && pylint --load-plugins pylint_quotes tests
+        pylint alpa
 
   Unittest:
     runs-on: [self-hosted, gpu]

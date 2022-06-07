@@ -94,8 +94,10 @@ fi
 # Run Pylint
 echo 'Alpa Pylint:'
 pylint alpa
-echo 'Alpa Tests Pylint:'
-pylint tests
+
+# Run Pylint on tests (TODO(zhuohan) enable linting on tests)
+# echo 'Alpa Tests Pylint:'
+# pylint tests
 
 if ! git diff --quiet &>/dev/null; then
     echo 'Reformatted files. Please review and stage the changes.'

@@ -91,7 +91,7 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
            ckpt_dir: the directory where this checkpoint will be saved.
            target: serializable flax object, usually a trainState.
            step: training step number or other metric number
-           local_cache_dir: If not None, `ckpt_dir` should be a shard filesystem path, and this function 
+           local_cache_dir: If not None, `ckpt_dir` should be a shared filesystem path, and this function 
                             will return as soon as the shards have been saved to this local directory. 
                             DaemonMoveWorkers will move these shards into `ckpt_dir` in the background.
     """

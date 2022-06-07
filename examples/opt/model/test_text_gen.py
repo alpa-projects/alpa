@@ -147,7 +147,8 @@ def get_model(model_name, device, dummy,
 
         name = model_name.split("-")[1].upper()
         config = get_config(name, num_pp_stages=num_pp_stages)
-        path = f"/home/ubuntu/opt_weights/{name}_np"
+        # path = f"/home/ubuntu/opt_weights/{name}_np"
+        path = f"/dataset/opt_weights/{name}_np"
 
         executable, params_aval = get_pipeshard_executable(
             config,

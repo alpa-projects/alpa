@@ -247,8 +247,9 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
             for stage_idx in stage_id_dict[mesh_idx]
         ]
         if distributed_compile:
-            module, jaxpr_args, flops = generate_sharded_xla_computations_arguments(
-                str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars)
+            module, jaxpr_args, flops = (
+                generate_sharded_xla_computations_arguments(
+                    str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars))
             other_kwargs = {
                 "logical_mesh": logical_mesh,
                 "return_mode": "stages",
@@ -275,8 +276,10 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         for _ in range(num_meshes):
             mesh_idx, (computation_names, computation_modules,
                        strategy_config) = compile_workers.get_next_unordered()
-            computation_modules = [xe.HloModule.from_serialized_hlo_module_proto(x)
-                                   for x in computation_modules]
+            computation_modules = [
+                xe.HloModule.from_serialized_hlo_module_proto(x)
+                for x in computation_modules
+            ]
             jax_computations, computation_donate_invars = compile_intermediate[
                 mesh_idx]
             sharded_xla_stages = generate_computations_from_modules(

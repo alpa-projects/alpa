@@ -159,10 +159,11 @@ class CompileWorker:
             "memory_budget_per_device": None,
         }
         try:
-            hlo_module = xe.HloModule.from_serialized_hlo_module_proto(config.model_proto)
+            hlo_module = xe.HloModule.from_serialized_hlo_module_proto(
+                config.model_proto)
             # pylint: disable=unbalanced-tuple-unpacking
-            module_names, modules, hooked_proto, strategy_config = run_auto_sharding_pass(
-                hlo_module, *jaxpr_args, **other_kwargs)
+            module_names, modules, hooked_proto, strategy_config = (
+                run_auto_sharding_pass(hlo_module, *jaxpr_args, **other_kwargs))
         except RuntimeError as e:
             logger.warning(f"Compilation error (auto-sharding pass) "
                            f"for stage {stage_id} : {e}")
@@ -175,7 +176,8 @@ class CompileWorker:
 
         if len(modules) > 1:
             if module_names[0].endswith(APPLY_GRAD_MARKER_SUFFIX):
-                module_names[0], module_names[1] = module_names[1], module_names[0]
+                module_names[0], module_names[1] = module_names[
+                    1], module_names[0]
                 modules[0], modules[1] = modules[1], modules[0]
             assert module_names[1].endswith(APPLY_GRAD_MARKER_SUFFIX)
 
@@ -185,8 +187,9 @@ class CompileWorker:
              acc_grad_module, logical_mesh.num_devices)
 
         if len(modules) > 1:
-            apply_grad_input_sharding_protos, _ = get_input_output_sharding_proto(
-                modules[1], logical_mesh.num_devices)
+            apply_grad_input_sharding_protos, _ = (
+                get_input_output_sharding_proto(modules[1],
+                                                logical_mesh.num_devices))
         else:
             apply_grad_input_sharding_protos = None
 
@@ -287,8 +290,7 @@ class ProfileWorker:
         if input_shardings is not None:
             hlo_module.set_spmd_parameters_shardings(
                 [xe.HloSharding(x) for x in input_shardings])
-            hlo_module.set_spmd_output_sharding(
-                xe.HloSharding(output_sharding))
+            hlo_module.set_spmd_output_sharding(xe.HloSharding(output_sharding))
         executable = PartialGradAccMeshDriverExecutable(
             self.mesh, hlo_module, compiled_output.strategy_config, avals,
             out_avals, donated_invars, output_acc_grad_indices)
@@ -844,8 +846,8 @@ def compute_apply_grad_invar_size(input_sharding_protos,
     else:
         assert len(input_sharding_protos) == len(config.invars)
         sharding_specs = [
-            hlo_sharding_to_sharding_spec(xe.HloSharding(sharding_proto),
-                                          aval, logical_mesh_shape)
+            hlo_sharding_to_sharding_spec(xe.HloSharding(sharding_proto), aval,
+                                          logical_mesh_shape)
             for sharding_proto, aval in zip(input_sharding_protos, avals)
         ]
         ordered_selected_vars = []

@@ -367,7 +367,8 @@ def jaxpr_to_hlo_module(name: str, closed_jaxpr: ClosedJaxpr,
     return c.build(out_tuple).as_hlo_module()
 
 
-def setup_computation_alias(xla_computation: Union[xc.XlaComputation, xe.HloModule],
+def setup_computation_alias(xla_computation: Union[xc.XlaComputation,
+                                                   xe.HloModule],
                             donated_invars: Sequence[bool]):
     """Set input/output alias in xla computation.
 

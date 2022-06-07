@@ -113,14 +113,8 @@ def shard_parallel_internal(
 
     # Compile a XLA executable
     hlo_module, strategy_config = run_auto_sharding_pass(
-        hlo_module,
-        avals,
-        out_avals,
-        donated_invars,
-        logical_mesh_choices[0],
-        "single",
-        1,
-        as_option)
+        hlo_module, avals, out_avals, donated_invars, logical_mesh_choices[0],
+        "single", 1, as_option)
 
     # Compile a mesh executable
     return NormalMeshDriverExecutable(physical_mesh,
@@ -165,14 +159,8 @@ def shard_parallel_internal_gradient_accumulation(
 
     # pylint: disable=unbalanced-tuple-unpacking
     hlo_stage_names, hlo_stages, strategy_config = run_auto_sharding_pass(
-        hlo_module,
-        avals,
-        out_avals,
-        donated_invars,
-        logical_mesh_choices[0],
-        "stages",
-        num_micro_batches,
-        as_option)
+        hlo_module, avals, out_avals, donated_invars, logical_mesh_choices[0],
+        "stages", num_micro_batches, as_option)
     assert len(hlo_stages) == 2
 
     if hlo_stage_names[0].endswith(APPLY_GRAD_MARKER_SUFFIX):

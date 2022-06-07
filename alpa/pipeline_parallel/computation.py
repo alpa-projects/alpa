@@ -859,7 +859,8 @@ def generate_sharded_xla_computations_arguments(
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     backend_name = "gpu"
     backend = xb.get_backend(backend_name)
-    hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, dummy_donated_invars, backend)
+    hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, dummy_donated_invars,
+                                     backend)
     flops = xe.hlo_module_count_flop_dot_conv_only(hlo_module)
     in_avals = [var.aval for var in invars]
     out_avals = [var.aval for var in outvars]
@@ -883,15 +884,11 @@ def generate_sharded_xla_computations(
     in_avals, out_avals, donated_invars = jaxpr_args
 
     #  pylint: disable=unbalanced-tuple-unpacking
-    computation_names, computation_modules, strategy_config = run_auto_sharding_pass(
-        hlo_module,
-        in_avals,
-        out_avals,
-        donated_invars,
-        logical_mesh,
-        "stages",
-        num_micro_batches,
-        autosharding_option)
+    (computation_names, computation_modules,
+     strategy_config) = run_auto_sharding_pass(hlo_module, in_avals, out_avals,
+                                               donated_invars, logical_mesh,
+                                               "stages", num_micro_batches,
+                                               autosharding_option)
     computations = generate_computations_from_modules(
         jax_computations, computation_names, computation_modules,
         computation_donate_invars, donatable_lists, acc_grad_outvars,

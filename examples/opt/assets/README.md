@@ -39,3 +39,28 @@ Each set contains *N* shards where N is the number of data-parallel workers (the
 `resharding_mp` has an argument `target_ddp_size`, it reads all the shards corresponding to one model parallel part into
 memory, merges them using `_merge_flat_fsdp_shards()`, then resharding them into `target_ddp_size` new chunks, and then save to disk. 
 There is an option `drop_optimizer_state` which controls if to drop optimizer state, which might not be relevant with inference/serving.
+
+
+### Part 5 wrong positions
+```python
+problem_positions = [
+(1537, 5172),
+(1537, 5173),
+(1537, 5174),
+(1537, 5175),
+(1537, 5176),
+(1537, 5177),
+(1537, 5178),
+(1537, 5179),
+(1537, 5180),
+(1537, 5181),
+(1537, 5182),
+(1537, 5183),
+(1537, 5184),
+(1537, 5185),
+(1537, 5186),
+(1537, 5187),
+(1537, 5188),
+(1537, 5189),
+]
+```

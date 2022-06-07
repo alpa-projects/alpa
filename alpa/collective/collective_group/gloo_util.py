@@ -216,8 +216,9 @@ def copy_tensor(dst_tensor, src_tensor):
         copied = False
     if not copied:
         raise ValueError(
-            f"Unsupported tensor type. Got: {type(dst_tensor)} and {type(src_tensor)}. "
-            "Supported CPU tensor types are: torch.Tensor, numpy.ndarray.")
+            f"Unsupported tensor type. Got: {type(dst_tensor)} and "
+            f"{type(src_tensor)}. Supported CPU tensor types are: "
+            f"torch.Tensor, numpy.ndarray.")
 
 
 # Note(Hao): this requires Ray >= 1.2.0,
@@ -226,13 +227,14 @@ class GlooQueue(_QueueActor):
 
     def index(self, group_name):
         try:
-            return self.queue._queue.index(group_name)
+            return self.queue._queue.index(group_name)  # pylint: disable=protected-access
         except ValueError:
             return -1
 
 
 @ray.remote(num_cpus=0)
 class SignalActor:
+    """An actor that can be used for sending signals."""
 
     def __init__(self, world_size):
         self.ready_events = [asyncio.Event() for _ in range(world_size)]

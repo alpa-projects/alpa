@@ -197,7 +197,7 @@ def create_collective_group(actors,
     from alpa.collective.util import Info  # pylint: disable=import-outside-toplevel
     # store the information into a NamedActor that can be accessed later.
     name = "info_" + group_name
-    actors_id = [a._ray_actor_id for a in actors]
+    actors_id = [a._ray_actor_id for a in actors]  # pylint: disable=protected-access
     # TODO (Dacheng): how do we recycle this name actor?
     info = Info.options(name=name, lifetime="detached").remote()
     ray.get([info.set_info.remote(actors_id, world_size, ranks, backend)])
@@ -388,8 +388,8 @@ def broadcast_partialgpu(tensor_list,
                          devices_ids,
                          devices_global_rank,
                          group_name: str = "default"):
-    """Broadcast the tensor from a source GPU to some other GPUs. 
-    This function is different from broadcast_multigpu that it only 
+    """Broadcast the tensor from a source GPU to some other GPUs.
+    This function is different from broadcast_multigpu that it only
     uses a subset of gpus in one host.
 
     Args:
@@ -696,12 +696,14 @@ def _check_and_get_group(group_name):
             ids, world_size, rank, backend = ray.get(
                 info_actor.get_info.remote())
 
-            # Recycle the info named actor *pro-activately* to avoid named actor leak.
+            # Recycle the info named actor *pro-activately* to avoid named actor
+            # leak.
             if ray.get(info_actor.get_access_counter.remote()) == world_size:
                 ray.kill(info_actor)
                 logger.debug(
-                    "Information about the collective group has been broadcasted. "
-                    "The Info actor will go out of context and be destroyed.")
+                    "Information about the collective group has been "
+                    "broadcasted. The Info actor will go out of context and be "
+                    "destroyed.")
 
             worker = ray.worker.global_worker
             id_ = worker.core_worker.get_actor_id()

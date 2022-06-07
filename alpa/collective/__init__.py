@@ -1,3 +1,5 @@
+"""Alpa's wrapper for NCCL collective operations."""
+
 from alpa.collective.collective import (
     nccl_available, gloo_available, is_group_initialized, init_collective_group,
     destroy_collective_group, create_collective_group, get_rank,

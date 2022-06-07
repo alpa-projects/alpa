@@ -1,3 +1,4 @@
+"""Gloo-based collective operations."""
 import logging
 import datetime
 import time
@@ -39,9 +40,9 @@ class Rendezvous:
         self._redis_ip_address, self._redis_port = (
             ray.worker._global_node.redis_address.split(":"))
         self._process_ip_address = (ray.util.get_node_ip_address())
-        logger.debug(
-            f"Redis address: {self._redis_ip_address}, port: {self._redis_port}, "
-            f"this actor address: {self._process_ip_address}.")
+        logger.debug(f"Redis address: {self._redis_ip_address}, "
+                     f"port: {self._redis_port}, "
+                     f"this actor address: {self._process_ip_address}.")
         self._store_type = store_type
         self._device_type = device_type
         self._store = None
@@ -161,6 +162,7 @@ class Rendezvous:
 
 
 class GLOOGroup(BaseGroup):
+    """Gloo-based collective operations."""
 
     def __init__(self,
                  world_size,

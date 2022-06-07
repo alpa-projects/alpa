@@ -1,3 +1,4 @@
+"""NCCL-based collective operations."""
 import logging
 import datetime
 import time
@@ -120,6 +121,7 @@ class Rendezvous:
 
 
 class NCCLGroup(BaseGroup):
+    """NCCL-based collective operations."""
 
     def __init__(self, world_size, rank, group_name):
         """Init an NCCL collective group."""
@@ -238,8 +240,8 @@ class NCCLGroup(BaseGroup):
     def broadcast_partialgpu(self,
                              tensors,
                              broadcast_options=BroadcastOptions()):
-        """Broadcast tensors to all other gpus following options. 
-        It will only involve subset of gpu in this worker. 
+        """Broadcast tensors to all other gpus following options.
+        It will only involve subset of gpu in this worker.
 
         Args:
             tensors (List): tensors to be broadcast or received.
@@ -280,20 +282,22 @@ class NCCLGroup(BaseGroup):
                                          devices_ids,
                                          devices_global_rank,
                                          nccl_uid=None):
-        """Create or retrieve an NCCL communicator for broadcast from cache. 
-        Here we only use partial devices in a host, so we create this function 
-        besides _get_nccl_collective_communicator. 
+        """Create or retrieve an NCCL communicator for broadcast from cache.
+        Here we only use partial devices in a host, so we create this function
+        besides _get_nccl_collective_communicator.
 
         If the communicator is found in cache, return the communicator. If not,
         a communicator and a stream will be created and put in cache.
 
         Args:
             comm_key (str): the key to query the communicator cache.
-            world_size (int): the number of devices in this collective communicator.
+            world_size (int): the number of devices in this collective
+                              communicator.
             devices_ids (List): a list of GPU devices of the current process
                                 that participates into the collective.
-            devices_global_rank (List): the corresponding global rank for device in devices_ids.
-            nccl_uid : If it is None, we will create a nccl_uid here. 
+            devices_global_rank (List): the corresponding global rank for device
+                                        in devices_ids.
+            nccl_uid : If it is None, we will create a nccl_uid here.
 
         Returns:
             communicator: the NCCL communicator corresponded to the devices.
@@ -318,12 +322,13 @@ class NCCLGroup(BaseGroup):
                 rendezvous.meet()
                 nccl_uid = rendezvous.get_nccl_id()
 
-                # Recycle the NCCLUniqueIDStore named actor *pro-activately* to avoid
-                # named actor leak.
+                # Recycle the NCCLUniqueIDStore named actor *pro-activately* to
+                # avoid named actor leak.
                 if rendezvous.get_access_counter() == self.world_size:
                     logger.debug(
-                        "NCCLUniqueID has been broadcasted. The NCCLUniqueIDStore "
-                        "will go out of context and be destroyed.")
+                        "NCCLUniqueID has been broadcasted. The "
+                        "NCCLUniqueIDStore will go out of context and be "
+                        "destroyed.")
                     rendezvous.destroy_store()
 
         # Now create the communicators
@@ -396,6 +401,7 @@ class NCCLGroup(BaseGroup):
         ]
 
         def postprocess_fn(stream):
+            # pylint: disable=unused-argument
             # TODO(Hao): designate a copy stream.
             for i, tensor_list in enumerate(tensor_lists):
                 for j, tensor in enumerate(tensor_list):
@@ -439,6 +445,7 @@ class NCCLGroup(BaseGroup):
         ]
 
         def preprocess_fn(stream):
+            # pylint: disable=unused-argument
             for i, tensor_list in enumerate(tensor_lists):
                 for j, tensor in enumerate(tensor_list):
                     nccl_util.copy_tensor(input_flattened[i][j], tensor)
@@ -522,8 +529,8 @@ class NCCLGroup(BaseGroup):
             rendezvous.meet()
             nccl_uid = rendezvous.get_nccl_id()
 
-            # Recycle the NCCLUniqueIDStore named actor *pro-activately* to avoid
-            # named actor leak.
+            # Recycle the NCCLUniqueIDStore named actor *pro-activately* to
+            # avoid named actor leak.
             if rendezvous.get_access_counter() == self.world_size:
                 logger.debug(
                     "NCCLUniqueID has been broadcasted. The NCCLUniqueIDStore "
@@ -581,6 +588,7 @@ class NCCLGroup(BaseGroup):
         Returns:
             communicator
         """
+        # pylint: disable=unused-argument
         if not comm_key:
             raise RuntimeError("Got empty communicator key.")
 
@@ -623,8 +631,9 @@ class NCCLGroup(BaseGroup):
                 # avoid named actor leak.
                 if rendezvous.get_access_counter() == 2:
                     logger.debug(
-                        "NCCLUniqueID has been broadcasted. The NCCLUniqueIDStore "
-                        "will go out of context and be destroyed.")
+                        "NCCLUniqueID has been broadcasted. The "
+                        "NCCLUniqueIDStore will go out of context and be "
+                        "destroyed.")
                     rendezvous.destroy_store()
 
         # create the p2p communicators
@@ -661,9 +670,8 @@ class NCCLGroup(BaseGroup):
             store = ray.get_actor(store_name)
             ray.kill(store)
         except ValueError:
-            logger.info(
-                f"The store with name {store_name} has been destroyed somewhere else."
-            )
+            logger.info(f"The store with name {store_name} has been destroyed "
+                        f"somewhere else.")
 
     @staticmethod
     def generate_nccl_uid():
@@ -752,7 +760,8 @@ class NCCLGroup(BaseGroup):
             my_gpu_idx (int): the gpu index on self rank.
             peer_rank (int): the rank of the peer process.
             peer_gpu_idx (int): the index of the gpu on the peer process.
-            nccl_uid (str, optional): optionally to provide the NCCLUniqueID in advance.
+            nccl_uid (str, optional): optionally to provide the NCCLUniqueID in
+                advance.
 
         Returns:
             None

@@ -8,7 +8,7 @@ _TORCH_AVAILABLE = False
 _CUPY_AVAILABLE = True
 
 try:
-    import cupy as cp  # noqa: F401
+    import cupy as cp  # pylint: disable=unused-import
 except ImportError:
     _CUPY_AVAILABLE = False
 

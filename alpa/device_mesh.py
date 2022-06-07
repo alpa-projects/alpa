@@ -90,7 +90,7 @@ class DaemonMoveWorker:
         for file in os.listdir(from_dir):
             from_path = os.path.join(from_dir, file)
             to_path = os.path.join(to_dir, file)
-            subprocess.run(["mv", from_path, to_path])
+            subprocess.run(["mv", from_path, to_path], check=True)
 
     def shutdown(self):
         """Noop function used to synchronized."""

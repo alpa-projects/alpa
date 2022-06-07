@@ -319,8 +319,8 @@ def benchmark_mlp_dist_save():
             alpa_save_checkpoint("/tmp/warmup", parallel_state, 1)
             jax.block_until_ready(parallel_state)
         else:
-            #alpa_save_checkpoint(outdir, parallel_state, 1, cachedir)
-            alpa_save_checkpoint("/tmp/warmup", parallel_state, 1)
+            alpa_save_checkpoint(outdir, parallel_state, 1, cachedir)
+            #alpa_save_checkpoint("/tmp/warmup", parallel_state, 1)
             jax.block_until_ready(parallel_state)
         duration = time.time() - start
         throughput = model_size * 32 / 1024 / 1024 / 1024 / duration
@@ -423,8 +423,8 @@ if __name__ == "__main__":
     # benchmark_dist_arr_load()
 
     # print("mlp dist save/load benchmark:")
-    benchmark_mlp_dist_save()
-    # benchmark_mlp_dist_load()
+    # benchmark_mlp_dist_save()
+    benchmark_mlp_dist_load()
     alpa.shutdown()
     
 

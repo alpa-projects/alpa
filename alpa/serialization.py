@@ -76,31 +76,32 @@ def load_sharded_array(ckpt_dir, metadatas):
     return entire_array
 
 
-def save_checkpoint(nfs_dir: Union[str, os.PathLike], target: PyTree,
-                    step: int, local_cache_dir=None):
-    """Save a checkpoint of the `target` to `path`. 
+def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
+                    step: int, local_cache_dir: Union[str, os.PathLike, None]=None):
+    """
+        Save a checkpoint of the `target` to `ckpt_dir`. 
 
-        Similar to flax.training.checkpoints.save_checkpoint, but support DistributedArrays 
-        and ReplicatedDistributedArray in alpa. 
-        # TODO (zhongyinmin): copy all the safe-saving stuff from 
-        https://flax.readthedocs.io/en/latest/_modules/flax/training/checkpoints.html#save_checkpoint
+        If you want to save a model which has been parallelized on multiple nodes by alpa, `ckpt_dir` 
+        should be a shared filesystem path. It is also recommended to provide a `local_cache_dir` on 
+        local disk to speed up the saving process because `save_checkpoint` will return as soon as 
+        each node has saved its shard of the model into `local_cache_dir`. The DaemonMoveWorkers will 
+        then move these local shards into `ckpt_dir` in the background.
+
+        If you just want to save a unparallelized model or the model is parallellized on a single node,
+        `ckpt_dir` should be a normal path on local disk, and the `local_cache_dir` should be None.
 
         Args:
-           nfs_dir: shared filesystem path to store checkpoint. 
+           ckpt_dir: the directory where this checkpoint will be saved.
            target: serializable flax object, usually a trainState.
            step: training step number or other metric number
-           local_cache_dir: If not None, `save_checkpoint` will return immediately after each host saving
-           its part of the model into this cache directory, and only the metadata file will be saved into
-           the `nfs_dir`. You can then use `rsync` to easily merge these these local data into `nfs_dir`.
+           local_cache_dir: If not None, `ckpt_dir` should be a shard filesystem path, and this function 
+                            will return as soon as the shards have been saved to this local directory. 
+                            DaemonMoveWorkers will move these shards into `ckpt_dir` in the background.
     """
     # create directories if not exist
-    os.makedirs(nfs_dir, exist_ok=True)
-
+    os.makedirs(ckpt_dir, exist_ok=True)
     if local_cache_dir is not None:
         os.makedirs(local_cache_dir, exist_ok=True)
-        save_dir = local_cache_dir
-    else:
-        save_dir = nfs_dir
 
     target = to_state_dict(target)
     flat_dirs = _dfs_pytree(target, "state")
@@ -109,26 +110,27 @@ def save_checkpoint(nfs_dir: Union[str, os.PathLike], target: PyTree,
     obj_refs = []
     assert(len(flat_dirs) == len(flat_target))
     for arr_dir, x in zip(flat_dirs, flat_target):
+        arr_path = os.path.join(ckpt_dir, arr_dir)
+        if local_cache_dir is None:
+            arr_cache_path = None
+        else:
+            arr_cache_path = os.path.join(local_cache_dir, arr_dir)
         if isinstance(x, (DistributedArray, ReplicatedDistributedArray, np.ndarray, jax.xla.DeviceArray)):
             if isinstance(x, DistributedArray):
-                obj_refs.extend(x.save(os.path.join(save_dir, arr_dir), False))
+                obj_refs.extend(x.save(arr_path, arr_cache_path, False))
             elif isinstance(x, ReplicatedDistributedArray):
-                obj_refs.extend(x.replica.save(os.path.join(save_dir, arr_dir), False))
+                obj_refs.extend(x.replica.save(arr_path, arr_cache_path, False))
             elif isinstance(x, (np.ndarray, jax.xla.DeviceArray)):
-                _save_unsharded_array(os.path.join(save_dir, arr_dir), x)
+                _save_unsharded_array(arr_path, x)
             flat_metadata.append(arr_dir)
         else:
             flat_metadata.append(x)
 
-    metapath = os.path.join(nfs_dir, f"checkpoint_{step}")
+    metapath = os.path.join(ckpt_dir, f"checkpoint_{step}")
     metadata = tree_unflatten(target_tree, flat_metadata)
     with open(metapath, "wb") as metafile:
         metafile.write(msgpack.packb(metadata))
     ray.get(obj_refs)
-    if local_cache_dir is not None:
-        logger.warning("Only the metadata has been saved into the shared filesystem, and the other data has\
-                        only been saved into the local cache directory. You can use rsync to merge them into\
-                        the shared filesystem easily.")
 
 
 class LoadInfo:
@@ -161,21 +163,15 @@ class LoadInfo:
         return f"{self.aval}, {self.meshes[0].mesh_id}, {self.specs[0]}"
 
 
-def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
-                       load_info: PyTree):
-    """Restore the specified checkpoint from `path`.
-
-        Similar to flax.training.checkpoints.load_checkpoint,
-        but support DistributedArrays and ReplicatedDistributedArray in alpa.
-        # TODO (zhongyinmin): copy all the safe-loading stuff from
-        https://flax.readthedocs.io/en/latest/_modules/flax/training/checkpoints.html#restore_checkpoint
+def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, load_info: PyTree):
+    """
+        Restore the specified checkpoint from `ckpt_dir` and reshard it according to the `load_info`.
 
         Args:
             ckpt_dir: directory of checkpoints to restore from. If you do not have a shared filesystem, 
             each host needs a copy of the checkpoint on its local disk at the same path.
-            at the same path.
             step: step number to load.
-            load_info: shardingSpec and deviceMesh allocation info for loading.
+            load_info: shardingSpec and deviceMesh placement info for loading.
     """
     metapath = os.path.join(ckpt_dir, f"checkpoint_{step}")
     with open(metapath, 'rb') as metafile:

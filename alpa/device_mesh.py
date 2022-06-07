@@ -82,12 +82,27 @@ ReshardingBroadcastTask = namedtuple("ReshardingBroadcastTask",
                                      ["broadcast_specs", "group_name"])
 
 
+class DaemonMoveWorker:
+    """A ray actor that moves local checkpoint into EFS in the background."""
+    def __init__(self, server_address: str):
+        print(server_address, "launch move worker successfully")
+    
+    def move(self, local_path, nfs_path):
+        pass
+
+
+
+
 class MeshHostWorker:
     """A ray actor that manages the xla computation and buffers on a single
     host."""
 
+<<<<<<< HEAD
     def __init__(self, server_address: str, num_hosts: int, host_id: int,
                  mesh_id: int):
+=======
+    def __init__(self, server_address: str, num_hosts: int, host_id: int, mesh_id: int, node_resource: str):
+>>>>>>> reorganize the checkpoint interfaces
         self.num_hosts = num_hosts
         self.host_id = host_id
         self.mesh_id = mesh_id
@@ -126,6 +141,10 @@ class MeshHostWorker:
                     jax_tensor_to_cupy(device_put(
                         jnp.ones((1,), dtype=jnp.int8), d),
                                        take_ownership=True))
+
+        # Launch the DaemonMoveWorker
+        cls = ray.remote(resources={node_resource: 1e-3})(DaemonMoveWorker)
+        self.move_worker = cls.remote(server_address)
 
     ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
@@ -251,9 +270,8 @@ class MeshHostWorker:
         return self.executables[uuid].grad_sync_channel_ids
 
     ##### Serialization Related Functions #####
-    def save_buffers(self, ckpt_dir: str, uuids: Sequence[int],
-                     shard_indices: Sequence[Index],
-                     global_shape: Sequence[int]):
+    def save_buffers(self, ckpt_dir: str, local_cache_dir: Union[str, None], uuids: Sequence[int],
+                     shard_indices: Sequence[Index], global_shape: Sequence[int]):
         assert len(uuids) > 0
         for uuid in uuids:
             assert uuid in self.buffers
@@ -267,13 +285,22 @@ class MeshHostWorker:
             'shard_indices': shard_indices,
         }
 
+        # create directories if not exist
         os.makedirs(ckpt_dir, exist_ok=True)
+        if local_cache_dir is not None:
+            os.makedirs(local_cache_dir, exist_ok=True)
+            save_dir = local_cache_dir
+        else:
+            save_dir = ckpt_dir
+
         for shard_name, uuid in zip(shard_names, uuids):
-            with open(os.path.join(ckpt_dir, shard_name), "wb") as datafile:
+            with open(os.path.join(save_dir, shard_name), "wb") as datafile:
                 np.save(datafile, self.buffers[uuid])
 
-        with open(os.path.join(ckpt_dir, f".metadata{self.host_id}"), "wb") as metafile:
+        with open(os.path.join(save_dir, f".metadata{self.host_id}"), "wb") as metafile:
             pickle.dump(metadata, metafile)
+        
+        # move data
 
     def load_buffers(self, ckpt_dir: str, uuids: Sequence[int],
                      shard_indices: Sequence[Index],
@@ -1085,7 +1112,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                              resources={node_resource: 1e-3})(MeshHostWorker)
             worker = cls.options(runtime_env={
                 "env_vars": env_vars
-            }).remote(self.server_address, self.num_hosts, i, self.mesh_id)
+            }).remote(self.server_address, self.num_hosts, i, self.mesh_id, node_resource)
             self.workers.append(worker)
         self.launched = True
 
@@ -1374,10 +1401,17 @@ class DistributedArray:
         self._npy_value = None
 
     ##### distributed save/load #####
-    def save(self, path: str, synchronized=True):
+    def save(self, ckpt_dir: str, local_cache_dir: Union[str, None]=None,  synchronized: bool=True):
         """
-            Save one replica of the array to `path` distributedly.
-            If set synchronized to False, it will return the futures.
+            Save one replica of the array to `ckpt_dir` distributedly.
+
+            Args:
+                ckpt_dir: The directory where all the shards of this array will be saved.
+                local_cache_dir: If not None, `ckpt_dir` should be a shared filesystem path, and this function 
+                                 will return as soon as the shards have been saved to this local directory. 
+                                 DaemonMoveWorkers will move these shards into `ckpt_dir` in the background.
+                synchronized: If set to False, it will return the ray futures. Or it will 
+                              wait untill all the shards have been saved to the disk.
         """
         one_replica_buffers = [
             self.remote_buffers[i] for i in self.one_replica_buffer_indices
@@ -1399,7 +1433,7 @@ class DistributedArray:
             if len(uuids) > 0:
                 obj_refs.append(
                     self.device_mesh.workers[host_id].save_buffers.remote(
-                        path, uuids, indices_per_host[host_id], self.shape))
+                        ckpt_dir, local_cache_dir, uuids, indices_per_host[host_id], self.shape))
         if synchronized:
             return None
         else:
@@ -1410,7 +1444,7 @@ class DistributedArray:
              sharding_spec: ShardingSpec, synchronized=True):
         """
             Load the data from `path` distributedly with `aval` and return a new DistributedArray
-            If set synchronized to False, it will also return the futures.
+            If set synchronized to False, it will return the futures.
         """
         # pylint: disable=import-outside-toplevel
         from alpa.mesh_executable import create_remote_buffer_refs

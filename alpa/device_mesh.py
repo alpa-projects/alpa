@@ -1401,7 +1401,7 @@ class DistributedArray:
         self._npy_value = None
 
     ##### distributed save/load #####
-    def save(self, ckpt_dir: str, local_cache_dir: Union[str, None]=None,  synchronized: bool=True):
+    def save(self, ckpt_dir: str, local_cache_dir: Union[str, None]=None):
         """
             Save one replica of the array to `ckpt_dir` distributedly.
 
@@ -1410,8 +1410,7 @@ class DistributedArray:
                 local_cache_dir: If not None, `ckpt_dir` should be a shared filesystem path, and this function 
                                  will return as soon as the shards have been saved to this local directory. 
                                  DaemonMoveWorkers will move these shards into `ckpt_dir` in the background.
-                synchronized: If set to False, it will return the ray futures. Or it will 
-                              wait untill all the shards have been saved to the disk.
+
         """
         one_replica_buffers = [
             self.remote_buffers[i] for i in self.one_replica_buffer_indices
@@ -1428,23 +1427,16 @@ class DistributedArray:
             else:
                 buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
                 indices_per_host[buf_ref.host_id].append(indice)
-        obj_refs = []
         for host_id, uuids in buf_refs_per_host.items():
             if len(uuids) > 0:
-                obj_refs.append(
-                    self.device_mesh.workers[host_id].save_buffers.remote(
-                        ckpt_dir, local_cache_dir, uuids, indices_per_host[host_id], self.shape))
-        if synchronized:
-            return None
-        else:
-            return obj_refs
+                self.device_mesh.workers[host_id].save_buffers.remote(
+                ckpt_dir, local_cache_dir, uuids, indices_per_host[host_id], self.shape)
 
     @classmethod
     def load(cls, path: str, aval: ShapedArray, device_mesh: PhysicalDeviceMesh,
-             sharding_spec: ShardingSpec, synchronized=True):
+             sharding_spec: ShardingSpec):
         """
             Load the data from `path` distributedly with `aval` and return a new DistributedArray
-            If set synchronized to False, it will return the futures.
         """
         # pylint: disable=import-outside-toplevel
         from alpa.mesh_executable import create_remote_buffer_refs
@@ -1463,19 +1455,12 @@ class DistributedArray:
                 buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
                 indices_per_host[buf_ref.host_id].append(indice)
                 device_ids_per_host[buf_ref.host_id].append(buf_ref.device_id)
-        obj_refs = []
         for host_id, uuids in buf_refs_per_host.items():
             if len(uuids) > 0:
-                obj_refs.append(
                     device_mesh.workers[host_id].load_buffers.remote(
                         path, uuids, indices_per_host[host_id],
-                        device_ids_per_host[host_id]))
-        loaded_array = DistributedArray(device_mesh, aval, sharding_spec, buf_refs, indices)
-        if synchronized:
-            ray.get(obj_refs)
-            return loaded_array
-        else:
-            return obj_refs, loaded_array
+                        device_ids_per_host[host_id])
+        return DistributedArray(device_mesh, aval, sharding_spec, buf_refs, indices)
 
     @property
     def one_replica_buffer_indices(self):

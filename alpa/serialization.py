@@ -107,7 +107,6 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
     flat_dirs = _dfs_pytree(target, "state")
     flat_target, target_tree = tree_flatten(target)
     flat_metadata = []
-    obj_refs = []
     assert(len(flat_dirs) == len(flat_target))
     for arr_dir, x in zip(flat_dirs, flat_target):
         arr_path = os.path.join(ckpt_dir, arr_dir)
@@ -117,9 +116,9 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
             arr_cache_path = os.path.join(local_cache_dir, arr_dir)
         if isinstance(x, (DistributedArray, ReplicatedDistributedArray, np.ndarray, jax.xla.DeviceArray)):
             if isinstance(x, DistributedArray):
-                obj_refs.extend(x.save(arr_path, arr_cache_path, False))
+                x.save(arr_path, arr_cache_path)
             elif isinstance(x, ReplicatedDistributedArray):
-                obj_refs.extend(x.replica.save(arr_path, arr_cache_path, False))
+                x.replica.save(arr_path, arr_cache_path)
             elif isinstance(x, (np.ndarray, jax.xla.DeviceArray)):
                 _save_unsharded_array(arr_path, x)
             flat_metadata.append(arr_dir)
@@ -130,7 +129,6 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
     metadata = tree_unflatten(target_tree, flat_metadata)
     with open(metapath, "wb") as metafile:
         metafile.write(msgpack.packb(metadata))
-    ray.get(obj_refs)
 
 
 class LoadInfo:
@@ -180,7 +178,6 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, load_info: 
     state_paths, state_tree = tree_flatten(metadata)
     flat_info = tree_leaves(load_info)
     flat_load_state = []
-    obj_refs = []
     for path, info in zip(state_paths, flat_info):
         if info is None:
             logger.warning('Variable is not used, skip loading it')
@@ -189,14 +186,11 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, load_info: 
             meshes, arrays = [], []
             for mesh, spec in info.get_info():
                 meshes.append(mesh)
-                obj_ref, dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path), info.aval, mesh, spec, False)
-                obj_refs.extend(obj_ref)
+                dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path), info.aval, mesh, spec)
                 arrays.append(dist_arr)
             flat_load_state.append(ReplicatedDistributedArray(meshes, arrays)) 
         else:
             mesh, spec = info.get_info()
-            obj_ref, dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path), info.aval, mesh, spec, False)
-            obj_refs.extend(obj_ref)
+            dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path), info.aval, mesh, spec)
             flat_load_state.append(dist_arr)
-    ray.get(obj_refs)
     return tree_unflatten(state_tree, flat_load_state)

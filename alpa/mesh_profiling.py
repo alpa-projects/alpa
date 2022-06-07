@@ -9,8 +9,8 @@ import numpy as np
 from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 import ray
 
-from alpa.util import (GB, print_used_time, XlaPassContext,
-                       to_str_round, run_with_timeout)
+from alpa.util import (GB, print_used_time, XlaPassContext, to_str_round,
+                       run_with_timeout)
 
 ops = xc.ops
 
@@ -42,7 +42,8 @@ class MeshProfilingResult:
         raise NotImplementedError
 
     def make_monotonic(self):
-        """Make the bandwidth monotonically increase along with the communication size."""
+        """Make the bandwidth monotonically increase along with the
+        communication size."""
         for cost_dict in [
                 self.all_gather_cost_dict, self.all_reduce_cost_dict,
                 self.all_to_all_cost_dict, self.reduce_scatter_cost_dict,
@@ -74,8 +75,8 @@ class MeshProfilingResult:
             cost_dict.update(new_cost_dict)
 
     def sort_cost_lists(self):
-        """Sort the items in the list from smallest to largest. This is the format required
-        by the HLO cost model in c++."""
+        """Sort the items in the list from smallest to largest. This is the
+        format required by the HLO cost model in c++."""
         for cost_dict in [
                 self.all_gather_cost_dict, self.all_reduce_cost_dict,
                 self.all_to_all_cost_dict, self.reduce_scatter_cost_dict,
@@ -151,16 +152,16 @@ class MeshProfilingResult:
             num_devices = len(key[0][0])
             sizes = np.array([x[0] for x in value])
             times = np.array([x[1] for x in value])
-            comm_bytes = (
-                (num_devices - 1) / (num_devices ** 2) 
-                * sizes * to_np_dtype(key[1]).itemsize)
+            comm_bytes = ((num_devices - 1) / (num_devices**2) * sizes *
+                          to_np_dtype(key[1]).itemsize)
             bandwidth = comm_bytes / times / GB
             ret += f"Key: {key}\nBandwidth: {to_str_round(bandwidth, 2)}\n\n"
         return ret
 
 
 class ProfilingResultDatabase:
-    """A database that stores profiling results for multiple device mesh shapes."""
+    """A database that stores profiling results for multiple device mesh
+    shapes."""
 
     def __init__(self, data=None):
         self.data = data or {}
@@ -226,7 +227,7 @@ def _op_all_gather(operand, replica_groups, channel_id):
 
 def _op_all_reduce(operand, dtype, reduce_op, replica_groups, channel_id):
     replica_groups_protos = xc.make_replica_groups(replica_groups)
-    if reduce_op == 'add':
+    if reduce_op == "add":
         rc = xc.XlaBuilder("reduce_" + reduce_op)
         x = _op_parameter(rc, 0, (), dtype)
         y = _op_parameter(rc, 1, (), dtype)
@@ -249,7 +250,7 @@ def _op_all_to_all(operand, replica_groups, channel_id):
 
 def _op_reduce_scatter(operand, dtype, reduce_op, replica_groups, channel_id):
     replica_groups_protos = xc.make_replica_groups(replica_groups)
-    if reduce_op == 'add':
+    if reduce_op == "add":
         rc = xc.XlaBuilder("reduce_" + reduce_op)
         x = _op_parameter(rc, 0, (), dtype)
         y = _op_parameter(rc, 1, (), dtype)
@@ -601,7 +602,7 @@ def profile_hlo_ops(op_infos, backend, local_devices, host_id, num_devices,
                 # Run barrier to reduce hanging/deadlock issues
                 run_with_timeout(profile_one_hlo_op,
                                  (backend, local_devices, host_id, num_devices,
-                                  ('barrier',)),
+                                  ("barrier",)),
                                  timeout=single_timeout)
 
             # Profile one op
@@ -649,9 +650,8 @@ def profile_dot(dot_range, device_cluster, cache_filename):
         n, m, k, dtype = op_infos[i][1]
         flop_count = 2 * n * m * k
         dot_cost_dict[((), dtype)].append((flop_count, results[i]))
-        print(
-            f"Matmul: {(n, m, k, dtype)}, TFLOPS: {flop_count / results[i]/ 1e12:.2f}"
-        )
+        print(f"Matmul: {(n, m, k, dtype)}, "
+              f"TFLOPS: {flop_count / results[i]/ 1e12:.2f}")
 
     physical_mesh.shutdown()
     time.sleep(2)
@@ -715,8 +715,12 @@ def enumerate_all_collective_spec(num_hosts, num_devices_per_host,
     return list(all_specs)
 
 
-def profile_all(device_cluster, cluster_key, max_comm_size_intra_node,
-                max_comm_size_inter_node, max_fail_retry, cache_filename,
+def profile_all(device_cluster,
+                cluster_key,
+                max_comm_size_intra_node,
+                max_comm_size_inter_node,
+                max_fail_retry,
+                cache_filename,
                 dot_range=(0, 1024)):
     """Profile costs for all dot and communication primitives."""
     #  pylint: disable=import-outside-toplevel
@@ -881,7 +885,8 @@ def estimate_hlo_module_cost(hlo_module,
                              profiling_results,
                              num_micro_batches=1,
                              grad_sync_channel_ids=""):
-    """Estimate the cost of an HLO module with the HLO instruction level cost model."""
+    """Estimate the cost of an HLO module with the HLO instruction level cost
+    model."""
     with XlaPassContext({
             "gpu_cost_model::profiling_results": profiling_results,
             "gpu_cost_model::num_micro_batches": num_micro_batches,

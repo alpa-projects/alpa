@@ -133,9 +133,10 @@ class PipeshardDriverExecutable:
         Instantiate NCCL groups between two physical meshes.
 
         Args:
-            device_str_groups (List[List[set]]): a num_mesh x num_mesh matrix. Only entries at
-                device_str_groups[i][j] (i < j) are filled, entries with i > j are None, because
-                (spec[i][j], spec[j][i]) will share collective groups.
+            device_str_groups (List[List[set]]): a num_mesh x num_mesh matrix.
+                Only entries at device_str_groups[i][j] (i < j) are filled,
+                entries with i > j are None, because (spec[i][j], spec[j][i])
+                will share collective groups.
         """
 
         # construct groups
@@ -170,17 +171,13 @@ class PipeshardDriverExecutable:
 
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
             # Shard inputs
-            mesh_args = [
-                args[idx] for idx in self.mesh_arg_indices[mesh_idx]
-            ]
+            mesh_args = [args[idx] for idx in self.mesh_arg_indices[mesh_idx]]
             tmp_bufs = physical_mesh.shard_args_to_bufs(
                 self.input_shard_indices[mesh_idx],
-                self.delete_after_shard[mesh_idx],
-                self.batch_invars[mesh_idx],
-                self.num_batch,
-                mesh_args)
+                self.delete_after_shard[mesh_idx], self.batch_invars[mesh_idx],
+                self.num_batch, mesh_args)
 
-            # Flatten the batch args in tmp_bufs  
+            # Flatten the batch args in tmp_bufs
             flatten_bufs = []
             for i, is_batch_invar in enumerate(self.batch_invars[mesh_idx]):
                 if is_batch_invar:
@@ -192,9 +189,8 @@ class PipeshardDriverExecutable:
             # Convert bufs to uuids
             num_hosts = physical_mesh.num_hosts
             num_devices_per_host = physical_mesh.num_devices_per_host
-            input_uuids = get_uuid_np_array(
-                input_bufs[mesh_idx]).reshape(
-                    -1, num_hosts, num_devices_per_host).transpose([1, 0, 2])
+            input_uuids = get_uuid_np_array(input_bufs[mesh_idx]).reshape(
+                (-1, num_hosts, num_devices_per_host)).transpose([1, 0, 2])
             output_uuids[mesh_idx] = next_remote_buffer_uuid(
                 num_hosts * num_outs[mesh_idx] * num_devices_per_host).reshape(
                     num_hosts, num_outs[mesh_idx], num_devices_per_host)
@@ -203,7 +199,8 @@ class PipeshardDriverExecutable:
             for i, worker in enumerate(physical_mesh.workers):
                 worker.run_executable.remote(
                     self.worker_executable_uuid_mapping[worker],
-                    input_uuids[i], output_uuids[mesh_idx][i],
+                    input_uuids[i],
+                    output_uuids[mesh_idx][i],
                     sync_for_timer=global_config.pipeline_sync_for_timer)
 
         # Handle donation
@@ -238,7 +235,8 @@ class PipeshardDriverExecutable:
         """Fast call without signature matching."""
         if self.static_argnums:
             dyn_args = [
-                args[i] for i in range(len(args))
+                args[i]
+                for i in range(len(args))
                 if i not in self.static_argnums
             ]
         else:
@@ -365,15 +363,15 @@ class PipeshardDriverExecutable:
 
 
 class PipeshardMeshWorkerExecuable:
-    """An executable that executes static pipeline runtime instructions on a worker."""
+    """An executable that executes static pipeline runtime instructions on a
+    worker."""
 
     def __init__(self, worker: MeshHostWorker, uuid: int,
                  instructions: Sequence[PipelineInstruction],
                  input_local_uuids: Sequence[int],
                  output_local_uuids: Sequence[int],
                  executable_configs: Sequence[ExecutableConfig],
-                 acc_local_uuids: np.ndarray,
-                 acc_out_uuids: np.ndarray,
+                 acc_local_uuids: np.ndarray, acc_out_uuids: np.ndarray,
                  donate_invars: Sequence[bool]):
         # Instruction Lists
         self.my_uuid = uuid
@@ -458,8 +456,10 @@ class PipeshardMeshWorkerExecuable:
         # Execute
         timers("overall").start(sync_func=sync_func)
         for instruction in self.instructions:
-            # print(f"memory_allocated: {self.worker.get_memory_allocated()/1024**3:.3f} GB  "
-            #       f"max_memory_allocated: {self.worker.get_max_memory_allocated()/1024**3:.3f} GB "
+            # print(f"memory_allocated: "
+            #       f"{self.worker.get_memory_allocated()/1024**3:.3f} GB  "
+            #       f"max_memory_allocated: "
+            #       f"{self.worker.get_max_memory_allocated()/1024**3:.3f} GB "
             #       f"next instruction: {instruction}")
             if instruction.opcode == PipelineInstType.RUN:
                 timers("compute").start()
@@ -529,8 +529,9 @@ class PipeshardMeshWorkerExecuable:
         self.worker.reset_memory_stats()
         ret = {
             exec_id:
-            (np.mean(self.worker.profile_executable_with_dummy_inputs(exec_id,
-                                                                      skip_grad_sync=False)),
+            (np.mean(
+                self.worker.profile_executable_with_dummy_inputs(
+                    exec_id, skip_grad_sync=False)),
              self.worker.get_exec_total_allocation_size(exec_id) / 1024**3)
             for exec_id in self.partial_grad_exec_uuids
         }

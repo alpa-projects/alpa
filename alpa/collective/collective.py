@@ -79,8 +79,7 @@ class GroupManager:
     def get_group_by_name(self, group_name):
         """Get the collective group handle by its name."""
         if not self.is_group_exist(group_name):
-            logger.warning(
-                f"The group '{group_name}' is not initialized.")
+            logger.warning(f"The group '{group_name}' is not initialized.")
             return None
         return self._name_group_map[group_name]
 
@@ -135,8 +134,7 @@ def init_collective_group(world_size: int,
     _check_backend_availability(backend)
     # TODO(Hao): implement a group auto-counter.
     if not group_name:
-        raise ValueError(
-            f"group_name '{group_name}' needs to be a string.")
+        raise ValueError(f"group_name '{group_name}' needs to be a string.")
 
     if _group_mgr.is_group_exist(group_name):
         raise RuntimeError("Trying to initialize a group twice.")
@@ -177,8 +175,9 @@ def create_collective_group(actors,
         pass
 
     if len(ranks) != len(actors):
-        raise RuntimeError(f"Each actor should correspond to one rank. Got '{len(ranks)}' "
-                           f"ranks but '{len(actors)}' actors")
+        raise RuntimeError(
+            f"Each actor should correspond to one rank. Got '{len(ranks)}' "
+            f"ranks but '{len(actors)}' actors")
 
     if set(ranks) != set(range(len(ranks))):
         got_ranks = "".join([str(r) for r in ranks])
@@ -198,7 +197,7 @@ def create_collective_group(actors,
     from alpa.collective.util import Info  # pylint: disable=import-outside-toplevel
     # store the information into a NamedActor that can be accessed later.
     name = "info_" + group_name
-    actors_id = [a._ray_actor_id for a in actors]
+    actors_id = [a._ray_actor_id for a in actors]  # pylint: disable=protected-access
     # TODO (Dacheng): how do we recycle this name actor?
     info = Info.options(name=name, lifetime="detached").remote()
     ray.get([info.set_info.remote(actors_id, world_size, ranks, backend)])
@@ -389,8 +388,8 @@ def broadcast_partialgpu(tensor_list,
                          devices_ids,
                          devices_global_rank,
                          group_name: str = "default"):
-    """Broadcast the tensor from a source GPU to some other GPUs. 
-    This function is different from broadcast_multigpu that it only 
+    """Broadcast the tensor from a source GPU to some other GPUs.
+    This function is different from broadcast_multigpu that it only
     uses a subset of gpus in one host.
 
     Args:
@@ -568,8 +567,7 @@ def send(tensor, dst_rank: int, group_name: str = "default"):
     g = _check_and_get_group(group_name)
     _check_rank_valid(g, dst_rank)
     if dst_rank == g.rank:
-        raise RuntimeError(
-            f"The destination rank '{dst_rank}' is self.")
+        raise RuntimeError(f"The destination rank '{dst_rank}' is self.")
     opts = types.SendOptions()
     opts.dst_rank = dst_rank
     g.send([tensor], opts)
@@ -605,8 +603,7 @@ def send_multigpu(tensor,
         raise RuntimeError(f"The dst_rank '{dst_rank}' is self. Considering "
                            "doing GPU to GPU memcpy instead?")
     if n_elements < 0:
-        raise RuntimeError(
-            f"The n_elements '{n_elements}' should >= 0.")
+        raise RuntimeError(f"The n_elements '{n_elements}' should >= 0.")
     opts = types.SendOptions()
     opts.dst_rank = dst_rank
     opts.dst_gpu_index = dst_gpu_index
@@ -629,8 +626,7 @@ def recv(tensor, src_rank: int, group_name: str = "default"):
     g = _check_and_get_group(group_name)
     _check_rank_valid(g, src_rank)
     if src_rank == g.rank:
-        raise RuntimeError(
-            f"The destination rank '{src_rank}' is self.")
+        raise RuntimeError(f"The destination rank '{src_rank}' is self.")
     opts = types.RecvOptions()
     opts.src_rank = src_rank
     g.recv([tensor], opts)
@@ -664,8 +660,7 @@ def recv_multigpu(tensor,
         raise RuntimeError(f"The dst_rank '{src_rank}' is self. Considering "
                            "doing GPU to GPU memcpy instead?")
     if n_elements < 0:
-        raise RuntimeError(
-            f"The n_elements '{n_elements}' should be >= 0.")
+        raise RuntimeError(f"The n_elements '{n_elements}' should be >= 0.")
     opts = types.RecvOptions()
     opts.src_rank = src_rank
     opts.src_gpu_index = src_gpu_index
@@ -701,12 +696,14 @@ def _check_and_get_group(group_name):
             ids, world_size, rank, backend = ray.get(
                 info_actor.get_info.remote())
 
-            # Recycle the info named actor *pro-activately* to avoid named actor leak.
+            # Recycle the info named actor *pro-activately* to avoid named actor
+            # leak.
             if ray.get(info_actor.get_access_counter.remote()) == world_size:
                 ray.kill(info_actor)
                 logger.debug(
-                    "Information about the collective group has been broadcasted. "
-                    "The Info actor will go out of context and be destroyed.")
+                    "Information about the collective group has been "
+                    "broadcasted. The Info actor will go out of context and be "
+                    "destroyed.")
 
             worker = ray.worker.global_worker
             id_ = worker.core_worker.get_actor_id()

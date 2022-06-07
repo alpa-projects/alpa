@@ -6,7 +6,6 @@ import sys
 
 from setuptools import setup, find_packages
 
-
 IS_WINDOWS = sys.platform == "win32"
 
 
@@ -16,12 +15,12 @@ def get_cuda_version(cuda_home):
     try:
         if os.path.isfile(version_file):
             with open(version_file, "r") as f_version:
-                version_str = f_version.readline().replace("\n", "").replace("\r", "")
+                version_str = f_version.readline().replace("\n", "").replace(
+                    "\r", "")
                 return version_str.split(" ")[2][:4]
         else:
             version_str = subprocess.check_output(
-                [os.path.join(cuda_home, "bin", "nvcc"), "--version"]
-            )
+                [os.path.join(cuda_home, "bin", "nvcc"), "--version"])
             version_str = str(version_str).replace("\n", "").replace("\r", "")
             idx = version_str.find("release")
             return version_str[idx + len("release "):idx + len("release ") + 4]
@@ -37,12 +36,14 @@ def locate_cuda():
         # Guess #2
         try:
             which = "where" if IS_WINDOWS else "which"
-            nvcc = subprocess.check_output([which, "nvcc"]).decode().rstrip("\r\n")
+            nvcc = subprocess.check_output([which,
+                                            "nvcc"]).decode().rstrip("\r\n")
             cuda_home = os.path.dirname(os.path.dirname(nvcc))
         except subprocess.CalledProcessError:
             # Guess #3
             if IS_WINDOWS:
-                cuda_homes = glob.glob("C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v*.*")
+                cuda_homes = glob.glob(
+                    "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v*.*")
                 if len(cuda_homes) == 0:
                     cuda_home = ""
                 else:
@@ -53,15 +54,18 @@ def locate_cuda():
                 cuda_home = None
     version = get_cuda_version(cuda_home)
     cudaconfig = {
-        "home": cuda_home,
-        "include": os.path.join(cuda_home, "include"),
-        "lib64": os.path.join(cuda_home, os.path.join("lib", "x64") if IS_WINDOWS else "lib64"),
+        "home":
+            cuda_home,
+        "include":
+            os.path.join(cuda_home, "include"),
+        "lib64":
+            os.path.join(cuda_home,
+                         os.path.join("lib", "x64") if IS_WINDOWS else "lib64"),
     }
     if not all([os.path.exists(v) for v in cudaconfig.values()]):
         raise EnvironmentError(
             "The CUDA  path could not be located in $PATH, $CUDA_HOME or $CUDA_PATH. "
-            "Either add it to your path, or set $CUDA_HOME or $CUDA_PATH."
-        )
+            "Either add it to your path, or set $CUDA_HOME or $CUDA_PATH.")
 
     return cudaconfig, version
 
@@ -86,18 +90,13 @@ install_require_list = [
 ]
 
 dev_require_list = [
-    "prospector",
-    "yapf",
-    "cmake",
-    "pybind11"
+    "yapf==0.32.0", "pylint==2.14.0", "coverage", "cmake", "pybind11"
 ]
 
 doc_require_list = [
-    "sphinx",
-    "sphinx-rtd-theme",
-    "sphinx-gallery",
-    "matplotlib"
+    "sphinx", "sphinx-rtd-theme", "sphinx-gallery", "matplotlib"
 ]
+
 
 def build():
     """Build the custom pipeline marker API."""
@@ -125,8 +124,9 @@ def build():
 
 def move_file(target_dir, filename):
     source = filename
-    destination = os.path.join(target_dir, "alpa/pipeline_parallel/xla_custom_call_marker/build",
-                               filename.split('/')[-1])
+    destination = os.path.join(
+        target_dir, "alpa/pipeline_parallel/xla_custom_call_marker/build",
+        filename.split('/')[-1])
     # Create the target directory if it doesn't already exist.
     os.makedirs(os.path.dirname(destination), exist_ok=True)
     if not os.path.exists(destination):
@@ -141,7 +141,8 @@ def move_file(target_dir, filename):
 
 def build_and_move(build_ext):
     build()
-    files_to_include = glob.glob("alpa/pipeline_parallel/xla_custom_call_marker/build/*.so")
+    files_to_include = glob.glob(
+        "alpa/pipeline_parallel/xla_custom_call_marker/build/*.so")
     for filename in files_to_include:
         move_file(build_ext.build_lib, filename)
 
@@ -152,19 +153,21 @@ if __name__ == "__main__":
     from setuptools.command.install import install
 
     class build_ext(setuptools.command.build_ext.build_ext):
+
         def run(self):
             return build_and_move(self)
 
     class BinaryDistribution(setuptools.Distribution):
+
         def has_ext_modules(self):
             return True
 
     class InstallPlatlib(install):
+
         def finalize_options(self):
             install.finalize_options(self)
             if self.distribution.has_ext_modules():
                 self.install_lib = self.install_platlib
-
 
     with open(os.path.join("README.md"), encoding="utf-8") as f:
         long_description = f.read()
@@ -174,8 +177,9 @@ if __name__ == "__main__":
         version=os.environ.get("VERSION"),
         author="Alpa team",
         author_email="",
-        description="Alpa automatically parallelizes large tensor computation graphs and "
-                    "runs them on a distributed cluster.",
+        description=
+        "Alpa automatically parallelizes large tensor computation graphs and "
+        "runs them on a distributed cluster.",
         long_description=long_description,
         long_description_content_type="text/markdown",
         url="https://github.com/alpa-projects/alpa",
@@ -187,8 +191,10 @@ if __name__ == "__main__":
                   "gpt-3 deep-learning language-model python"),
         packages=find_packages(exclude=["playground"]),
         python_requires='>=3.7',
-        cmdclass={"build_ext": build_ext,
-                  "install": InstallPlatlib},
+        cmdclass={
+            "build_ext": build_ext,
+            "install": InstallPlatlib
+        },
         distclass=BinaryDistribution,
         install_requires=install_require_list,
         extras_require={

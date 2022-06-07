@@ -12,9 +12,8 @@ class GlobalConfig:
         self.xla_gpu_autotune_level = 4
         self.delete_remote_buffers_threshold = 200
         # use AWS EFA network interface
-        self.use_aws_efa = os.environ.get("ALPA_USE_AWS_EFA", "").lower() in [
-            "true", "1"
-        ]
+        self.use_aws_efa = os.environ.get("ALPA_USE_AWS_EFA",
+                                          "").lower() in ["true", "1"]
 
         ########## Options of shard_parallel ##########
         self.shard_parallel_sync_for_timer = False
@@ -23,11 +22,12 @@ class GlobalConfig:
         # Whether to debug with local runtime. The local runtime checks
         # correctness of stage construction and other graph level operations.
         self.debug_with_local_runtime = False
-        # Whether to debug with pipeshard runtime. If turned on, no physical resource
-        # is required until launching PipeshardExecutable.
+        # Whether to debug with pipeshard runtime. If turned on, no physical
+        # resource is required until launching PipeshardExecutable.
         # TODO(yonghao): deprecate it later.
         self.debug_with_pipeshard_runtime = False
-        # Whether to use the whole cluster for stage profiling. If not, only use the given mesh.
+        # Whether to use the whole cluster for stage profiling. If not, only
+        # use the given mesh.
         self.profile_with_whole_ray_cluster = True
         # Stage construction profiling time threshold.
         self.profile_timeout = 500
@@ -39,7 +39,8 @@ class GlobalConfig:
 
         ########## Options of pipeline runtime ##########
         self.pipeline_check_alive = True
-        # Whether to sync before and after the executable for accurate internal timer
+        # Whether to sync before and after the executable for accurate internal
+        # timer
         self.pipeline_sync_for_timer = False
         # Whether to use distributed compilation in pipeline parallel for
         # each stage. Disabling it helps debug.
@@ -49,12 +50,14 @@ class GlobalConfig:
         self.use_scatter_gather = True
         self.eagerly_create_communicators = True
         self.use_memzero_for_gradient_accumulation = False
-        # Cross mesh resharding mode. Possible choices: {"send_recv", "broadcast"}
+        # Cross mesh resharding mode. Possible choices: {"send_recv",
+        # "broadcast"}
         self.resharding_mode = "send_recv"
 
         ########## Options of XLA compilation ##########
         self.build_random_seed = 42
-        # Whether to use xla while instruction for preventing CSE in rematerialization
+        # Whether to use xla while instruction for preventing CSE in
+        # rematerialization
         self.remat_using_while = False
 
         ########## Options of benchmark ##########

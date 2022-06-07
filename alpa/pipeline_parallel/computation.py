@@ -138,7 +138,8 @@ class XlaPipelineComputation(PipelineComputation):
         Construct a XlaPipelineComputation from a JaxPipelineComputation.
 
         Args:
-            jax_pipeline_computation (JaxPipelineComputation): the source JaxPipelineComputation.
+            jax_pipeline_computation (JaxPipelineComputation): the source
+              JaxPipelineComputation.
         """
         closed_jaxpr = jax_pipeline_computation.closed_jaxpr()
         backend = xb.get_backend("gpu")
@@ -157,7 +158,7 @@ class XlaPipelineComputation(PipelineComputation):
         out_avals = [var.aval for var in self.outvars]
         tuple_args = len(
             self.invars) > 100  # pass long arg lists as tuple for TPU
-        backend = 'gpu'
+        backend = "gpu"
         backend = xb.get_backend(backend)
         device = backend.get_default_device_assignment(1)[0]
         options = get_compile_options(
@@ -178,8 +179,13 @@ class XlaPipelineComputation(PipelineComputation):
             dispatch.aval_to_num_buffers(aval) for aval in out_avals
         ])
         kept_var_idx = range(len(self.invars))
-        return partial(dispatch._execute_compiled, self.name, compiled,
-                       buffer_counts, result_handlers, kept_var_idx)
+        return partial(
+            dispatch._execute_compiled,  # pylint: disable=protected-access
+            self.name,
+            compiled,
+            buffer_counts,
+            result_handlers,
+            kept_var_idx)
 
     def get_hlo_text(self):
         """Get the HLO text."""
@@ -205,7 +211,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
     @classmethod
     def dummy_computation(cls, name, logical_mesh_shape, gensym_func):
         """Create a dummy computation."""
-        backend_name = 'gpu'
+        backend_name = "gpu"
         backend = xb.get_backend(backend_name)
         strategy_config = StrategyConfig(global_config.build_random_seed,
                                          logical_mesh_shape, 1, 1, None, 0)
@@ -304,7 +310,8 @@ class XlaShardedPipelineComputation(PipelineComputation):
             self.donated_invars[var_indices[invar]] = True
 
     def get_spmd_partitioned(self):
-        """Run spmd partitioner to get the input/output sharding specs after partitioning."""
+        """Run spmd partitioner to get the input/output sharding specs after
+        partitioning."""
         if self.spmd_partitioned_hlo_module is not None:
             return self.spmd_partitioned_hlo_module
 
@@ -323,9 +330,10 @@ class XlaShardedPipelineComputation(PipelineComputation):
 
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
-        input_sharding_specs, output_sharding_specs = get_input_output_sharding_specs(
-            spmd_partitioned_hlo_module, avals, out_avals, num_devices,
-            strategy_config.logical_mesh_shape)
+        input_sharding_specs, output_sharding_specs = (
+            get_input_output_sharding_specs(spmd_partitioned_hlo_module, avals,
+                                            out_avals, num_devices,
+                                            strategy_config.logical_mesh_shape))
         self.input_sharding_specs = input_sharding_specs
         self.output_sharding_specs = output_sharding_specs
         self.spmd_partitioned_hlo_module = spmd_partitioned_hlo_module
@@ -334,7 +342,8 @@ class XlaShardedPipelineComputation(PipelineComputation):
     def get_runnable(self, mesh=None):
         """Return a callable of the pipeline computation."""
         if not mesh:
-            raise RuntimeError("`XlaShardedPipelineComputation` requires a mesh.")
+            raise RuntimeError(
+                "`XlaShardedPipelineComputation` requires a mesh.")
         hlo_module = self.get_spmd_partitioned()
 
         avals = [var.aval for var in self.invars]
@@ -351,7 +360,8 @@ class XlaShardedPipelineComputation(PipelineComputation):
 
 def slice_closed_jaxpr_by_full_pipeline_marks(
         closed_jaxpr: ClosedJaxpr) -> Sequence[JaxPipelineComputation]:
-    """Slice a closed jaxpr into multiple JaxPipelineComputation by full pipeline markers."""
+    """Slice a closed jaxpr into multiple JaxPipelineComputation by full
+    pipeline markers."""
     global_consts_dir = dict(
         zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
 
@@ -378,7 +388,8 @@ def slice_closed_jaxpr_by_full_pipeline_marks(
         current_computation.eqns.append(eqn)
 
         if eqn.primitive is pipeline_p and eqn.params["mark_type"] == "end":
-            assert current_computation is not None, "Ending a pipeline computation before its start."
+            assert current_computation is not None, (
+                "Ending a pipeline computation before its start.")
             assert current_computation.name == eqn.params["name"][:len(
                 current_computation.name
             )], "Ending a pipeline computation different from its start."
@@ -400,7 +411,8 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
     jax.grad or alpa.grad. Also remove unused variables in the pipeline
     markers.
     """
-    # assert len(computations) % 2 == 0.  TODO(zhuohan): fix this for inference schedule
+    # TODO(zhuohan): fix this for inference schedule
+    # assert len(computations) % 2 == 0.
     num_forward_computations = len(computations) // 2
 
     var_computation_id = {}
@@ -752,7 +764,8 @@ def rearrange_vars(vars,
     """
     Rearrange vars to let those in selected be first.
 
-    If the pipe_marker is given, rearrange invars and outvars in pipemarker as well.
+    If the pipe_marker is given, rearrange invars and outvars in pipemarker as
+    well.
 
     Args:
         vars (Sequence[Var]): all vars to be rearranged.
@@ -846,7 +859,8 @@ def generate_sharded_xla_computations_arguments(
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     backend_name = "gpu"
     backend = xb.get_backend(backend_name)
-    hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, dummy_donated_invars, backend)
+    hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, dummy_donated_invars,
+                                     backend)
     flops = xe.hlo_module_count_flop_dot_conv_only(hlo_module)
     in_avals = [var.aval for var in invars]
     out_avals = [var.aval for var in outvars]
@@ -870,15 +884,11 @@ def generate_sharded_xla_computations(
     in_avals, out_avals, donated_invars = jaxpr_args
 
     #  pylint: disable=unbalanced-tuple-unpacking
-    computation_names, computation_modules, strategy_config = run_auto_sharding_pass(
-        hlo_module,
-        in_avals,
-        out_avals,
-        donated_invars,
-        logical_mesh,
-        "stages",
-        num_micro_batches,
-        autosharding_option)
+    (computation_names, computation_modules,
+     strategy_config) = run_auto_sharding_pass(hlo_module, in_avals, out_avals,
+                                               donated_invars, logical_mesh,
+                                               "stages", num_micro_batches,
+                                               autosharding_option)
     computations = generate_computations_from_modules(
         jax_computations, computation_names, computation_modules,
         computation_donate_invars, donatable_lists, acc_grad_outvars,
@@ -1157,7 +1167,8 @@ def split_donate_invars(donation_mapping,
         stages: slices in topology order of execution.
 
     Returns:
-        donate_invars_dict:Sequence[Sequence[bool]]: donate_invars for each stage.
+        donate_invars_dict:Sequence[Sequence[bool]]: donate_invars for each
+            stage.
     """
     reversed_donation_mapping = {v: k for k, v in donation_mapping.items()}
 
@@ -1187,11 +1198,13 @@ def get_donatable_intermediate(stages: Sequence[JaxPipelineComputation],
 
     Args:
         stages (Sequence[JaxPipelineStage]): all stages.
-        worker_stage_mapping (Dict[int, OrderedSet[int]]): indices of stages in each mesh.
+        worker_stage_mapping (Dict[int, OrderedSet[int]]): indices of stages in
+            each mesh.
         global_invars (Sequence[Var] | OrderedSet[Var]): global input variables.
 
     Returns:
-        donatable_list (Sequence[OrderedSet[Var]]): donatable invars of each stage.
+        donatable_list (Sequence[OrderedSet[Var]]): donatable invars of each
+            stage.
     """
     global_invars = OrderedSet(global_invars)
     main_copy_at = {}

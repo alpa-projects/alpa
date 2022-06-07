@@ -6,7 +6,8 @@ import jax.numpy as jnp
 import optax
 import ray
 
-from alpa import (init, parallelize,  manual_layer_construction, PipeshardParallel)
+from alpa import (init, parallelize, manual_layer_construction,
+                  PipeshardParallel)
 from alpa.parallel_method import LocalPipelineParallel
 from alpa.model.model_util import TrainState
 from alpa.model.bert_model import BertConfig
@@ -20,6 +21,7 @@ class PipelineBERTTest(unittest.TestCase):
         init(cluster="ray")
 
     def train_2_layer_bert(self, method):
+
         def train_step(state, batch):
 
             def loss_func(params, x, y, attention_mask):

@@ -1,3 +1,5 @@
+"""Alpa is a system for training large-scale neural networks."""
+
 from alpa.api import (init, shutdown, parallelize, grad, value_and_grad,
                       clear_executable_cache, set_parallelize_options)
 from alpa.data_loader import DataLoader, MeshDriverDataLoader
@@ -8,7 +10,8 @@ from alpa.device_mesh import (DeviceCluster, PhysicalDeviceMesh,
                               set_global_virtual_physical_mesh)
 from alpa.global_env import global_config
 from alpa.mesh_profiling import ProfilingResultDatabase
-from alpa.parallel_method import (ShardParallel, PipeshardParallel, ManualPipeshardParallel)
+from alpa.parallel_method import (ShardParallel, PipeshardParallel,
+                                  ManualPipeshardParallel)
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 from alpa.pipeline_parallel.layer_construction import (
     manual_remat, automatic_remat, automatic_layer_construction,

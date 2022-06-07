@@ -10,13 +10,11 @@ from jax.core import AbstractValue
 from jax.experimental.maps import FrozenDict
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 
-from alpa.device_mesh import (init_global_cluster,
-                              shutdown_global_cluster)
+from alpa.device_mesh import (init_global_cluster, shutdown_global_cluster)
 from alpa.parallel_method import ParallelMethod, ShardParallel
 from alpa.pipeline_parallel.primitive_def import mark_gradient
 from alpa.util import (auto_donate_argnums, auto_static_argnums,
                        abstractify_with_aval)
-
 
 is_initialized = False
 
@@ -61,13 +59,14 @@ def parallelize(fun: Optional[Callable] = None,
         donate_argnums: The same as the donate_argnums argument of jax.jit.
           If it is "auto", alpa uses heuristic rules to infer this.
         batch_argnums: The indices of arguments that are the data batch.
-          This information is used to split the original data batch into micro batches
-          to perform gradient accumulation or pipeline parallelism.
+          This information is used to split the original data batch into micro
+          batches to perform gradient accumulation or pipeline parallelism.
           Alpa assumes the 0-th dimension of the tensor is the batch dimension.
         method: The parallelization method.
     """
+
     def decorate_fun(fun):
-        api._check_callable(fun)
+        api._check_callable(fun)  # pylint: disable=protected-access
         nonlocal method
         method = method or ShardParallel()
         return ParallelizedFunc(fun, static_argnums, donate_argnums,
@@ -81,12 +80,14 @@ def parallelize(fun: Optional[Callable] = None,
 class ParallelizedFunc:
     """The function after being transformed by alpa.parallelize."""
 
-    def __init__(self,
-                 fun: Callable,
-                 static_argnums: Union[Sequence[int], str],
-                 donate_argnums: Union[Sequence[int], str],
-                 batch_argnums: Union[Sequence[int], str],
-                 method: ParallelMethod):
+    def __init__(
+        self,
+        fun: Callable,
+        static_argnums: Union[Sequence[int], str],
+        donate_argnums: Union[Sequence[int], str],
+        batch_argnums: Union[Sequence[int], str],
+        method: ParallelMethod,
+    ):
         self.fun = fun
         self.static_argnums = static_argnums
         self.donate_argnums = donate_argnums
@@ -97,7 +98,8 @@ class ParallelizedFunc:
 
     def __call__(self, *args):
         """Launch the computation on the driver."""
-        executable, _, out_tree, args_flat = self._decode_args_and_get_executable(*args)
+        executable, _, out_tree, args_flat = (
+            self._decode_args_and_get_executable(*args))
         out = executable.launch_on_driver(*args_flat)
         return tree_unflatten(out_tree(), out)
 
@@ -108,7 +110,8 @@ class ParallelizedFunc:
 
     def preshard_dynamic_args(self, *args):
         """Shard the dynamic arguments."""
-        executable, in_tree, _, args_flat = self._decode_args_and_get_executable(*args)
+        executable, in_tree, _, args_flat = (
+            self._decode_args_and_get_executable(*args))
         sharded_args = executable.preshard_dynamic_args(*args_flat)
         return tree_unflatten(in_tree, sharded_args)
 
@@ -118,8 +121,9 @@ class ParallelizedFunc:
 
     def _decode_args_and_get_executable(self, *args):
         """Flatten PyTree arguments and get the executable."""
-        static_argnums, donate_argnums, batch_argnums = (
-            self.static_argnums, self.donate_argnums, self.batch_argnums)
+        static_argnums, donate_argnums, batch_argnums = (self.static_argnums,
+                                                         self.donate_argnums,
+                                                         self.batch_argnums)
         kwargs = {}
 
         f = lu.wrap_init(self.fun)
@@ -163,11 +167,12 @@ class ParallelizedFunc:
         batch_tuple = rebase_donate_argnums(batch_argnums, static_argnums)
         batch_invars = donation_vector(batch_tuple, dyn_args, kwargs)
 
-        # Compile 
+        # Compile
         abstract_args = map(abstractify_with_aval, args_flat)
-        executable = _compile_parallel_executable(
-            f, in_tree, out_tree_hashable, static_argnums, donated_invars,
-            batch_invars, self.method, *abstract_args)
+        executable = _compile_parallel_executable(f, in_tree, out_tree_hashable,
+                                                  static_argnums,
+                                                  donated_invars, batch_invars,
+                                                  self.method, *abstract_args)
 
         self.last_executable = executable
         return executable, in_tree, out_tree, args_flat
@@ -209,12 +214,13 @@ def clear_executable_cache():
 
 
 def grad(*args, **kwargs):
-    """The same as jax.grad, but inserts a gradient marker after the gradient computation.
+    """The same as jax.grad, but inserts a gradient marker after the gradient
+    computation.
 
-    This function annotates all gradient tensors. This information is used to perform
-    gradient accumulation transformation.
-    If any auxiliary tensors are returned, they are averaged over mini batches in the same
-    way as how the gradients are averaged.
+    This function annotates all gradient tensors. This information is used to
+    perform gradient accumulation transformation.
+    If any auxiliary tensors are returned, they are averaged over mini batches
+    in the same way as how the gradients are averaged.
     """
 
     def ret(*call_args, **call_kwargs):
@@ -225,12 +231,13 @@ def grad(*args, **kwargs):
 
 
 def value_and_grad(*args, **kwargs):
-    """The same as jax.value_and_grad, but inserts a gradient marker after the gradient computation.
+    """The same as jax.value_and_grad, but inserts a gradient marker after the
+    gradient computation.
 
-    This function annotates all gradient tensors. This information is used to perform
-    gradient accumulation transformation.
-    If any auxiliary tensors are returned, they are averaged over mini batches in the same
-    way as how the gradients are averaged.
+    This function annotates all gradient tensors. This information is used to
+    perform gradient accumulation transformation.
+    If any auxiliary tensors are returned, they are averaged over mini batches
+    in the same way as how the gradients are averaged.
     """
 
     def ret(*call_args, **call_kwargs):

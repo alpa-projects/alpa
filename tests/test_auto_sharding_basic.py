@@ -25,6 +25,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         self.method = ShardParallel(devices=self.devices)
 
     def test_donate_buffer(self):
+
         @parallelize(donate_argnums=(0,), method=self.method)
         def add_one(x):
             x = x + 1
@@ -63,6 +64,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         assert_allclose(expected, actual)
 
     def test_one_by_one_mesh(self):
+
         @parallelize(method=ShardParallel(devices=self.devices[0:1]))
         def add_one(x):
             x = x + 1

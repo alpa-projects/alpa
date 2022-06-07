@@ -30,23 +30,17 @@ Formatting and Linting
 ----------------------
 We follow `Google Python Style Guide <https://google.github.io/styleguide/pyguide.html>`__.
 
-Install prospector and yapf via:
+Install yapf and pylint via:
 
 .. code-block:: bash
 
-    pip install prospector yapf
+    pip install yapf==0.32.0 pylint==2.14.0
 
-Use yapf to format the code:
+Use the following script to format the code and check linting errors:
 
 .. code-block:: bash
 
     ./format.sh
-
-Then use prospector to run linting for the folder ``alpa/``:
-
-.. code-block:: bash
-
-    prospector alpa/
 
 Unittest
 --------

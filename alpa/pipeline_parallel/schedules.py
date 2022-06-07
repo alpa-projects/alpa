@@ -13,8 +13,9 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def gen_dependency_with_stages(compute_stages: List[PipelineComputation],
-                               apply_grad_stages: List[PipelineComputation] = ()):
+def gen_dependency_with_stages(
+    compute_stages: List[PipelineComputation],
+    apply_grad_stages: List[PipelineComputation] = ()):
     """Generate the dependency matrix for a list of pipeline stages."""
     n_stages = len(compute_stages) + len(apply_grad_stages)
     d = np.zeros([n_stages, n_stages], dtype=int)
@@ -56,8 +57,8 @@ class PipelineSchedule(metaclass=ABCMeta):
 
     Args:
         dependency (np.array): dependency adjacency matrix.
-        sliced_mesh (List[VirtualPhysicalMesh]): a list of pre-sliced virtual meshes
-            to assign stages on.
+        sliced_mesh (List[VirtualPhysicalMesh]): a list of pre-sliced virtual
+            meshes to assign stages on.
         apply_grad_placement (Dict[int, int]): A map from apply grad's stage idx
             to the worker it is assigned.
         num_batch (int): number of microbatches.
@@ -306,7 +307,8 @@ class PipeDreamFlush(PipelineSchedule):
 
                 # backward
                 # first, offset the next available clock to the clock
-                # when the previous stage has just finished backward of the target mb.
+                # when the previous stage has just finished backward of the
+                # target mb.
                 if i + 1 < n:  # not the last device
                     # find the next possible backward clock
                     while finished_bwd_batch_indices[next_clock][

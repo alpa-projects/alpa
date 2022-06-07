@@ -1,5 +1,5 @@
 """Compile executables for pipeshard parallelism."""
-import dataclasses 
+import dataclasses
 import logging
 import time
 from typing import Callable, Sequence
@@ -22,10 +22,10 @@ from alpa.pipeline_parallel.computation import (
     mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
     pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
     split_donate_invars, XlaShardedPipelineComputation)
-from alpa.pipeline_parallel.apply_grad import (
-    compute_grad_to_accumulate_grad,
-    process_apply_gradient,
-    split_compute_grad_and_apply_grad)
+from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
+                                               process_apply_gradient,
+                                               split_compute_grad_and_apply_grad
+                                              )
 from alpa.pipeline_parallel.stage_construction import (
     cluster_layers_and_slice_mesh, StageOption)
 from alpa.pipeline_parallel.stage_profiling import CompileWorkerPool
@@ -36,18 +36,13 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def compile_pipeshard_executable(fun: lu.WrappedFun,
-                                 in_tree: PyTreeDef,
-                                 out_tree_thunk: Callable[[], PyTreeDef],
-                                 static_argnums: Sequence[int],
-                                 donated_invars: Sequence[bool],
-                                 batch_invars: Sequence[bool],
-                                 virtual_mesh: VirtualPhysicalMesh,
-                                 num_microbatch: int,
-                                 pipeline_schedule: str,
-                                 default_as_option: AutoShardingOption,
-                                 stage_option: StageOption,
-                                 *avals: Sequence[AbstractValue]):
+def compile_pipeshard_executable(
+        fun: lu.WrappedFun, in_tree: PyTreeDef,
+        out_tree_thunk: Callable[[], PyTreeDef], static_argnums: Sequence[int],
+        donated_invars: Sequence[bool], batch_invars: Sequence[bool],
+        virtual_mesh: VirtualPhysicalMesh, num_microbatch: int,
+        pipeline_schedule: str, default_as_option: AutoShardingOption,
+        stage_option: StageOption, *avals: Sequence[AbstractValue]):
     """
     Compile a callable for pipeshard parallel which combines
     pipeline parallelism and 2d shard parallelsim.
@@ -67,9 +62,8 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
     # FIXME(yonghao): use apply grad jaxpr returned by this function
     batch_dim = 0
     (reduction_vector, post_microbatch_bound,
-     _apply_grad_jaxpr) = _get_full_batch_apply_grad(fun, avals, batch_invars,
-                                                     microbatch_bound,
-                                                     num_microbatch, batch_dim)
+     _) = _get_full_batch_apply_grad(fun, avals, batch_invars, microbatch_bound,
+                                     num_microbatch, batch_dim)
 
     if num_microbatch > 1:
         (acc_grad_jaxpr, acc_grad_dict,
@@ -89,8 +83,10 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
     assert (len(jax_pipeline_layers) == len(
         set(layer.name for layer in jax_pipeline_layers))), \
         "All layers must have unique names."
-    jax_pipeline_layers = mark_missing_vars_in_backward_computation_pipeline_marks(
-        jax_pipeline_layers, acc_grad_invars, acc_grad_outvars, gensym_func)
+    jax_pipeline_layers = (
+        mark_missing_vars_in_backward_computation_pipeline_marks(
+            jax_pipeline_layers, acc_grad_invars, acc_grad_outvars,
+            gensym_func))
     # TODO(yonghao): remove this pass. we can clear these vars when rewriting
     # compute grad to accumulate grad
     jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
@@ -111,11 +107,11 @@ def compile_pipeshard_executable(fun: lu.WrappedFun,
 
     # Construct pipeline stages by merging layers
     (jax_pipeline_stages, stage_to_mesh, sliced_virtual_meshes,
-     logical_mesh_shapes, autosharding_option_dicts) = cluster_layers_and_slice_mesh(
-         jax_pipeline_layers, virtual_mesh, donation_mapping,
-         acc_grad_outvars, num_microbatch, batch_size,
-         jax_apply_layers, apply_grad_global_info, pipeline_schedule,
-         default_as_option, stage_option)
+     logical_mesh_shapes,
+     autosharding_option_dicts) = cluster_layers_and_slice_mesh(
+         jax_pipeline_layers, virtual_mesh, donation_mapping, acc_grad_outvars,
+         num_microbatch, batch_size, jax_apply_layers, apply_grad_global_info,
+         pipeline_schedule, default_as_option, stage_option)
     num_meshes = len(sliced_virtual_meshes)
     debug_compilation_time("stage construction")
 
@@ -231,7 +227,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
     xla_stages = [None] * n_stages
     if distributed_compile:
         compile_workers = CompileWorkerPool(num_meshes)
-        compile_fn = lambda w, v: w.run_auto_sharding_pass.remote(*v)  # noqa
+        compile_fn = lambda w, v: w.run_auto_sharding_pass.remote(*v)  # pylint: disable=unnecessary-lambda-assignment
         compile_intermediate = [None] * num_meshes
     total_flops = 0
     for mesh_idx in range(num_meshes):
@@ -251,8 +247,9 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
             for stage_idx in stage_id_dict[mesh_idx]
         ]
         if distributed_compile:
-            module, jaxpr_args, flops = generate_sharded_xla_computations_arguments(
-                str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars)
+            module, jaxpr_args, flops = (
+                generate_sharded_xla_computations_arguments(
+                    str(mesh_idx), stage_dict[mesh_idx], stage_donate_invars))
             other_kwargs = {
                 "logical_mesh": logical_mesh,
                 "return_mode": "stages",
@@ -279,8 +276,10 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         for _ in range(num_meshes):
             mesh_idx, (computation_names, computation_modules,
                        strategy_config) = compile_workers.get_next_unordered()
-            computation_modules = [xe.HloModule.from_serialized_hlo_module_proto(x)
-                                   for x in computation_modules]
+            computation_modules = [
+                xe.HloModule.from_serialized_hlo_module_proto(x)
+                for x in computation_modules
+            ]
             jax_computations, computation_donate_invars = compile_intermediate[
                 mesh_idx]
             sharded_xla_stages = generate_computations_from_modules(
@@ -326,7 +325,8 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
     return wrap_layers, apply_grad_global_info
 
 
-# TODO(yonghao): the reduction vector should be created by a more careful analysis.
+# TODO(yonghao): the reduction vector should be created by a more careful
+#  analysis.
 def _get_full_batch_apply_grad(fun: lu.WrappedFun, avals, batch_invars,
                                microbatch_bound, num_microbatch, batch_dim):
     # Trace and split a non-microbatch version for the correct shape of
@@ -352,8 +352,8 @@ def _get_full_batch_apply_grad(fun: lu.WrappedFun, avals, batch_invars,
             assert tuple(expected_microbatched_shape) == microbatch_shape
             if len(apply_grad_jaxpr.eqns) > 0:
                 raise NotImplementedError(
-                    "apply gradient with not reduced input is not supported yet."
-                )
+                    "apply gradient with not reduced input is not supported "
+                    "yet.")
         reduced_vector.append(microbatch_shape == batch_shape)
 
     return reduced_vector, dummy_microbatch_bound, apply_grad_jaxpr

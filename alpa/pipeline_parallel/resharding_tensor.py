@@ -132,15 +132,16 @@ class VirtualDistributedArray:
         """
         Return the shape of the tiles.
 
-        Each dim of the tile_shape is an integer representing how many tiles are along this dim.
+        Each dim of the tile_shape is an integer representing how many tiles are
+        along this dim.
         """
         if self.tiled:
             return self.tile_assignments.shape
         elif self.partial_tiled:
             return self.tile_assignments.shape[:-1]
         else:
-            # when fully replicated, the tile shape should be [1, ..., 1, num_devices],
-            # with rank = rank(array) + 1
+            # when fully replicated, the tile shape should be
+            # [1, ..., 1, num_devices], with rank = rank(array) + 1
             return [1] * len(self.sharding_spec.sharding)
 
     @property
@@ -150,7 +151,8 @@ class VirtualDistributedArray:
 
     @property
     def tiles(self):
-        """Return all the shards of the VirtualDistributedArray following their orders."""
+        """Return all the shards of the VirtualDistributedArray following their
+        orders."""
         if self._tiles is None:
             # Below are for tiled or partial_tiled.
             num_tiles = np.prod(self.tile_shape)
@@ -197,11 +199,15 @@ class Tile:
     Representing a full tile (shard) on the original distributed array.
 
     Args:
-        index (List[int]): the index of this shard in the tile_assignments matrix of the VirtualDistributedArray.
+        index (List[int]): the index of this shard in the tile_assignments
+            matrix of the VirtualDistributedArray.
         index_flat (int): flattend index, row-majored.
-        replica_device_ids (List[int]): the device ids this shard is replicated on.
-        replica_device_strs (List[str]): the device strs this shard is replicated on.
-        indices (List[slice]): a list of slices that expresses its indices in the original array.
+        replica_device_ids (List[int]): the device ids this shard is replicated
+            on.
+        replica_device_strs (List[str]): the device strs this shard is
+            replicated on.
+        indices (List[slice]): a list of slices that expresses its indices in
+            the original array.
     """
 
     index: List[int]
@@ -232,7 +238,8 @@ class TileSlice(Tile):
     TileSlice subsets Tile, and Tile subsets VirtualDistributedArray.
 
     Args:
-        offset (List[slice]): a list of slice objects to represent the offset made on the shard.
+        offset (List[slice]): a list of slice objects to represent the offset
+            made on the shard.
     """
 
     offset: List[slice]

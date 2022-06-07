@@ -26,6 +26,7 @@ class HloCostModelTest(unittest.TestCase):
                         hidden_dim,
                         device_mesh,
                         use_bias=True):
+
         class Model(nn.Module):
 
             @nn.compact

@@ -1,3 +1,4 @@
+"""NCCL-based collective operations."""
 import logging
 import datetime
 import time
@@ -61,11 +62,13 @@ class Rendezvous:
         start_time = datetime.datetime.now()
         while elapsed < timeout_delta:
             try:
-                logger.debug(f"Trying to meet at the store '{self._store_name}'")
+                logger.debug(
+                    f"Trying to meet at the store '{self._store_name}'")
                 self._store = ray.get_actor(self._store_name)
             except ValueError:
-                logger.debug(f"Failed to meet at the store '{self._store_name}'. "
-                             "Trying again...")
+                logger.debug(
+                    f"Failed to meet at the store '{self._store_name}'. "
+                    "Trying again...")
                 time.sleep(1)
                 elapsed = datetime.datetime.now() - start_time
                 continue
@@ -118,6 +121,7 @@ class Rendezvous:
 
 
 class NCCLGroup(BaseGroup):
+    """NCCL-based collective operations."""
 
     def __init__(self, world_size, rank, group_name):
         """Init an NCCL collective group."""
@@ -233,9 +237,11 @@ class NCCLGroup(BaseGroup):
 
         self._collective(tensors, tensors, collective_fn)
 
-    def broadcast_partialgpu(self, tensors, broadcast_options=BroadcastOptions()):
-        """Broadcast tensors to all other gpus following options. 
-        It will only involve subset of gpu in this worker. 
+    def broadcast_partialgpu(self,
+                             tensors,
+                             broadcast_options=BroadcastOptions()):
+        """Broadcast tensors to all other gpus following options.
+        It will only involve subset of gpu in this worker.
 
         Args:
             tensors (List): tensors to be broadcast or received.
@@ -247,19 +253,20 @@ class NCCLGroup(BaseGroup):
         root_rank = 0
 
         def collective_fn(input_tensor, output_tensor, comm, stream):
-            comm.broadcast(nccl_util.get_tensor_ptr(input_tensor),
-                           nccl_util.get_tensor_ptr(output_tensor),
-                           broadcast_options.n_elements if broadcast_options.n_elements > 0 else
-                           nccl_util.get_tensor_n_elements(input_tensor),
-                           nccl_util.get_nccl_tensor_dtype(input_tensor),
-                           root_rank, stream.ptr)
+            comm.broadcast(
+                nccl_util.get_tensor_ptr(input_tensor),
+                nccl_util.get_tensor_ptr(output_tensor),
+                broadcast_options.n_elements if broadcast_options.n_elements > 0
+                else nccl_util.get_tensor_n_elements(input_tensor),
+                nccl_util.get_nccl_tensor_dtype(input_tensor), root_rank,
+                stream.ptr)
 
         _check_gpu_tensors(tensors)
 
         key = broadcast_options.comm_key
-        comms = self._get_nccl_broadcast_communicator(key, broadcast_options.world_size,
-                                                      broadcast_options.devices_ids,
-                                                      broadcast_options.devices_global_rank)
+        comms = self._get_nccl_broadcast_communicator(
+            key, broadcast_options.world_size, broadcast_options.devices_ids,
+            broadcast_options.devices_global_rank)
         streams = self._dev_streams_map[key]
         events = self._dev_event_map[key]
         self._sync_streams(broadcast_options.devices_ids, events, streams)
@@ -269,21 +276,28 @@ class NCCLGroup(BaseGroup):
             collective_fn(tensor, tensor, comms[i], streams[i])
         nccl_util.groupEnd()
 
-    def _get_nccl_broadcast_communicator(self, comm_key, world_size, devices_ids, devices_global_rank, nccl_uid=None):
-        """Create or retrieve an NCCL communicator for broadcast from cache. 
-        Here we only use partial devices in a host, so we create this function 
-        besides _get_nccl_collective_communicator. 
+    def _get_nccl_broadcast_communicator(self,
+                                         comm_key,
+                                         world_size,
+                                         devices_ids,
+                                         devices_global_rank,
+                                         nccl_uid=None):
+        """Create or retrieve an NCCL communicator for broadcast from cache.
+        Here we only use partial devices in a host, so we create this function
+        besides _get_nccl_collective_communicator.
 
         If the communicator is found in cache, return the communicator. If not,
         a communicator and a stream will be created and put in cache.
 
         Args:
             comm_key (str): the key to query the communicator cache.
-            world_size (int): the number of devices in this collective communicator.
+            world_size (int): the number of devices in this collective
+                              communicator.
             devices_ids (List): a list of GPU devices of the current process
                                 that participates into the collective.
-            devices_global_rank (List): the corresponding global rank for device in devices_ids.
-            nccl_uid : If it is None, we will create a nccl_uid here. 
+            devices_global_rank (List): the corresponding global rank for device
+                                        in devices_ids.
+            nccl_uid : If it is None, we will create a nccl_uid here.
 
         Returns:
             communicator: the NCCL communicator corresponded to the devices.
@@ -308,12 +322,13 @@ class NCCLGroup(BaseGroup):
                 rendezvous.meet()
                 nccl_uid = rendezvous.get_nccl_id()
 
-                # Recycle the NCCLUniqueIDStore named actor *pro-activately* to avoid
-                # named actor leak.
+                # Recycle the NCCLUniqueIDStore named actor *pro-activately* to
+                # avoid named actor leak.
                 if rendezvous.get_access_counter() == self.world_size:
                     logger.debug(
-                        "NCCLUniqueID has been broadcasted. The NCCLUniqueIDStore "
-                        "will go out of context and be destroyed.")
+                        "NCCLUniqueID has been broadcasted. The "
+                        "NCCLUniqueIDStore will go out of context and be "
+                        "destroyed.")
                     rendezvous.destroy_store()
 
         # Now create the communicators
@@ -321,9 +336,11 @@ class NCCLGroup(BaseGroup):
         streams = [None] * len(devices_ids)
         events = [None] * len(devices_ids)
         nccl_util.groupStart()
-        for i, (global_rank, device_id) in enumerate(zip(devices_global_rank, devices_ids)):
+        for i, (global_rank,
+                device_id) in enumerate(zip(devices_global_rank, devices_ids)):
             with nccl_util.Device(device_id):
-                comms[i] = nccl_util.create_nccl_communicator(world_size, nccl_uid, global_rank)
+                comms[i] = nccl_util.create_nccl_communicator(
+                    world_size, nccl_uid, global_rank)
                 streams[i] = get_stream_pool(device_id).get_stream()
                 events[i] = cupy.cuda.Event()
         nccl_util.groupEnd()
@@ -384,6 +401,7 @@ class NCCLGroup(BaseGroup):
         ]
 
         def postprocess_fn(stream):
+            # pylint: disable=unused-argument
             # TODO(Hao): designate a copy stream.
             for i, tensor_list in enumerate(tensor_lists):
                 for j, tensor in enumerate(tensor_list):
@@ -427,6 +445,7 @@ class NCCLGroup(BaseGroup):
         ]
 
         def preprocess_fn(stream):
+            # pylint: disable=unused-argument
             for i, tensor_list in enumerate(tensor_lists):
                 for j, tensor in enumerate(tensor_list):
                     nccl_util.copy_tensor(input_flattened[i][j], tensor)
@@ -510,8 +529,8 @@ class NCCLGroup(BaseGroup):
             rendezvous.meet()
             nccl_uid = rendezvous.get_nccl_id()
 
-            # Recycle the NCCLUniqueIDStore named actor *pro-activately* to avoid
-            # named actor leak.
+            # Recycle the NCCLUniqueIDStore named actor *pro-activately* to
+            # avoid named actor leak.
             if rendezvous.get_access_counter() == self.world_size:
                 logger.debug(
                     "NCCLUniqueID has been broadcasted. The NCCLUniqueIDStore "
@@ -569,6 +588,7 @@ class NCCLGroup(BaseGroup):
         Returns:
             communicator
         """
+        # pylint: disable=unused-argument
         if not comm_key:
             raise RuntimeError("Got empty communicator key.")
 
@@ -611,8 +631,9 @@ class NCCLGroup(BaseGroup):
                 # avoid named actor leak.
                 if rendezvous.get_access_counter() == 2:
                     logger.debug(
-                        "NCCLUniqueID has been broadcasted. The NCCLUniqueIDStore "
-                        "will go out of context and be destroyed.")
+                        "NCCLUniqueID has been broadcasted. The "
+                        "NCCLUniqueIDStore will go out of context and be "
+                        "destroyed.")
                     rendezvous.destroy_store()
 
         # create the p2p communicators
@@ -649,8 +670,8 @@ class NCCLGroup(BaseGroup):
             store = ray.get_actor(store_name)
             ray.kill(store)
         except ValueError:
-            logger.info(
-                f"The store with name {store_name} has been destroyed somewhere else.")
+            logger.info(f"The store with name {store_name} has been destroyed "
+                        f"somewhere else.")
 
     @staticmethod
     def generate_nccl_uid():
@@ -739,7 +760,8 @@ class NCCLGroup(BaseGroup):
             my_gpu_idx (int): the gpu index on self rank.
             peer_rank (int): the rank of the peer process.
             peer_gpu_idx (int): the index of the gpu on the peer process.
-            nccl_uid (str, optional): optionally to provide the NCCLUniqueID in advance.
+            nccl_uid (str, optional): optionally to provide the NCCLUniqueID in
+                advance.
 
         Returns:
             None
@@ -825,8 +847,9 @@ def _check_inputs_compatibility_for_scatter_gather(tensors, tensor_lists):
         # check all tensor in `tensors` match.
         dt = nccl_util.get_nccl_tensor_dtype(tensors[i])
         if dt != dtype:
-            raise RuntimeError("All tensor operands to scatter/gather must "
-                               f"have the same dtype. Got '{dt}' and '{dtype}'.")
+            raise RuntimeError(
+                "All tensor operands to scatter/gather must "
+                f"have the same dtype. Got '{dt}' and '{dtype}'.")
         # Note: typically CCL libraries only requires they have the same
         # number of elements; Here we make it more strict -- we require
         # exact shape match.

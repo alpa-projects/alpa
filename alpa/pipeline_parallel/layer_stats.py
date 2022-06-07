@@ -28,12 +28,12 @@ def call_to_xla_computation(eqn: JaxprEqn):
                                        eqn.params,
                                        source_info=eqn.source_info)
     c.set_op_metadata(op_metadata)
-    in_nodes, _ = xla._xla_callable_args(
+    in_nodes, _ = xla._xla_callable_args(  # pylint: disable=protected-access
         c, list(map(lambda x: x.aval, eqn.invars)),
         len(eqn.invars) > 100)
     axis_env = xla.AxisEnv(1, (), ())
     ctx = xla.TranslationContext(c, backend.platform, axis_env, prim.name)
-    rule = xla._translations[eqn.primitive]
+    rule = xla._translations[eqn.primitive]  # pylint: disable=protected-access
     ans = rule(ctx, list(map(aval, eqn.invars)), list(map(aval, eqn.outvars)),
                *in_nodes, **eqn.params)
     c.clear_op_metadata()
@@ -51,19 +51,19 @@ def call_to_xla_computation(eqn: JaxprEqn):
 
 def eqn_flops(eqn: JaxprEqn) -> float:
     """Get the FLOP of a jaxpr equation."""
-    if eqn.primitive in xla._translations:
+    if eqn.primitive in xla._translations:  # pylint: disable=protected-access
         xla_computation = call_to_xla_computation(eqn)
     else:
         xla_computation = xla.primitive_subcomputation(
             "gpu", xla.AxisEnv(1, (), ()), eqn.primitive,
             *map(lambda x: x.aval, eqn.invars), **eqn.params)
     hlo_module = xla_computation.as_hlo_module()
-    properties = xc._xla.hlo_module_cost_analysis(xb.get_backend("gpu"),
-                                                  hlo_module)
+    properties = xc._xla.hlo_module_cost_analysis(  # pylint: disable=protected-access
+        xb.get_backend("gpu"), hlo_module)
     return properties["flops"] if "flops" in properties else 0.0
 
 
-def cluster_edges_cost(start: List['JaxprEqn'], end: List['JaxprEqn']):
+def cluster_edges_cost(start: List["JaxprEqn"], end: List["JaxprEqn"]):
     """Calculates the cost of cluster edges."""
     out_tensors = OrderedSet()
     for eqn in start:
@@ -123,9 +123,9 @@ def get_cross_slice_vars(jaxpr, slices):
                 if defined[invar] >= 0 and defined[invar] != i:
                     stage_invars[i].add(invar)
     for i, invars in enumerate(stage_invars):
-        print(f'Layer {i} has inputs:')
+        print(f"Layer {i} has inputs:")
         for invar in invars:
-            print(invar, invar.aval.shape, 'from layer', defined[invar])
+            print(invar, invar.aval.shape, "from layer", defined[invar])
 
 
 def log_layer_slicing_stats(origin_jaxpr, slices):

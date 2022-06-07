@@ -411,7 +411,8 @@ class FlaxBertLayerCollection(nn.Module):
             if self.config.add_manual_pipeline_markers:
                 layers_per_stage = self.config.num_hidden_layers // self.config.pipeline_mp_size
                 assert self.config.num_hidden_layers % self.config.pipeline_mp_size == 0
-                if i % layers_per_stage == layers_per_stage - 1 and i != len(self.layers) - 1:
+                if i % layers_per_stage == layers_per_stage - 1 and i != len(
+                        self.layers) - 1:
                     mark_pipeline_boundary()
 
         if output_hidden_states:

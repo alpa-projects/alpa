@@ -1,6 +1,8 @@
 """Serialization utilities for Alpa.
-Adapted from https://flax.readthedocs.io/en/latest/_modules/flax/serialization.html.
-Add support for DistributedArray and ReplicatedDistributedArray serialization in Alpa.
+Adapted from
+https://flax.readthedocs.io/en/latest/_modules/flax/serialization.html
+Add support for DistributedArray and ReplicatedDistributedArray serialization
+in Alpa.
 """
 
 import enum
@@ -16,11 +18,13 @@ from jax.interpreters.pxla import ShardingSpec
 from jax.core import ShapedArray
 import jax.numpy as jnp
 from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
-from flax.serialization import to_state_dict, from_state_dict, _ndarray_from_bytes, _ndarray_to_bytes
+from flax.serialization import (to_state_dict, from_state_dict,
+                                _ndarray_from_bytes, _ndarray_to_bytes)
 import msgpack
 import tensorstore as ts
 
-from alpa.device_mesh import DistributedArray, ReplicatedDistributedArray, PhysicalDeviceMesh
+from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
+                              PhysicalDeviceMesh)
 
 PyTree = Any
 
@@ -30,6 +34,7 @@ logger.setLevel(logging.INFO)
 
 class _MsgpackExtType(enum.IntEnum):
     """Messagepack custom type ids."""
+    # pylint: disable=invalid-name
     ndarray = 1
     native_complex = 2
     npscalar = 3
@@ -89,11 +94,7 @@ def _msgpack_ext_unpack(code, data):
 
 
 def get_ts_spec(ckpt_path: str):
-    spec = {
-        'driver': 'zarr',
-        'kvstore': {},
-        'metadata_key': ".zarray0"
-    }
+    spec = {'driver': 'zarr', 'kvstore': {}, 'metadata_key': '.zarray0'}
     if ckpt_path.startswith('gs://'):
         m = re.fullmatch('^gs://([^/]*)/(.*)$', ckpt_path, re.DOTALL)
         if m is None:
@@ -138,22 +139,24 @@ def ts_store(ckpt_dir, data: Union[np.ndarray, jax.xla.DeviceArray]):
 
 def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
                     step: int):
-    """Save a checkpoint of the `target` to `path`. 
+    """Save a checkpoint of the `target` to `path`.
 
-        Similar to flax.training.checkpoints.save_checkpoint, but support DistributedArrays 
-        and ReplicatedDistributedArray in alpa. Also it will save np.ndarray and jax.xla.DeviceArray
-        into tensorstore for later distributed loading.
-        # TODO (zhongyinmin): copy all the safe-saving stuff from 
+        Similar to flax.training.checkpoints.save_checkpoint, but support
+        DistributedArrays and ReplicatedDistributedArray in alpa. Also it will
+        save np.ndarray and jax.xla.DeviceArray into tensorstore for later
+        distributed loading.
+        # TODO (zhongyinmin): copy all the safe-saving stuff from
         https://flax.readthedocs.io/en/latest/_modules/flax/training/checkpoints.html#save_checkpoint
 
         Args:
-           ckpt_dir: str or pathlib-like path to store checkpoint directories in.
+           ckpt_dir: str or pathlib-like path to store checkpoint directories
+             in.
            target: serializable flax object, usually a trainState
            step: training step number or other metric number
     """
     state_dict = to_state_dict(target)
     os.makedirs(ckpt_dir, exist_ok=True)
-    ckpt_path = os.path.join(ckpt_dir, f"checkpoint_{step}")
+    ckpt_path = os.path.join(ckpt_dir, f'checkpoint_{step}')
     with open(ckpt_path, 'wb') as fp:
         fp.write(
             msgpack.packb(state_dict,
@@ -165,9 +168,9 @@ class LoadInfo:
     """
     A wrapper for the loading information.
     """
-    def __init__(self, 
-                 avals: Sequence[ShapedArray], 
-                 meshes: Sequence[PhysicalDeviceMesh], 
+
+    def __init__(self, avals: Sequence[ShapedArray],
+                 meshes: Sequence[PhysicalDeviceMesh],
                  specs: Sequence[ShardingSpec]):
         assert len(avals) == len(meshes)
         assert len(meshes) == len(specs)
@@ -190,15 +193,16 @@ class LoadInfo:
         return len(self.avals) > 1
 
     def __str__(self):
-        return f"{self.avals[0]}, {self.meshes[0].mesh_id}, {self.specs[0]}"
+        return f'{self.avals[0]}, {self.meshes[0].mesh_id}, {self.specs[0]}'
 
 
-def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, load_info: PyTree):
-    """Restore the specified checkpoint from `path`. 
+def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
+                       load_info: PyTree):
+    """Restore the specified checkpoint from `path`.
 
-        Similar to flax.training.checkpoints.load_checkpoint, 
+        Similar to flax.training.checkpoints.load_checkpoint,
         but support DistributedArrays and ReplicatedDistributedArray in alpa.
-        # TODO (zhongyinmin): copy all the safe-loading stuff from 
+        # TODO (zhongyinmin): copy all the safe-loading stuff from
         https://flax.readthedocs.io/en/latest/_modules/flax/training/checkpoints.html#restore_checkpoint
 
         Args:
@@ -206,26 +210,28 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, load_info: 
             step: step number to load.
             load_info: shardingSpec and deviceMesh allocation info for loading.
     """
-    ckpt_path = os.path.join(ckpt_dir, f"checkpoint_{step}")
+    ckpt_path = os.path.join(ckpt_dir, f'checkpoint_{step}')
     with open(ckpt_path, 'rb') as fp:
         ckpt_contents = fp.read()
     state_dict_content = msgpack.unpackb(ckpt_contents,
                                          ext_hook=_msgpack_ext_unpack,
                                          raw=False)
-    state_paths, state_tree = tree_flatten(from_state_dict(load_info, state_dict_content))
+    state_paths, state_tree = tree_flatten(
+        from_state_dict(load_info, state_dict_content))
     flat_info = tree_leaves(load_info)
     flat_load_state = []
     for path, info in zip(state_paths, flat_info):
         if info is None:
-            logger.warning("Variable is not used, skip loading it")
+            logger.warning('Variable is not used, skip loading it')
             flat_load_state.append(None)
         if info.is_replicated():
             meshes, arrays = [], []
             for aval, mesh, spec in info.get_info():
                 meshes.append(mesh)
                 arrays.append(DistributedArray.load(path, aval, mesh, spec))
-            flat_load_state.append(ReplicatedDistributedArray(meshes, arrays)) 
+            flat_load_state.append(ReplicatedDistributedArray(meshes, arrays))
         else:
             aval, mesh, spec = info.get_info()
-            flat_load_state.append(DistributedArray.load(path, aval, mesh, spec))
+            flat_load_state.append(DistributedArray.load(
+                path, aval, mesh, spec))
     return tree_unflatten(state_tree, flat_load_state)

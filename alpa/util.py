@@ -35,7 +35,6 @@ import cupy as cp
 
 from alpa.global_env import global_config, is_worker
 
-
 ########################################
 ##### Alpa API Utilities
 ########################################
@@ -316,7 +315,8 @@ def get_compile_options(num_replicas: int, num_partitions: int,
         device_assignment=device_assignment,
         use_spmd_partitioning=use_spmd_partitioning,
     )
-    compile_options.parameter_is_tupled_arguments = parameter_is_tupled_arguments
+    compile_options.parameter_is_tupled_arguments = (
+        parameter_is_tupled_arguments)
     compile_options.executable_build_options.seed = build_random_seed
     return compile_options
 
@@ -336,11 +336,14 @@ def jaxpr_to_hlo_module(name: str, closed_jaxpr: ClosedJaxpr,
     # Convert jaxpr to XLA HLO
     tuple_args = False
     axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())
-    name_stack = xla.new_name_stack(xla.wrap_name(name, 'parallelize'))
+    name_stack = xla.new_name_stack(xla.wrap_name(name, "parallelize"))
     c = xc.XlaBuilder(name)
-    xla_consts = xla._xla_consts(c, consts)
-    xla_args, donated_invars = xla._xla_callable_args(
-        c, in_avals, tuple_args, donated_invars=donated_invars)
+    xla_consts = xla._xla_consts(c, consts)  # pylint: disable=protected-access
+    xla_args, donated_invars = xla._xla_callable_args(  # pylint: disable=protected-access
+        c,
+        in_avals,
+        tuple_args,
+        donated_invars=donated_invars)
     ctx = xla.TranslationContext(c, backend_name, axis_env, name_stack)
     out_nodes = xla.jaxpr_subcomp(ctx, closed_jaxpr.jaxpr, xla_consts,
                                   *xla_args)
@@ -364,7 +367,8 @@ def jaxpr_to_hlo_module(name: str, closed_jaxpr: ClosedJaxpr,
     return c.build(out_tuple).as_hlo_module()
 
 
-def setup_computation_alias(xla_computation: Union[xc.XlaComputation, xe.HloModule],
+def setup_computation_alias(xla_computation: Union[xc.XlaComputation,
+                                                   xe.HloModule],
                             donated_invars: Sequence[bool]):
     """Set input/output alias in xla computation.
 
@@ -443,7 +447,8 @@ def compile_dummy_zero_constant(backend, num_devices: int):
 def compile_allocate_zero_buffers(backend, num_devices: int,
                                   shapes: Sequence[Sequence[int]],
                                   dtypes: Sequence[jnp.dtype]):
-    """Compile an XLA executable that returns zero buffers with given shape and dtypes."""
+    """Compile an XLA executable that returns zero buffers with given shape and
+    dtypes."""
     c = xc.XlaBuilder("allocate_zero_buffers")
     sharding = xc.OpSharding()
     sharding.type = sharding.type.REPLICATED
@@ -470,8 +475,8 @@ def compile_memset_zero_buffers(backend, num_devices: int,
                                 shapes: Sequence[Sequence[int]],
                                 dtypes: Sequence[jnp.dtype]):
     """
-    Compile an XLA executable that memset zero buffers with given shape and dtypes.
-    Try to avoid memcpy
+    Compile an XLA executable that memset zero buffers with given shape and
+    dtypes. Try to avoid memcpy
     """
     c = xc.XlaBuilder("allocate_zero_buffers")
     args = []
@@ -490,7 +495,7 @@ def compile_memset_zero_buffers(backend, num_devices: int,
     c.set_sharding(sharding)
     output_shape = xc.Shape.scalar_shape(np.dtype(np.float32))
     output_tuple = xc.ops.CustomCall(c,
-                                     b'__builtin$MemZero',
+                                     b"__builtin$MemZero",
                                      operands=(input_params,),
                                      shape=output_shape)
     c = c.build(output_tuple)
@@ -583,7 +588,8 @@ class XlaPassContext:
         self.value_dict = value_dict
 
     def __enter__(self):
-        assert XlaPassContext.current is None, "Do not support recurrent context"
+        assert XlaPassContext.current is None, (
+            "Do not support recurrent context")
         XlaPassContext.current = self
         xe.set_pass_context(self.value_dict)
 
@@ -777,7 +783,7 @@ def benchmark_func(run_func,
         if sync_func:
             sync_func()
         tic = time.time()
-        for __ in range(number):
+        for _ in range(number):
             run_func()
         if sync_func:
             sync_func()
@@ -820,7 +826,8 @@ def is_continuous_subset(tensor_slice, tensor_shape, row_major=True):
 def infer_offset_and_n_elements(tensor_slice):
     """Calculate the offset and #elements before making NCCL calls.
 
-    This function assumes the slice is a continuous subset of the original tensor.
+    This function assumes the slice is a continuous subset of the original
+    tensor.
     """
     slice_shape = tuple(ind.stop - ind.start for ind in tensor_slice)
     offset = tuple()
@@ -848,10 +855,12 @@ def jax_tensor_to_xla_buffer(jax_buf):
 
 
 def xla_buffer_to_cupy(xla_buf, take_ownership=False):
-    """Convert an xla buffer directly to cupy, w/o transitioning from jax buffer."""
+    """Convert an xla buffer directly to cupy, w/o transitioning from jax
+    buffer."""
     return cp.fromDlpack(
-        xc._xla.buffer_to_dlpack_managed_tensor(xla_buf,
-                                                take_ownership=take_ownership))
+        xc._xla.buffer_to_dlpack_managed_tensor(  # pylint: disable=protected-access
+            xla_buf,
+            take_ownership=take_ownership))
 
 
 def cupy_to_xla_buffer(tensor):
@@ -863,8 +872,8 @@ def cupy_to_xla_buffer(tensor):
         gpu_backend = xb.get_backend("gpu")
     except RuntimeError:
         gpu_backend = None
-    buf = xc._xla.dlpack_managed_tensor_to_buffer(tensor.toDlpack(),
-                                                  cpu_backend, gpu_backend)
+    buf = xc._xla.dlpack_managed_tensor_to_buffer(  # pylint: disable=protected-access
+        tensor.toDlpack(), cpu_backend, gpu_backend)
     return buf
 
 
@@ -888,7 +897,8 @@ if is_worker:
     FLAGS.experimental_cpp_jit = False
 
 
-# Note(Hao): this function will be jit-ed into as many versions as the possible length of start_indices
+# Note(Hao): this function will be jit-ed into as many versions as the possible
+# length of start_indices
 @partial(jax.jit, donate_argnums=0, static_argnums=2)
 def jax_tensor_set(src_buf, update, start_indices):
     """
@@ -897,7 +907,8 @@ def jax_tensor_set(src_buf, update, start_indices):
     Args:
         src_buf: JAX device array.
         update: JAX device array.
-        start_indices (tuple[int]): tuple of integers indicating the starting indices.
+        start_indices (tuple[int]): tuple of integers indicating the starting
+        indices.
     """
     # src_buf = src_buf.at[indices].set(update)
     src_buf = jax.lax.dynamic_update_slice(src_buf, update, start_indices)
@@ -959,10 +970,13 @@ def disable_tqdm_globally():
 
 
 def get_num_hosts_and_num_devices(args):
-    """Get the number of hosts and the number of devices per host for benchmark scripts."""
+    """Get the number of hosts and the number of devices per host for benchmark
+    scripts."""
     if args.num_hosts is not None or args.num_devices_per_host is not None:
-        assert args.num_hosts is not None and args.num_devices_per_host is not None
-        num_hosts, num_devices_per_host = args.num_hosts, args.num_devices_per_host
+        assert (args.num_hosts is not None and
+                args.num_devices_per_host is not None)
+        num_hosts, num_devices_per_host = (args.num_hosts,
+                                           args.num_devices_per_host)
     else:
         if hasattr(args, "local") and args.local:
             num_hosts = 1

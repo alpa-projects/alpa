@@ -8,6 +8,7 @@ from alpa.collective.types import (AllReduceOptions, BarrierOptions,
 
 
 class BaseGroup(metaclass=ABCMeta):
+    """Abstract class for collective groups."""
 
     def __init__(self, world_size, rank, group_name):
         """Init the process group with basic information.

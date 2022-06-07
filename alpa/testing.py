@@ -18,7 +18,8 @@ from alpa.parallel_method import PipeshardParallel
 from alpa.pipeline_parallel.layer_construction import (
     automatic_layer_construction, manual_layer_construction)
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
-from alpa.pipeline_parallel.stage_construction import UniformStageOption, StageOption
+from alpa.pipeline_parallel.stage_construction import (UniformStageOption,
+                                                       StageOption)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption
 
 
@@ -29,13 +30,13 @@ def assert_allclose(x, y, rtol=1e-4, atol=1e-4):
         assert set(x.keys()) == set(y.keys())
         for k in x.keys():
             assert_allclose(x[k], y[k], rtol, atol)
-    elif isinstance(x, Iterable) and not hasattr(x, '__array__'):
-        assert isinstance(y, Iterable) and not hasattr(y, '__array__')
+    elif isinstance(x, Iterable) and not hasattr(x, "__array__"):
+        assert isinstance(y, Iterable) and not hasattr(y, "__array__")
         assert len(x) == len(y)
         for x_elt, y_elt in zip(x, y):
             assert_allclose(x_elt, y_elt, rtol, atol)
-    elif hasattr(x, '__array__') or np.isscalar(x):
-        assert hasattr(y, '__array__') or np.isscalar(y), f"{y}"
+    elif hasattr(x, "__array__") or np.isscalar(x):
+        assert hasattr(y, "__array__") or np.isscalar(y), f"{y}"
         x = np.asarray(x)
         y = np.asarray(y)
         np.testing.assert_allclose(x, y, rtol, atol)
@@ -47,6 +48,7 @@ def assert_allclose(x, y, rtol=1e-4, atol=1e-4):
 
 # Models and functions for Pipeline Tests
 class MLPModel(nn.Module):
+    """An MLP model for testing."""
     hidden_dim: int
     output_dim: int
     manual_pipeline_layer: bool = True
@@ -65,6 +67,7 @@ class MLPModel(nn.Module):
 
 
 class BertLayerModel(nn.Module):
+    """A BERT model for testing."""
     config: BertConfig
     dtype: jnp.dtype = jnp.float32
     manual_pipeline_layer: bool = True
@@ -109,16 +112,13 @@ def create_dummy_train_state(rngkey, model, inputs, dtype=jnp.float16):
 
 def decorate_loss_fn(fn, manual_pipeline, use_remat, layer_num):
     if manual_pipeline:
-        return manual_layer_construction(fn,
-                                         remat_layer=use_remat)
+        return manual_layer_construction(fn, remat_layer=use_remat)
     return automatic_layer_construction(fn,
                                         remat_layer=use_remat,
                                         layer_num=layer_num)
 
 
-def get_mlp_train_step(parallel_method,
-                       manual_pipeline_layer,
-                       use_remat,
+def get_mlp_train_step(parallel_method, manual_pipeline_layer, use_remat,
                        use_value_and_grad):
 
     def train_step(state, batch):
@@ -152,8 +152,7 @@ def get_mlp_train_step(parallel_method,
         return train_step
 
 
-def get_mlp_inference_step(parallel_method,
-                           manual_pipeline_layer):
+def get_mlp_inference_step(parallel_method, manual_pipeline_layer):
 
     def inference_step(state, batch):
 
@@ -163,22 +162,21 @@ def get_mlp_inference_step(parallel_method,
             return out, loss
 
         if parallel_method:
-            forward = decorate_loss_fn(forward, manual_pipeline_layer,
-                                       False, 2)
+            forward = decorate_loss_fn(forward, manual_pipeline_layer, False, 2)
 
         out = forward(state.params)
         return out
 
     if parallel_method:
-        return parallelize(inference_step, donate_argnums=(),
+        return parallelize(inference_step,
+                           donate_argnums=(),
                            method=parallel_method)
     else:
         return inference_step
 
 
 def get_bert_layer_collection_inference_step(parallel_method,
-                                             manual_pipeline_layer,
-                                             n_layers):
+                                             manual_pipeline_layer, num_layers):
 
     def inference_step(state, batch):
 
@@ -190,20 +188,22 @@ def get_bert_layer_collection_inference_step(parallel_method,
                                  output_hidden_states=True)
             loss = jnp.mean((out.last_hidden_state - batch["y"])**2)
             # FIXME(yonghao): Otherwise, the first hidden state is an input,
-            # but we do not support outputing an input(not batch-related outputs).
+            #   but we do not support outputing an input(not batch-related
+            #   outputs).
             out = FlaxBaseModelOutput(last_hidden_state=out.last_hidden_state,
                                       hidden_states=out.hidden_states[1:],
                                       attentions=out.attentions)
             return out, loss
 
         if parallel_method:
-            forward = decorate_loss_fn(forward, manual_pipeline_layer,
-                                       False, 2)
+            forward = decorate_loss_fn(forward, manual_pipeline_layer, False,
+                                       num_layers)
         out = forward(state.params)
         return out
 
     if parallel_method:
-        return parallelize(inference_step, donate_argnums=(),
+        return parallelize(inference_step,
+                           donate_argnums=(),
                            method=parallel_method)
     else:
         return inference_step
@@ -279,18 +279,14 @@ class PipelineBasicTest(unittest.TestCase):
         rngkey = jax.random.PRNGKey(0)
         x = jax.random.normal(rngkey, (batch_size, input_dim), jnp.float32)
         y = jax.random.normal(rngkey, (batch_size, output_dim), jnp.float32)
-        batch = {'x': x, 'y': y}
+        batch = {"x": x, "y": y}
         state = create_train_state(rngkey, model, [x])
 
         # Compile
-        serial_train_step = get_mlp_train_step(None,
-                                               None,
-                                               None,
+        serial_train_step = get_mlp_train_step(None, None, None,
                                                use_value_and_grad)
-        parallel_train_step = get_mlp_train_step(method,
-                                                 manual_pipeline_layer,
-                                                 use_remat,
-                                                 use_value_and_grad)
+        parallel_train_step = get_mlp_train_step(method, manual_pipeline_layer,
+                                                 use_remat, use_value_and_grad)
         executable = parallel_train_step.get_executable(state, batch)
 
         # Run correctnesss test
@@ -305,8 +301,7 @@ class PipelineBasicTest(unittest.TestCase):
 
                 if i > 0:
                     state = actual_new_state
-                actual_new_state, actual_val = parallel_train_step(
-                    state, batch)
+                actual_new_state, actual_val = parallel_train_step(state, batch)
 
                 assert_allclose(expected_new_state.params,
                                 actual_new_state.params, 1e-3, 1e-3)
@@ -348,9 +343,7 @@ class PipelineBasicTest(unittest.TestCase):
         state = create_train_state(rngkey, model, [x, attention_mask])
 
         # Compile
-        serial_train_step = get_bert_layer_train_step(None,
-                                                      None,
-                                                      None,
+        serial_train_step = get_bert_layer_train_step(None, None, None,
                                                       n_layers,
                                                       use_value_and_grad)
         parallel_train_step = get_bert_layer_train_step(method,
@@ -372,8 +365,7 @@ class PipelineBasicTest(unittest.TestCase):
                 if i > 0:
                     state = actual_new_state
 
-                actual_new_state, actual_val = parallel_train_step(
-                    state, batch)
+                actual_new_state, actual_val = parallel_train_step(state, batch)
 
                 assert_allclose(expected_new_state.params,
                                 actual_new_state.params, 1e-3, 1.5e-3)

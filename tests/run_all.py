@@ -18,7 +18,6 @@ import unittest
 
 from alpa.util import run_with_timeout
 
-
 slow_testcases = set([
     "test_pipeline_stage_construction.py",
 ])
@@ -26,7 +25,8 @@ slow_testcases = set([
 
 def run_unittest_files(files, args):
     """Run unit test files one by one in separates processes."""
-    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = str(args.xla_client_mem_fraction)
+    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = str(
+        args.xla_client_mem_fraction)
 
     for filename in files:
         if not filename.startswith("test"):
@@ -38,6 +38,7 @@ def run_unittest_files(files, args):
 
         def func():
             ret = unittest.main(module=None, argv=["", "-vb"] + [filename])
+
         p = multiprocessing.Process(target=func)
 
         def run_one_file():
@@ -79,11 +80,10 @@ if __name__ == "__main__":
         type=int,
         default=1000,
         help="The time limit for running one file in seconds.")
-    arg_parser.add_argument(
-        "--order",
-        type=str,
-        default="sorted",
-        choices=["sorted", "random", "reverse_sorted"])
+    arg_parser.add_argument("--order",
+                            type=str,
+                            default="sorted",
+                            choices=["sorted", "random", "reverse_sorted"])
     args = arg_parser.parse_args()
 
     files = glob.glob("*.py")

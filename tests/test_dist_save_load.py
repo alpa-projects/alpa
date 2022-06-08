@@ -101,7 +101,7 @@ class DistSaveLoadTest(unittest.TestCase):
                 # Save the DistributedArray (one replica only)
                 dist_input_data1.save(ckpt_dir, cache_dir)
 
-                # Sync all the move workers 
+                # Sync all the move workers
                 physical_mesh.sync_move_workers()
 
                 # Load previously saved DistributedArray with a different shardingSpec
@@ -112,12 +112,14 @@ class DistSaveLoadTest(unittest.TestCase):
                 load_sharding_spec = logical_mesh.make_tile_spec(
                     global_input_data1, [0, 1], [0])
                 dist_load_data1 = DistributedArray.load(
-                    ckpt_dir, jax.ShapedArray(global_input_data1.shape, jnp.int32),
+                    ckpt_dir,
+                    jax.ShapedArray(global_input_data1.shape, jnp.int32),
                     physical_mesh, load_sharding_spec)
 
                 # Check the DistributedArray's remote buffers
                 desired_buffers2 = np.array([[[0, 1], [2, 3]], [[0, 1], [2, 3]],
-                                            [[4, 5], [6, 7]], [[4, 5], [6, 7]]])
+                                             [[4, 5], [6, 7]], [[4, 5], [6,
+                                                                         7]]])
                 self.check_dist_array_eq(desired_buffers2, dist_load_data1)
 
         # Cleanup
@@ -263,7 +265,7 @@ class DistSaveLoadTest(unittest.TestCase):
                 # Save checkpoint
                 save_checkpoint(ckpt_dir, parallel_state, 1, cache_dir)
 
-                # Sync all the move workers 
+                # Sync all the move workers
                 executable.sync_move_workers()
 
                 # Restore checkpoint

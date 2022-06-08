@@ -68,13 +68,17 @@ def load_sharded_array(ckpt_dir, metadatas):
     for metadata in metadatas:
         with open(os.path.join(ckpt_dir, metadata), "rb") as metafile:
             meta = pickle.load(metafile)
-        for shard_name, shard_indice in zip(meta["shard_names"], meta["shard_indices"]):
-            entire_array[shard_indice] = np.load(os.path.join(ckpt_dir, shard_name))
+        for shard_name, shard_indice in zip(meta["shard_names"],
+                                            meta["shard_indices"]):
+            entire_array[shard_indice] = np.load(
+                os.path.join(ckpt_dir, shard_name))
     return entire_array
 
 
-def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
-                    step: int, local_cache_dir: Union[str, os.PathLike, None] = None):
+def save_checkpoint(ckpt_dir: Union[str, os.PathLike],
+                    target: PyTree,
+                    step: int,
+                    local_cache_dir: Union[str, os.PathLike, None] = None):
     """
         Save a checkpoint of the `target` to `ckpt_dir`. 
 
@@ -104,14 +108,15 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
     flat_dirs = _dfs_pytree(target, "state")
     flat_target, target_tree = tree_flatten(target)
     flat_metadata = []
-    assert(len(flat_dirs) == len(flat_target))
+    assert (len(flat_dirs) == len(flat_target))
     for arr_dir, x in zip(flat_dirs, flat_target):
         arr_path = os.path.join(ckpt_dir, arr_dir)
         if local_cache_dir is None:
             arr_cache_path = None
         else:
             arr_cache_path = os.path.join(local_cache_dir, arr_dir)
-        if isinstance(x, (DistributedArray, ReplicatedDistributedArray, np.ndarray, jax.xla.DeviceArray)):
+        if isinstance(x, (DistributedArray, ReplicatedDistributedArray,
+                          np.ndarray, jax.xla.DeviceArray)):
             if isinstance(x, DistributedArray):
                 x.save(arr_path, arr_cache_path)
             elif isinstance(x, ReplicatedDistributedArray):
@@ -132,9 +137,8 @@ class LoadInfo:
     """
     A wrapper for the loading information.
     """
-    def __init__(self, 
-                 aval: ShapedArray, 
-                 meshes: Sequence[PhysicalDeviceMesh], 
+
+    def __init__(self, aval: ShapedArray, meshes: Sequence[PhysicalDeviceMesh],
                  specs: Sequence[ShardingSpec]):
         assert len(meshes) == len(specs)
         self.aval = aval
@@ -158,7 +162,8 @@ class LoadInfo:
         return f"{self.aval}, {self.meshes[0].mesh_id}, {self.specs[0]}"
 
 
-def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, load_info: PyTree):
+def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
+                       load_info: PyTree):
     """
         Restore the specified checkpoint from `ckpt_dir` and reshard it according to the `load_info`.
 
@@ -183,11 +188,13 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int, load_info: 
             meshes, arrays = [], []
             for mesh, spec in info.get_info():
                 meshes.append(mesh)
-                dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path), info.aval, mesh, spec)
+                dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path),
+                                                 info.aval, mesh, spec)
                 arrays.append(dist_arr)
-            flat_load_state.append(ReplicatedDistributedArray(meshes, arrays)) 
+            flat_load_state.append(ReplicatedDistributedArray(meshes, arrays))
         else:
             mesh, spec = info.get_info()
-            dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path), info.aval, mesh, spec)
+            dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path),
+                                             info.aval, mesh, spec)
             flat_load_state.append(dist_arr)
     return tree_unflatten(state_tree, flat_load_state)

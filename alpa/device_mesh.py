@@ -85,6 +85,7 @@ ReshardingBroadcastTask = namedtuple("ReshardingBroadcastTask",
 
 class DaemonMoveWorker:
     """A ray actor that moves local checkpoint into the shared filesystem in the background."""
+
     def move(self, from_dir: str, to_dir: str):
         os.makedirs(to_dir, exist_ok=True)
         for file in os.listdir(from_dir):
@@ -100,7 +101,8 @@ class MeshHostWorker:
     """A ray actor that manages the xla computation and buffers on a single
     host."""
 
-    def __init__(self, server_address: str, num_hosts: int, host_id: int, mesh_id: int, node_resource: str):
+    def __init__(self, server_address: str, num_hosts: int, host_id: int,
+                 mesh_id: int, node_resource: str):
         self.num_hosts = num_hosts
         self.host_id = host_id
         self.mesh_id = mesh_id
@@ -273,13 +275,16 @@ class MeshHostWorker:
     def sync_move_worker(self):
         ray.get(self.move_worker.sync.remote())
 
-    def save_buffers(self, ckpt_dir: str, local_cache_dir: Union[str, None], uuids: Sequence[int],
-                     shard_indices: Sequence[Index], global_shape: Sequence[int]):
+    def save_buffers(self, ckpt_dir: str, local_cache_dir: Union[str, None],
+                     uuids: Sequence[int], shard_indices: Sequence[Index],
+                     global_shape: Sequence[int]):
         assert len(uuids) > 0
         for uuid in uuids:
             assert uuid in self.buffers
 
-        shard_names = [str(self.host_id) + "." + str(i) for i in range(len(uuids))]
+        shard_names = [
+            str(self.host_id) + "." + str(i) for i in range(len(uuids))
+        ]
 
         metadata = {
             'global_shape': global_shape,
@@ -300,7 +305,8 @@ class MeshHostWorker:
             with open(os.path.join(save_dir, shard_name), "wb") as datafile:
                 np.save(datafile, self.buffers[uuid])
 
-        with open(os.path.join(save_dir, f".metadata{self.host_id}"), "wb") as metafile:
+        with open(os.path.join(save_dir, f".metadata{self.host_id}"),
+                  "wb") as metafile:
             pickle.dump(metadata, metafile)
 
         # move data
@@ -308,10 +314,11 @@ class MeshHostWorker:
             self.move_worker.move.remote(local_cache_dir, ckpt_dir)
 
     def load_buffers(self, ckpt_dir: str, uuids: Sequence[int],
-                     shard_indices: Sequence[Index],
-                     device_ids: Sequence[int]):
+                     shard_indices: Sequence[Index], device_ids: Sequence[int]):
         assert len(uuids) > 0
-        metadatas = list(filter(lambda fname: fname.startswith(".metadata"), os.listdir(ckpt_dir)))
+        metadatas = list(
+            filter(lambda fname: fname.startswith(".metadata"),
+                   os.listdir(ckpt_dir)))
         # pylint: disable=import-outside-toplevel
         from alpa.serialization import load_sharded_array
         entire_arr = load_sharded_array(ckpt_dir, metadatas)
@@ -1123,7 +1130,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                              resources={node_resource: 1e-3})(MeshHostWorker)
             worker = cls.options(runtime_env={
                 "env_vars": env_vars
-            }).remote(self.server_address, self.num_hosts, i, self.mesh_id, node_resource)
+            }).remote(self.server_address, self.num_hosts, i, self.mesh_id,
+                      node_resource)
             self.workers.append(worker)
         self.launched = True
 
@@ -1350,7 +1358,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
     ##### Other Functions #####
     def sync_workers(self):
         ray.get([w.sync.remote() for w in self.workers])
-    
+
     def sync_move_workers(self):
         ray.get([w.sync_move_worker.remote() for w in self.workers])
 
@@ -1444,7 +1452,8 @@ class DistributedArray:
         for host_id, uuids in buf_refs_per_host.items():
             if len(uuids) > 0:
                 self.device_mesh.workers[host_id].save_buffers.remote(
-                    ckpt_dir, local_cache_dir, uuids, indices_per_host[host_id], self.shape)
+                    ckpt_dir, local_cache_dir, uuids, indices_per_host[host_id],
+                    self.shape)
 
     @classmethod
     def load(cls, path: str, aval: ShapedArray, device_mesh: PhysicalDeviceMesh,
@@ -1472,8 +1481,10 @@ class DistributedArray:
         for host_id, uuids in buf_refs_per_host.items():
             if len(uuids) > 0:
                 device_mesh.workers[host_id].load_buffers.remote(
-                    path, uuids, indices_per_host[host_id], device_ids_per_host[host_id])
-        return DistributedArray(device_mesh, aval, sharding_spec, buf_refs, indices)
+                    path, uuids, indices_per_host[host_id],
+                    device_ids_per_host[host_id])
+        return DistributedArray(device_mesh, aval, sharding_spec, buf_refs,
+                                indices)
 
     @property
     def one_replica_buffer_indices(self):
@@ -1864,7 +1875,7 @@ class PhysicalDeviceMeshGroup:
         """Sync device activities on all workers."""
         all_workers = [w for mesh in self.meshes for w in mesh.workers]
         ray.get([w.sync.remote() for w in all_workers])
-    
+
     def sync_move_workers(self):
         """Sync moveworkers on all meshes."""
         for mesh in self.meshes:

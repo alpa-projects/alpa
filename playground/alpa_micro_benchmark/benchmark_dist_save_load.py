@@ -15,13 +15,16 @@ from alpa import PipeshardParallel, DistributedArray
 from alpa.testing import (MLPModel, create_train_state, get_mlp_train_step)
 from alpa.device_mesh import get_global_cluster
 
+
 def _get_efs_mount_point():
     # Hacky function to get the EFS mount point
-    for line in subprocess.check_output("df -h", shell=True).decode().split('\n'):
+    for line in subprocess.check_output("df -h",
+                                        shell=True).decode().split('\n'):
         cols = line.split(' ')
         if "efs" in cols[0]:
-            return cols[-1]+"/"
+            return cols[-1] + "/"
     return None
+
 
 def _get_save_prefix(to_efs):
     if to_efs:
@@ -32,7 +35,9 @@ def _get_save_prefix(to_efs):
         save_prefix = "/tmp/"
     return save_prefix
 
-LOOP_CNT=2
+
+LOOP_CNT = 2
+
 
 def benchmark_ndarray_save_load(mode="flax", to_efs=True):
     """
@@ -65,8 +70,10 @@ def benchmark_ndarray_save_load(mode="flax", to_efs=True):
     """
     rngkey = random.PRNGKey(0)
     #arr_sizes = [1024*1024, 4*1024*1024, 16*1024*1024, 32*1024*1024] # 4M, 16M, 64M, 128M
-    arr_sizes = [256*1024*1024] # 1G
-    benchmark_arrs = [random.normal(rngkey, (arr_size,)) for arr_size in arr_sizes]
+    arr_sizes = [256 * 1024 * 1024]  # 1G
+    benchmark_arrs = [
+        random.normal(rngkey, (arr_size,)) for arr_size in arr_sizes
+    ]
     for arr in benchmark_arrs:
         save_tot_duration = 0.0
         save_tot_throughput = 0.0
@@ -74,14 +81,14 @@ def benchmark_ndarray_save_load(mode="flax", to_efs=True):
         load_tot_throughput = 0.0
         prefix = _get_save_prefix(to_efs)
         for i in range(LOOP_CNT):
-            assert(prefix is not None)
+            assert (prefix is not None)
             outdir = os.path.join(prefix, "benchmark_checkpoint")
             # clean working directory
             subprocess.run(["rm", "-rf", outdir])
             # rebuild working directory
             os.mkdir(outdir)
-            print (f"save to {outdir}")
-            ckpt_path = os.path.join(outdir, "checkpoint_1.npy") # numpy-only
+            print(f"save to {outdir}")
+            ckpt_path = os.path.join(outdir, "checkpoint_1.npy")  # numpy-only
 
             # save benchmark
             start = time.time()
@@ -96,7 +103,9 @@ def benchmark_ndarray_save_load(mode="flax", to_efs=True):
             if i >= 1:
                 save_tot_duration += duration
                 save_tot_throughput += throughput
-            print(f"loop {i} save, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
+            print(
+                f"loop {i} save, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps"
+            )
 
             gpus = jax.devices("gpu")
             # load benchmark
@@ -107,20 +116,29 @@ def benchmark_ndarray_save_load(mode="flax", to_efs=True):
                 print("alpa skip load array benchmark")
                 continue
             else:
-                jax.block_until_ready(jax.device_put(np.load(ckpt_path), gpus[0]))
-                
+                jax.block_until_ready(
+                    jax.device_put(np.load(ckpt_path), gpus[0]))
+
             duration = time.time() - start
             throughput = arr.size * 32 / 1024 / 1024 / 1024 / duration
             if i >= 1:
                 load_tot_duration += duration
                 load_tot_throughput += throughput
-            print(f"loop {i} load, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
+            print(
+                f"loop {i} load, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps"
+            )
 
-        print(f"save average run time: {save_tot_duration/(LOOP_CNT - 1):.4f} seconds, save average throughput: {save_tot_throughput/(LOOP_CNT - 1):.4f} Gbps")
-        print(f"load average run time: {load_tot_duration/(LOOP_CNT - 1):.4f} seconds, load average throughput: {load_tot_throughput/(LOOP_CNT - 1):.4f} Gbps")
+        print(
+            f"save average run time: {save_tot_duration/(LOOP_CNT - 1):.4f} seconds, save average throughput: {save_tot_throughput/(LOOP_CNT - 1):.4f} Gbps"
+        )
+        print(
+            f"load average run time: {load_tot_duration/(LOOP_CNT - 1):.4f} seconds, load average throughput: {load_tot_throughput/(LOOP_CNT - 1):.4f} Gbps"
+        )
+
 
 def count_params(model):
     return sum(x.size for x in jax.tree_leaves(model))
+
 
 def benchmark_mlp_save(mode="flax", to_efs=True):
     """
@@ -137,11 +155,11 @@ def benchmark_mlp_save(mode="flax", to_efs=True):
     """
     # Init model and optimizer
     batch_size = 64
-    hidden_dim = 8192 # 3072M
+    hidden_dim = 8192  # 3072M
     input_dim = output_dim = hidden_dim
     model = MLPModel(hidden_dim=hidden_dim,
-                        output_dim=output_dim,
-                        manual_pipeline_layer=True)
+                     output_dim=output_dim,
+                     manual_pipeline_layer=True)
 
     # Init batch args
     rngkey = random.PRNGKey(0)
@@ -154,14 +172,14 @@ def benchmark_mlp_save(mode="flax", to_efs=True):
     tot_throughput = 0.0
     prefix = _get_save_prefix(to_efs)
     for i in range(LOOP_CNT):
-        assert(prefix is not None)
+        assert (prefix is not None)
         outdir = os.path.join(prefix, "benchmark_checkpoint")
-        ckpt_path = os.path.join(outdir, f"checkpoint_1.npy") # numpy-only
+        ckpt_path = os.path.join(outdir, f"checkpoint_1.npy")  # numpy-only
         # clean working directory
         subprocess.run(["rm", "-rf", outdir])
         # rebuild working directory
         os.mkdir(outdir)
-        print (f"save to {outdir}")
+        print(f"save to {outdir}")
 
         start = time.time()
         if mode == "flax":
@@ -176,8 +194,13 @@ def benchmark_mlp_save(mode="flax", to_efs=True):
         throughput = model_size * 32 / 1024 / 1024 / 1024 / duration
         tot_duration += duration
         tot_throughput += throughput
-        print(f"loop {i}, time: {duration} seconds, throughput: {throughput} Gbps")
-    print(f"average run time: {tot_duration/LOOP_CNT}, average throughput: {tot_throughput/LOOP_CNT} Gbps")
+        print(
+            f"loop {i}, time: {duration} seconds, throughput: {throughput} Gbps"
+        )
+    print(
+        f"average run time: {tot_duration/LOOP_CNT}, average throughput: {tot_throughput/LOOP_CNT} Gbps"
+    )
+
 
 def benchmark_dist_arr_save(to_efs=False):
     """
@@ -195,14 +218,14 @@ def benchmark_dist_arr_save(to_efs=False):
     logical_mesh = physical_mesh.get_logical_mesh()
 
     rngkey = random.PRNGKey(0)
-    arr_shape = (64*1024, 16*1024) #1GB
+    arr_shape = (64 * 1024, 16 * 1024)  #1GB
     arr = random.normal(rngkey, arr_shape)
 
     sharding_spec = logical_mesh.make_tile_spec(arr, [0, 1], [0, 1])
     input_indices = sharding_spec.indices(arr.shape).flatten()
     (dist_arr,) = physical_mesh.shard_args_to_arrays(
-        (jax.ShapedArray(arr.shape, jnp.int32),),
-        (input_indices,), (sharding_spec,), (arr,))
+        (jax.ShapedArray(arr.shape, jnp.int32),), (input_indices,),
+        (sharding_spec,), (arr,))
 
     save_tot_duration = 0.0
     save_tot_throughput = 0.0
@@ -219,8 +242,13 @@ def benchmark_dist_arr_save(to_efs=False):
         if i >= 1:
             save_tot_duration += duration
             save_tot_throughput += throughput
-        print(f"loop {i} save, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
-    print(f"save average run time: {save_tot_duration/(LOOP_CNT - 1):.4f} seconds, save average throughput: {save_tot_throughput/(LOOP_CNT - 1):.4f} Gbps")
+        print(
+            f"loop {i} save, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps"
+        )
+    print(
+        f"save average run time: {save_tot_duration/(LOOP_CNT - 1):.4f} seconds, save average throughput: {save_tot_throughput/(LOOP_CNT - 1):.4f} Gbps"
+    )
+
 
 def benchmark_dist_arr_load():
     """
@@ -238,7 +266,7 @@ def benchmark_dist_arr_load():
     logical_mesh = physical_mesh.get_logical_mesh()
 
     rngkey = random.PRNGKey(0)
-    arr_shape = (64*1024, 16*1024) #1GB
+    arr_shape = (64 * 1024, 16 * 1024)  #1GB
     arr = random.normal(rngkey, arr_shape)
 
     sharding_spec = logical_mesh.make_tile_spec(arr, [0, 1], [0, 1])
@@ -252,15 +280,21 @@ def benchmark_dist_arr_load():
         # load benchmark
         start = time.time()
         print("start", time.time())
-        jax.block_until_ready(DistributedArray.load(outdir, jax.ShapedArray(arr.shape, jnp.int32), physical_mesh, sharding_spec))
+        jax.block_until_ready(
+            DistributedArray.load(outdir, jax.ShapedArray(arr.shape, jnp.int32),
+                                  physical_mesh, sharding_spec))
         print("end", time.time())
         duration = time.time() - start
         throughput = arr.size * 32 / 1024 / 1024 / 1024 / duration
         if i >= 1:
             load_tot_duration += duration
             load_tot_throughput += throughput
-        print(f"loop {i} load, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
-    print(f"load average run time: {load_tot_duration/(LOOP_CNT - 1):.4f} seconds, load average throughput: {load_tot_throughput/(LOOP_CNT - 1):.4f} Gbps")
+        print(
+            f"loop {i} load, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps"
+        )
+    print(
+        f"load average run time: {load_tot_duration/(LOOP_CNT - 1):.4f} seconds, load average throughput: {load_tot_throughput/(LOOP_CNT - 1):.4f} Gbps"
+    )
 
 
 def benchmark_mlp_dist_save():
@@ -284,18 +318,18 @@ def benchmark_mlp_dist_save():
     """
     # Init model and optimizer
     batch_size = 64
-    hidden_dim = 8192 # 3072M
+    hidden_dim = 8192  # 3072M
     input_dim = output_dim = hidden_dim
     model = MLPModel(hidden_dim=hidden_dim,
-                        output_dim=output_dim,
-                        manual_pipeline_layer=True)
+                     output_dim=output_dim,
+                     manual_pipeline_layer=True)
 
     # Init batch args
     rngkey = random.PRNGKey(0)
     x = random.normal(rngkey, (batch_size, input_dim), jnp.float32)
     y = jax.random.normal(rngkey, (batch_size, output_dim), jnp.float32)
     batch = {'x': x, 'y': y}
- 
+
     state = create_train_state(rngkey, model, [x])
     model_size = count_params(state)
     print(f"model size: {model_size * 4 / 1024 / 1024} MB")
@@ -327,9 +361,13 @@ def benchmark_mlp_dist_save():
         if i >= 1:
             save_tot_duration += duration
             save_tot_throughput += throughput
-        print(f"loop {i} save, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
+        print(
+            f"loop {i} save, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps"
+        )
 
-    print(f"save average run time: {save_tot_duration/(LOOP_CNT - 1):.4f} seconds, save average throughput: {save_tot_throughput/(LOOP_CNT - 1):.4f} Gbps")
+    print(
+        f"save average run time: {save_tot_duration/(LOOP_CNT - 1):.4f} seconds, save average throughput: {save_tot_throughput/(LOOP_CNT - 1):.4f} Gbps"
+    )
 
 
 def benchmark_mlp_dist_load():
@@ -348,18 +386,18 @@ def benchmark_mlp_dist_load():
     """
     # Init model and optimizer
     batch_size = 64
-    hidden_dim = 8192 # 3072M
+    hidden_dim = 8192  # 3072M
     input_dim = output_dim = hidden_dim
     model = MLPModel(hidden_dim=hidden_dim,
-                        output_dim=output_dim,
-                        manual_pipeline_layer=True)
+                     output_dim=output_dim,
+                     manual_pipeline_layer=True)
 
     # Init batch args
     rngkey = random.PRNGKey(0)
     x = random.normal(rngkey, (batch_size, input_dim), jnp.float32)
     y = jax.random.normal(rngkey, (batch_size, output_dim), jnp.float32)
     batch = {'x': x, 'y': y}
- 
+
     state = create_train_state(rngkey, model, [x])
     model_size = count_params(state)
     print(f"model size: {model_size * 4 / 1024 / 1024} MB")
@@ -367,7 +405,7 @@ def benchmark_mlp_dist_load():
     # Compile
     method = PipeshardParallel(num_micro_batches=2)
     parallel_train_step = get_mlp_train_step(method, True, False, False)
-    executable = parallel_train_step.get_executable(state, batch) 
+    executable = parallel_train_step.get_executable(state, batch)
     state_ss, _ = executable.get_load_info()
     _ = parallel_train_step(state, batch)[0]
 
@@ -382,12 +420,16 @@ def benchmark_mlp_dist_load():
         jax.block_until_ready(load_state)
         duration = time.time() - start
         throughput = model_size * 32 / 1024 / 1024 / 1024 / duration
-        if i >= 1: # first loop for warmup
+        if i >= 1:  # first loop for warmup
             load_tot_duration += duration
             load_tot_throughput += throughput
-        print(f"loop {i} load, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps")
+        print(
+            f"loop {i} load, time: {duration:.4f} seconds, throughput: {throughput:.4f} Gbps"
+        )
 
-    print(f"load average run time: {load_tot_duration/(LOOP_CNT - 1):.4f} seconds, load average throughput: {load_tot_throughput/(LOOP_CNT - 1):.4f} Gbps")
+    print(
+        f"load average run time: {load_tot_duration/(LOOP_CNT - 1):.4f} seconds, load average throughput: {load_tot_throughput/(LOOP_CNT - 1):.4f} Gbps"
+    )
 
 
 if __name__ == "__main__":
@@ -400,7 +442,7 @@ if __name__ == "__main__":
     # print("\nnumpy")
     # benchmark_ndarray_save_load(mode="numpy")
 
-    # print("\n\nndarray benchmark on local disk:") 
+    # print("\n\nndarray benchmark on local disk:")
     # print("flax")
     # benchmark_ndarray_save_load(mode="flax", to_efs=False)
     # print("\nalpa")
@@ -426,5 +468,3 @@ if __name__ == "__main__":
     # benchmark_mlp_dist_save()
     benchmark_mlp_dist_load()
     alpa.shutdown()
-    
-

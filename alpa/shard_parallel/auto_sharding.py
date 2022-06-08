@@ -385,7 +385,7 @@ def run_spmd_partitioner_pass(
         device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
         parameter_is_tupled_arguments=False,
-        build_random_seed=global_config.build_random_seed)
+        build_random_seed=global_config.compile_random_seed)
 
     if rewrite_for_grad_acc and rewrite_grad_acc_indices is None:
         rewrite_grad_acc_indices = tuple(

@@ -95,26 +95,32 @@ class DistSaveLoadTest(unittest.TestCase):
                                      [[5], [7]]])
         self.check_dist_array_eq(desired_buffers1, dist_input_data1)
 
-        # Save the DistributedArray (one replica only)
-        tmpdir = tempfile.TemporaryDirectory(prefix=save_prefix)
-        subprocess.run(["rm", "-rf", tmpdir.name])
-        dist_input_data1.save(tmpdir.name)
+        # cached save/load
+        with tempfile.TemporaryDirectory(prefix=save_prefix) as ckpt_dir:
+            with tempfile.TemporaryDirectory(prefix="/tmp/") as cache_dir:
+                # Save the DistributedArray (one replica only)
+                dist_input_data1.save(ckpt_dir, cache_dir)
 
-        # Load previously saved DistributedArray with a different shardingSpec
-        # [[0,1],          [[0,1],  [[0,1],
-        #  [2,3],  shard    [2,3]]   [2,3]]
-        #  [4,5],  ====>   [[4,5],  [[4,5],
-        #  [6,7]]           [6,7]]   [6,7]]
-        load_sharding_spec = logical_mesh.make_tile_spec(
-            global_input_data1, [0, 1], [0])
-        dist_load_data1 = DistributedArray.load(
-            tmpdir.name, jax.ShapedArray(global_input_data1.shape, jnp.int32),
-            physical_mesh, load_sharding_spec)
+                # Sync all the move workers
+                physical_mesh.sync_move_workers()
 
-        # Check the DistributedArray's remote buffers
-        desired_buffers2 = np.array([[[0, 1], [2, 3]], [[0, 1], [2, 3]],
-                                     [[4, 5], [6, 7]], [[4, 5], [6, 7]]])
-        self.check_dist_array_eq(desired_buffers2, dist_load_data1)
+                # Load previously saved DistributedArray with a different shardingSpec
+                # [[0,1],          [[0,1],  [[0,1],
+                #  [2,3],  shard    [2,3]]   [2,3]]
+                #  [4,5],  ====>   [[4,5],  [[4,5],
+                #  [6,7]]           [6,7]]   [6,7]]
+                load_sharding_spec = logical_mesh.make_tile_spec(
+                    global_input_data1, [0, 1], [0])
+                dist_load_data1 = DistributedArray.load(
+                    ckpt_dir,
+                    jax.ShapedArray(global_input_data1.shape, jnp.int32),
+                    physical_mesh, load_sharding_spec)
+
+                # Check the DistributedArray's remote buffers
+                desired_buffers2 = np.array([[[0, 1], [2, 3]], [[0, 1], [2, 3]],
+                                             [[4, 5], [6, 7]], [[4, 5], [6,
+                                                                         7]]])
+                self.check_dist_array_eq(desired_buffers2, dist_load_data1)
 
         # Cleanup
         physical_mesh.shutdown()
@@ -158,7 +164,7 @@ class DistSaveLoadTest(unittest.TestCase):
         # Check results
         assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)
 
-    def test_distributed_mlp_save_load(self):
+    def test_distributed_mlp_uncached_save_load(self):
         save_prefix = self._get_save_prefix()
 
         # Init model and optimizer
@@ -189,6 +195,7 @@ class DistSaveLoadTest(unittest.TestCase):
         parallel_state = parallel_train_step(parallel_state, batch)[0]
         assert_allclose(serial_state.params, parallel_state.params, 1e-3, 1e-3)
 
+        # uncached save/load
         with tempfile.TemporaryDirectory(prefix=save_prefix) as ckpt_dir:
             # Save checkpoint
             save_checkpoint(ckpt_dir, parallel_state, 1)
@@ -200,11 +207,10 @@ class DistSaveLoadTest(unittest.TestCase):
             # Run after load
             serial_state = serial_train_step(serial_state, batch)[0]
             load_state = parallel_train_step(load_state, batch)[0]
-
         # Check results
         assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)
 
-    def test_distributed_bert_save_load(self):
+    def test_distributed_bert_cached_save_load(self):
         save_prefix = self._get_save_prefix()
 
         # Config
@@ -253,18 +259,22 @@ class DistSaveLoadTest(unittest.TestCase):
         parallel_state = parallel_train_step(parallel_state, batch)[0]
         assert_allclose(serial_state.params, parallel_state.params, 1e-3, 1e-3)
 
+        # cached save/load
         with tempfile.TemporaryDirectory(prefix=save_prefix) as ckpt_dir:
-            # Save checkpoint
-            save_checkpoint(ckpt_dir, parallel_state, 1)
+            with tempfile.TemporaryDirectory(prefix="/tmp/") as cache_dir:
+                # Save checkpoint
+                save_checkpoint(ckpt_dir, parallel_state, 1, cache_dir)
 
-            # Restore checkpoint
-            state_ss, _ = executable.get_load_info()
-            load_state = restore_checkpoint(ckpt_dir, 1, state_ss)
+                # Sync all the move workers
+                executable.sync_move_workers()
 
-            # Run after load
-            serial_state = serial_train_step(serial_state, batch)[0]
-            load_state = parallel_train_step(load_state, batch)[0]
+                # Restore checkpoint
+                state_ss, _ = executable.get_load_info()
+                load_state = restore_checkpoint(ckpt_dir, 1, state_ss)
 
+                # Run after load
+                serial_state = serial_train_step(serial_state, batch)[0]
+                load_state = parallel_train_step(load_state, batch)[0]
         # Check results
         assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)
 
@@ -273,8 +283,8 @@ def suite():
     suite = unittest.TestSuite()
     suite.addTest(DistSaveLoadTest("test_distributed_array_save_load"))
     suite.addTest(DistSaveLoadTest("test_jax_mlp_save_dist_load"))
-    suite.addTest(DistSaveLoadTest("test_distributed_mlp_save_load"))
-    suite.addTest(DistSaveLoadTest("test_distributed_bert_save_load"))
+    suite.addTest(DistSaveLoadTest("test_distributed_mlp_uncached_save_load"))
+    suite.addTest(DistSaveLoadTest("test_distributed_bert_cached_save_load"))
     return suite
 
 

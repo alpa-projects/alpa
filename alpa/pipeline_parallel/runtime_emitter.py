@@ -991,9 +991,9 @@ class PipelineInstEmitter:
                                     physical_mesh,
                                     input_shard_specs[mesh_idx][local_idx])
                 if load_info_arr[global_idx] is None:
-                    load_info_arr[global_idx] = LoadInfo([aval], [mesh], [spec])
+                    load_info_arr[global_idx] = LoadInfo(aval, [mesh], [spec])
                 else:
-                    load_info_arr[global_idx].add_replica(aval, mesh, spec)
+                    load_info_arr[global_idx].add_replica(mesh, spec)
 
         # build load_info_arr
         return tree_unflatten(self.in_tree, load_info_arr)

@@ -1,27 +1,20 @@
-"""Serialization utilities for Alpa.
-Adapted from
-https://flax.readthedocs.io/en/latest/_modules/flax/serialization.html
-Add support for DistributedArray and ReplicatedDistributedArray serialization
-in Alpa.
+"""
+Serialization utilities for Alpa.
+Support DistributedArray and ReplicatedDistributedArray serialization in Alpa.
 """
 
-import enum
 import logging
 import os
-import re
+import pickle
 from typing import Union, Any, Sequence
-import uuid
 
-import numpy as np
+from flax.serialization import to_state_dict, from_state_dict
 import jax
 from jax.interpreters.pxla import ShardingSpec
 from jax.core import ShapedArray
-import jax.numpy as jnp
 from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
-from flax.serialization import (to_state_dict, from_state_dict,
-                                _ndarray_from_bytes, _ndarray_to_bytes)
 import msgpack
-import tensorstore as ts
+import numpy as np
 
 from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
                               PhysicalDeviceMesh)
@@ -32,136 +25,116 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-class _MsgpackExtType(enum.IntEnum):
-    """Messagepack custom type ids."""
-    # pylint: disable=invalid-name
-    ndarray = 1
-    native_complex = 2
-    npscalar = 3
-    distarray = 4
-    replicated_distarray = 5
+def _dfs_pytree(tree, prefix):
+    paths = []
+    if isinstance(tree, dict):
+        for k, v in tree.items():
+            paths += _dfs_pytree(v, prefix + "." + str(k))
+    elif isinstance(tree, (tuple, list)):
+        for i, v in enumerate(tree):
+            paths += _dfs_pytree(v, prefix + "." + str(i))
+    elif tree is not None:
+        # Leaf node
+        paths.append(prefix)
+    return paths
 
 
-def _msgpack_ext_pack_wrapper(ckpt_dir):
-
-    def _get_save_path():
-        return os.path.join(ckpt_dir, uuid.uuid4().hex)
-
-    def _msgpack_ext_pack(x):
-        """Messagepack encoders for custom types."""
-        if isinstance(x, (np.ndarray, jax.xla.DeviceArray)):
-            save_dir = _get_save_path()
-            ts_store(save_dir, x)
-            return msgpack.ExtType(_MsgpackExtType.ndarray,
-                                   msgpack.packb(save_dir))
-        if np.issctype(type(x)):
-            # pack scalar as ndarray
-            return msgpack.ExtType(_MsgpackExtType.npscalar,
-                                   _ndarray_to_bytes(np.asarray(x)))
-        elif isinstance(x, complex):
-            return msgpack.ExtType(_MsgpackExtType.native_complex,
-                                   msgpack.packb((x.real, x.imag)))
-        elif isinstance(x, DistributedArray):
-            save_dir = _get_save_path()
-            x.save(save_dir)
-            return msgpack.ExtType(_MsgpackExtType.distarray,
-                                   msgpack.packb(save_dir))
-        elif isinstance(x, ReplicatedDistributedArray):
-            save_dir = _get_save_path()
-            x.replica.save(save_dir)
-            return msgpack.ExtType(_MsgpackExtType.replicated_distarray,
-                                   msgpack.packb(save_dir))
-        return x
-
-    return _msgpack_ext_pack
-
-
-def _msgpack_ext_unpack(code, data):
-    """Messagepack decoders for custom types."""
-    if code == _MsgpackExtType.ndarray:
-        return msgpack.unpackb(data)
-    elif code == _MsgpackExtType.native_complex:
-        complex_tuple = msgpack.unpackb(data)
-        return complex(complex_tuple[0], complex_tuple[1])
-    elif code == _MsgpackExtType.npscalar:
-        ar = _ndarray_from_bytes(data)
-        return ar[()]  # unpack ndarray to scalar
-    elif code == _MsgpackExtType.distarray:
-        return msgpack.unpackb(data)
-    elif code == _MsgpackExtType.replicated_distarray:
-        return msgpack.unpackb(data)
-    return msgpack.ExtType(code, data)
-
-
-def get_ts_spec(ckpt_path: str):
-    spec = {'driver': 'zarr', 'kvstore': {}, 'metadata_key': '.zarray0'}
-    if ckpt_path.startswith('gs://'):
-        m = re.fullmatch('^gs://([^/]*)/(.*)$', ckpt_path, re.DOTALL)
-        if m is None:
-            raise ValueError(
-                'The ckpt_path should contain the bucket name and the '
-                f'file path inside the bucket. Got: {ckpt_path}')
-        gcs_bucket = m.group(1)
-        path_without_bucket = m.group(2)
-        spec['kvstore'] = {
-            'driver': 'gcs',
-            'bucket': gcs_bucket,
-            'path': path_without_bucket
-        }
-    else:
-        spec['kvstore'] = {'driver': 'file', 'path': ckpt_path}
-    return spec
-
-
-def ts_store(ckpt_dir, data: Union[np.ndarray, jax.xla.DeviceArray]):
-    ts_spec = get_ts_spec(ckpt_dir)
-    dtype = data.dtype
-    if dtype == jnp.bfloat16:
-        # Tensorstore uses 'bfloat16', not '<V2'.
-        dtype = 'bfloat16'
-    else:
-        dtype = np.dtype(dtype).str
+def _save_unsharded_array(ckpt_dir, arr):
+    os.makedirs(ckpt_dir, exist_ok=True)
+    shard_name = "0.0"
     metadata = {
-        'shape': data.shape,
-        'chunks': data.shape,
-        'dtype': dtype,
+        "global_shape": arr.shape,
+        "dtype": arr.dtype,
+        "shard_names": [shard_name],
+        "shard_indices": None,
     }
-    ts_spec['metadata'] = metadata
-    t = ts.open(ts.Spec(ts_spec),
-                create=True,
-                open=True,
-                context=ts.Context({'file_io_concurrency': {
-                    'limit': 128
-                }})).result()
-
-    t.write(data).result()
+    with open(os.path.join(ckpt_dir, shard_name), "wb") as datafile:
+        np.save(datafile, arr)
+    with open(os.path.join(ckpt_dir, ".metadata0"), "wb") as metafile:
+        pickle.dump(metadata, metafile)
 
 
-def save_checkpoint(ckpt_dir: Union[str, os.PathLike], target: PyTree,
-                    step: int):
-    """Save a checkpoint of the `target` to `path`.
+def load_sharded_array(ckpt_dir, metadatas):
+    """
+        Used by MeshHostWorker.load_buffers to first load the entire shared
+        array from disk.
+    """
+    assert len(metadatas) > 0
+    with open(os.path.join(ckpt_dir, metadatas[0]), "rb") as metafile:
+        meta = pickle.load(metafile)
+    if meta["shard_indices"] is None:
+        return np.load(os.path.join(ckpt_dir, meta["shard_names"][0]))
+    entire_array = np.empty(meta["global_shape"], meta["dtype"])
+    for metadata in metadatas:
+        with open(os.path.join(ckpt_dir, metadata), "rb") as metafile:
+            meta = pickle.load(metafile)
+        for shard_name, shard_indice in zip(meta["shard_names"],
+                                            meta["shard_indices"]):
+            entire_array[shard_indice] = np.load(
+                os.path.join(ckpt_dir, shard_name))
+    return entire_array
 
-        Similar to flax.training.checkpoints.save_checkpoint, but support
-        DistributedArrays and ReplicatedDistributedArray in alpa. Also it will
-        save np.ndarray and jax.xla.DeviceArray into tensorstore for later
-        distributed loading.
-        # TODO (zhongyinmin): copy all the safe-saving stuff from
-        https://flax.readthedocs.io/en/latest/_modules/flax/training/checkpoints.html#save_checkpoint
+
+def save_checkpoint(ckpt_dir: Union[str, os.PathLike],
+                    target: PyTree,
+                    step: int,
+                    local_cache_dir: Union[str, os.PathLike, None] = None):
+    """
+        Save a checkpoint of the `target` to `ckpt_dir`.
+
+        If you want to save a model which has been parallelized on multiple
+        nodes by alpa, `ckpt_dir` should be a shared filesystem path.
+        It is also recommended to provide a `local_cache_dir` on local disk
+        to speed up the saving process because `save_checkpoint` will return
+        as soon as each node has saved its shard of the model into
+        `local_cache_dir`. The DaemonMoveWorkers will then move these local
+        shards into `ckpt_dir` in the background.
+
+        If you just want to save a unparallelized model or the model is
+        parallellized on a single node, `ckpt_dir` should be a normal
+        path on local disk, and the `local_cache_dir` should be None.
 
         Args:
-           ckpt_dir: str or pathlib-like path to store checkpoint directories
-             in.
-           target: serializable flax object, usually a trainState
-           step: training step number or other metric number
+           ckpt_dir: the directory where this checkpoint will be saved.
+           target: serializable flax object, usually a trainState.
+           step: training step number or other metric number.
+           local_cache_dir: If not None, `ckpt_dir` should be a
+           shared filesystem path, and this function will return as soon as
+           the shards have been saved to this local directory. DaemonMoveWorkers
+           will move these shards into `ckpt_dir` in the background.
     """
-    state_dict = to_state_dict(target)
+    # create directories if not exist
     os.makedirs(ckpt_dir, exist_ok=True)
-    ckpt_path = os.path.join(ckpt_dir, f'checkpoint_{step}')
-    with open(ckpt_path, 'wb') as fp:
-        fp.write(
-            msgpack.packb(state_dict,
-                          default=_msgpack_ext_pack_wrapper(ckpt_dir),
-                          strict_types=True))
+    if local_cache_dir is not None:
+        os.makedirs(local_cache_dir, exist_ok=True)
+
+    target = to_state_dict(target)
+    flat_dirs = _dfs_pytree(target, "state")
+    flat_target, target_tree = tree_flatten(target)
+    flat_metadata = []
+    assert (len(flat_dirs) == len(flat_target))
+    for arr_dir, x in zip(flat_dirs, flat_target):
+        arr_path = os.path.join(ckpt_dir, arr_dir)
+        if local_cache_dir is None:
+            arr_cache_path = None
+        else:
+            arr_cache_path = os.path.join(local_cache_dir, arr_dir)
+        if isinstance(x, (DistributedArray, ReplicatedDistributedArray,
+                          np.ndarray, jax.xla.DeviceArray)):
+            if isinstance(x, DistributedArray):
+                x.save(arr_path, arr_cache_path)
+            elif isinstance(x, ReplicatedDistributedArray):
+                x.replica.save(arr_path, arr_cache_path)
+            elif isinstance(x, (np.ndarray, jax.xla.DeviceArray)):
+                _save_unsharded_array(arr_path, x)
+            flat_metadata.append(arr_dir)
+        else:
+            flat_metadata.append(x)
+
+    metapath = os.path.join(ckpt_dir, f"checkpoint_{step}")
+    metadata = tree_unflatten(target_tree, flat_metadata)
+    with open(metapath, "wb") as metafile:
+        metafile.write(msgpack.packb(metadata))
 
 
 class LoadInfo:
@@ -169,69 +142,65 @@ class LoadInfo:
     A wrapper for the loading information.
     """
 
-    def __init__(self, avals: Sequence[ShapedArray],
-                 meshes: Sequence[PhysicalDeviceMesh],
+    def __init__(self, aval: ShapedArray, meshes: Sequence[PhysicalDeviceMesh],
                  specs: Sequence[ShardingSpec]):
-        assert len(avals) == len(meshes)
         assert len(meshes) == len(specs)
-        self.avals = avals
+        self.aval = aval
         self.meshes = meshes
         self.specs = specs
 
-    def add_replica(self, aval, mesh, spec):
-        self.avals.append(aval)
+    def add_replica(self, mesh, spec):
         self.meshes.append(mesh)
         self.specs.append(spec)
 
     def get_info(self):
         if self.is_replicated():
-            return zip(self.avals, self.meshes, self.specs)
+            return zip(self.meshes, self.specs)
         else:
-            return self.avals[0], self.meshes[0], self.specs[0]
+            return self.meshes[0], self.specs[0]
 
     def is_replicated(self):
-        return len(self.avals) > 1
+        return len(self.meshes) > 1
 
     def __str__(self):
-        return f'{self.avals[0]}, {self.meshes[0].mesh_id}, {self.specs[0]}'
+        return f"{self.aval}, {self.meshes[0].mesh_id}, {self.specs[0]}"
 
 
 def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
                        load_info: PyTree):
-    """Restore the specified checkpoint from `path`.
-
-        Similar to flax.training.checkpoints.load_checkpoint,
-        but support DistributedArrays and ReplicatedDistributedArray in alpa.
-        # TODO (zhongyinmin): copy all the safe-loading stuff from
-        https://flax.readthedocs.io/en/latest/_modules/flax/training/checkpoints.html#restore_checkpoint
+    """
+        Restore the specified checkpoint from `ckpt_dir` and reshard it
+        according to the `load_info`.
 
         Args:
-            ckpt_dir: directory of checkpoints to restore from.
+            ckpt_dir: directory of checkpoints to restore from. If you
+            do not have a shared filesystem, each host needs a copy of
+            the checkpoint on its local disk at the same path.
             step: step number to load.
-            load_info: shardingSpec and deviceMesh allocation info for loading.
+            load_info: shardingSpec and deviceMesh placement info for loading.
     """
-    ckpt_path = os.path.join(ckpt_dir, f'checkpoint_{step}')
-    with open(ckpt_path, 'rb') as fp:
-        ckpt_contents = fp.read()
-    state_dict_content = msgpack.unpackb(ckpt_contents,
-                                         ext_hook=_msgpack_ext_unpack,
-                                         raw=False)
-    state_paths, state_tree = tree_flatten(
-        from_state_dict(load_info, state_dict_content))
+    metapath = os.path.join(ckpt_dir, f"checkpoint_{step}")
+    with open(metapath, "rb") as metafile:
+        metadata = from_state_dict(load_info, msgpack.unpackb(metafile.read()))
+
+    state_paths, state_tree = tree_flatten(metadata)
     flat_info = tree_leaves(load_info)
     flat_load_state = []
     for path, info in zip(state_paths, flat_info):
         if info is None:
-            logger.warning('Variable is not used, skip loading it')
+            logger.warning("Variable is not used, skip loading it")
             flat_load_state.append(None)
         if info.is_replicated():
             meshes, arrays = [], []
-            for aval, mesh, spec in info.get_info():
+            for mesh, spec in info.get_info():
                 meshes.append(mesh)
-                arrays.append(DistributedArray.load(path, aval, mesh, spec))
+                dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path),
+                                                 info.aval, mesh, spec)
+                arrays.append(dist_arr)
             flat_load_state.append(ReplicatedDistributedArray(meshes, arrays))
         else:
-            aval, mesh, spec = info.get_info()
-            flat_load_state.append(DistributedArray.load(
-                path, aval, mesh, spec))
+            mesh, spec = info.get_info()
+            dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path),
+                                             info.aval, mesh, spec)
+            flat_load_state.append(dist_arr)
     return tree_unflatten(state_tree, flat_load_state)

@@ -346,6 +346,10 @@ class PipeshardDriverExecutable:
         """Sync device activities on all workers."""
         self.mesh_group.sync_workers()
 
+    def sync_move_workers(self):
+        """Sync moveworkers on all meshes."""
+        self.mesh_group.sync_move_workers()
+
     def _check_alive(self):
         try:
             rets = [

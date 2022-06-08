@@ -100,12 +100,7 @@ class MeshHostWorker:
     """A ray actor that manages the xla computation and buffers on a single
     host."""
 
-<<<<<<< HEAD
-    def __init__(self, server_address: str, num_hosts: int, host_id: int,
-                 mesh_id: int):
-=======
     def __init__(self, server_address: str, num_hosts: int, host_id: int, mesh_id: int, node_resource: str):
->>>>>>> reorganize the checkpoint interfaces
         self.num_hosts = num_hosts
         self.host_id = host_id
         self.mesh_id = mesh_id

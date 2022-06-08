@@ -43,10 +43,10 @@ def _save_unsharded_array(ckpt_dir, arr):
     os.makedirs(ckpt_dir, exist_ok=True)
     shard_name = "0.0"
     metadata = {
-        'global_shape': arr.shape,
-        'dtype': arr.dtype,
-        'shard_names': [shard_name],
-        'shard_indices': None,
+        "global_shape": arr.shape,
+        "dtype": arr.dtype,
+        "shard_names": [shard_name],
+        "shard_indices": None,
     }
     with open(os.path.join(ckpt_dir, shard_name), "wb") as datafile:
         np.save(datafile, arr)
@@ -56,15 +56,15 @@ def _save_unsharded_array(ckpt_dir, arr):
 
 def load_sharded_array(ckpt_dir, metadatas):
     """
-        Used by MeshHostWorker.load_buffers to first load the entire shared array
-        from disk.
+        Used by MeshHostWorker.load_buffers to first load the entire shared
+        array from disk.
     """
     assert len(metadatas) > 0
     with open(os.path.join(ckpt_dir, metadatas[0]), "rb") as metafile:
         meta = pickle.load(metafile)
     if meta["shard_indices"] is None:
         return np.load(os.path.join(ckpt_dir, meta["shard_names"][0]))
-    entire_array = np.empty(meta["global_shape"], meta['dtype'])
+    entire_array = np.empty(meta["global_shape"], meta["dtype"])
     for metadata in metadatas:
         with open(os.path.join(ckpt_dir, metadata), "rb") as metafile:
             meta = pickle.load(metafile)
@@ -80,24 +80,28 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike],
                     step: int,
                     local_cache_dir: Union[str, os.PathLike, None] = None):
     """
-        Save a checkpoint of the `target` to `ckpt_dir`. 
+        Save a checkpoint of the `target` to `ckpt_dir`.
 
-        If you want to save a model which has been parallelized on multiple nodes by alpa, `ckpt_dir` 
-        should be a shared filesystem path. It is also recommended to provide a `local_cache_dir` on 
-        local disk to speed up the saving process because `save_checkpoint` will return as soon as 
-        each node has saved its shard of the model into `local_cache_dir`. The DaemonMoveWorkers will 
-        then move these local shards into `ckpt_dir` in the background.
+        If you want to save a model which has been parallelized on multiple
+        nodes by alpa, `ckpt_dir` should be a shared filesystem path.
+        It is also recommended to provide a `local_cache_dir` on local disk
+        to speed up the saving process because `save_checkpoint` will return
+        as soon as each node has saved its shard of the model into
+        `local_cache_dir`. The DaemonMoveWorkers will then move these local
+        shards into `ckpt_dir` in the background.
 
-        If you just want to save a unparallelized model or the model is parallellized on a single node,
-        `ckpt_dir` should be a normal path on local disk, and the `local_cache_dir` should be None.
+        If you just want to save a unparallelized model or the model is
+        parallellized on a single node, `ckpt_dir` should be a normal
+        path on local disk, and the `local_cache_dir` should be None.
 
         Args:
            ckpt_dir: the directory where this checkpoint will be saved.
            target: serializable flax object, usually a trainState.
-           step: training step number or other metric number
-           local_cache_dir: If not None, `ckpt_dir` should be a shared filesystem path, and this function 
-                            will return as soon as the shards have been saved to this local directory. 
-                            DaemonMoveWorkers will move these shards into `ckpt_dir` in the background.
+           step: training step number or other metric number.
+           local_cache_dir: If not None, `ckpt_dir` should be a
+           shared filesystem path, and this function will return as soon as
+           the shards have been saved to this local directory. DaemonMoveWorkers
+           will move these shards into `ckpt_dir` in the background.
     """
     # create directories if not exist
     os.makedirs(ckpt_dir, exist_ok=True)
@@ -165,16 +169,18 @@ class LoadInfo:
 def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
                        load_info: PyTree):
     """
-        Restore the specified checkpoint from `ckpt_dir` and reshard it according to the `load_info`.
+        Restore the specified checkpoint from `ckpt_dir` and reshard it
+        according to the `load_info`.
 
         Args:
-            ckpt_dir: directory of checkpoints to restore from. If you do not have a shared filesystem, 
-            each host needs a copy of the checkpoint on its local disk at the same path.
+            ckpt_dir: directory of checkpoints to restore from. If you
+            do not have a shared filesystem, each host needs a copy of
+            the checkpoint on its local disk at the same path.
             step: step number to load.
             load_info: shardingSpec and deviceMesh placement info for loading.
     """
     metapath = os.path.join(ckpt_dir, f"checkpoint_{step}")
-    with open(metapath, 'rb') as metafile:
+    with open(metapath, "rb") as metafile:
         metadata = from_state_dict(load_info, msgpack.unpackb(metafile.read()))
 
     state_paths, state_tree = tree_flatten(metadata)
@@ -182,7 +188,7 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
     flat_load_state = []
     for path, info in zip(state_paths, flat_info):
         if info is None:
-            logger.warning('Variable is not used, skip loading it')
+            logger.warning("Variable is not used, skip loading it")
             flat_load_state.append(None)
         if info.is_replicated():
             meshes, arrays = [], []

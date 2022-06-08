@@ -84,7 +84,10 @@ ReshardingBroadcastTask = namedtuple("ReshardingBroadcastTask",
 
 
 class DaemonMoveWorker:
-    """A ray actor that moves local checkpoint into the shared filesystem in the background."""
+    """
+        A ray actor that moves local checkpoint into the shared
+        filesystem in the background.
+    """
 
     def move(self, from_dir: str, to_dir: str):
         os.makedirs(to_dir, exist_ok=True)
@@ -287,10 +290,10 @@ class MeshHostWorker:
         ]
 
         metadata = {
-            'global_shape': global_shape,
-            'dtype': self.buffers[uuids[0]].dtype,
-            'shard_names': shard_names,
-            'shard_indices': shard_indices,
+            "global_shape": global_shape,
+            "dtype": self.buffers[uuids[0]].dtype,
+            "shard_names": shard_names,
+            "shard_indices": shard_indices,
         }
 
         # create directories if not exist
@@ -1428,10 +1431,13 @@ class DistributedArray:
             Save one replica of the array to `ckpt_dir` distributedly.
 
             Args:
-                ckpt_dir: The directory where all the shards of this array will be saved.
-                local_cache_dir: If not None, `ckpt_dir` should be a shared filesystem path, and this function 
-                                 will return as soon as the shards have been saved to this local directory. 
-                                 DaemonMoveWorkers will move these shards into `ckpt_dir` in the background.
+                ckpt_dir: The directory where all the shards of
+                this array will be saved.
+                local_cache_dir: If not None, `ckpt_dir` should be a shared
+                filesystem path, and this function will return as soon as the
+                shards have been saved to this local directory.
+                DaemonMoveWorkers will move these shards into `ckpt_dir`
+                in the background.
 
         """
         one_replica_buffers = [
@@ -1459,7 +1465,8 @@ class DistributedArray:
     def load(cls, path: str, aval: ShapedArray, device_mesh: PhysicalDeviceMesh,
              sharding_spec: ShardingSpec):
         """
-            Load the data from `path` distributedly with `aval` and return a new DistributedArray
+            Load the data from `path` distributedly with `aval` and
+            return a new DistributedArray
         """
         # pylint: disable=import-outside-toplevel
         from alpa.mesh_executable import create_remote_buffer_refs

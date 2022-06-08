@@ -92,8 +92,8 @@ class DaemonMoveWorker:
             to_path = os.path.join(to_dir, file)
             shutil.move(from_path, to_path)
 
-    def shutdown(self):
-        """Noop function used to synchronized."""
+    def sync(self):
+        """Noop function used to synchronize."""
 
 
 class MeshHostWorker:
@@ -275,6 +275,9 @@ class MeshHostWorker:
         return self.executables[uuid].grad_sync_channel_ids
 
     ##### Serialization Related Functions #####
+    def sync_move_worker(self):
+        ray.get(self.move_worker.sync.remote())
+
     def save_buffers(self, ckpt_dir: str, local_cache_dir: Union[str, None], uuids: Sequence[int],
                      shard_indices: Sequence[Index], global_shape: Sequence[int]):
         assert len(uuids) > 0
@@ -728,16 +731,15 @@ class MeshHostWorker:
     def check_alive():
         return True
 
-    def shutdown(self, forced=False):
+    def shutdown(self):
         if not self.launched:
             return
         self.sync()
         self.buffers.clear()
         self.executables.clear()
         self.distributed_client.shutdown()
-        # shutdown DaemonMoveWorker
-        if not forced:
-            ray.get(self.move_worker.shutdown.remote())
+        # sync & shutdown DaemonMoveWorker
+        self.sync_move_worker()
         ray.kill(self.move_worker)
         self.move_worker = None
 
@@ -1353,6 +1355,9 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
     ##### Other Functions #####
     def sync_workers(self):
         ray.get([w.sync.remote() for w in self.workers])
+    
+    def sync_move_workers(self):
+        ray.get([w.sync_move_worker.remote() for w in self.workers])
 
     def shutdown(self, forced=False):
         if not self.launched:
@@ -1864,6 +1869,11 @@ class PhysicalDeviceMeshGroup:
         """Sync device activities on all workers."""
         all_workers = [w for mesh in self.meshes for w in mesh.workers]
         ray.get([w.sync.remote() for w in all_workers])
+    
+    def sync_move_workers(self):
+        """Sync moveworkers on all meshes."""
+        for mesh in self.meshes:
+            mesh.sync_move_workers()
 
     def get_memory_allocated(self):
         """Get the current size of allocated memory."""

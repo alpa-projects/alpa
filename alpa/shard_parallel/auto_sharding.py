@@ -203,7 +203,7 @@ def run_auto_sharding_pass(
 
     multiple_stages = return_mode in ["stages", "stages_and_hook"]
     num_devices = logical_mesh.num_devices
-    build_random_seed = global_config.build_random_seed
+    build_random_seed = global_config.compile_random_seed
     compile_options = get_compile_options(
         num_replicas=1,
         num_partitions=num_devices,

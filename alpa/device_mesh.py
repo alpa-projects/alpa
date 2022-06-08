@@ -105,7 +105,7 @@ class MeshHostWorker:
     host."""
 
     def __init__(self, server_address: str, num_hosts: int, host_id: int,
-                 mesh_id: int, node_resource: str):
+                 mesh_id: int, node_resource: str, runtime_random_seed: int):
         self.num_hosts = num_hosts
         self.host_id = host_id
         self.mesh_id = mesh_id
@@ -136,6 +136,8 @@ class MeshHostWorker:
 
         self.data_loaders = {}  # Dict[uuid -> MeshWorkerDataLoader]
         self.data_loader_iters = {}  # Dict[uuid -> iterator]
+
+        self.set_runtime_random_seed(runtime_random_seed)
 
         if global_config.pipeline_use_signal_send_recv:
             print("Use signal send recv.")
@@ -273,6 +275,10 @@ class MeshHostWorker:
 
     def get_exec_grad_sync_channel_ids(self, uuid: int):
         return self.executables[uuid].grad_sync_channel_ids
+
+    def set_runtime_random_seed(self, seed: int):
+        for d in self.local_devices:
+            d.set_seed(seed)
 
     ##### Serialization Related Functions #####
     def sync_move_worker(self):
@@ -891,6 +897,10 @@ class PhysicalDeviceMesh(ABC):
         arrays."""
         raise NotImplementedError()
 
+    @abstractmethod
+    def set_runtime_random_seed(self, seed: int):
+        raise NotImplementedError()
+
     ##### Profiling Related Functions #####
     @abstractmethod
     def get_remote_timer(self, timer_name: str):
@@ -941,6 +951,8 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.mesh_id = 0
         self.device_strs = []
 
+        self.set_runtime_random_seed(global_config.runtime_random_seed)
+
     ##### Executable Related Functions #####
     def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
                            donated_invars: Sequence[bool],
@@ -986,6 +998,10 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
         outs_handler = pxla.local_avals_to_results_handler(
             sharding_specs, avals)
         return outs_handler
+
+    def set_runtime_random_seed(self, seed: int):
+        for d in self.devices:
+            d.set_seed(seed)
 
     ##### Profiling Related Functions #####
     def get_remote_timer(self, timer_name: str):
@@ -1136,7 +1152,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             worker = cls.options(runtime_env={
                 "env_vars": env_vars
             }).remote(self.server_address, self.num_hosts, i, self.mesh_id,
-                      node_resource)
+                      node_resource, global_config.runtime_random_seed)
             self.workers.append(worker)
         self.launched = True
 
@@ -1320,8 +1336,12 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         if self.workers is None or not ray.is_initialized():
             return
 
-        for i in range(self.num_hosts):
-            self.workers[i].delete_executable.remote(exec_uuid)
+        for w in self.workers:
+            w.delete_executable.remote(exec_uuid)
+
+    def set_runtime_random_seed(self, seed: int):
+        for w in self.workers:
+            w.set_runtime_random_seed.remote(seed)
 
     ##### Profiling and Debugging Related Functions #####
     def profile_hlo_ops(self,
@@ -1880,6 +1900,10 @@ class PhysicalDeviceMeshGroup:
 
         return rets
 
+    def set_runtime_random_seed(self, seed: int):
+        for m in self.meshes:
+            m.set_runtime_random_seed(seed)
+
     def sync_workers(self):
         """Sync device activities on all workers."""
         all_workers = [w for mesh in self.meshes for w in mesh.workers]
@@ -2121,6 +2145,15 @@ def set_global_virtual_physical_mesh(mesh: VirtualPhysicalMesh):
 
 def get_global_virtual_physical_mesh():
     return global_virtual_physical_mesh
+
+
+def set_seed(seed: int):
+    global_config.runtime_random_seed = seed
+
+    if global_physical_mesh:
+        global_physical_mesh.set_runtime_random_seed(seed)
+    if global_virtual_physical_mesh:
+        global_virtual_physical_mesh.launched_physical_mesh_group.set_runtime_random_seed(seed)
 
 
 ########################################

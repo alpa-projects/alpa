@@ -14,6 +14,10 @@ class GlobalConfig:
         # use AWS EFA network interface
         self.use_aws_efa = os.environ.get("ALPA_USE_AWS_EFA",
                                           "").lower() in ["true", "1"]
+        # Random seed used for compilation
+        self.compile_random_seed = 42
+        # Random seed used for runtime
+        self.runtime_random_seed = 42
 
         ########## Options of shard_parallel ##########
         self.shard_parallel_sync_for_timer = False
@@ -55,7 +59,6 @@ class GlobalConfig:
         self.resharding_mode = "send_recv"
 
         ########## Options of XLA compilation ##########
-        self.build_random_seed = 42
         # Whether to use xla while instruction for preventing CSE in
         # rematerialization
         self.remat_using_while = False

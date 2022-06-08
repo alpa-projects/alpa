@@ -1,53 +1,60 @@
-"""Test auto sharding with simple computational graphs."""
+"""Test random seed."""
 import unittest
-import time
 
 import jax
 import jax.numpy as jnp
-from jax.interpreters import pxla
-from jax.interpreters.pxla import Chunked, ShardedAxis, NoSharding, Replicated
-from flax import linen as nn
-from flax import optim
+import numpy as np
 
-from alpa import parallelize, ShardParallel
-from alpa.util import count_communication_primitives
+from alpa import parallelize, ShardParallel, set_seed
 from alpa.testing import assert_allclose
-
-from test_auto_sharding_mlp import assert_close
-
-MB = 1024**2
 
 
 class RandomSeedTest(unittest.TestCase):
 
-    def test_donate_buffer(self):
+    def test_random_generation(self):
         @parallelize(method=ShardParallel())
         def func():
             rngkey = jax.random.PRNGKey(0)
-            x = jax.random.normal(rngkey, (8, 2))
-            y = jax.random.normal(rngkey, (8, 2))
-            return jnp.vstack((x, y))
+            x = jax.random.normal(rngkey, (16, 4))
+            y = jax.random.normal(rngkey, (16, 4))
+            z = jnp.hstack((x, y))
+            z = (10000 * z).astype(jnp.int32)
+            return z.flatten()
 
-        devices = jax.local_devices()
+        a = func()
+        s = set(np.array(a))
 
-        [d.synchronize_all_activity() for d in devices]
-        [d.set_seed(0) for d in devices]
-        s = func()
-        print(s)
+        assert len(a) == len(s)
 
-        [d.synchronize_all_activity() for d in devices]
-        [d.set_seed(0) for d in devices]
-        s = func()
-        print(s)
+    def test_set_seed(self):
+        @parallelize(method=ShardParallel())
+        def func():
+            rngkey = jax.random.PRNGKey(0)
+            return jax.random.normal(rngkey, (16, 4))
+
+        set_seed(10)
+        a = func()
+        b = func()
+        set_seed(10)
+        c = func()
+
+        assert_allclose(a, c)
+
+        allclose = True
+        try:
+            assert_allclose(a, b)
+        except AssertionError:
+            allclose = False
+        assert not allclose
 
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(RandomSeedTest("test_donate_buffer"))
+    suite.addTest(RandomSeedTest("test_random_generation"))
+    suite.addTest(RandomSeedTest("test_set_seed"))
     return suite
 
 
 if __name__ == "__main__":
     runner = unittest.TextTestRunner()
     runner.run(suite())
-

@@ -32,6 +32,7 @@ class AutoShardingMoETest(unittest.TestCase):
 
     def run_moe_layer(self, batch_size, seq_len, hidden_size, num_heads, S, E,
                       deterministic, device_mesh):
+
         @parallelize(method=ShardParallel(devices=device_mesh,
                                           auto_sharding_option=self.as_option))
         def train_step(optimizer, batch, deterministic, apply_fn):
@@ -62,7 +63,8 @@ class AutoShardingMoETest(unittest.TestCase):
             num_attention_heads=num_heads,
             expert_group_size=S,
             expert_number=E,
-        ), dtype=dtype)
+        ),
+                             dtype=dtype)
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, hidden_states, attention_mask)
         optimizer = optim.Adam(1e-2).create(params)
@@ -89,6 +91,7 @@ class AutoShardingMoETest(unittest.TestCase):
 
     def run_moe_lm(self, batch_size, seq_len, num_layers, hidden_size,
                    num_heads, vocab_size, S, E, deterministic, device_mesh):
+
         @parallelize(method=ShardParallel(devices=device_mesh,
                                           auto_sharding_option=self.as_option))
         def train_step(state, batch, deterministic, rng_key):
@@ -380,6 +383,7 @@ class AutoShardingMoETest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
+
     def add(name):
         suite.addTest(AutoShardingMoETest(name))
 

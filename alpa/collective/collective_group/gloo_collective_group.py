@@ -1,3 +1,4 @@
+"""Gloo-based collective operations."""
 import logging
 import datetime
 import time
@@ -39,9 +40,9 @@ class Rendezvous:
         self._redis_ip_address, self._redis_port = (
             ray.worker._global_node.redis_address.split(":"))
         self._process_ip_address = (ray.util.get_node_ip_address())
-        logger.debug(
-            f"Redis address: {self._redis_ip_address}, port: {self._redis_port}, "
-            f"this actor address: {self._process_ip_address}.")
+        logger.debug(f"Redis address: {self._redis_ip_address}, "
+                     f"port: {self._redis_port}, "
+                     f"this actor address: {self._process_ip_address}.")
         self._store_type = store_type
         self._device_type = device_type
         self._store = None
@@ -75,8 +76,7 @@ class Rendezvous:
         elif store_type == "hash":
             raise NotImplementedError("No implementation for hash store.")
         else:
-            raise RuntimeError(
-                f"Unrecognized store type: {store_type}.")
+            raise RuntimeError(f"Unrecognized store type: {store_type}.")
 
     def create_device(self, device_type):
         if device_type == "tcp":
@@ -162,6 +162,7 @@ class Rendezvous:
 
 
 class GLOOGroup(BaseGroup):
+    """Gloo-based collective operations."""
 
     def __init__(self,
                  world_size,
@@ -253,12 +254,13 @@ class GLOOGroup(BaseGroup):
         root_rank = reduce_options.root_rank
 
         def collective_fn(input_tensor, output_tensor, context):
-            pygloo.reduce(context, gloo_util.get_tensor_ptr(input_tensor),
-                          gloo_util.get_tensor_ptr(output_tensor),
-                          gloo_util.get_tensor_n_elements(input_tensor),
-                          gloo_util.get_gloo_tensor_dtype(input_tensor),
-                          gloo_util.get_gloo_reduce_op(reduce_options.reduce_op),
-                          root_rank)
+            pygloo.reduce(
+                context, gloo_util.get_tensor_ptr(input_tensor),
+                gloo_util.get_tensor_ptr(output_tensor),
+                gloo_util.get_tensor_n_elements(input_tensor),
+                gloo_util.get_gloo_tensor_dtype(input_tensor),
+                gloo_util.get_gloo_reduce_op(reduce_options.reduce_op),
+                root_rank)
 
         self._collective(tensors, tensors, collective_fn)
 
@@ -509,8 +511,9 @@ def _check_inputs_compatibility_for_scatter_gather(tensors, tensor_lists):
         # check dtype
         dt = gloo_util.get_gloo_tensor_dtype(t)
         if dt != dtype:
-            raise RuntimeError("All tensor operands to scatter/gather must "
-                               f"have the same dtype. Got '{dt}' and '{dtype}'.")
+            raise RuntimeError(
+                "All tensor operands to scatter/gather must "
+                f"have the same dtype. Got '{dt}' and '{dtype}'.")
         s = gloo_util.get_tensor_shape(t)
         if s != shape:
             raise RuntimeError("All tensor operands to scatter/gather must "

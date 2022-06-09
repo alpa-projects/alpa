@@ -40,9 +40,11 @@ class _Timer:
     def stop(self, sync_func: Callable = None):
         """Stop the timer."""
         if self.ever_suspended:
-            assert not self.started, f"Stop the timer {self.name} before suspending it."
+            assert not self.started, (
+                f"Stop the timer {self.name} before suspending it.")
         else:
-            assert self.started, f"timer {self.name} is not started nor ever suspended."
+            assert self.started, (
+                f"timer {self.name} is not started nor ever suspended.")
         if sync_func and do_sync:
             sync_func()
         if self.ever_suspended:
@@ -77,7 +79,7 @@ class _Timer:
         string = "time (ms)"
 
         elapsed = self.elapsed(mode) * 1000.0 / normalizer
-        string += f' | {self.name}: {elapsed:.2f}'
+        string += f" | {self.name}: {elapsed:.2f}"
         print(string, flush=True)
 
 
@@ -98,10 +100,10 @@ class Timers:
     def log(self, names: str, normalizer: float = 1.0):
         """Log a group of timers."""
         assert normalizer > 0.0
-        string = 'time (ms)'
+        string = "time (ms)"
         for name in names:
             elapsed_time = self.timers[name].elapsed() * 1000.0 / normalizer
-            string += f' | {name}: {elapsed_time:.2f}'
+            string += f" | {name}: {elapsed_time:.2f}"
         print(string, flush=True)
 
 

@@ -6,8 +6,8 @@ import jax
 import jax.numpy as jnp
 import optax
 
-from alpa import (init, parallelize, mark_pipeline, manual_layer_construction,
-                  grad, PipeshardParallel)
+from alpa import (init, parallelize, mark_pipeline_boundary,
+                  manual_layer_construction, grad, PipeshardParallel)
 from alpa.model.model_util import TrainState
 from alpa.testing import assert_allclose
 from alpa.util import get_ray_namespace_str
@@ -31,10 +31,8 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
                 self.embed = nn.Embed(vocab_size, hidden_size)
 
             def __call__(self, x):
-                mark_pipeline(name='1', mark_type='start')
                 x = self.embed(x)
-                mark_pipeline(name='1', mark_type='end')
-                mark_pipeline(name='2', mark_type='start')
+                mark_pipeline_boundary()
                 embed = self.embed.variables["params"]["embedding"]
                 x = x @ embed.T
                 return x
@@ -46,7 +44,6 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
                 y_ = jax.nn.one_hot(batch["y"], out.shape[-1])
                 loss = -jnp.sum(y_ * jax.nn.log_softmax(out, axis=-1),
                                 axis=-1).sum()
-                mark_pipeline(name='2', mark_type='end')
                 return loss
 
             loss_func = manual_layer_construction(loss_func)

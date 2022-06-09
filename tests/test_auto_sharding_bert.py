@@ -31,6 +31,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
     def run_bert_layers(self, batch_size, seq_len, num_layers, hidden_size,
                         num_heads, deterministic, use_remat, device_mesh):
+
         @parallelize(method=ShardParallel(devices=device_mesh,
                                           auto_sharding_option=self.as_option))
         def train_step(optimizer, batch, deterministic, apply_fn):
@@ -87,6 +88,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
     def run_bert_mlm(self, batch_size, seq_len, num_layers, hidden_size,
                      num_heads, vocab_size, deterministic, device_mesh):
+
         @parallelize(method=ShardParallel(devices=device_mesh,
                                           auto_sharding_option=self.as_option))
         def train_step(optimizer, batch):
@@ -300,7 +302,8 @@ class AutoShardingAttentionTest(unittest.TestCase):
         optimizer, hlo_ir, objective = self.run_bert_layers(
             batch_size, seq_len, num_layers, hidden_size, num_heads,
             deterministic, use_remat, device_mesh)
-        assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh, self.as_option, 0)
+        assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh,
+                                  self.as_option, 0)
 
         # model parallel (case 1)
         device_mesh = self.get_device_mesh([1, 4], [1, 1], [1, 1])
@@ -618,6 +621,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
+
     def add(name):
         suite.addTest(AutoShardingAttentionTest(name))
 

@@ -3,12 +3,12 @@ import numpy
 try:
     import cupy
     from cupy.cuda import nccl
-    from cupy.cuda import Device  # noqa: F401
+    from cupy.cuda import Device  # pylint: disable=unused-import
     from cupy.cuda.nccl import get_version
     from cupy.cuda.nccl import get_build_version
     from cupy.cuda.nccl import NcclCommunicator
-    from cupy.cuda.nccl import groupStart  # noqa: F401
-    from cupy.cuda.nccl import groupEnd  # noqa: F401
+    from cupy.cuda.nccl import groupStart  # pylint: disable=unused-import
+    from cupy.cuda.nccl import groupEnd  # pylint: disable=unused-import
 except ImportError as error:
     raise ImportError("NCCL requires Cupy being available!") from error
 
@@ -118,8 +118,7 @@ def get_nccl_reduce_op(reduce_op):
         (nccl.ncclRedOp_t): the mapped NCCL reduce op.
     """
     if reduce_op not in NCCL_REDUCE_OP_MAP:
-        raise RuntimeError(
-            f"NCCL does not support reduce op: '{reduce_op}'.")
+        raise RuntimeError(f"NCCL does not support reduce op: '{reduce_op}'.")
     return NCCL_REDUCE_OP_MAP[reduce_op]
 
 
@@ -250,8 +249,9 @@ def copy_tensor(dst_tensor, src_tensor):
         copied = False
     if not copied:
         raise ValueError(
-            f"Unsupported tensor type. Got: {type(dst_tensor)} and {type(src_tensor)}. "
-            "Supported GPU tensor types are: torch.Tensor, cupy.ndarray.")
+            f"Unsupported tensor type. Got: {type(dst_tensor)} and "
+            f"{type(src_tensor)}. Supported GPU tensor types are: "
+            f"torch.Tensor, cupy.ndarray.")
 
 
 def get_tensor_device_list(tensors):

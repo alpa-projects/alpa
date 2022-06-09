@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import optax
 import ray
 
-from alpa import (init, parallelize, mark_pipeline, manual_layer_construction,
+from alpa import (init, parallelize, manual_layer_construction,
                   PipeshardParallel)
 from alpa.parallel_method import LocalPipelineParallel
 from alpa.model.model_util import TrainState
@@ -23,13 +23,12 @@ class PipelineMLPTest(unittest.TestCase):
 
         def train_step(state, batch):
 
+            @manual_layer_construction
             def loss_func(params, x, y):
                 out = state.apply_fn(params, x)
                 loss = jnp.mean((out - y)**2)
-                mark_pipeline(name="2", mark_type="end")
                 return loss
 
-            loss_func = manual_layer_construction(loss_func)
             grads = jax.grad(loss_func)(state.params, batch["x"], batch["y"])
             return grads
 
@@ -55,11 +54,15 @@ class PipelineMLPTest(unittest.TestCase):
         gradients = train_step(state, batch)
         p_train_step = parallelize(train_step, donate_argnums=(), method=method)
         gradients_with_pipeline = p_train_step(state, batch)
-        if isinstance(method, PipeshardParallel):
-            p_train_step.get_executable(state, batch).get_load_info()
 
         # Check results
         assert_allclose(gradients, gradients_with_pipeline)
+
+        # Check debug utilities
+        if isinstance(method, PipeshardParallel):
+            executable = p_train_step.get_last_executable()
+            executable.get_load_info()
+            executable.print_resharding_tasks()
 
     def test_2_layer_mlp_local_pipeline_parallel(self):
         self.train_2_layer_mlp(LocalPipelineParallel())

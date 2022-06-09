@@ -268,6 +268,7 @@ class AutoShardingConvTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
+
     def add(name):
         suite.addTest(AutoShardingConvTest(name))
 

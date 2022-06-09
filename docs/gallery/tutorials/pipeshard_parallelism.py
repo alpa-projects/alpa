@@ -104,7 +104,7 @@ expected_state = train_step(state, batch)
 # Pipeline Parallelism with Manual Assignment
 # -------------------------------------------
 # To manually assign stages for pipeline parallelism, we can use the
-# ``alpa.mark_pipeline`` function to mark the start and end of each pipeline
+# ``alpa.mark_pipeline_boundary`` function to mark the boundary of each pipeline
 # stage, and use the ``@alpa.manual_layer_construction`` decorator to indicate
 # that we are manually assigning stages. Note that each the pipeline stage is
 # also automatically parallelized by the shard parallel pass.
@@ -120,11 +120,8 @@ class ManualPipelineMLPModel(nn.Module):
         x = nn.relu(x)
         x = nn.Dense(features=self.hidden_dim)(x)
         x = nn.relu(x)
-        # Mark the end of the 0th pipeline stage and the start of the 1st
-        # pipeline stage. the start marker of the 0th stage and the end
-        # marker of the 1st stage are marked in the train_step below.
-        alpa.mark_pipeline(name='0', mark_type='end')
-        alpa.mark_pipeline(name='1', mark_type='start')
+        # Use this boundary marker to separate the network into two stages.
+        alpa.mark_pipeline_boundary()
         x = nn.Dense(features=self.hidden_dim * 4)(x)
         x = nn.relu(x)
         x = nn.Dense(features=self.hidden_dim)(x)
@@ -145,12 +142,8 @@ def manual_pipeline_train_step(state, batch):
     # Indicate that we are manually assigning pipeline stages.
     @alpa.manual_layer_construction
     def loss_func(params):
-        # Mark the start of the 0th pipeline stage.
-        alpa.mark_pipeline(name='0', mark_type='start')
         out = state.apply_fn(params, batch["x"])
         loss = jnp.mean((out - batch["y"])**2)
-        # Mark the end of the 1st pipeline stage.
-        alpa.mark_pipeline(name='1', mark_type='end')
         return loss
 
     # We use `alpa.grad` here to seperate the apply gradient stage with the

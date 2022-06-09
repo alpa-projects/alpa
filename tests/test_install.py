@@ -10,13 +10,14 @@ import numpy as np
 import optax
 import ray
 
-from alpa import (init, parallelize, grad, ShardParallel, automatic_layer_construction,
-                  PipeshardParallel)
+from alpa import (init, parallelize, grad, ShardParallel,
+                  automatic_layer_construction, PipeshardParallel)
 from alpa.device_mesh import get_global_cluster
 from alpa.testing import assert_allclose
 
 
 def create_train_state_and_batch(batch_size, hidden_size):
+
     class Model(nn.Module):
 
         @nn.compact
@@ -31,10 +32,12 @@ def create_train_state_and_batch(batch_size, hidden_size):
 
     rngkey = jax.random.PRNGKey(0)
     batch = {
-        "x": jax.random.normal(rngkey, (batch_size, hidden_size),
-                               dtype=jnp.float32),
-        "y": jax.random.normal(rngkey, (batch_size, hidden_size),
-                               dtype=jnp.float32)
+        "x":
+            jax.random.normal(rngkey, (batch_size, hidden_size),
+                              dtype=jnp.float32),
+        "y":
+            jax.random.normal(rngkey, (batch_size, hidden_size),
+                              dtype=jnp.float32)
     }
 
     # Init model and optimizer

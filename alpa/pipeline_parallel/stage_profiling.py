@@ -9,7 +9,7 @@ from typing import Dict, Sequence
 import jax.numpy as jnp
 from jax.core import (ClosedJaxpr, Var, gensym)
 from jax.interpreters import pxla
-from jax.lib import xla_bridge, xla_client, xla_extension as _xla
+from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 import numpy as np
 import tqdm
 import ray
@@ -19,8 +19,10 @@ from ray.util import ActorPool
 from alpa.device_mesh import (DistributedArray, PhysicalDeviceMesh,
                               VirtualPhysicalMesh, _shard_device_array)
 from alpa.global_env import global_config
-from alpa.mesh_executable import PartialGradAccMeshDriverExecutable, get_grad_sync_channel_ids_with_hint
-from alpa.mesh_profiling import ProfilingResultDatabase, estimate_hlo_module_cost
+from alpa.mesh_executable import (PartialGradAccMeshDriverExecutable,
+                                  get_grad_sync_channel_ids_with_hint)
+from alpa.mesh_profiling import (ProfilingResultDatabase,
+                                 estimate_hlo_module_cost)
 from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from alpa.pipeline_parallel.computation import (
     JaxPipelineComputation, get_donation_mapping_and_modify,
@@ -34,7 +36,7 @@ from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                run_spmd_partitioner_pass,
                                                run_backend_compilation,
                                                hlo_sharding_to_sharding_spec)
-from alpa.util import (clone_jaxpr, get_shard_shape, jaxpr_to_hlo_computation,
+from alpa.util import (clone_jaxpr, get_shard_shape, jaxpr_to_hlo_module,
                        OrderedSet)
 
 logger = logging.getLogger(__name__)
@@ -102,12 +104,10 @@ class BaseWorkerPoolWrapper(ABC):
             self.shutdown()
 
 
-def get_input_output_sharding_proto(proto, num_devices):
+def get_input_output_sharding_proto(hlo_module, num_devices):
     """Given proto of XlaComputation, return its input and output sharding."""
     if num_devices <= 1:
         return None, None
-    computation = xla_client.XlaComputation(proto)
-    hlo_module = computation.as_hlo_module()
     hlo_module.infer_spmd_shardings()
     input_shardings = hlo_module.spmd_parameters_shardings()
     output_sharding = hlo_module.spmd_output_sharding()
@@ -138,7 +138,8 @@ class CompileWorker:
             stage_id: the index of the input stage.
             config: configs for compilation.
             logical_mesh: the logical mesh for compilation.
-            autosharding_option: the global config dictionary for compilation setting.
+            autosharding_option: the global config dictionary for compilation
+                setting.
             num_micro_batches: the number of microbatches.
 
         Returns:
@@ -152,43 +153,43 @@ class CompileWorker:
                       config.donate_invars)
         other_kwargs = {
             "logical_mesh": logical_mesh,
-            "return_mode": "stage_and_hook_protos",
+            "return_mode": "stages_and_hook",
             "as_option": autosharding_option,
             "num_micro_batches": num_micro_batches,
             "memory_budget_per_device": None,
         }
         try:
-            computation = xla_client.XlaComputation(config.model_proto)
+            hlo_module = xe.HloModule.from_serialized_hlo_module_proto(
+                config.model_proto)
             # pylint: disable=unbalanced-tuple-unpacking
-            proto_names, protos, hooked_proto, strategy_config = run_auto_sharding_pass(
-                computation, *jaxpr_args, **other_kwargs)
+            module_names, modules, hooked_proto, strategy_config = (
+                run_auto_sharding_pass(hlo_module, *jaxpr_args, **other_kwargs))
         except RuntimeError as e:
             logger.warning(f"Compilation error (auto-sharding pass) "
                            f"for stage {stage_id} : {e}")
             return stage_id, None
 
-        assert (len(protos) <=
+        assert (len(modules) <=
                 2), "Can only compile no more than two stages (compute+(apply))"
 
         # Read input/output shardings
 
-        if len(protos) > 1:
-            if proto_names[0].endswith(APPLY_GRAD_MARKER_SUFFIX):
-                proto_names[0], proto_names[1] = proto_names[1], proto_names[0]
-                protos[0], protos[1] = protos[1], protos[0]
-            assert proto_names[1].endswith(APPLY_GRAD_MARKER_SUFFIX)
+        if len(modules) > 1:
+            if module_names[0].endswith(APPLY_GRAD_MARKER_SUFFIX):
+                module_names[0], module_names[1] = module_names[
+                    1], module_names[0]
+                modules[0], modules[1] = modules[1], modules[0]
+            assert module_names[1].endswith(APPLY_GRAD_MARKER_SUFFIX)
 
-        acc_grad_proto = protos[0]
-        sharding_annotated_computation = xla_client.XlaComputation(
-            acc_grad_proto)
+        acc_grad_module = modules[0]
         (input_sharding_protos,
          output_sharding_proto) = get_input_output_sharding_proto(
-             acc_grad_proto, logical_mesh.num_devices)
+             acc_grad_module, logical_mesh.num_devices)
 
-        if len(protos) > 1:
-            apply_grad_proto = protos[1]
-            apply_grad_input_sharding_protos, _ = get_input_output_sharding_proto(
-                apply_grad_proto, logical_mesh.num_devices)
+        if len(modules) > 1:
+            apply_grad_input_sharding_protos, _ = (
+                get_input_output_sharding_proto(modules[1],
+                                                logical_mesh.num_devices))
         else:
             apply_grad_input_sharding_protos = None
 
@@ -196,7 +197,7 @@ class CompileWorker:
         rewrite_for_grad_acc = len(config.output_acc_grad_indices) > 0
         try:
             hlo_module = run_spmd_partitioner_pass(
-                sharding_annotated_computation,
+                acc_grad_module,
                 logical_mesh.num_devices,
                 rewrite_for_grad_acc=rewrite_for_grad_acc,
                 rewrite_grad_acc_indices=config.output_acc_grad_indices)
@@ -214,9 +215,13 @@ class CompileWorker:
     @staticmethod
     def run_auto_sharding_pass(stage_id, proto, jaxpr_args, other_kwargs):
         """Run auto-sharding pass on a proto."""
-        computation = xla_client.XlaComputation(proto)
-        return stage_id, run_auto_sharding_pass(computation, *jaxpr_args,
-                                                **other_kwargs)
+        hlo_module = xe.HloModule.from_serialized_hlo_module_proto(proto)
+        assert other_kwargs["return_mode"] == "stages"
+        # pylint: disable=unbalanced-tuple-unpacking
+        hlo_stage_names, hlo_stages, strategy_config = run_auto_sharding_pass(
+            hlo_module, *jaxpr_args, **other_kwargs)
+        hlo_stages = [x.as_serialized_hlo_module_proto() for x in hlo_stages]
+        return stage_id, (hlo_stage_names, hlo_stages, strategy_config)
 
 
 class CompileWorkerPool(BaseWorkerPoolWrapper):
@@ -280,13 +285,12 @@ class ProfileWorker:
         output_sharding = compiled_output.output_sharding_proto
         donated_invars = (True,) * len(tot_donation) + (False,) * (
             len(avals) - len(tot_donation))
-        hlo_module = xla_client.XlaComputation(
+        hlo_module = xc.XlaComputation(
             compiled_output.model_proto).as_hlo_module()
         if input_shardings is not None:
             hlo_module.set_spmd_parameters_shardings(
-                [_xla.HloSharding(x) for x in input_shardings])
-            hlo_module.set_spmd_output_sharding(
-                _xla.HloSharding(output_sharding))
+                [xe.HloSharding(x) for x in input_shardings])
+            hlo_module.set_spmd_output_sharding(xe.HloSharding(output_sharding))
         executable = PartialGradAccMeshDriverExecutable(
             self.mesh, hlo_module, compiled_output.strategy_config, avals,
             out_avals, donated_invars, output_acc_grad_indices)
@@ -354,7 +358,7 @@ class HloCostModelProfileWorker:
     """A ray actor to estimate the cost of HLO Proto based on cost model."""
 
     def __init__(self, prof_result, num_devices, num_micro_batches):
-        self.backend = xla_bridge.get_backend("gpu")
+        self.backend = xb.get_backend("gpu")
         self.prof_result = prof_result
         self.num_devices = num_devices
         self.num_micro_batches = num_micro_batches
@@ -440,8 +444,8 @@ def compile_all(stages, num_micro_batches, default_as_option):
         compile_workers.submit(
             lambda w, v: w.compile_stage_for_profiling.remote(*v),
             (stage_id, stage_config.compile_config, logical_mesh,
-             dataclasses.replace(default_as_option, **autosharding_option_dict),
-             num_micro_batches))
+             dataclasses.replace(default_as_option, **
+                                 autosharding_option_dict), num_micro_batches))
 
     compiled_outputs = [None] * len(stages)
     for _ in tqdm.tqdm(stages):
@@ -459,12 +463,13 @@ def compile_all(stages, num_micro_batches, default_as_option):
 
 
 def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
-                num_layers, num_auto_sharding_configs,
-                num_micro_batches, auto_stage_option, mesh_cached_result):
+                num_layers, num_auto_sharding_configs, num_micro_batches,
+                auto_stage_option, mesh_cached_result):
     """Profile all compiled outputs on given meshes.
 
     This function launches a profile worker pool and submits given tasks.
     """
+    # pylint: disable=unused-argument
     compute_cost, max_n_succ_stages, is_profiled = mesh_cached_result
 
     if auto_stage_option.use_hlo_cost_model:
@@ -475,9 +480,10 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
         prof_database = ProfilingResultDatabase()
         prof_database.load(auto_stage_option.profiling_database_filename)
         prof_result = prof_database.query("default", meshes[0].shape)
-        profile_workers = HloCostModelProfileWorkerPool(
-            num_cpus, num_gpus, prof_result, mesh_num_devices,
-            num_micro_batches)
+        profile_workers = HloCostModelProfileWorkerPool(num_cpus, num_gpus,
+                                                        prof_result,
+                                                        mesh_num_devices,
+                                                        num_micro_batches)
     else:
         profile_workers = ProfileWorkerPool(meshes)
 
@@ -528,14 +534,14 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
         compute_cost[start, end, config_idx] = np.mean(cost)
         max_n_succ_stages[start, end, config_idx] = max_stage
         is_profiled[start, end, config_idx] = 1
-        pbar.write(
-            f"cost[{start}, {end}, {config_idx}]={compute_cost[start, end, config_idx]:.3f},"
-            f" max_n_succ_stage={max_stage},"
-            f" Mem: avail={available_memory / GB:.3f}GB,"
-            f" peak={peak_memory / GB:.3f}GB,"
-            f" intermediate={intermediate_size / GB:.3f}GB,"
-            f" init={initial_size / GB:.3f}GB,"
-            f" as_config={(logical_mesh.shape, auto_sharding_dict)}")
+        pbar.write(f"cost[{start}, {end}, {config_idx}]"
+                   f"={compute_cost[start, end, config_idx]:.3f},"
+                   f" max_n_succ_stage={max_stage},"
+                   f" Mem: avail={available_memory / GB:.3f}GB,"
+                   f" peak={peak_memory / GB:.3f}GB,"
+                   f" intermediate={intermediate_size / GB:.3f}GB,"
+                   f" init={initial_size / GB:.3f}GB,"
+                   f" as_config={(logical_mesh.shape, auto_sharding_dict)}")
     profile_workers.shutdown()
     return compute_cost, max_n_succ_stages, is_profiled
 
@@ -547,8 +553,9 @@ def split_global_use_and_donate(layers: Sequence[JaxPipelineComputation],
     """
     Obtains donation_mapping and global_use of each selected layer.
 
-    It picks some layers (no need to be consecutive) and assumes they are on a mesh,
-    it then returns `donation_mapping` and `global_use` of each selected layer.
+    It picks some layers (no need to be consecutive) and assumes they are on a
+    mesh, it then returns `donation_mapping` and `global_use` of each selected
+    layer.
 
     Args:
         layers: all layers
@@ -616,7 +623,7 @@ def generate_stage_info(all_layers, selected_indices, donation_mapping,
                         global_outvars, name, insert_hook_after,
                         apply_grad_layers, apply_grad_info):
     """Combine selected layers together for profiling."""
-    backend = xla_bridge.get_backend("gpu")
+    backend = xb.get_backend("gpu")
 
     # TODO(yonghao): clean up code here
     (selected_donation_mapping, used_outside,
@@ -679,8 +686,8 @@ def generate_stage_info(all_layers, selected_indices, donation_mapping,
     avals = [var.aval for var in merged.jaxpr.invars]
     out_avals = [var.aval for var in merged.jaxpr.outvars]
 
-    built = jaxpr_to_hlo_computation(name, merged, is_donated, backend)
-    proto = built.as_serialized_hlo_module_proto()
+    hlo_module = jaxpr_to_hlo_module(name, merged, is_donated, backend)
+    proto = hlo_module.as_serialized_hlo_module_proto()
     compile_config = CompileConfig(proto, avals, out_avals, is_donated,
                                    output_acc_grad_indices)
     stage_config = StageConfig(compile_config, profile_config, apply_info)
@@ -701,16 +708,18 @@ def dummy_resharding_send_recv_strategy(spec: ReshardingTaskSpec):
     """Generates a dummy sharding strategy for profiling."""
     src_loads = {src: 0 for src in spec.src.device_mesh.device_strs}
     dst_loads = {dst: 0 for dst in spec.dst.device_mesh.device_strs}
-    return CrossMeshCommunicator._generate_send_recv_resharding_strategy_by_loads(
-        spec, src_loads, dst_loads)
+    return (
+        CrossMeshCommunicator._generate_send_recv_resharding_strategy_by_loads(  # pylint: disable=protected-access
+            spec, src_loads, dst_loads))
 
 
 def dummy_resharding_broadcast_strategy(spec: ReshardingTaskSpec):
     """Generates a dummy sharding strategy for profiling."""
     src_loads = {src: 0 for src in spec.src.device_mesh.device_strs}
     dst_loads = {dst: 0 for dst in spec.dst.device_mesh.device_strs}
-    return CrossMeshCommunicator._generate_broadcast_resharding_strategy_by_loads(
-        spec, src_loads, dst_loads)
+    return (
+        CrossMeshCommunicator._generate_broadcast_resharding_strategy_by_loads(  # pylint: disable=protected-access
+            spec, src_loads, dst_loads))
 
 
 # FIXME(Hao): this function is broken by recent updates. Use with caution.
@@ -756,15 +765,13 @@ def profile_layer_communication_cost(
             DistributedArray(src_phy_mesh, invar.aval, in_sharding_spec,
                              remote_buffers, input_indices)
             if global_config.resharding_mode == "send_recv":
-                task = SymbolicReshardingTask(task_spec,
-                                              collective_group,
+                task = SymbolicReshardingTask(task_spec, collective_group,
                                               collective_group.src_mesh,
                                               collective_group.dst_mesh)
             else:
-                task = SymbolicBroadcastReshardingTask(task_spec,
-                                                       collective_group,
-                                                       collective_group.src_mesh,
-                                                       collective_group.dst_mesh)
+                task = SymbolicBroadcastReshardingTask(
+                    task_spec, collective_group, collective_group.src_mesh,
+                    collective_group.dst_mesh)
             tasks.append(task)
 
     for task in tasks:
@@ -782,7 +789,8 @@ def profile_layer_communication_cost(
 
 
 def _compute_vars_size(sharding_specs, selected_vars, logical_mesh_shape):
-    """Compute bytes of selected_vars with given sharding proto and logical mesh."""
+    """Compute bytes of selected_vars with given sharding proto and logical
+    mesh."""
 
     def get_byte(shape, dtype):
         return np.prod(shape) * np.dtype(dtype).itemsize
@@ -801,8 +809,7 @@ def _compute_vars_size(sharding_specs, selected_vars, logical_mesh_shape):
 
     return sum(
         get_byte(shape, aval.dtype)
-        for shape, aval in zip(sharded_shapes, avals)
-    )
+        for shape, aval in zip(sharded_shapes, avals))
 
 
 def compute_intermediate_size(serialized_proto, intermediate_vars,
@@ -815,7 +822,7 @@ def compute_intermediate_size(serialized_proto, intermediate_vars,
     if np.prod(logical_mesh_shape) == 1:
         sharding_specs = None
     else:
-        hlo_sharding = _xla.HloSharding(serialized_proto[0])
+        hlo_sharding = xe.HloSharding(serialized_proto[0])
         sharding_specs = hlo_sharding_to_sharding_spec(hlo_sharding, avals,
                                                        logical_mesh_shape)
     return _compute_vars_size(sharding_specs, intermediate_vars,
@@ -839,8 +846,8 @@ def compute_apply_grad_invar_size(input_sharding_protos,
     else:
         assert len(input_sharding_protos) == len(config.invars)
         sharding_specs = [
-            hlo_sharding_to_sharding_spec(_xla.HloSharding(sharding_proto),
-                                          aval, logical_mesh_shape)
+            hlo_sharding_to_sharding_spec(xe.HloSharding(sharding_proto), aval,
+                                          logical_mesh_shape)
             for sharding_proto, aval in zip(input_sharding_protos, avals)
         ]
         ordered_selected_vars = []

@@ -1,3 +1,4 @@
+"""CUDA stream pool."""
 import logging
 import threading
 

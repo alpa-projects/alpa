@@ -1,4 +1,5 @@
-"""Measurement records that serialize the tasks, strategies, and measurement results to files."""
+"""Measurement records that serialize the tasks, strategies, and measurement
+results to files."""
 from collections import namedtuple
 import json
 import os
@@ -15,7 +16,8 @@ class SearchTask:
     """
     The input specification of an auto-parallelization search task.
 
-    The input coantains a computation specification and a device cluster specification.
+    The input coantains a computation specification and a device cluster
+    specification.
     """
 
     def __init__(self, compute_key, device_key):
@@ -36,7 +38,8 @@ class SearchTask:
 
 
 class StrategyConfig:
-    """A configuration that specifies all details of a parallelization strategy."""
+    """A configuration that specifies all details of a parallelization
+    strategy."""
 
     def __init__(self, build_random_seed: int, logical_mesh_shape: Tuple[int],
                  all_gather_threshold: int, all_reduce_threshold: int,
@@ -130,8 +133,8 @@ def load_from_file(filename, protocol="json"):
     with open(filename, "r", encoding="utf-8") as f:
         for line in f:
             obj = json.loads(line)
-            (task_jsonable, config_jsonable, time_costs, estimated_cost, error_no,
-             timestamp, _) = obj
+            (task_jsonable, config_jsonable, time_costs, estimated_cost,
+             error_no, timestamp, _) = obj
 
         inp = MeasureInput(SearchTask.from_jsonable(task_jsonable),
                            StrategyConfig.from_jsonable(config_jsonable))

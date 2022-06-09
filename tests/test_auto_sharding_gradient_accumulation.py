@@ -12,8 +12,8 @@ import jax
 import jax.numpy as jnp
 import ray
 
-from alpa import (init, shutdown, parallelize, grad,
-                  LocalPhysicalDeviceMesh, ShardParallel)
+from alpa import (init, shutdown, parallelize, grad, LocalPhysicalDeviceMesh,
+                  ShardParallel)
 from alpa.device_mesh import (get_global_cluster, get_global_physical_mesh,
                               set_global_physical_mesh)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption
@@ -59,9 +59,11 @@ class GradAccumulationTest(unittest.TestCase):
                 return x
 
         batch = {
-            "x": jnp.ones(
-                (batch_size, hidden_size)) * jnp.arange(batch_size)[:, None],
-            "y": jnp.ones((batch_size, hidden_size)),
+            "x":
+                jnp.ones((batch_size, hidden_size)) *
+                jnp.arange(batch_size)[:, None],
+            "y":
+                jnp.ones((batch_size, hidden_size)),
         }
 
         # Init model and optimizer
@@ -84,11 +86,11 @@ class GradAccumulationTest(unittest.TestCase):
         optimizer_expected = train_step(optimizer, batch, model.apply)
 
         # Distributed execution
-        p_train_step = parallelize(
-            train_step,
-            method=ShardParallel(devices=logical_mesh,
-                                 num_micro_batches=num_micro_batches,
-                                 auto_sharding_option=self.as_option))
+        p_train_step = parallelize(train_step,
+                                   method=ShardParallel(
+                                       devices=logical_mesh,
+                                       num_micro_batches=num_micro_batches,
+                                       auto_sharding_option=self.as_option))
         executable = p_train_step.get_executable(optimizer, batch, model.apply)
         optimizer_actual = p_train_step(optimizer, batch, model.apply)
 

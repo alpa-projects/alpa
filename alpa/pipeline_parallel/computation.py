@@ -14,7 +14,6 @@ from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
                       ShapedArray, get_aval, raise_to_shaped)
 from jax.interpreters import pxla
 from jax.interpreters.partial_eval import remat_call_p
-from jaxlib import xla_extension
 import numpy as np
 
 from alpa.measure_record import StrategyConfig
@@ -28,7 +27,7 @@ from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                hlo_sharding_to_sharding_spec)
 from alpa.global_env import global_config
 from alpa.util import (OrderedSet, clone_jaxpr, get_compile_options,
-                       jaxpr_to_hlo_computation, setup_computation_alias,
+                       jaxpr_to_hlo_module, setup_computation_alias,
                        compile_dummy_zero_constant, get_var_mapping)
 
 # pylint: disable=redefined-builtin
@@ -128,9 +127,9 @@ class JaxPipelineComputation(PipelineComputation):
 
 @dataclass
 class XlaPipelineComputation(PipelineComputation):
-    """A pipeline computation defined by XLA HLO proto."""
+    """A pipeline computation defined by XLA HLO Module."""
 
-    hlo_proto: bytes = field(default_factory=b"")
+    hlo_module: xe.HloModule = None
 
     @classmethod
     def from_jax_pipeline_computation(
@@ -139,16 +138,17 @@ class XlaPipelineComputation(PipelineComputation):
         Construct a XlaPipelineComputation from a JaxPipelineComputation.
 
         Args:
-            jax_pipeline_computation (JaxPipelineComputation): the source JaxPipelineComputation.
+            jax_pipeline_computation (JaxPipelineComputation): the source
+              JaxPipelineComputation.
         """
         closed_jaxpr = jax_pipeline_computation.closed_jaxpr()
         backend = xb.get_backend("gpu")
         name = f"pipeline_computation_{jax_pipeline_computation.name}"
-        built = jaxpr_to_hlo_computation(name, closed_jaxpr, None, backend)
+        hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, None, backend)
 
         return cls(
             name=jax_pipeline_computation.name,
-            hlo_proto=built.as_serialized_hlo_module_proto(),
+            hlo_module=hlo_module,
             invars=jax_pipeline_computation.invars,
             outvars=jax_pipeline_computation.outvars,
         )
@@ -156,10 +156,9 @@ class XlaPipelineComputation(PipelineComputation):
     def get_runnable(self, mesh=None):
         """Return a callable of the pipeline computation."""
         out_avals = [var.aval for var in self.outvars]
-        xla_computation = xc.XlaComputation(self.hlo_proto)
         tuple_args = len(
             self.invars) > 100  # pass long arg lists as tuple for TPU
-        backend = 'gpu'
+        backend = "gpu"
         backend = xb.get_backend(backend)
         device = backend.get_default_device_assignment(1)[0]
         options = get_compile_options(
@@ -171,6 +170,8 @@ class XlaPipelineComputation(PipelineComputation):
             build_random_seed=global_config.build_random_seed,
         )
 
+        xla_computation = xc.XlaComputation(
+            self.hlo_module.as_serialized_hlo_module_proto())
         compiled = backend.compile(xla_computation, compile_options=options)
         result_handlers = map(partial(dispatch.aval_to_result_handler, device),
                               out_avals)
@@ -178,20 +179,27 @@ class XlaPipelineComputation(PipelineComputation):
             dispatch.aval_to_num_buffers(aval) for aval in out_avals
         ])
         kept_var_idx = range(len(self.invars))
-        return partial(dispatch._execute_compiled, self.name, compiled,
-                       buffer_counts, result_handlers, kept_var_idx)
+        return partial(
+            dispatch._execute_compiled,  # pylint: disable=protected-access
+            self.name,
+            compiled,
+            buffer_counts,
+            result_handlers,
+            kept_var_idx)
 
     def get_hlo_text(self):
         """Get the HLO text."""
-        xla_computation = xc.XlaComputation(self.hlo_proto)
-        return xla_computation.as_hlo_text()
+        return self.hlo_module.to_string()
 
 
 @dataclass
 class XlaShardedPipelineComputation(PipelineComputation):
-    """A pipeline computation defined by XLA HLO proto. The XLA HLO is annotated by sharding spec."""
+    """
+    A pipeline computation defined by XLA HLO Module.
+    The XLA HLO is annotated by sharding spec.
+    """
 
-    sharding_annotated_proto: bytes = None
+    sharding_annotated_module: xe.HloModule = None
     donated_invars: Sequence[bool] = None
     strategy_config: StrategyConfig = None
     input_sharding_specs: Sequence[pxla.ShardingSpec] = None
@@ -203,18 +211,17 @@ class XlaShardedPipelineComputation(PipelineComputation):
     @classmethod
     def dummy_computation(cls, name, logical_mesh_shape, gensym_func):
         """Create a dummy computation."""
-        backend_name = 'gpu'
+        backend_name = "gpu"
         backend = xb.get_backend(backend_name)
         strategy_config = StrategyConfig(global_config.build_random_seed,
                                          logical_mesh_shape, 1, 1, None, 0)
         compiled = compile_dummy_zero_constant(backend,
                                                np.prod(logical_mesh_shape))
-        sharding_annotated_proto = compiled.hlo_modules(
-        )[0].as_serialized_hlo_module_proto()
+        sharding_annotated_module = compiled.hlo_modules()[0]
         outvar = gensym_func(ShapedArray((), np.dtype(np.int32)))
         return cls(
             name=name,
-            sharding_annotated_proto=sharding_annotated_proto,
+            sharding_annotated_module=sharding_annotated_module,
             strategy_config=strategy_config,
             donated_invars=[],
             invars=[],
@@ -228,7 +235,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
             cls,
             *,
             jax_pipeline_computation: JaxPipelineComputation,
-            sharding_annotated_proto: xc.XlaComputation,
+            sharding_annotated_module: xe.HloModule,
             strategy_config: StrategyConfig,
             donated_invars: Sequence[bool] = None,
             acc_grad_outvars: Sequence[Var] = (),
@@ -247,7 +254,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
         ]
 
         return cls(name=jax_pipeline_computation.name,
-                   sharding_annotated_proto=sharding_annotated_proto,
+                   sharding_annotated_module=sharding_annotated_module,
                    strategy_config=strategy_config,
                    donated_invars=donated_invars,
                    invars=jax_pipeline_computation.invars,
@@ -303,28 +310,30 @@ class XlaShardedPipelineComputation(PipelineComputation):
             self.donated_invars[var_indices[invar]] = True
 
     def get_spmd_partitioned(self):
-        """Run spmd partitioner to get the input/output sharding specs after partitioning."""
+        """Run spmd partitioner to get the input/output sharding specs after
+        partitioning."""
         if self.spmd_partitioned_hlo_module is not None:
             return self.spmd_partitioned_hlo_module
 
         strategy_config = self.strategy_config
         logical_mesh_shape = strategy_config.logical_mesh_shape
-        xla_computation = xc.XlaComputation(self.sharding_annotated_proto)
-        setup_computation_alias(xla_computation, self.donated_invars)
+        hlo_module = self.sharding_annotated_module
+        setup_computation_alias(hlo_module, self.donated_invars)
 
         num_devices = np.prod(logical_mesh_shape)
         rewrite_for_grad_acc = len(self.output_acc_grad_indices) > 0
         spmd_partitioned_hlo_module = run_spmd_partitioner_pass(
-            xla_computation,
+            hlo_module,
             num_devices,
             rewrite_for_grad_acc=rewrite_for_grad_acc,
             rewrite_grad_acc_indices=self.output_acc_grad_indices)
 
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
-        input_sharding_specs, output_sharding_specs = get_input_output_sharding_specs(
-            spmd_partitioned_hlo_module, avals, out_avals, num_devices,
-            strategy_config.logical_mesh_shape)
+        input_sharding_specs, output_sharding_specs = (
+            get_input_output_sharding_specs(spmd_partitioned_hlo_module, avals,
+                                            out_avals, num_devices,
+                                            strategy_config.logical_mesh_shape))
         self.input_sharding_specs = input_sharding_specs
         self.output_sharding_specs = output_sharding_specs
         self.spmd_partitioned_hlo_module = spmd_partitioned_hlo_module
@@ -333,7 +342,8 @@ class XlaShardedPipelineComputation(PipelineComputation):
     def get_runnable(self, mesh=None):
         """Return a callable of the pipeline computation."""
         if not mesh:
-            raise RuntimeError("`XlaShardedPipelineComputation` requires a mesh.")
+            raise RuntimeError(
+                "`XlaShardedPipelineComputation` requires a mesh.")
         hlo_module = self.get_spmd_partitioned()
 
         avals = [var.aval for var in self.invars]
@@ -345,13 +355,13 @@ class XlaShardedPipelineComputation(PipelineComputation):
 
     def get_hlo_text(self):
         """Get the HLO text."""
-        xla_computation = xc.XlaComputation(self.sharding_annotated_proto)
-        return xla_computation.as_hlo_text()
+        return self.sharding_annotated_module.to_string()
 
 
 def slice_closed_jaxpr_by_full_pipeline_marks(
         closed_jaxpr: ClosedJaxpr) -> Sequence[JaxPipelineComputation]:
-    """Slice a closed jaxpr into multiple JaxPipelineComputation by full pipeline markers."""
+    """Slice a closed jaxpr into multiple JaxPipelineComputation by full
+    pipeline markers."""
     global_consts_dir = dict(
         zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
 
@@ -378,7 +388,8 @@ def slice_closed_jaxpr_by_full_pipeline_marks(
         current_computation.eqns.append(eqn)
 
         if eqn.primitive is pipeline_p and eqn.params["mark_type"] == "end":
-            assert current_computation is not None, "Ending a pipeline computation before its start."
+            assert current_computation is not None, (
+                "Ending a pipeline computation before its start.")
             assert current_computation.name == eqn.params["name"][:len(
                 current_computation.name
             )], "Ending a pipeline computation different from its start."
@@ -400,7 +411,8 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
     jax.grad or alpa.grad. Also remove unused variables in the pipeline
     markers.
     """
-    assert len(computations) % 2 == 0
+    # TODO(zhuohan): fix this for inference schedule
+    # assert len(computations) % 2 == 0.
     num_forward_computations = len(computations) // 2
 
     var_computation_id = {}
@@ -752,7 +764,8 @@ def rearrange_vars(vars,
     """
     Rearrange vars to let those in selected be first.
 
-    If the pipe_marker is given, rearrange invars and outvars in pipemarker as well.
+    If the pipe_marker is given, rearrange invars and outvars in pipemarker as
+    well.
 
     Args:
         vars (Sequence[Var]): all vars to be rearranged.
@@ -787,15 +800,15 @@ def rearrange_vars(vars,
     return new_vars, new_marker
 
 
-def generate_computations_from_protos(jax_computations, computation_names,
-                                      computation_protos, donate_invars,
-                                      donatable_lists, acc_grad_outvars,
-                                      strategy_config):
-    """Generate XLA computation from protos."""
-    proto_dict = dict(zip(computation_names, computation_protos))
+def generate_computations_from_modules(jax_computations, computation_names,
+                                       computation_modules, donate_invars,
+                                       donatable_lists, acc_grad_outvars,
+                                       strategy_config):
+    """Generate pipeline computation from HLO modules."""
+    module_dict = dict(zip(computation_names, computation_modules))
     computations = [
         XlaShardedPipelineComputation.from_auto_sharded_computation(
-            sharding_annotated_proto=proto_dict[computation.name],
+            sharding_annotated_module=module_dict[computation.name],
             jax_pipeline_computation=computation,
             strategy_config=strategy_config,
             donated_invars=donate_invars,
@@ -846,15 +859,13 @@ def generate_sharded_xla_computations_arguments(
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
     backend_name = "gpu"
     backend = xb.get_backend(backend_name)
-    built = jaxpr_to_hlo_computation(name, closed_jaxpr, dummy_donated_invars,
+    hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, dummy_donated_invars,
                                      backend)
-    flops = xla_extension.hlo_module_count_flop_dot_conv_only(
-        built.as_hlo_module())
+    flops = xe.hlo_module_count_flop_dot_conv_only(hlo_module)
     in_avals = [var.aval for var in invars]
     out_avals = [var.aval for var in outvars]
     jaxpr_args = in_avals, out_avals, dummy_donated_invars
-    proto = built.as_serialized_hlo_module_proto()
-    return proto, jaxpr_args, flops
+    return hlo_module, jaxpr_args, flops
 
 
 def generate_sharded_xla_computations(
@@ -868,23 +879,18 @@ def generate_sharded_xla_computations(
     Note: we merge the co-located forward and backward computation and compile
     them together to get a sharding strategy config.
     """
-    proto, jaxpr_args, flops = generate_sharded_xla_computations_arguments(
+    hlo_module, jaxpr_args, flops = generate_sharded_xla_computations_arguments(
         name, jax_computations, computation_donate_invars)
-    built = xc.XlaComputation(proto)
     in_avals, out_avals, donated_invars = jaxpr_args
 
     #  pylint: disable=unbalanced-tuple-unpacking
-    computation_names, computation_protos, strategy_config = run_auto_sharding_pass(
-        built,
-        in_avals,
-        out_avals,
-        donated_invars,
-        logical_mesh,
-        "stage_protos",
-        num_micro_batches,
-        autosharding_option)
-    computations = generate_computations_from_protos(
-        jax_computations, computation_names, computation_protos,
+    (computation_names, computation_modules,
+     strategy_config) = run_auto_sharding_pass(hlo_module, in_avals, out_avals,
+                                               donated_invars, logical_mesh,
+                                               "stages", num_micro_batches,
+                                               autosharding_option)
+    computations = generate_computations_from_modules(
+        jax_computations, computation_names, computation_modules,
         computation_donate_invars, donatable_lists, acc_grad_outvars,
         strategy_config)
     return computations, flops
@@ -1161,7 +1167,8 @@ def split_donate_invars(donation_mapping,
         stages: slices in topology order of execution.
 
     Returns:
-        donate_invars_dict:Sequence[Sequence[bool]]: donate_invars for each stage.
+        donate_invars_dict:Sequence[Sequence[bool]]: donate_invars for each
+            stage.
     """
     reversed_donation_mapping = {v: k for k, v in donation_mapping.items()}
 
@@ -1191,11 +1198,13 @@ def get_donatable_intermediate(stages: Sequence[JaxPipelineComputation],
 
     Args:
         stages (Sequence[JaxPipelineStage]): all stages.
-        worker_stage_mapping (Dict[int, OrderedSet[int]]): indices of stages in each mesh.
+        worker_stage_mapping (Dict[int, OrderedSet[int]]): indices of stages in
+            each mesh.
         global_invars (Sequence[Var] | OrderedSet[Var]): global input variables.
 
     Returns:
-        donatable_list (Sequence[OrderedSet[Var]]): donatable invars of each stage.
+        donatable_list (Sequence[OrderedSet[Var]]): donatable invars of each
+            stage.
     """
     global_invars = OrderedSet(global_invars)
     main_copy_at = {}

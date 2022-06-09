@@ -1,24 +1,29 @@
-Alpa
-=======
+# Alpa
 [**Documentation**](https://alpa-projects.github.io) |
 [**Slack**](https://forms.gle/YEZTCrtZD6EAVNBQ7)
 
 [![Build Jaxlib and Jax](https://github.com/alpa-projects/alpa/actions/workflows/build_jax.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/build_jax.yml)
 [![CI](https://github.com/alpa-projects/alpa/actions/workflows/ci.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/ci.yml)
 
-Alpa is a system for large-scale distributed training.
-Alpa is specifically designed for training giant neural networks that cannot fit into a single device.
-Alpa can automatically generate dstirbuted execution plans that unify data, operator, and pipeline parallelism.
+Alpa is a system for training large-scale neural networks.
+Scaling neural networks to hundreds of billions of parameters has enabled dramatic breakthroughs such as GPT-3, but training these large-scale neural networks requires complicated distributed training techniques.
+Alpa aims to automate large-scale distributed training with just a few lines of code.
 
-Quick Start
------------
+The key features of Alpa include:  
 
-Use Alpa's decorator ``@parallelize`` to scale your single-node training code to distributed clusters, even though 
-your model is much bigger than a single device memory.
+💻 **Automatic Parallelization**. Alpa automatically parallelizes users' single-device code on distributed clusters with data, operator, and pipeline parallelism. 
+
+🚀 **Excellent Performance**. Alpa achieves linear scaling on training models with billions of parameters on distributed clusters.
+
+✨ **Tight Integration with Machine Learning Ecosystem**. Alpa is backed by open-source, high-performance, and production-ready libraries such as [Jax](https://github.com/google/jax), [XLA](https://www.tensorflow.org/xla), and [Ray](https://github.com/ray-project/ray)
+
+## Quick Start
+Use Alpa's decorator ``@parallelize`` to scale your single-device training code to distributed clusters.
 
 ```python
 import alpa
 
+# Parallelize the training step in Jax by simply using a decorator
 @alpa.parallelize
 def train_step(model_state, batch):
     def loss_func(params):
@@ -29,7 +34,7 @@ def train_step(model_state, batch):
     new_model_state = model_state.apply_gradient(grads)
     return new_model_state
 
-# The training loop now automatically runs on your designated cluster.
+# The training loop now automatically runs on your designated cluster
 model_state = create_train_state()
 for batch in data_loader:
     model_state = train_step(model_state, batch)
@@ -37,17 +42,13 @@ for batch in data_loader:
 
 Check out the [Alpa Documentation](https://alpa-projects.github.io) site for installation instructions, tutorials, examples, and more.
 
-More Information
-----------------
+## More Information
 - [Alpa paper](https://arxiv.org/pdf/2201.12023.pdf) (OSDI'22)
-- [Blog](https://ai.googleblog.com/2022/05/alpa-automated-model-parallel-deep.html)
+- [Google AI Blog](https://ai.googleblog.com/2022/05/alpa-automated-model-parallel-deep.html)
 
+## Getting Involved
+- Please read the [contributor guide](https://alpa-projects.github.io/developer/developer_guide.html) if you are interested in contributing to Alpa. 
+- Please connect to Alpa contributors via the [Alpa slack](https://forms.gle/YEZTCrtZD6EAVNBQ7).
 
-Contributing
-------------
-Please read the [contributor guide](https://alpa-projects.github.io/developer/developer_guide.html) if you are interested in contributing to Alpa. 
-Please connect to Alpa contributors via the [Alpa slack](https://forms.gle/YEZTCrtZD6EAVNBQ7).
-
-License
--------
+## License
 Alpa is licensed under the [Apache-2.0 license](https://github.com/alpa-projects/alpa/blob/main/LICENSE).

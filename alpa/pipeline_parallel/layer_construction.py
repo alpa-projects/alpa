@@ -29,74 +29,20 @@ DEFAULT_EPS = 0.6
 DEFAULT_COST_CRITERIA = "flops"
 
 
-def slice_eqns_by_pipeline_marks(closed_jaxpr: ClosedJaxpr):
-    """Slices eqns by pipeline markers."""
+def slice_eqns_by_layer_boundary(closed_jaxpr: ClosedJaxpr):
+    """Slices eqns by layer boundary markers."""
     sliced_eqns = []
-    current_computation_eqns = None
+    current_computation_eqns = []
 
     for eqn in closed_jaxpr.jaxpr.eqns:
-        if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'start':
-            assert current_computation_eqns is None, (
-                "Defining a pipeline computation inside a pipeline "
-                "computation is not allowed.")
-            current_computation_eqns = []
-        elif eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'end':
-            assert current_computation_eqns is not None, (
-                "Ending a pipeline computation before its start.")
+        if (eqn.primitive is pipeline_p and
+                eqn.params["mark_type"] == "boundary"):
             sliced_eqns.append(current_computation_eqns)
-            current_computation_eqns = None
+            current_computation_eqns = []
         else:
-            assert current_computation_eqns is not None
             current_computation_eqns.append(eqn)
-    assert current_computation_eqns is None
+    sliced_eqns.append(current_computation_eqns)
     return sliced_eqns
-
-
-def lift_pipeline_marker(jaxpr: ClosedJaxpr):
-    """Lift the first/last marker if it is not the first/last eqn."""
-    marker_idx = np.nonzero([e.primitive is pipeline_p for e in jaxpr.eqns])[0]
-    assert marker_idx.size > 1
-    start_idx = marker_idx[0]
-    end_idx = marker_idx[-1]
-    new_eqns = ([jaxpr.eqns[start_idx]] + jaxpr.eqns[0:start_idx] +
-                jaxpr.eqns[start_idx + 1:end_idx] + jaxpr.eqns[end_idx + 1:] +
-                [jaxpr.eqns[end_idx]])
-    cnt = 0
-    for eqn in new_eqns:
-        if eqn.primitive is pipeline_p:
-            eqn.params["name"] = str(cnt)
-            if eqn.params["mark_type"] == "end":
-                cnt += 1
-    return clone_jaxpr(jaxpr, eqns=new_eqns)
-
-
-def transform_pipeline_forward(fn: Callable,
-                               transform_fn,
-                               static_argnums: Sequence[int] = (),
-                               lift_markers: bool = False):
-    """TODO(zhuohan):docstring."""
-
-    def get_sliced(*args):
-        origin_jaxpr, out_shape_tree = make_jaxpr(fn,
-                                                  static_argnums=static_argnums,
-                                                  return_shape=True)(*args)
-        if lift_markers:
-            origin_jaxpr = lift_pipeline_marker(origin_jaxpr)
-        sliced_eqns = slice_eqns_by_pipeline_marks(origin_jaxpr)
-        return origin_jaxpr, sliced_eqns, out_shape_tree
-
-    @wraps(fn)
-    def wrapped(*args):
-        origin_jaxpr, sliced_eqns, out_shape_tree = get_sliced(*args)
-        #log_layer_slicing_stats(origin_jaxpr, sliced_eqns)
-        new_jaxpr = transform_fn(origin_jaxpr, sliced_eqns)
-        flatten_args, _ = tree_flatten(args)
-        ans = jaxpr_as_fun(new_jaxpr)(*flatten_args)  # pylint: disable=not-callable
-        _, out_tree = tree_flatten(out_shape_tree)
-        return tree_unflatten(out_tree, ans)
-
-    wrapped.get_sliced = get_sliced
-    return wrapped
 
 
 def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
@@ -146,7 +92,7 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
             computation_var_mapping[var] = new_var
         new_eqns.append(
             mark_pipeline_jaxpreqn(pipeline_start_invars,
-                                   pipeline_start_outvars, str(i), 'start'))
+                                   pipeline_start_outvars, str(i), "start"))
         # all other eqns
         for eqn in eqns:
             new_invars = [
@@ -167,7 +113,7 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
             var_mapping[var] = new_var
         new_eqns.append(
             mark_pipeline_jaxpreqn(pipeline_end_invars, pipeline_end_outvars,
-                                   str(i), 'end'))
+                                   str(i), "end"))
     new_outvars = [
         get_var_mapping(var_mapping, var) for var in closed_jaxpr.jaxpr.outvars
     ]
@@ -177,16 +123,15 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
     return new_closed_jaxpr
 
 
-def remat_jaxpr(origin_jaxpr, sliced_eqns, add_pipeline_marks):
-    """The input function should be marked by markers without input."""
+def remat_sliced_eqns(origin_jaxpr, sliced_eqns):
+    """Add tensor rematerialization for sliced equations."""
+    ret_eqns = []
+
     sliced_jaxprs = slices_to_jaxpr(origin_jaxpr, sliced_eqns)
-    new_eqns = []
     for i, jaxpr in enumerate(sliced_jaxprs):
-        if add_pipeline_marks:
-            new_eqns.append(mark_pipeline_jaxpreqn([], [], str(i), 'start'))
         new_invars = jaxpr.jaxpr.invars + jaxpr.jaxpr.constvars
         new_jaxpr = Jaxpr([], new_invars, jaxpr.jaxpr.outvars, jaxpr.jaxpr.eqns)
-        new_eqns.append(
+        ret_eqns.append([
             new_jaxpr_eqn(
                 new_invars, new_jaxpr.outvars, remat_call_p,
                 dict(concrete=False,
@@ -194,21 +139,9 @@ def remat_jaxpr(origin_jaxpr, sliced_eqns, add_pipeline_marks):
                      name=str(i),
                      call_jaxpr=new_jaxpr,
                      prevent_cse=True,
-                     policy=None)))
-        if add_pipeline_marks:
-            new_eqns.append(mark_pipeline_jaxpreqn([], [], str(i), 'end'))
-    new_closed_jaxpr = clone_jaxpr(origin_jaxpr, eqns=new_eqns)
-    return new_closed_jaxpr
-
-
-def insert_marker(origin_jaxpr, sliced_eqns):
-    """Inserts pipeline markers in jaxpr."""
-    new_eqns = []
-    for i, slices in enumerate(sliced_eqns):
-        new_eqns.append(mark_pipeline_jaxpreqn([], [], str(i), 'start'))
-        new_eqns.extend(slices)
-        new_eqns.append(mark_pipeline_jaxpreqn([], [], str(i), 'end'))
-    return clone_jaxpr(origin_jaxpr, eqns=new_eqns)
+                     policy=None))
+        ])
+    return ret_eqns
 
 
 def jaxpr_eqns_input_sizes(jaxpr) -> np.ndarray:
@@ -249,12 +182,14 @@ def get_layer_construction_costs(jaxpr, cost_criteria="flops"):
         compute_costs = np.array([
             eqn_flops(eqn) if nt else 0
             for nt, eqn in zip(nontrivial, jaxpr.eqns)
-        ], dtype=np.float64)
+        ],
+                                 dtype=np.float64)
     elif cost_criteria == "count":
         compute_costs = np.array([
             heavy_count(eqn) if nt else 0
             for nt, eqn in zip(nontrivial, jaxpr.eqns)
-        ], dtype=np.float64)
+        ],
+                                 dtype=np.float64)
     elif cost_criteria == "input_memory":
         cost_fn = partial(global_invar_size, set(jaxpr.jaxpr.invars))
         compute_costs = np.array([cost_fn(eqn) for eqn in jaxpr.eqns],
@@ -360,20 +295,22 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
                     if r == -1 else "unknown error")
     solution = list(reversed(reversed_sliced_eqns))
 
-    #print("dp solution")
-    #for i, eqns in enumerate(solution):
+    # print("dp solution")
+    # for i, eqns in enumerate(solution):
     #    invars = OrderedSet()
     #    for eqn in eqns:
     #        invars.update([var for var in eqn.invars if isinstance(var, Var)])
     #    invars.intersection_update(jaxpr.jaxpr.invars)
-    #    print(f"mesh: {i},  set_shapes: {[x.aval.shape for x in invars if len(x.aval.shape) > 1]}")
-
+    #    print(f"mesh: {i},  set_shapes: "
+    #          f"{[x.aval.shape for x in invars if len(x.aval.shape) > 1]}")
+    #
     #    invars = []
     #    for eqn in eqns:
     #        tmp_set = set([var for var in eqn.invars if isinstance(var, Var)])
     #        tmp_set.intersection_update(jaxpr.jaxpr.invars)
     #        invars.extend(list(tmp_set))
-    #    print(f"mesh: {i}, list_shapes: {[x.aval.shape for x in invars if len(x.aval.shape) > 1]}")
+    #    print(f"mesh: {i}, list_shapes: "
+    #          f"{[x.aval.shape for x in invars if len(x.aval.shape) > 1]}")
 
     solution_info = {
         "total_cost": value,
@@ -419,8 +356,7 @@ def layer_level_jaxpr_transformation(fn: Callable,
                                      layer_num: Union[int, str] = None,
                                      eps: float = DEFAULT_EPS,
                                      cost_criteria: str = DEFAULT_COST_CRITERIA,
-                                     layer_eps: float = 0.0,
-                                     lift_markers: bool = False):
+                                     layer_eps: float = 0.0):
     """TODO(zhuohan): docstring."""
     if not remat and not layer_construction:
         return fn
@@ -442,18 +378,16 @@ def layer_level_jaxpr_transformation(fn: Callable,
                                                    costs,
                                                    cost_criteria=cost_criteria)
         else:
-            if lift_markers:
-                jaxpr = lift_pipeline_marker(jaxpr)
-            sliced_eqns = slice_eqns_by_pipeline_marks(jaxpr)
-        #log_layer_slicing_stats(jaxpr, sliced_eqns)
+            sliced_eqns = slice_eqns_by_layer_boundary(jaxpr)
+
         if remat:
-            jaxpr = remat_jaxpr(jaxpr,
-                                sliced_eqns,
-                                add_pipeline_marks=layer_construction)
-            if layer_construction:
-                sliced_eqns = slice_eqns_by_pipeline_marks(jaxpr)
+            sliced_eqns = remat_sliced_eqns(jaxpr, sliced_eqns)
+
         if layer_construction:
             jaxpr = add_pipeline_marks_for_sliced_eqns(jaxpr, sliced_eqns)
+        else:
+            jaxpr = clone_jaxpr(jaxpr,
+                                eqns=[x for eqns in sliced_eqns for x in eqns])
 
         flatten_args, _ = tree_flatten(args)
         ans = jaxpr_as_fun(jaxpr)(*flatten_args)  # pylint: disable=not-callable
@@ -463,10 +397,7 @@ def layer_level_jaxpr_transformation(fn: Callable,
     return wrapped
 
 
-def manual_remat(fun: Callable = None,
-                 *,
-                 static_argnums: Sequence[int] = (),
-                 lift_markers: bool = False):
+def manual_remat(fun: Callable = None, *, static_argnums: Sequence[int] = ()):
     """Rematerialize an input function with manually selected layer boundaries.
 
     Rematerialize each layer of an input function with manually selected layer
@@ -476,10 +407,7 @@ def manual_remat(fun: Callable = None,
         fun: the input function to rematerialize.
         static_argnums: An optional int or collection of ints that specify
           which positional arguments to treat as static (compile-time constant).
-          Same as in jax.
-        lift_markers: move the first pipeline marker as the first jaxpr eqn and
-          move the last pipeline marker as the last jaxpr eqn.
-
+          Same as in jax.jit
     Returns:
         A new function rematerializes each layer of the input function.
     """
@@ -489,8 +417,7 @@ def manual_remat(fun: Callable = None,
                                                 static_argnums,
                                                 remat=True,
                                                 layer_construction=False,
-                                                auto_layer_boundary=False,
-                                                lift_markers=lift_markers)
+                                                auto_layer_boundary=False)
 
     if fun is None:
         return decorate_fun
@@ -515,12 +442,12 @@ def automatic_remat(fun: Callable = None,
         fun: The input function to rematerialize.
         static_argnums: An optional int or collection of ints that specify
           which positional arguments to treat as static (compile-time constant).
-          Same as in jax.
+          Same as in jax.jit
         layer_num: The number of layers to rematerialize. If set to "auto", the
           number of layers will be automatically determined by a binary search.
           The binary search might not work for complex input functions.
         eps: The tolerance of inbalance of the costs of different layers.
-        cost_criteria: The cost criteria to use for deciding the layers
+        cost_criteria: The cost criteria to use for deciding the layers.
         layer_eps: A parameter for layer_num binary search.
 
     Returns:
@@ -548,19 +475,18 @@ def automatic_remat(fun: Callable = None,
 def manual_layer_construction(fun: Callable = None,
                               *,
                               static_argnums: Sequence[int] = (),
-                              remat_layer: bool = False,
-                              lift_markers: bool = False):
+                              remat_layer: bool = False):
     """Setup manually selected layer boundaries.
+
     Add input variables of each layer to its start pipeline marker and output
     variables of each layer to its end pipeline marker.
+
     Args:
         fun: the input function.
         static_argnums: An optional int or collection of ints that specify
           which positional arguments to treat as static (compile-time constant).
-          Same as in jax.
+          Same as in jax.jit
         remat_layer: Whether to rematerialize each layer at layer boundaries.
-        lift_markers: Move the first pipeline marker as the first jaxpr eqn and
-          move the last pipeline marker as the last jaxpr eqn.
     Returns:
         A new function with correctly setup pipeline markers.
     """
@@ -570,8 +496,7 @@ def manual_layer_construction(fun: Callable = None,
                                                 static_argnums,
                                                 remat=remat_layer,
                                                 layer_construction=True,
-                                                auto_layer_boundary=False,
-                                                lift_markers=lift_markers)
+                                                auto_layer_boundary=False)
 
     if fun is None:
         return decorate_fun
@@ -595,13 +520,13 @@ def automatic_layer_construction(fun: Callable = None,
         fun: the input function.
         static_argnums: An optional int or collection of ints that specify
           which positional arguments to treat as static (compile-time constant).
-          Same as in jax.
+          Same as in jax.jit
         remat_layer: Whether to rematerialize each layer at layer boundaries.
         layer_num: the number of layers to rematerialize. If set to "auto", the
           number of layers will be automatically determined by a binary search.
           The binary search might not work for complex input functions.
         eps: the tolerance of inbalance of the costs of different layers.
-        cost_criteria: the cost criteria to use for deciding the layers
+        cost_criteria: the cost criteria to use for deciding the layers.
         layer_eps: a parameter for layer_num binary search.
     Returns:
         A new function rematerializes each layer of the input function.

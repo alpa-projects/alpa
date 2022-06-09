@@ -1,3 +1,4 @@
+"""Import XLA custom call of the pipeline marker"""
 import sys
 
 try:

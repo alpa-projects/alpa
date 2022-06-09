@@ -19,7 +19,7 @@ class PipelineInferenceTest(unittest.TestCase):
     def tearDown(self):
         shutdown()
 
-    def run_mlp_inference(self, manual_pipeline_layer=True):
+    def run_mlp_inference(self, manual_pipeline_layer):
         method = PipeshardParallel(num_micro_batches=4,
                                    pipeline_schedule="inference")
 
@@ -51,7 +51,7 @@ class PipelineInferenceTest(unittest.TestCase):
         hlo_text = executable.get_hlo_text()
         return hlo_text
 
-    def run_bert_layer_collection_inference(self, manual_pipeline_layer=True):
+    def run_bert_layer_collection_inference(self, manual_pipeline_layer):
         method = PipeshardParallel(num_micro_batches=4,
                                    pipeline_schedule="inference")
 
@@ -62,13 +62,13 @@ class PipelineInferenceTest(unittest.TestCase):
         num_heads = 512 // 64
         n_layers = 2
 
-        model = FlaxBertLayerCollection(config=BertConfig(
-            hidden_size=hidden_size,
-            intermediate_size=hidden_size * 4,
-            num_attention_heads=num_heads,
-            num_hidden_layers=n_layers,
-            add_manual_pipeline_markers=manual_pipeline_layer,
-            pipeline_mp_size=n_layers))
+        model = FlaxBertLayerCollection(
+            config=BertConfig(hidden_size=hidden_size,
+                              intermediate_size=hidden_size * 4,
+                              num_attention_heads=num_heads,
+                              num_hidden_layers=n_layers,
+                              add_manual_pipeline_markers=manual_pipeline_layer,
+                              pipeline_mp_size=n_layers))
         rngkey = jax.random.PRNGKey(0)
         x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
                               dtype=jnp.float32)
@@ -93,14 +93,17 @@ class PipelineInferenceTest(unittest.TestCase):
         hlo_text = executable.get_hlo_text()
         return hlo_text
 
-    def test_pipeline_inference_only(self):
-        self.run_mlp_inference()
-        self.run_bert_layer_collection_inference()
+    def test_mlp(self):
+        self.run_mlp_inference(True)
+
+    def test_bert(self):
+        self.run_bert_layer_collection_inference(True)
 
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(PipelineInferenceTest("test_pipeline_inference_only"))
+    suite.addTest(PipelineInferenceTest("test_mlp"))
+    suite.addTest(PipelineInferenceTest("test_bert"))
     return suite
 
 

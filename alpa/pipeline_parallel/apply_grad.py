@@ -1,4 +1,5 @@
-"""Transformations and utilities to process gradient accumulation and apply_gradient."""
+"""Transformations and utilities to process gradient accumulation and
+apply_gradient."""
 import logging
 from typing import Sequence, Dict, Tuple
 
@@ -41,10 +42,10 @@ def _rewrite_cross_layer_grad(compute_eqns, microbatch_bound, apply_eqns,
     global_invars = closed_jaxpr.jaxpr.invars
     for eqn in compute_eqns:
         if eqn.primitive is pipeline_p:
-            if eqn.params['mark_type'] == "end":
+            if eqn.params['mark_type'] == 'end':
                 unmarked_vars.update(
                     [v for v in eqn.outvars if not isinstance(v, DropVar)])
-            elif eqn.params['mark_type'] == "start":
+            elif eqn.params['mark_type'] == 'start':
                 layer_invars.update(
                     [v for v in eqn.invars if isinstance(v, Var)])
     cross_layer_grad_eqns = []
@@ -145,7 +146,8 @@ def jaxpr_have_apply_grad(closed_jaxpr: ClosedJaxpr):
 
 def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn,
                                       num_microbatch):
-    """Split the train_step jaxpr into two parts: compute_grad and apply_grad."""
+    """Split the train_step jaxpr into two parts: compute_grad and
+    apply_grad."""
     split_eqn = None
     for idx, eqn in enumerate(closed_jaxpr.eqns):
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'grad':
@@ -153,8 +155,8 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn,
             split_idx = idx
     if split_eqn is None:
         logger.warning(
-            "Missing microbatch_bound between compute and apply. Assume there is no "
-            "apply gradient step. Hint: replace jax.grad by alpa.grad.")
+            'Missing microbatch_bound between compute and apply. Assume there '
+            'is no apply gradient step. Hint: replace jax.grad by alpa.grad.')
         dummy_jaxpr = ClosedJaxpr(Jaxpr([], [], [], []), [])
         dummy_bound = new_jaxpr_eqn([], [], pipeline_p, {
             'mark_type': 'grad',
@@ -178,7 +180,7 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn,
     split_eqn = sliced_eqns[1][0]
     if len(apply_grad.eqns) == 0:
         logger.warning(
-            "the apply gradient part is empty. Hint: apply() after alpa.grad")
+            'the apply gradient part is empty. Hint: apply() after alpa.grad')
     return closed_jaxpr, compute_grad, apply_grad, split_eqn
 
 
@@ -211,7 +213,8 @@ def _get_post_to_pre_marker_mapping(compute_jaxpr):
                     pre_to_post_marker_outs[eqn.invars[i]] = final_outvar
     # FIXME(zhuohan): Should support auxiliary outputs in the future (e.g. loss)
     for outvar in post_marker_outs:
-        assert outvar in post_to_pre_marker_outs, "all outputs should be captured by pipeline marker"
+        assert outvar in post_to_pre_marker_outs, (
+            'all outputs should be captured by pipeline marker')
     return post_to_pre_marker_outs
 
 
@@ -224,7 +227,7 @@ def _rewrite_jaxpr_to_reduced_outputs(compute_jaxpr, to_reduce_pre_marker_outs,
     to_reduce_pre_marker_outs = OrderedSet(to_reduce_pre_marker_outs)
     for eqn in compute_jaxpr.eqns:
         if eqn.primitive is pipeline_p:
-            if eqn.params["mark_type"] == "start":
+            if eqn.params['mark_type'] == 'start':
                 pipe_start = eqn
                 for outvar in eqn.outvars:
                     if (not isinstance(outvar, DropVar) and
@@ -232,7 +235,7 @@ def _rewrite_jaxpr_to_reduced_outputs(compute_jaxpr, to_reduce_pre_marker_outs,
                         # collect to_reduce_pre_marker_outs in this computation
                         to_acc.append(outvar)
                 continue
-            if eqn.params["mark_type"] == "end":
+            if eqn.params['mark_type'] == 'end':
                 # add grad used in this computation in pipeline start
                 reduce_invar_post_pipe = {
                     outvar: gensym_fn(outvar.aval) for outvar in to_acc
@@ -283,8 +286,8 @@ def _rewrite_jaxpr_to_reduced_outputs(compute_jaxpr, to_reduce_pre_marker_outs,
 def compute_grad_to_accumulate_grad(
         compute_jaxpr: ClosedJaxpr, reduction_vector,
         gensym_fn) -> Tuple[ClosedJaxpr, Dict[Var, Var], Dict[Var, Var]]:
-    """
-    Transform compute_grad jaxpr with pipeline markers into accumulate_grad jaxpr.
+    """Transform compute_grad jaxpr with pipeline markers into accumulate_grad
+    jaxpr.
 
     Args:
         compute_jaxpr: the original jaxpr
@@ -327,7 +330,7 @@ def compute_grad_to_accumulate_grad(
             update_outs[outvar] = reduced_outvar
             reduced_in_to_out[reduced_invar] = reduced_outvar
         else:
-            raise NotImplementedError("outputs cannot be Literal")
+            raise NotImplementedError('outputs cannot be Literal')
     # rewrite eqns
     new_eqns = _rewrite_jaxpr_to_reduced_outputs(compute_jaxpr,
                                                  to_reduce_pre_marker_outs,
@@ -362,7 +365,8 @@ def process_apply_gradient(apply_grad_jaxpr, microbatch_bound, acc_grad_dict,
                            jax_pipeline_stages, stage_to_mesh, gensym_func,
                            num_micro_batches, num_meshes, global_invars,
                            global_outvars, donated_invars, reduction_vector):
-    """Slice apply_grad jaxpr into stages and assign them to the correspondig meshes."""
+    """Slice apply_grad jaxpr into stages and assign them to the correspondig
+    meshes."""
     # TODO(yonghao): the condition of creating RDA variable should be extended.
 
     # Process apply gradient:
@@ -576,18 +580,21 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
         grad_mesh: some invars should be at certain mesh;
             If not in the dict, the variable should be a global parameter.
         outvar_mesh: some outvars should be at certain mesh.
-        num_mesh: number of meshes. If a mesh does not have apply gradient computation,
-        add an empty jaxpr
+        num_mesh: number of meshes. If a mesh does not have apply gradient
+          computation, add an empty jaxpr
         num_stage: number of stages in the apply gradient computation.
         donation_mapping: donation mapping for global invars
 
     Returns:
-        jaxprs(List[ClosedJaxpr]): The i-th ClosedJaxpr runs at the i-th cluster.
+        jaxprs(List[ClosedJaxpr]): The i-th ClosedJaxpr runs at the i-th
+          cluster.
         info: A tuple of:
-            deps (List[Tuple[int, int]]): dependencies of apply gradient computations
-            mesh_assignment (Dict[int, int]): From apply grad index to the its mesh's index
-            infered_global_invars (Dict[Var, List[int]]): From invar index to meshes need
-            this invar.
+            deps (List[Tuple[int, int]]): dependencies of apply gradient
+              computations
+            mesh_assignment (Dict[int, int]): From apply grad index to the its
+              mesh's index
+            infered_global_invars (Dict[Var, List[int]]): From invar index to
+              meshes need this invar.
     """
     var_mesh = {var: OrderedSet([mesh]) for var, mesh in grad_mesh.items()}
     sliced_eqns = [[] for _ in range(num_mesh)]
@@ -645,8 +652,8 @@ def apply_grad_add_marker(jaxprs: Sequence[ClosedJaxpr],
                           apply_in_to_acc_out: Dict[Var, Var],
                           gensym_fn,
                           computation=False):
-    """
-    Add pipeline markers for sliced apply grads, keep invars and outvars still unless.
+    """Add pipeline markers for sliced apply grads, keep invars and outvars
+    still unless.
 
     The invar is in apply_in_to_acc_out or invar is outvar:
     In the first case, the final invar follows the apply_in_to_acc_out;
@@ -669,7 +676,7 @@ def apply_grad_add_marker(jaxprs: Sequence[ClosedJaxpr],
         for outvar in jaxpr.jaxpr.outvars:
             if not isinstance(outvar, Var):
                 raise NotImplementedError(
-                    "outvar of apply grad cannot be literal")
+                    'outvar of apply grad cannot be literal')
             if outvar in jaxpr.jaxpr.invars:
                 if outvar not in outvar_map:
                     outvar_map[outvar] = gensym_fn(outvar.aval)

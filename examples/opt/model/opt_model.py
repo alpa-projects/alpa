@@ -647,8 +647,10 @@ def load_params_np(params, path, config, dummy=False):
     return flax.core.freeze(params)
 
 
-def get_pipeshard_executable(config, support_output_attentions=False,
-                             support_output_hidden_states=False):
+def get_pipeshard_executable(config,
+                             support_output_attentions=False,
+                             support_output_hidden_states=False,
+                             autoregressive=True):
     # Init model
     model, params = init_model_aval(config)
 
@@ -656,26 +658,46 @@ def get_pipeshard_executable(config, support_output_attentions=False,
     method = alpa.PipeshardParallel(num_micro_batches=1,
                                     pipeline_schedule="inference")
 
-    @alpa.parallelize(batch_argnums=(1,), method=method)
-    def inference_step_with_cache(params, batch):
-        @alpa.manual_layer_construction
-        def forward(params):
-            output = model.apply(params,
-                                 batch["input_ids"],
-                                 batch["position_ids"],
-                                 attention_cache=batch["cache"],
-                                 output_attentions=support_output_attentions,
-                                 output_hidden_states=support_output_hidden_states)
+    if autoregressive:
+        @alpa.parallelize(batch_argnums=(1,), method=method)
+        def inference_step_with_cache(params, batch):
+            @alpa.manual_layer_construction
+            def forward(params):
+                output = model.apply(params,
+                                     batch["input_ids"],
+                                     batch["position_ids"],
+                                     attention_cache=batch["cache"],
+                                     output_attentions=support_output_attentions,
+                                     output_hidden_states=support_output_hidden_states)
+                return output
+
+            output = forward(params)
             return output
 
-        output = forward(params)
-        return output
+        executable = inference_step_with_cache.get_executable(params, {
+            "input_ids": jax.core.ShapedArray((1, 1), jnp.int32),
+            "position_ids": jax.core.ShapedArray((1, 1), jnp.int32),
+            "cache": init_cache_aval(config, 1),
+        })
+    else:
+        @alpa.parallelize(batch_argnums=(1,), method=method)
+        def inference_step(params, batch):
+            @alpa.manual_layer_construction
+            def forward(params):
+                output = model.apply(params,
+                                     batch["input_ids"],
+                                     batch["position_ids"],
+                                     output_attentions=support_output_attentions,
+                                     output_hidden_states=support_output_hidden_states)
+                return output
 
-    executable = inference_step_with_cache.get_executable(params, {
-        "input_ids": jax.core.ShapedArray((1, 1), jnp.int32),
-        "position_ids": jax.core.ShapedArray((1, 1), jnp.int32),
-        "cache": init_cache_aval(config, 1),
-    })
+            output = forward(params)
+            return output
+
+        executable = inference_step.get_executable(params, {
+            "input_ids": jax.core.ShapedArray((1, 1), jnp.int32),
+            "position_ids": jax.core.ShapedArray((1, 1), jnp.int32),
+        })
 
     return executable, params
 

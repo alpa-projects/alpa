@@ -161,7 +161,8 @@ def get_model(model_name, device, dummy, cluster="aws",
         executable, params_aval = get_pipeshard_executable(
             config,
             support_output_attentions=support_output_attentions,
-            support_output_hidden_states=support_output_hidden_states)
+            support_output_hidden_states=support_output_hidden_states,
+            autoregressive=False)
         params = load_params_dis_array(path, executable, params_aval, config, dummy)
         init_cache = init_cache_dis_array(executable, config, 1, dummy)
         executable.sync()

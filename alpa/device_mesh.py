@@ -1987,7 +1987,7 @@ class DeviceCluster:
 
     @property
     def num_hosts(self):
-        return sum(self.host_info)
+        return len(self.host_info)
 
     def get_physical_mesh(self,
                           host_ids: Sequence[int] = None,

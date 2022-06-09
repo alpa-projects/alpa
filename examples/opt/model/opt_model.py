@@ -459,7 +459,7 @@ def get_config(name, **kwargs):
     if name == "125M":
         config = OPTConfig(
             max_target_positions=2048,
-            decoder_layers=4,
+            decoder_layers=12,
             decoder_attention_heads=12,
             decoder_embed_dim=768,
             decoder_input_dim=768,
@@ -773,4 +773,3 @@ def init_cache_dis_array(executable, config, batch_size, dummy=False):
     ret = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
     alpa.global_config.use_dummy_value_for_benchmarking = False
     return ret
-

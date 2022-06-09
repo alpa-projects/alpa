@@ -11,8 +11,7 @@ import numpy as np
 import torch
 from transformers import GPT2Tokenizer, OPTForCausalLM, GPT2LMHeadModel
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
-from benchmark.util import compute_gpt_tflops
-from examples.opt.model.opt_utils import gpt_flops, opt_specs, compute_gpt_tflops_with_padding
+from examples.opt.model.opt_utils import opt_specs, compute_gpt_tflops_inference_with_padding
 
 try:
     from .opt_model import (get_config, get_pipeshard_executable,
@@ -68,11 +67,12 @@ class WrappedInferenceFunc(GenerationMixin):
 
     This class also decomposes the first call of prompt during generation to one token by one token.
     """
-    def __init__(self, inference_func, config, executable):
+    def __init__(self, inference_func, config, executable, opt_config):
         self.inference_func = inference_func
         self.config = config
         self.main_input_name = "input_ids"
         self.executable = executable
+        self.opt_config = opt_config
 
     def forward(self, attention_mask):
         raise NotImplementedError()
@@ -194,7 +194,7 @@ def get_model(model_name, device, dummy, cluster="aws",
 
         inference_func_config = InferenceFuncConfig()
 
-    return WrappedInferenceFunc(inference_func, inference_func_config, executable)
+    return WrappedInferenceFunc(inference_func, inference_func_config, executable, config)
 
 
 if __name__ == "__main__":
@@ -222,46 +222,33 @@ if __name__ == "__main__":
         # "What do you think about the future of Cryptocurrency?"
     ]
 
-    model_name = args.model.split("-")[-1]
-    model_spec = opt_specs[model_name]
-    H = model_spec[1]
-    L = model_spec[2]
-    num_head = model_spec[3]
-
+    H = model.opt_config.decoder_input_dim
+    L = model.opt_config.decoder_layers
+    num_head = model.opt_config.decoder_attention_heads
 
     for prompt in prompts:
         tic = time.time()
         torch.manual_seed(8)
         input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(args.device)
-        # output = model.generate(input_ids=input_ids, max_length=256, do_sample=False,
-        #                         return_dict_in_generate=True, output_hidden_states=False)
-        # generated_ids = output.sequences
-        # generated_string = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+        output = model.generate(input_ids=input_ids, max_length=256, do_sample=False,
+                                return_dict_in_generate=True, output_hidden_states=False)
+        generated_ids = output.sequences
+        generated_string = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
         num_gpus = alpa.get_global_cluster().num_devices
-        # print(f"input length: {input_ids.shape[1]}, output_length: {generated_ids.shape[1]}, num_gpus: {num_gpus}")
+        print(f"input length: {input_ids.shape[1]}, output_length: {generated_ids.shape[1]}, num_gpus: {num_gpus}")
         print(f"hidden size: {H}, num layers: {L}, num attention heads: {num_head}")
         latency = time.time() - tic
-        latency = 1.0
-        # gen_len = generated_ids.shape[1]
-        gen_len = 256
-
+        gen_len = generated_ids.shape[1]
 
         exec_flops = model.executable.flop_count / 1e12 / latency / num_gpus * gen_len
-        print(model.executable.flop_count )
+        # print(model.executable.flop_count )
 
-        total_flop = gpt_flops(input_ids.shape[1], gen_len,
-                               num_heads=num_head, d_model=H, d_ff=H*4,
-                               num_layers=L)
-        train_flops = compute_gpt_tflops_with_padding(1, gen_len, 2048, L, H, 50272, num_gpus, latency, checkpoint_activations=True)
+        tflops = compute_gpt_tflops_inference_with_padding(1, gen_len, 2048, L, H, 50272, num_gpus, latency)
+        speed = np.prod(generated_ids.shape) / latency
 
-        tflops = float(total_flop / latency / num_gpus / 1e12)
-        speed = gen_len / latency # TODO
+        print(f"{generated_string}")
+        print(f"speed: {speed:.2f} token/s, tflops: {tflops} tflops/s, exec_flops: {exec_flops}")
 
-        # print(f"{generated_string}")
-        print(f"speed: {speed:.2f} token/s, tflops: {tflops} tflops/s, "
-              f"train_flops: {train_flops}, train_flops/4: {train_flops/4.0} "
-              f"exec_flops: {exec_flops}")
-
-    heads = ["Model", "Device", "Dummy", "Load (s)", "Speed (token/s)", "TFlops (Tflops/s)"]
-    values = [args.model, args.device, args.dummy, f"{load_time:.2f}", f"{speed:.2f}", f"{tflops:.2f}"]
+    heads = ["Model", "Device", "Dummy", "Load (s)", "Speed (token/s)", "TFlops (TFlops/s)"]
+    values = [args.model, args.device, args.dummy, f"{load_time:.2f}", f"{speed}", f"{tflops}"]
     write_tsv(heads, values, "results.tsv")

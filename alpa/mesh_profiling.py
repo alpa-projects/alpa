@@ -820,6 +820,7 @@ def profile_all(device_cluster,
                 while physical_mesh is None:
                     try:
                         time.sleep(10)
+                        tmp_mesh.launched_physical_mesh = None
                         physical_mesh = tmp_mesh.get_physical_mesh()
                     except ray.exceptions.RayError:
                         ray.shutdown()

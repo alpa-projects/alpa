@@ -6,13 +6,12 @@ import numpy as np
 import optax
 
 import alpa
-from alpa import parallelize, global_config, set_parallelize_options, LocalPhysicalDeviceMesh
+from alpa import (parallelize, global_config, LocalPhysicalDeviceMesh,
+                  ShardParallel, AutoShardingOption)
 from alpa.model.bert_model import BertConfig, FlaxBertForMaskedLMModule, TrainState
 from alpa.model.gpt_model import FlaxGPTForLMModule
 from alpa.timer import timers
 from alpa.util import map_to_shape, count_communication_primitives, print_used_time, GB
-
-as_option = global_config.default_autosharding_option
 
 
 def compute_gpt_parameter_count(num_layers, hidden_size, vocab_size):
@@ -75,9 +74,9 @@ def create_train_state_aval(rngkey, model, batch, dtype):
     return state
  
 
-def get_train_step(grad_func, num_layers, dtype):
+def get_train_step(grad_func, method):
 
-    @parallelize
+    @parallelize(method=method)
     def train_step(state, batch, rng_key):
         def loss_func(params):
             rngs = {"dropout": rng_key}
@@ -121,10 +120,10 @@ def benchmark_2d_one_case_gpt_bert(physical_mesh, model_type, benchmark_case):
         num_micro_batches = None
         grad_func = jax.grad
 
+    as_option = AutoShardingOption()
     if force_batch_dim_mapping: # Always map batch dim to mesh dim 0
         as_option.force_batch_dim_to_mesh_dim = 0
     as_option.prefer_reduce_scatter = prefer_reduce_scatter
-
     if parallel_mode == "zero-3":
         as_option.force_zero_stage_3 = True
     elif parallel_mode in ["shard-largest"]:
@@ -132,8 +131,9 @@ def benchmark_2d_one_case_gpt_bert(physical_mesh, model_type, benchmark_case):
         global_config.remat_using_while = True
 
     logical_mesh = physical_mesh.get_logical_mesh([dp, op])
-    set_parallelize_options(devices=logical_mesh,
-                            num_micro_batches=num_micro_batches)
+    method = ShardParallel(devices=logical_mesh,
+                           num_micro_batches=num_micro_batches,
+                           auto_sharding_option=as_option)
     print_used_time("Setup device mesh")
 
     # Prepare input batch
@@ -177,7 +177,7 @@ def benchmark_2d_one_case_gpt_bert(physical_mesh, model_type, benchmark_case):
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(grad_func, num_layers, dtype)
+    train_step = get_train_step(grad_func, method)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 

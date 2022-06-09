@@ -11,6 +11,8 @@ import numpy as np
 import torch
 from transformers import GPT2Tokenizer, OPTForCausalLM, GPT2LMHeadModel
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
+from benchmark.util import compute_gpt_tflops
+from examples.opt.model.opt_utils import gpt_flops, opt_specs, compute_gpt_tflops_with_padding
 
 try:
     from .opt_model import (get_config, get_pipeshard_executable,
@@ -66,10 +68,11 @@ class WrappedInferenceFunc(GenerationMixin):
 
     This class also decomposes the first call of prompt during generation to one token by one token.
     """
-    def __init__(self, inference_func, config):
+    def __init__(self, inference_func, config, executable):
         self.inference_func = inference_func
         self.config = config
         self.main_input_name = "input_ids"
+        self.executable = executable
 
     def forward(self, attention_mask):
         raise NotImplementedError()
@@ -99,7 +102,7 @@ class WrappedInferenceFunc(GenerationMixin):
         return ret
 
 
-def get_model(model_name, device, dummy,
+def get_model(model_name, device, dummy, cluster="aws",
               support_output_attentions=False,
               support_output_hidden_states=False):
     if "gpt" in model_name:
@@ -147,8 +150,13 @@ def get_model(model_name, device, dummy,
 
         name = model_name.split("-")[1].upper()
         config = get_config(name, num_pp_stages=num_pp_stages)
-        # path = f"/home/ubuntu/opt_weights/{name}_np"
-        path = f"/dataset/opt_weights/{name}_np"
+
+        if cluster == "aws":
+            path = f"/home/ubuntu/opt_weights/{name}_np"
+        elif cluster == "mbzuai":
+            path = f"/dataset/opt_weights/{name}_np"
+        else:
+            raise RuntimeError("Unrecognized cluster.")
 
         executable, params_aval = get_pipeshard_executable(
             config,
@@ -186,39 +194,74 @@ def get_model(model_name, device, dummy,
 
         inference_func_config = InferenceFuncConfig()
 
-    return WrappedInferenceFunc(inference_func, inference_func_config)
+    return WrappedInferenceFunc(inference_func, inference_func_config, executable)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="alpa/opt-125m")
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--cluster", type=str, default="aws")
     parser.add_argument("--dummy", action="store_true")
     args = parser.parse_args()
 
     tokenizer = GPT2Tokenizer.from_pretrained("facebook/opt-125m")
 
     tic = time.time()
-    model = get_model(args.model, args.device, args.dummy)
+    model = get_model(args.model, args.device, args.dummy, args.cluster)
     load_time = time.time() - tic
 
     prompts = [
         "Computer science is the study of computation and",
         "Ion Stoica is a Romanian-American computer scientist specializing in",
         "The University of California, Berkeley is a public",
+        # "Today is a good day and I want to",
+        # "What is the valuation of Databricks?",
+        # "Paris is the capital city of",
+        # "Which country has the most population?",
+        # "What do you think about the future of Cryptocurrency?"
     ]
+
+    model_name = args.model.split("-")[-1]
+    model_spec = opt_specs[model_name]
+    H = model_spec[1]
+    L = model_spec[2]
+    num_head = model_spec[3]
+
 
     for prompt in prompts:
         tic = time.time()
         torch.manual_seed(8)
         input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(args.device)
-        output = model.generate(input_ids=input_ids, max_length=256, do_sample=False,
-                                return_dict_in_generate=True, output_hidden_states=False)
-        generated_ids = output.sequences
-        generated_string = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-        speed = np.prod(generated_ids.shape) / (time.time() - tic)
-        print(f"{generated_string}, speed: {speed:.2f} token/s")
+        # output = model.generate(input_ids=input_ids, max_length=256, do_sample=False,
+        #                         return_dict_in_generate=True, output_hidden_states=False)
+        # generated_ids = output.sequences
+        # generated_string = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+        num_gpus = alpa.get_global_cluster().num_devices
+        # print(f"input length: {input_ids.shape[1]}, output_length: {generated_ids.shape[1]}, num_gpus: {num_gpus}")
+        print(f"hidden size: {H}, num layers: {L}, num attention heads: {num_head}")
+        latency = time.time() - tic
+        latency = 1.0
+        # gen_len = generated_ids.shape[1]
+        gen_len = 256
 
-    heads = ["Model", "Device", "Dummy", "Load (s)", "Speed (token/s)"]
-    values = [args.model, args.device, args.dummy, f"{load_time:.2f}", f"{speed:.2f}"]
+
+        exec_flops = model.executable.flop_count / 1e12 / latency / num_gpus * gen_len
+        print(model.executable.flop_count )
+
+        total_flop = gpt_flops(input_ids.shape[1], gen_len,
+                               num_heads=num_head, d_model=H, d_ff=H*4,
+                               num_layers=L)
+        train_flops = compute_gpt_tflops_with_padding(1, gen_len, 2048, L, H, 50272, num_gpus, latency, checkpoint_activations=True)
+
+        tflops = float(total_flop / latency / num_gpus / 1e12)
+        speed = gen_len / latency # TODO
+
+        # print(f"{generated_string}")
+        print(f"speed: {speed:.2f} token/s, tflops: {tflops} tflops/s, "
+              f"train_flops: {train_flops}, train_flops/4: {train_flops/4.0} "
+              f"exec_flops: {exec_flops}")
+
+    heads = ["Model", "Device", "Dummy", "Load (s)", "Speed (token/s)", "TFlops (Tflops/s)"]
+    values = [args.model, args.device, args.dummy, f"{load_time:.2f}", f"{speed:.2f}", f"{tflops:.2f}"]
     write_tsv(heads, values, "results.tsv")

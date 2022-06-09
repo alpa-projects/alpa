@@ -8,7 +8,7 @@ import os
 MAX_SEQ_LEN = 2048
 BATCH_SIZE = 2048  # silly high bc we dynamically batch by MAX_BATCH_TOKENS
 MAX_BATCH_TOKENS = 3072
-DEFAULT_PORT = 8888
+DEFAULT_PORT = 10001
 MODEL_PARALLEL = 2
 TOTAL_WORLD_SIZE = 2
 
@@ -41,7 +41,7 @@ TOTAL_WORLD_SIZE = 2
 #             "You must set the variables in metaseq.service.constants to launch the API."
 #         )
 LOCAL_SSD = "/home/ubuntu/opt"
-MODEL_SHARED_FOLDER = "/home/ubuntu/parax-efs/pycharm/opt/metaseq/add_opt"
+MODEL_SHARED_FOLDER = "/home/haozhang/hao/alpa-projects"
 
 # tokenizer files
 BPE_MERGES = os.path.join(MODEL_SHARED_FOLDER, "gpt2-merges.txt")

@@ -459,7 +459,7 @@ def get_config(name, **kwargs):
     if name == "125M":
         config = OPTConfig(
             max_target_positions=2048,
-            decoder_layers=12,
+            decoder_layers=4,
             decoder_attention_heads=12,
             decoder_embed_dim=768,
             decoder_input_dim=768,

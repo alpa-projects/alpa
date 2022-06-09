@@ -26,10 +26,10 @@ class GeneratorInterface:
         self.dummy = dummy
 
 
-    def load_model(self, model_name="alpa/opt-125m"):
+    def load_model(self, model_name="alpa/opt-125m", cluster="aws"):
         """Load model and return the model wrapper."""
         self.task = tasks.setup_task(self.cfg.task)
-        self.model_wrapper = get_model(model_name, "cuda", False)
+        self.model_wrapper = get_model(model_name, "cuda", False, cluster=cluster)
         self.tokenizer = GPT2Tokenizer.from_pretrained("facebook/opt-125m")
         return self.model_wrapper
 

@@ -5,7 +5,8 @@
 
 import uuid
 import time
-from metaseq.service.constants import CHECKPOINT_LOCAL
+from examples.opt.serving.service.constants import CHECKPOINT_LOCAL
+# from metaseq.service.constants import CHECKPOINT_LOCAL
 
 
 class OAIResponse:

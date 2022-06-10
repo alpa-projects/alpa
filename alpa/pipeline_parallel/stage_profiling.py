@@ -463,7 +463,7 @@ def compile_all(stages, num_micro_batches, default_as_option):
 
 
 def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
-                num_layers, num_auto_sharding_configs, num_micro_batches,
+                num_layers, num_autosharding_configs, num_micro_batches,
                 auto_stage_option, mesh_cached_result):
     """Profile all compiled outputs on given meshes.
 

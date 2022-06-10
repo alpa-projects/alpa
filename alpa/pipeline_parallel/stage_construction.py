@@ -163,12 +163,10 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices,
     return best_cost, best_solution
 
 
-def get_submesh_choices(mesh: VirtualPhysicalMesh, space: str):
+def get_submesh_choices(num_hosts: int, num_devices_per_host: int, space: str):
     """Gets the valid choices of submesh shapes."""
     if global_config.overwrite_submesh_choices is not None:
         return global_config.overwrite_submesh_choices
-    num_hosts = mesh.num_hosts
-    num_devices_per_host = mesh.num_devices_per_host
     submesh_choices = []
 
     # smaller submeshes:
@@ -570,7 +568,7 @@ def cluster_layers_and_slice_mesh(
                                       "inference mode is not supported yet.")
 
         submesh_choices = get_submesh_choices(
-            virtual_mesh, stage_option.submesh_physical_shape_space)
+            virtual_mesh.num_hosts, virtual_mesh.num_devices_per_host, stage_option.submesh_physical_shape_space)
         autosharding_configs = get_all_submesh_autosharding_config_choices(
             virtual_mesh, submesh_choices,
             stage_option.submesh_logical_shape_space, batch_size)

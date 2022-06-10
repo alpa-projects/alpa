@@ -26,9 +26,12 @@ Regardless of installing from wheels or from source, we need to install a few pr
 
     Otherwise, please try to install via `binary <https://projects.coin-or.org/Cbc#DownloadandInstall>`_ or `conda <https://anaconda.org/conda-forge/coincbc>`_.
 
-3. Install cupy:
+3. Update pip version and install cupy:
 
   .. code:: bash
+
+    # Update pip
+    pip3 install --upgrade pip
 
     # Use your own CUDA version. Here cuda-cuda114 means cuda 11.4
     pip3 install cupy-cuda114
@@ -92,7 +95,14 @@ Install from Source
   
     git clone --recursive git@github.com:alpa-projects/alpa.git
 
-2. Build and install jaxlib
+2. Install Alpa
+
+  .. code:: bash
+
+    cd alpa
+    pip3 install -e .[dev]  # Note that the suffix `[dev]` is required to build custom modules.
+
+3. Build and install jaxlib
 
   .. code:: bash
   
@@ -101,13 +111,6 @@ Install from Source
     cd dist
 
     pip3 install -e .
-
-3. Install Alpa
-
-  .. code:: bash
-  
-    cd alpa
-    pip3 install -e .[dev]  # Note that the suffix `[dev]` is required to build custom modules.
 
 
 .. note::

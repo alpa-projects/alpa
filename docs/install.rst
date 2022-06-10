@@ -60,7 +60,6 @@ If you need to use other CUDA, cuDNN, or Python versions, please follow the next
 
   .. code:: bash
 
-    pip3 install --upgrade pip
     pip3 install alpa
 
 2. Then install the Alpa-modified Jaxlib from our `self-hosted PyPI server <http://169.229.48.123:8080/simple/>`_,
@@ -174,3 +173,28 @@ Make sure your jax version is 0.3.5, Flax version is 0.4.1 by reinstalling them 
   pip3 install flax==0.4.1
 
 Make sure you install **Alpa-modified Jaxlib** by either using :ref:`our prebuilt wheels<install-from-wheels>` or :ref:`Install from Source<install-from-source>`.
+
+Numpy Version Problems
+#######################
+If you start with a clean Python virtual environment and have followed the procedures in this guide strictly, you should not see problems about Numpy versions.
+
+However, sometimes due to the installation of other Python packages, another version of numpy might be silently installed before compiling jaxlib,
+and you might see numpy version errors similar to the following one when launching Alpa after installing from source:
+
+.. code:: bash
+
+  >>> python3 tests/test_install.py
+    ......
+    RuntimeError: module compiled against API version 0xf but this version of numpy is 0xd
+    ImportError: numpy.core._multiarray_umath failed to import
+    ImportError: numpy.core.umath failed to import
+    2022-05-20 21:57:35.710782: F external/org_tensorflow/tensorflow/compiler/xla/python/xla.cc:83] Check failed: tensorflow::RegisterNumpyBfloat16()
+    Aborted (core dumped)
+
+This is because you have used a higher version of numpy when compiling jaxlib, but later used a lower version of numpy to run Alpa.
+
+To address the problem, please first downgrade the numpy in your Python environment to ``numpy==1.20`` via ``pip install numpy==1.20``,
+then follow the procedures in :ref:`install from source<install-from-source>` to rebuild and reinstall jaxlib.
+Optionally, you can switch back to use the higher version of numpy (``numpy>=1.20``) to run Alpa and your other applications, thanks to numpy's backward compatibility.
+
+See `Issue#461 <https://github.com/alpa-projects/alpa/issues/461>`_ for more discussion.

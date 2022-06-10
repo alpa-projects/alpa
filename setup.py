@@ -91,7 +91,7 @@ install_require_list = [
 
 dev_require_list = [
     f"cupy-cuda{get_cuda_version_str(no_dot=True)}",
-    "yapf==0.32.0", "pylint==2.14.0", "coverage", "cmake", "pybind11"
+    "yapf==0.32.0", "pylint==2.14.0", "cmake", "pybind11"
 ]
 
 doc_require_list = [

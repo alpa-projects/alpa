@@ -16,7 +16,7 @@ class DynamicProgrammingTest(unittest.TestCase):
     def test_stage_construction(self):
         """Test stage construction."""
         num_layers = 8
-        num_hosts = 4
+        num_hosts = 1
         num_devices_per_host = 8
         num_devices = num_hosts * num_devices_per_host
         num_micro_batches = 16

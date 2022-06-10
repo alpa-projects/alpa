@@ -123,7 +123,7 @@ def train_torch_module(pt_module_gen, weight_init_func, dataloader, loss_func,
 
         # Generate sharding plan based on shape-only tensors.
         # Only needed for dist training.
-        # TODO: improve this after https://github.com/alpa-projects/alpa/pull/489
+        # TODO: improve after https://github.com/alpa-projects/alpa/pull/489
         if atorch.mode() == "dist":
             # pylint: disable=line-too-long
             alpa.global_env.global_config.use_dummy_value_for_benchmarking = True

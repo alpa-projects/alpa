@@ -96,8 +96,27 @@ def assert_format(target_format: str, *inputs):
             "of type {type(inp)}"
 
 
-def meta_like(*tensors):
-    return tuple(torch.empty_like(tensor, device="meta") for tensor in tensors)
+def _meta_like_single_input(inp):
+    ret = None
+    if isinstance(inp, tuple):
+        ret = tuple(_meta_like_single_input(x) for x in inp)
+    elif isinstance(inp, list):
+        ret = [_meta_like_single_input(x) for x in inp]
+    elif isinstance(inp, dict):
+        ret = dict(
+            zip(inp.keys(),
+                [_meta_like_single_input(x) for x in inp.values()]))
+    elif isinstance(inp, torch.Tensor):
+        ret = torch.empty_like(inp, device="meta")
+    if ret is not None:
+        return ret
+    else:
+        raise NotImplementedError(
+            f"Value of type {type(inp)} is not supported yet.")
+
+
+def meta_like(*inps):
+    return tuple(_meta_like_single_input(inp) for inp in inps)
 
 
 def is_torch_tensor_type(x):

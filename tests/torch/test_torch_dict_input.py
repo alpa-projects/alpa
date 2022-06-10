@@ -17,7 +17,8 @@ class MyModule(torch.nn.Module):
 
     def forward(self, input_dict):
         x = input_dict["x"]
-        x = self.linear1(x)
+        y = input_dict["dict2"]["y"]
+        x = self.linear1(x) + y
         # do some debugging when in local mode
         if getattr(torch, "local_mode", True):
             print(x)
@@ -43,8 +44,8 @@ class TorchDictInputTest(unittest.TestCase):
         pt_module_gen = lambda: MyModule()
 
         dataloader = [
-            ({"x": torch.randn(8, 16)}, torch.randn(8, 16)),
-            ({"x": torch.randn(8, 16)}, torch.randn(8, 16)),
+            ({"x": torch.randn(8, 16), "dict2": {"y": torch.randn(8, 16)}}, torch.randn(8, 16)),
+            ({"x": torch.randn(8, 16), "dict2": {"y": torch.randn(8, 16)}}, torch.randn(8, 16)),
         ]
         loss_func = lambda *args, **kwargs: torch.nn.functional.mse_loss(
             *args, **kwargs)

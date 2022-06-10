@@ -35,9 +35,11 @@ class DynamicProgrammingTest(unittest.TestCase):
             (num_layers, num_layers, num_submesh_choices,
              num_autosharding_configs), 4096)
         alpa.util._DISABLE_NUMBA = False
-        numba_cost, _ = stage_construction_dp(
-            num_layers, num_devices, num_micro_batches, submesh_choices,
-            num_autosharding_configs, compute_cost, max_n_succ_stages)
+        numba_cost, _ = stage_construction_dp(num_layers, num_devices,
+                                              num_micro_batches,
+                                              submesh_choices,
+                                              num_autosharding_configs,
+                                              compute_cost, max_n_succ_stages)
         alpa.util._DISABLE_NUMBA = True
         no_numba_cost, _ = stage_construction_dp(
             num_layers, num_devices, num_micro_batches, submesh_choices,

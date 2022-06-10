@@ -92,12 +92,11 @@ class CreateStateTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(CreateStateTest("test_shard_parallel"))
-    #suite.addTest(CreateStateTest("test_pipeshard_parallel"))
+    #suite.addTest(CreateStateTest("test_shard_parallel"))
+    suite.addTest(CreateStateTest("test_pipeshard_parallel"))
     return suite
 
 
 if __name__ == "__main__":
     runner = unittest.TextTestRunner()
     runner.run(suite())
-

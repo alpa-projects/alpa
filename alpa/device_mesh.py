@@ -1902,7 +1902,7 @@ class PhysicalDeviceMeshGroup:
 
     def set_runtime_random_seed(self, seed: int):
         for m in self.meshes:
-            m.set_runtime_random_seed(seed)
+            m.set_runtime_random_seed(seed + m.mesh_id << 20)
 
     def sync_workers(self):
         """Sync device activities on all workers."""

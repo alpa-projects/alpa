@@ -24,7 +24,8 @@ pipeline_p = Primitive("pipeline_marker")
 def mark_pipeline_boundary():
     """Mark the boundary of pipeline layers. We reuse pipeline_marker for this
     functionality."""
-    return pipeline_p.bind(name="boundary", mark_type="boundary")
+    # The argument "0" is used to avoid a bug in jax
+    return pipeline_p.bind(0, name="boundary", mark_type="boundary")
 
 
 def mark_gradient(grad):

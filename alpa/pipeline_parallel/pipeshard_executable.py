@@ -3,7 +3,7 @@ import logging
 import time
 from typing import Optional, Sequence, Callable
 
-from jax.tree_util import tree_flatten, tree_unflatten
+from jax.tree_util import tree_map, tree_flatten, tree_unflatten
 import numpy as np
 import ray.exceptions
 
@@ -15,7 +15,8 @@ from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
                                   MemzeroWorkerExecutable,
                                   PartialGradAccMeshWorkerExecutable,
                                   next_mesh_executable_uuid, get_uuid_np_array,
-                                  next_remote_buffer_uuid, RemoteBufferRef)
+                                  next_remote_buffer_uuid, RemoteBufferRef,
+                                  PlacementSpec)
 from alpa.pipeline_parallel.runtime_emitter import (
     AllocateZeroWorkerExecutableConfig, ConcatWorkerExecutableConfig,
     ExecutableConfig, MemZeroWorkerExecutableConfig,
@@ -230,6 +231,12 @@ class PipeshardDriverExecutable:
             self._check_alive()
 
         return self.outs_handler(self.mesh_group, output_bufs)
+
+    def get_placement_specs(self):
+        def load_info_to_placement_spec(load_info):
+            return PlacementSpec([x.mesh_id for x in load_info.meshes], load_info.specs)
+
+        return tree_map(lambda x: load_info_to_placement_spec(x), self.load_info)
 
     def __call__(self, *args):
         """Fast call without signature matching."""

@@ -1201,7 +1201,7 @@ class ConcatMeshWorkerExecutable(MeshWorkerExecutable):
             device_assignment=np.arange(num_devices).reshape((1, -1)),
             use_spmd_partitioning=False,
             parameter_is_tupled_arguments=False,
-            build_random_seed=global_config.build_random_seed)
+            build_random_seed=global_config.compile_random_seed)
         xla_computation = xe.XlaComputation(hlo_proto)
 
         self.concat = worker.backend.compile(xla_computation, compile_options)

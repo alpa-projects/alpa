@@ -264,9 +264,10 @@ class PipelineInstEmitter:
     """Pipeline Instruction Emitter."""
 
     def __init__(self, *, stages: Sequence[XlaShardedPipelineComputation],
-                 global_invars: Sequence[Var], grad_dummy_invars: Sequence[Var],
-                 concat_vars_mapping: Dict[Var,
-                                           Var], global_outvars: Sequence[Var],
+                 global_invars: Sequence[Var],
+                 grad_dummy_invars: Dict[Var, Var],
+                 global_outvars: Sequence[Var],
+                 concat_vars_mapping: Dict[Var, Var],
                  mesh_group: PhysicalDeviceMeshGroup,
                  schedule: PipelineSchedule, is_batch: Sequence[bool],
                  num_batch: int, in_tree: PyTreeDef):

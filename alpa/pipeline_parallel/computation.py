@@ -167,7 +167,7 @@ class XlaPipelineComputation(PipelineComputation):
             device_assignment=(device.id,) if device else None,
             use_spmd_partitioning=False,
             parameter_is_tupled_arguments=tuple_args,
-            build_random_seed=global_config.build_random_seed,
+            build_random_seed=global_config.compile_random_seed,
         )
 
         xla_computation = xc.XlaComputation(
@@ -213,7 +213,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
         """Create a dummy computation."""
         backend_name = "gpu"
         backend = xb.get_backend(backend_name)
-        strategy_config = StrategyConfig(global_config.build_random_seed,
+        strategy_config = StrategyConfig(global_config.compile_random_seed,
                                          logical_mesh_shape, 1, 1, None, 0)
         compiled = compile_dummy_zero_constant(backend,
                                                np.prod(logical_mesh_shape))

@@ -19,6 +19,7 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk, static_argnums
     out_tree = out_tree_thunk()
     state_aval = tree_unflatten(out_tree, out_avals)
 
+    # Compile train_step to get the placement specs.
     executable = train_step.get_executable(state_aval, other_args)
     placement_specs = executable.get_placement_specs()[0]
 
@@ -26,23 +27,34 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk, static_argnums
     backend = xb.get_backend("gpu")
     hlo_module = jaxpr_to_hlo_module(name, ClosedJaxpr(jaxpr, consts),
                                      donated_invars, backend)
-
     placement_specs, _ = tree_flatten(placement_specs)
 
-    sharding_protos = []
-    for spec in placement_specs:
-        assert len(spec.mesh_ids) == 1
-        sharding_protos.append(spec.sharding_specs[0].sharding_proto())
+    if isinstance(executable, NormalMeshDriverExecutable, GradAccMeshDriverExecutable):
+        sharding_protos = []
+        for spec in placement_specs:
+            assert len(spec.mesh_ids) == 1
+            sharding_protos.append(spec.sharding_specs[0].sharding_proto())
 
-    xe.set_hlo_module_output_shardings(hlo_module, sharding_protos)
-    physical_mesh = executable.physical_mesh
+        xe.set_hlo_module_output_shardings(hlo_module, sharding_protos)
+        physical_mesh = executable.physical_mesh
 
-    run_spmd_partitioner_pass(hlo_module, physical_mesh.num_devices)
-    strategy_config = executable.strategy_config
+        run_spmd_partitioner_pass(hlo_module, physical_mesh.num_devices)
+        strategy_config = executable.strategy_config
 
-    return NormalMeshDriverExecutable(physical_mesh,
-                                      hlo_module,
-                                      strategy_config,
-                                      avals,
-                                      out_avals,
-                                      [False] * len(avals))
+        return NormalMeshDriverExecutable(physical_mesh,
+                                          hlo_module,
+                                          strategy_config,
+                                          avals,
+                                          out_avals,
+                                          [False] * len(avals))
+    else:
+        # Construct a new pipelined jaxpr
+        var_to_mesh = {}
+
+        eqn_to_mesh = propagate_mesh_placement(jaxpr, var_to_mesh)
+        eqns = slice_jaxpr(jaxpr, eqn_to_mesh)
+        jaxpr = add_pipeline_marks_for_sliced_eqns(jaxpr, sliced_eqns)
+
+        # Compile a pipeshard executable
+
+

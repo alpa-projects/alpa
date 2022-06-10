@@ -15,7 +15,8 @@ class MyModule(torch.nn.Module):
         self.linear3 = torch.nn.Linear(16, 16)
         self.linear4 = torch.nn.Linear(16, 16)
 
-    def forward(self, x):
+    def forward(self, input_dict):
+        x = input_dict["x"]
         x = self.linear1(x)
         # do some debugging when in local mode
         if getattr(torch, "local_mode", True):
@@ -36,22 +37,19 @@ def weight_init_func(pt_module, name_map, params, bufs):
     return params, bufs
 
 
-class TorchSimpleTest(unittest.TestCase):
+class TorchDictInputTest(unittest.TestCase):
 
-    def test_simple(self):
-        # `meta_init` allows a PyTorch model to be created with shape-only tensors as weights.
+    def test_dict_input(self):
         pt_module_gen = lambda: MyModule()
 
         dataloader = [
-            (torch.randn(8, 16), torch.randn(8, 16)),
-            (torch.randn(8, 16), torch.randn(8, 16)),
+            ({"x": torch.randn(8, 16)}, torch.randn(8, 16)),
+            ({"x": torch.randn(8, 16)}, torch.randn(8, 16)),
         ]
         loss_func = lambda *args, **kwargs: torch.nn.functional.mse_loss(
             *args, **kwargs)
         optim_gen = torchoptim.adam(lr=1e-3)
-        num_micro_batches = 2
-        parallel_method = alpa.PipeshardParallel(
-            stage_mode="auto", num_micro_batches=num_micro_batches)
+        parallel_method = alpa.ShardParallel()
 
         train_torch_module(pt_module_gen, weight_init_func, dataloader,
                            loss_func, optim_gen, parallel_method)
@@ -59,7 +57,7 @@ class TorchSimpleTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(TorchSimpleTest("test_simple"))
+    suite.addTest(TorchDictInputTest("test_dict_input"))
     return suite
 
 

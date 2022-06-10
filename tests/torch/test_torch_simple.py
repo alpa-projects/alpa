@@ -38,8 +38,7 @@ def weight_init_func(pt_module, name_map, params, bufs):
 
 class TorchSimpleTest(unittest.TestCase):
 
-    def test_simple(self):
-        # `meta_init` allows a PyTorch model to be created with shape-only tensors as weights.
+    def test_simple_shard(self):
         pt_module_gen = lambda: MyModule()
 
         dataloader = [
@@ -54,10 +53,28 @@ class TorchSimpleTest(unittest.TestCase):
         train_torch_module(pt_module_gen, weight_init_func, dataloader,
                            loss_func, optim_gen, parallel_method)
 
+    def test_simple_pipeshard(self):
+        pt_module_gen = lambda: MyModule()
+
+        dataloader = [
+            (torch.randn(8, 16), torch.randn(8, 16)),
+            (torch.randn(8, 16), torch.randn(8, 16)),
+        ]
+        loss_func = lambda *args, **kwargs: torch.nn.functional.mse_loss(
+            *args, **kwargs)
+        optim_gen = torchoptim.adam(lr=1e-3)
+        num_micro_batches = 2
+        parallel_method = alpa.PipeshardParallel(
+            stage_mode="auto", num_micro_batches=num_micro_batches)
+
+        train_torch_module(pt_module_gen, weight_init_func, dataloader,
+                           loss_func, optim_gen, parallel_method)
+
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(TorchSimpleTest("test_simple"))
+    suite.addTest(TorchSimpleTest("test_simple_shard"))
+    suite.addTest(TorchSimpleTest("test_simple_pipeshard"))
     return suite
 
 

@@ -452,7 +452,6 @@ class TorchZHENTest(unittest.TestCase):
             TokenMixer.CONVOLUTION, TokenMixer.DOT
         ]
 
-        # `meta_init` allows a PyTorch model to be created with shape-only tensors as weights.
         pt_module_gen = lambda: ZHENCollection(LAYERS, D, TOKENS, F,
                                                OUTPUT_PER_ENSEMBLE)
 
@@ -486,7 +485,6 @@ class TorchZHENTest(unittest.TestCase):
                       TokenMixer.DOT
                   ], [TokenMixer.LINEAR, TokenMixer.DOT]]  # 3-layer ZHEN
 
-        # `meta_init` allows a PyTorch model to be created with shape-only tensors as weights.
         pt_module_gen = lambda: ZHENCollection(len(TOKENS), D, TOKENS, F,
                                                OUTPUT_PER_ENSEMBLE)
 

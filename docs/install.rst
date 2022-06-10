@@ -151,7 +151,7 @@ To enable Alpa for PyTorch, install the following dependencies:
     cd functorch/
     python3 setup.py install
 
-Please look at tests/test_torch_simple_shard.py for usage example.
+Please look at tests/test_torch_simple.py for usage example.
 
 TODO: add PyTorch examples in examples/ or tutorials/
 

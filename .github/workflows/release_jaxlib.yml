@@ -45,7 +45,7 @@ jobs:
           docker run --gpus all --tmpfs /build:exec \
           --rm -v /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}:/dist \
           build-jaxlib-image-cuda${CUDA_VERSION} ${PYTHON_VERSION} \
-          cuda ${CUDA_VERSION} master
+          cuda ${CUDA_VERSION}
         env:
           CUDA_VERSION: ${{ matrix.cuda }}
           PYTHON_VERSION: ${{ matrix.python }}

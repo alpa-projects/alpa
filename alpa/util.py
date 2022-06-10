@@ -1089,8 +1089,13 @@ def get_var_mapping(mapping, var):
         return var
 
 
+_DISABLE_NUMBA = False
+
+
 def maybe_numba_jit(func):
     """Decorator to mark a function as numba jitted if numba is available."""
+    if _DISABLE_NUMBA:
+        return func
     try:
         from numba import jit  # pylint: disable=import-outside-toplevel
         return jit(nopython=True)(func)

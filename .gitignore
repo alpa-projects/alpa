@@ -55,3 +55,6 @@ docs/tutorials
 
 # Example temp files
 examples/imagenet/imagenet
+
+# macOS temp files
+.DS_Store

@@ -50,6 +50,7 @@ alpa.init(cluster="ray")
 # Note that now this model is being executed on CPU because we force the driver
 # process to use the CPU.
 
+
 class MLPModel(nn.Module):
     hidden_dim: int
 
@@ -64,6 +65,7 @@ class MLPModel(nn.Module):
         x = nn.Dense(features=self.hidden_dim)(x)
         x = nn.relu(x)
         return x
+
 
 dim = 2048
 batch_size = 2048
@@ -86,8 +88,10 @@ params = model.init(rngkey, x)
 tx = optax.adam(learning_rate=1e-3)
 state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
+
 # Define training step
 def train_step(state, batch):
+
     def loss_func(params):
         out = model.apply(params, batch["x"])
         loss = jnp.mean((out - batch["y"])**2)
@@ -96,6 +100,7 @@ def train_step(state, batch):
     grads = jax.grad(loss_func)(state.params)
     new_state = state.apply_gradients(grads=grads)
     return new_state
+
 
 batch = {"x": x, "y": y}
 expected_state = train_step(state, batch)
@@ -128,11 +133,14 @@ class ManualPipelineMLPModel(nn.Module):
         x = nn.relu(x)
         return x
 
+
 # Initialize the train state with the same parameters as the single-device
 # model.
 manual_pipeline_model = ManualPipelineMLPModel(hidden_dim=dim)
 manual_pipeline_state = TrainState.create(apply_fn=manual_pipeline_model.apply,
-                                          params=copy.deepcopy(params), tx=tx)
+                                          params=copy.deepcopy(params),
+                                          tx=tx)
+
 
 # Define the training step with manually parallelized pipeline stages.
 # We use the "alpa.PipeshardParallel" option to let alpa use both
@@ -153,9 +161,11 @@ def manual_pipeline_train_step(state, batch):
     new_state = state.apply_gradients(grads=grads)
     return new_state
 
-manual_pipeline_actual_state = manual_pipeline_train_step(manual_pipeline_state,
-                                                          batch)
-assert_allclose(expected_state.params, manual_pipeline_actual_state.params,
+
+manual_pipeline_actual_state = manual_pipeline_train_step(
+    manual_pipeline_state, batch)
+assert_allclose(expected_state.params,
+                manual_pipeline_actual_state.params,
                 atol=5e-3)
 
 alpa.shutdown()
@@ -184,7 +194,9 @@ alpa.init(cluster="ray")
 # modification required is the two decorators. The stage construction and
 # mesh slicing are performed within the `parallelize` decorator.
 
-@alpa.parallelize(method=alpa.PipeshardParallel(num_micro_batches=16, stage_mode="auto"))
+
+@alpa.parallelize(method=alpa.PipeshardParallel(num_micro_batches=16,
+                                                stage_mode="auto"))
 def auto_pipeline_train_step(state, batch):
     # Indicate that we use automatic layer construction. The `layer_num` here
     # is a hyperparameter to control how many layers we get from the
@@ -201,11 +213,13 @@ def auto_pipeline_train_step(state, batch):
     new_state = state.apply_gradients(grads=grads)
     return new_state
 
+
 # In the first call, alpa triggers the compilation.
 # The compilation first profiles several costs and solves an optimization
 # problem to get the optimal pipeline assignments.
 auto_pipeline_actual_state = auto_pipeline_train_step(state, batch)
-assert_allclose(expected_state.params, auto_pipeline_actual_state.params,
+assert_allclose(expected_state.params,
+                auto_pipeline_actual_state.params,
                 atol=5e-3)
 
 alpa.shutdown()

@@ -8,11 +8,10 @@ import time
 
 import alpa
 from alpa import (parallelize, global_config, get_global_cluster,
-                  set_global_virtual_physical_mesh,
-                  PipeshardParallel, ManualPipeshardParallel,
-                  AutoShardingOption,
-                  manual_layer_construction,
-                  automatic_layer_construction, automatic_remat)
+                  set_global_virtual_physical_mesh, PipeshardParallel,
+                  ManualPipeshardParallel, AutoShardingOption,
+                  manual_layer_construction, automatic_layer_construction,
+                  automatic_remat)
 from alpa.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from alpa.model.model_util import TrainState
 from alpa.model.gpt_model import FlaxGPTForLMModule
@@ -23,20 +22,25 @@ from alpa.util import print_used_time, to_str_round, GB
 from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops
 
 
-
 def report_pipeline_breakdown(executable, timer_names, niter):
-    overall_costs = executable.get_execution_time_costs(warmup=0, timer_name="overall")
+    overall_costs = executable.get_execution_time_costs(warmup=0,
+                                                        timer_name="overall")
 
     print(">>> overall: {}...".format(overall_costs))
     other_percentage = [100.0] * niter
     other = overall_costs
     for timer_name in timer_names:
-        costs = executable.get_execution_time_costs(warmup=0, timer_name=timer_name)
+        costs = executable.get_execution_time_costs(warmup=0,
+                                                    timer_name=timer_name)
         if len(costs) == 0:
             costs = [0.0] * niter
-        percentage = [cost / overall_costs[i] * 100 for i, cost in enumerate(costs)]
+        percentage = [
+            cost / overall_costs[i] * 100 for i, cost in enumerate(costs)
+        ]
         other = [remain - costs[i] for i, remain in enumerate(other)]
-        other_percentage = [remain - percentage[i] for i, remain in enumerate(other_percentage)]
+        other_percentage = [
+            remain - percentage[i] for i, remain in enumerate(other_percentage)
+        ]
         strs = []
         for i, cost in enumerate(costs):
             strs.append(str(cost) + f" ({percentage[i]:.1f}) ")
@@ -52,8 +56,9 @@ def report_pipeline_breakdown(executable, timer_names, niter):
 
 
 def create_train_state(rngkey, model, batch, dtype):
-    params = model.init_dummy(rngkey, batch["input_ids"], batch["attention_mask"],
-                              batch["token_type_ids"], batch["position_ids"])
+    params = model.init_dummy(rngkey, batch["input_ids"],
+                              batch["attention_mask"], batch["token_type_ids"],
+                              batch["position_ids"])
 
     def weight_decay_mask(pytree):
         # do not use weight decay on layer norm and bias.
@@ -61,15 +66,13 @@ def create_train_state(rngkey, model, batch, dtype):
 
     tx = optax.chain(
         #optax.clip_by_global_norm(1.0),  # TODO(lmzheng): fix reduce-scatter for this
-        optax.adamw(learning_rate=1e-2, mask=weight_decay_mask)
-    )
+        optax.adamw(learning_rate=1e-2, mask=weight_decay_mask))
     mixed_precision = (dtype == jnp.float16)
-    state = TrainState.create(
-        apply_fn=model.apply,
-        params=params,
-        tx=tx,
-        mixed_precision=mixed_precision,
-        dynamic_scale=None)
+    state = TrainState.create(apply_fn=model.apply,
+                              params=params,
+                              tx=tx,
+                              mixed_precision=mixed_precision,
+                              dynamic_scale=None)
     return state
 
 
@@ -84,24 +87,18 @@ def create_train_state_aval(rngkey, model, batch, dtype):
 
     tx = optax.chain(
         #optax.clip_by_global_norm(1.0),  # TODO(lmzheng): fix reduce-scatter for this
-        optax.adamw(learning_rate=1e-2, mask=weight_decay_mask)
-    )
+        optax.adamw(learning_rate=1e-2, mask=weight_decay_mask))
     mixed_precision = (dtype == jnp.float16)
-    state = TrainState.create_aval(
-        apply_fn=model.apply,
-        params=params,
-        tx=tx,
-        mixed_precision=mixed_precision,
-        dynamic_scale=None)
+    state = TrainState.create_aval(apply_fn=model.apply,
+                                   params=params,
+                                   tx=tx,
+                                   mixed_precision=mixed_precision,
+                                   dynamic_scale=None)
     return state
 
 
-def get_train_step(parallel_method,
-                   auto_layer,
-                   num_manual_pipeline_stages,
-                   num_auto_layers,
-                   auto_remat_mode,
-                   num_auto_remat_layers):
+def get_train_step(parallel_method, auto_layer, num_manual_pipeline_stages,
+                   num_auto_layers, auto_remat_mode, num_auto_remat_layers):
 
     @parallelize(method=parallel_method)
     def train_step(state, batch, rng_key):
@@ -115,9 +112,10 @@ def get_train_step(parallel_method,
                                     batch["position_ids"],
                                     deterministic=True,
                                     rngs=rngs)[0]
-            label_mask = jnp.where(batch["labels"]  > 0, 1.0, 0.0)
+            label_mask = jnp.where(batch["labels"] > 0, 1.0, 0.0)
             labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
-            loss = - jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
+            loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1),
+                            axis=-1)
             loss = (label_mask * loss).sum() / label_mask.sum()
             return loss
 
@@ -125,13 +123,14 @@ def get_train_step(parallel_method,
             loss_func = manual_layer_construction(loss_func)
         else:
             if auto_remat_mode == "fine_grained":
-                loss_func = automatic_remat(loss_func, layer_num=num_auto_remat_layers)
-                loss_func = automatic_layer_construction(loss_func, layer_num=num_auto_layers)
+                loss_func = automatic_remat(loss_func,
+                                            layer_num=num_auto_remat_layers)
+                loss_func = automatic_layer_construction(
+                    loss_func, layer_num=num_auto_layers)
             else:
                 use_remat = True if auto_remat_mode is "coarse_grained" else False
-                loss_func = automatic_layer_construction(loss_func,
-                                                         remat_layer=use_remat,
-                                                         layer_num=num_auto_layers)
+                loss_func = automatic_layer_construction(
+                    loss_func, remat_layer=use_remat, layer_num=num_auto_layers)
 
         grads = alpa.grad(loss_func)(state.params)
         new_state = state.apply_gradients(grads=grads)
@@ -141,13 +140,17 @@ def get_train_step(parallel_method,
     return train_step
 
 
-def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
-                                num_hosts, num_devices_per_host, aval_train_state=True):
+def benchmark_gpt_bert_internal(model_type,
+                                benchmark_case,
+                                niter,
+                                num_hosts,
+                                num_devices_per_host,
+                                aval_train_state=True):
     print_used_time(None)
 
     # Model configs
-    (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_micro_batches,
-     parallel_mode, parallel_args) = benchmark_case
+    (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
+     num_micro_batches, parallel_mode, parallel_args) = benchmark_case
     dtype = jnp.float16
     tie_word_embeddings = False
 
@@ -168,7 +171,7 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
             stage_mode="auto",
             num_micro_batches=num_micro_batches,
             default_auto_sharding_option=AutoShardingOption(
-               prefer_reduce_scatter=prefer_reduce_scatter),
+                prefer_reduce_scatter=prefer_reduce_scatter),
             **auto_stage_option)
     elif parallel_mode == "load_solution":
         prefer_reduce_scatter, use_remat, num_auto_layers, manual_stage_option = parallel_args
@@ -183,8 +186,9 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
                 prefer_reduce_scatter=prefer_reduce_scatter))
     elif parallel_mode == "manual":
         (prefer_reduce_scatter, use_remat, (dp, op, pp),
-            force_batch_dim_mapping) = parallel_args
-        as_option = AutoShardingOption(prefer_reduce_scatter=prefer_reduce_scatter)
+         force_batch_dim_mapping) = parallel_args
+        as_option = AutoShardingOption(
+            prefer_reduce_scatter=prefer_reduce_scatter)
         if force_batch_dim_mapping:
             as_option.force_batch_dim_to_mesh_dim = 0
         auto_layer = False
@@ -236,7 +240,8 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
             gradient_checkpointing=add_manual_remat,
             add_manual_pipeline_markers=add_manual_layer_marker,
             pipeline_mp_size=num_manual_pipeline_stages,
-        ), dtype=dtype)
+        ),
+                                          dtype=dtype)
     elif model_type == "gpt":
         model = FlaxGPTForLMModule(BertConfig(
             vocab_size=vocab_size,
@@ -249,7 +254,8 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
             gradient_checkpointing=add_manual_remat,
             add_manual_pipeline_markers=add_manual_layer_marker,
             pipeline_mp_size=num_manual_pipeline_stages,
-        ), dtype=dtype)
+        ),
+                                   dtype=dtype)
     else:
         raise ValueError(f"Invalid model {model_type}")
 
@@ -268,10 +274,14 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     print_used_time("Compile (driver)")
 
     if parallel_mode == "search":
-        compilation_times = {k : timers(k).elapsed() for k in
-                ["stage-construction", "stage-construction-dp",
-                 "stage-construction-compilation", "stage-construction-profiling"]}
-        print(f"compilation time breakdown: {to_str_round(compilation_times, 2)}")
+        compilation_times = {
+            k: timers(k).elapsed() for k in [
+                "stage-construction", "stage-construction-dp",
+                "stage-construction-compilation", "stage-construction-profiling"
+            ]
+        }
+        print(
+            f"compilation time breakdown: {to_str_round(compilation_times, 2)}")
     else:
         compilation_times = None
 
@@ -310,15 +320,15 @@ def benchmark_gpt_bert_internal(model_type, benchmark_case, niter,
     print_used_time("Benchmark")
 
     # Compute statistics
-    tflops = compute_gpt_tflops(batch_size, seq_len, num_layers,
-                                hidden_size, vocab_size,
-                                virtual_mesh.num_devices,
+    tflops = compute_gpt_tflops(batch_size, seq_len, num_layers, hidden_size,
+                                vocab_size, virtual_mesh.num_devices,
                                 np.mean(latencies))
     tflops_ckpt = compute_gpt_tflops(batch_size, seq_len, num_layers,
-                                     hidden_size, vocab_size,
-                                     virtual_mesh.num_devices,
+                                     hidden_size,
+                                     vocab_size, virtual_mesh.num_devices,
                                      np.mean(latencies), True)
-    parameter_count = compute_gpt_parameter_count(num_layers, hidden_size, vocab_size)
+    parameter_count = compute_gpt_parameter_count(num_layers, hidden_size,
+                                                  vocab_size)
     #report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], niter)
-    return (parameter_count, max_mem_allocated, latencies,
-            tflops, tflops_ckpt, compilation_times) + get_last_dp_result()
+    return (parameter_count, max_mem_allocated, latencies, tflops, tflops_ckpt,
+            compilation_times) + get_last_dp_result()

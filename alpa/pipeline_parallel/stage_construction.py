@@ -157,7 +157,6 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices,
             best_cost = cost
             best_solution = solution
         last_max_stage_cost = max_stage_cost
-    assert best_solution is not None, "no solution in auto stage construction."
 
     timers("stage-construction-dp").suspend()
     return best_cost, best_solution
@@ -568,7 +567,8 @@ def cluster_layers_and_slice_mesh(
                                       "inference mode is not supported yet.")
 
         submesh_choices = get_submesh_choices(
-            virtual_mesh.num_hosts, virtual_mesh.num_devices_per_host, stage_option.submesh_physical_shape_space)
+            virtual_mesh.num_hosts, virtual_mesh.num_devices_per_host,
+            stage_option.submesh_physical_shape_space)
         autosharding_configs = get_all_submesh_autosharding_config_choices(
             virtual_mesh, submesh_choices,
             stage_option.submesh_logical_shape_space, batch_size)
@@ -584,6 +584,8 @@ def cluster_layers_and_slice_mesh(
                          num_micro_batches, submesh_choices,
                          num_autosharding_configs, compute_cost,
                          max_n_succ_stages)
+
+        assert solution is not None, "no solution in auto stage construction."
 
         # Parse solution
         forward_stage_layer_ids = [

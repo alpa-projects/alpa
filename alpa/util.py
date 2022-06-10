@@ -1097,10 +1097,12 @@ def maybe_numba_jit(func):
     try:
         from numba import jit  # pylint: disable=import-outside-toplevel
         jitted_func = jit(nopython=True)(func)
+
         def wrapper(*args, **kwargs):
             if _DISABLE_NUMBA:
                 return func(*args, **kwargs)
             return jitted_func(*args, **kwargs)
+
         return wrapper
     except ImportError:
         logger.warning("Install numba to jit and accelerate the function.")

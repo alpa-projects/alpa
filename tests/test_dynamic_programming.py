@@ -1,4 +1,4 @@
-"""Test OrderedSet."""
+"""Test dynamic programming."""
 
 import numpy as np
 import unittest

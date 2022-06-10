@@ -11,7 +11,6 @@ from jax._src.tree_util import tree_unflatten
 from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun,
                       new_jaxpr_eqn, gensym)
 from jax.interpreters.partial_eval import remat_call_p
-import numba
 
 from alpa.pipeline_parallel.layer_stats import (global_invar_size,
                                                 is_nontrivial, eqn_flops,
@@ -19,7 +18,7 @@ from alpa.pipeline_parallel.layer_stats import (global_invar_size,
 from alpa.pipeline_parallel.primitive_def import (pipeline_p,
                                                   mark_pipeline_jaxpreqn)
 from alpa.util import (clone_jaxpr, slices_to_jaxpr, OrderedSet,
-                       get_var_mapping)
+                       get_var_mapping, maybe_numba_jit)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -220,7 +219,7 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
             "Too few non-trivial ops (dot, conv), which may influence"
             " auto-sharding performance")
 
-    @numba.jit(nopython=True)
+    @maybe_numba_jit
     def init():
         blocked = np.full((length + 1, length + 1), np.inf, dtype=np.float32)
         for left in range(1, length + 1):
@@ -241,7 +240,7 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
                 blocked[left, r] = 0
         return blocked
 
-    @numba.jit(nopython=True)
+    @maybe_numba_jit
     def dp(input_sizes, blocked):
         max_cost = np.full((length + 1, layer_num + 1),
                            np.inf,

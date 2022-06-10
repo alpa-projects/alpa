@@ -104,8 +104,7 @@ def _meta_like_single_input(inp):
         ret = [_meta_like_single_input(x) for x in inp]
     elif isinstance(inp, dict):
         ret = dict(
-            zip(inp.keys(),
-                [_meta_like_single_input(x) for x in inp.values()]))
+            zip(inp.keys(), [_meta_like_single_input(x) for x in inp.values()]))
     elif isinstance(inp, torch.Tensor):
         ret = torch.empty_like(inp, device="meta")
     if ret is not None:

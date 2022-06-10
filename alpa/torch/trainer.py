@@ -17,12 +17,8 @@ related to dist dataloading.
 """
 
 
-def train_torch_module(pt_module_gen,
-                       weight_init_func,
-                       dataloader,
-                       loss_func,
-                       optim_gen,
-                       parallel_method):
+def train_torch_module(pt_module_gen, weight_init_func, dataloader, loss_func,
+                       optim_gen, parallel_method):
     for mode in ["local", "dist"]:
         # "local": pure PT eager mode on single GPU,
         #     allows print in middle of graph, no dist training
@@ -56,19 +52,14 @@ def train_torch_module(pt_module_gen,
 
         # Enable dist mode for all user-defined functions
         if atorch.mode() == "dist":
-            (
-                module_func,
-                weight_init_func,
-                loss_func,
-                optim_func,
-                optim_state_init_func
-            ) = atorch.enable_dist_for_funcs(
-                module_func,
-                weight_init_func,
-                loss_func,
-                optim_func,
-                optim_state_init_func,
-            )
+            (module_func, weight_init_func, loss_func, optim_func,
+             optim_state_init_func) = atorch.enable_dist_for_funcs(
+                 module_func,
+                 weight_init_func,
+                 loss_func,
+                 optim_func,
+                 optim_state_init_func,
+             )
 
         # Define the training loop
         def sgd_train_func(module_func, loss_func, optim_func, params, bufs,
@@ -112,12 +103,9 @@ def train_torch_module(pt_module_gen,
                 train_func,
                 method=parallel_method,
                 # NOTE: assumes the 4th argument is input batch
-                batch_argnums=(
-                    3,),
+                batch_argnums=(3,),
                 # NOTE: preserves mem addr and sharding spec for first 3 args
-                donate_argnums=(
-                    0, 1, 2
-                ),
+                donate_argnums=(0, 1, 2),
             )
 
         def iter_func(params, bufs, optim_state, pt_batch):

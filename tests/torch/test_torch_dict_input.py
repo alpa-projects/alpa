@@ -44,8 +44,18 @@ class TorchDictInputTest(unittest.TestCase):
         pt_module_gen = lambda: MyModule()
 
         dataloader = [
-            ({"x": torch.randn(8, 16), "dict2": {"y": torch.randn(8, 16)}}, torch.randn(8, 16)),
-            ({"x": torch.randn(8, 16), "dict2": {"y": torch.randn(8, 16)}}, torch.randn(8, 16)),
+            ({
+                "x": torch.randn(8, 16),
+                "dict2": {
+                    "y": torch.randn(8, 16)
+                }
+            }, torch.randn(8, 16)),
+            ({
+                "x": torch.randn(8, 16),
+                "dict2": {
+                    "y": torch.randn(8, 16)
+                }
+            }, torch.randn(8, 16)),
         ]
         loss_func = lambda *args, **kwargs: torch.nn.functional.mse_loss(
             *args, **kwargs)

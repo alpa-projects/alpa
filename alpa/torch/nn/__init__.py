@@ -464,4 +464,5 @@ def materialize(*tensor_dicts):
 def meta_init(module_fn: Callable[..., torch.nn.Module], *args, **kwargs):
     pt_module = torchdistx_deferred_init.deferred_init(module_fn, *args,
                                                        **kwargs)
-    return pt_module._apply(lambda t: meta_like(t))
+    # pylint: disable=protected-access
+    return pt_module._apply(meta_like)

@@ -26,13 +26,13 @@ RUN source python3.9-env/bin/activate && pip install --upgrade pip \
 # Install PyTorch dependencies
 RUN git clone https://github.com/pytorch/functorch /functorch
 RUN source python3.7-env/bin/activate \
-  && pip install torchdistx --pre --extra-index-url https://download.pytorch.org/whl/nightly/cpu \
+  && pip install torch torchdistx --pre --extra-index-url https://download.pytorch.org/whl/nightly/cpu \
   && pushd /functorch && python setup.py install && popd
 RUN source python3.8-env/bin/activate \
-  && pip install torchdistx --pre --extra-index-url https://download.pytorch.org/whl/nightly/cpu \
+  && pip install torch torchdistx --pre --extra-index-url https://download.pytorch.org/whl/nightly/cpu \
   && pushd /functorch && python setup.py install && popd
 RUN source python3.9-env/bin/activate \
-  && pip install torchdistx --pre --extra-index-url https://download.pytorch.org/whl/nightly/cpu \
+  && pip install torch torchdistx --pre --extra-index-url https://download.pytorch.org/whl/nightly/cpu \
   && pushd /functorch && python setup.py install && popd
 
 # We determine the CUDA version at `docker build ...` phase

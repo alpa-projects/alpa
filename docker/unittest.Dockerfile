@@ -13,15 +13,15 @@ RUN virtualenv --python=python3.9 python3.9-env
 RUN source python3.7-env/bin/activate && pip install --upgrade pip \
   && pip install numpy==1.19.5 setuptools wheel six auditwheel \
   tqdm scipy numba pulp tensorstore prospector yapf coverage cmake \
-  pybind11 ray[default] matplotlib
+    pybind11 ray[default] matplotlib
 RUN source python3.8-env/bin/activate && pip install --upgrade pip \
   && pip install numpy==1.19.5 setuptools wheel six auditwheel \
   tqdm scipy numba pulp tensorstore prospector yapf coverage cmake  \
-  pybind11  ray[default] matplotlib
+    pybind11  ray[default] matplotlib
 RUN source python3.9-env/bin/activate && pip install --upgrade pip \
   && pip install numpy==1.19.5 setuptools wheel six auditwheel \
   tqdm scipy numba pulp tensorstore prospector yapf coverage cmake  \
-  pybind11 ray[default] matplotlib
+    pybind11 ray[default] matplotlib
 
 # Install PyTorch dependencies
 RUN git clone https://github.com/pytorch/functorch /functorch

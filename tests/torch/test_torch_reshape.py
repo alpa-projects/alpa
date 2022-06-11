@@ -35,7 +35,6 @@ class TorchReshapeTest(unittest.TestCase):
     def test_reshape(self):
         B = 64
 
-        # `meta_init` allows a PyTorch model to be created with shape-only tensors as weights.
         pt_module_gen = lambda: MyModule()
 
         dataloader = [

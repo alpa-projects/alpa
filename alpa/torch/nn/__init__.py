@@ -7,6 +7,7 @@ import torch
 from torch import Tensor, nn
 from torch.fx.experimental.normalize import NormalizeOperators
 from torchdistx import deferred_init as torchdistx_deferred_init
+from torchdistx.fake import meta_like
 import alpa.torch as atorch
 from alpa.torch.tensor_utils import make_shaped_array_from_pt_tensor
 from alpa.torch.ops.mapping import zeros_like_on_device
@@ -463,5 +464,5 @@ def materialize(*tensor_dicts):
 def meta_init(module_fn: Callable[..., torch.nn.Module], *args, **kwargs):
     pt_module = torchdistx_deferred_init.deferred_init(module_fn, *args,
                                                        **kwargs)
-    pt_module = pt_module.to(device="meta")
-    return pt_module
+    # pylint: disable=protected-access
+    return pt_module._apply(meta_like)

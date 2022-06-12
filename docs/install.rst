@@ -144,7 +144,7 @@ To enable Alpa for PyTorch, install the following dependencies:
 
     # Install nightly version of torch and torchdistx
     pip3 uninstall -y torch torchdistx
-    pip install torchdistx --pre --extra-index-url https://download.pytorch.org/whl/nightly/cpu
+    pip install torch torchdistx --pre --extra-index-url https://download.pytorch.org/whl/nightly/cpu
 
     # Build functorch from source
     git clone https://github.com/pytorch/functorch

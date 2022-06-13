@@ -2207,7 +2207,9 @@ def _shard_array(array, device_mesh, indices, num_batch=1, batch_dim=0):
     else:
         # Create shards according to indices for a numpy array
         if array.shape == ():
-            datas = [array] * len(indices)
+            # need a special branch because np.ascontiguousarray does not
+            # correctly preserve the shapes of rank-0 arrays.
+            datas = [np.asarray(array)] * len(indices)
         else:
             datas = [np.ascontiguousarray(array[i]) for i in indices]
         if num_batch > 1:

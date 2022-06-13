@@ -10,7 +10,7 @@ import optax
 
 import alpa
 from alpa import (init, parallelize, ShardParallel, PipeshardParallel,
-                  CreateStateParallel, manual_layer_construction)
+                  CreateStateParallel, manual_layer_construction, fetch)
 
 
 class CreateStateTest(unittest.TestCase):
@@ -65,18 +65,17 @@ class CreateStateTest(unittest.TestCase):
         state = create_state()
         state = train_step(state, batch)
 
-        actual = create_state.get_last_executable().output_sharding_specs
-
         if isinstance(method, ShardParallel):
+            actual = create_state.get_last_executable().output_sharding_specs
             if method.num_micro_batches == None: # NormalMeshDriverExecutable
                 expected = train_step.get_last_executable().input_sharding_specs[:len(actual)]
             else: # GradAccMeshDriverExecutable
                 expected = train_step.get_last_executable().global_arg_sharding_specs[:len(actual)]
+            for x, y in zip(actual, expected):
+                assert x == y
         elif isinstance(method, PipeshardParallel):
             pass
 
-        for x, y in zip(actual, expected):
-            assert x == y
 
     def test_shard_parallel(self):
         method = ShardParallel(num_micro_batches=None)

@@ -50,6 +50,7 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
     layer_pipeline_invars = [OrderedSet() for _ in range(layer_num)]
     layer_pipeline_outvars = [OrderedSet() for _ in range(layer_num)]
     var_layer_dict = {}
+    var_mapping = {}
 
     # build mapping dicts for global invars
     for var in closed_jaxpr.jaxpr.invars:
@@ -71,19 +72,27 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
                     var_layer_dict[var] = i
 
     # build mapping dict for global outvars
-    literal_outvars_indices = []
-    literal_outvars_idx_to_var = {}
+    gensym_func = gensym([closed_jaxpr.jaxpr])
+    literal_outvar_eqns = []
+    literal_outvar_marker_invars = []
+    literal_outvar_marker_outvars = []
     for idx, var in enumerate(closed_jaxpr.jaxpr.outvars):
         if isinstance(var, Literal):
-            literal_outvars_indices.append(idx)
+            # add a dummy equation to transform a Literal into a normal Var
+            zero_literal = Literal(0, raise_to_shaped(get_aval(0)))
+            new_var = gensym_func(var.aval)
+            new_eqn = new_jaxpr_eqn([var, zero_literal], [new_var],
+                                    lax.add_p, {})
+            literal_outvar_eqns.append(new_eqn)
+            literal_outvar_marker_invars.append(new_var)
+            literal_outvar_marker_outvars.append(gensym_func(var.aval))
+            var_mapping[idx] = literal_outvar_marker_outvars[-1]
         elif var in closed_jaxpr.jaxpr.constvars or var_layer_dict[var] == -1:
             raise NotImplementedError("Does not support this use case of output var.")
         else:
             layer_pipeline_outvars[var_layer_dict[var]].add(var)
 
-    gensym_func = gensym([closed_jaxpr.jaxpr])
-    var_mapping = {}
-
+    # build new equations
     new_eqns = []
     for i, eqns in enumerate(sliced_eqns):
         # pipeline start eqn
@@ -100,7 +109,7 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
             mark_pipeline_jaxpreqn(pipeline_start_invars,
                                    pipeline_start_outvars, str(i), "start"))
         # all other eqns
-        for eqn in eqns:
+        for eqn in (eqns + literal_outvar_eqns if i == 0 else eqns):
             new_invars = [
                 get_var_mapping(computation_var_mapping, var)
                 for var in eqn.invars
@@ -109,22 +118,9 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
                 new_jaxpr_eqn(new_invars, eqn.outvars, eqn.primitive,
                               eqn.params, eqn.source_info))
 
-        # add literal output here
-        if i == 0:
-            for idx in literal_outvars_indices:
-                # add a dummy equation to transform a Literal into a normal Var
-                zero_literal = Literal(0, raise_to_shaped(get_aval(0)))
-                var = closed_jaxpr.jaxpr.outvars[idx]
-                new_var = gensym_func(var.aval)
-                new_eqn = new_jaxpr_eqn([var, zero_literal], [new_var],
-                                        lax.add_p, {})
-                new_eqns.append(new_eqn)
-                literal_outvars_idx_to_var[idx] = new_var
-                layer_pipeline_outvars[i].add(new_var)
-
         # pipeline end eqn
-        pipeline_end_invars = []
-        pipeline_end_outvars = []
+        pipeline_end_invars = list(literal_outvar_marker_invars) if i == 0 else []
+        pipeline_end_outvars = list(literal_outvar_marker_outvars) if i == 0 else []
         for var in layer_pipeline_outvars[i]:
             new_var = gensym_func(var.aval)
             pipeline_end_invars.append(
@@ -138,7 +134,7 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
     new_outvars = []
     for idx, var in enumerate(closed_jaxpr.jaxpr.outvars):
         if isinstance(var, Literal):
-            new_outvars.append(var_mapping[literal_outvars_idx_to_var[idx]])
+            new_outvars.append(var_mapping[idx])
         else:
             new_outvars.append(get_var_mapping(var_mapping, var))
 

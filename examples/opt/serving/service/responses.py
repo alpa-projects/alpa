@@ -5,8 +5,6 @@
 
 import uuid
 import time
-from examples.opt.serving.service.constants import CHECKPOINT_LOCAL
-# from metaseq.service.constants import CHECKPOINT_LOCAL
 
 
 class OAIResponse:
@@ -20,17 +18,16 @@ class OAIResponse:
             "id": self.response_id,
             "object": "text_completion",
             "created": self.created,
-            "model": CHECKPOINT_LOCAL,
             "choices": [
                 {
                     "text": result["text"],
-                    "logprobs": {
-                        "tokens": result["tokens"],
-                        "token_logprobs": result["token_scores"],
-                        "text_offset": result["text_offset"],
-                        "top_logprobs": result["top_logprobs"],
-                        "finish_reason": "length",  # TODO: implement this
-                    },
+                    # "logprobs": {
+                    #     "tokens": result["tokens"],
+                    #     "token_logprobs": result["token_scores"],
+                    #     "text_offset": result["text_offset"],
+                    #     "top_logprobs": result["top_logprobs"],
+                    #     "finish_reason": "length",  # TODO: implement this
+                    # },
                 }
                 for result in self.results
             ],

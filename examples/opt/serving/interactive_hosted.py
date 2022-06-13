@@ -1,52 +1,23 @@
-#!/usr/bin/env python3 -u
-# Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved.
-#
-# This source code is licensed under the MIT license found in the
-# LICENSE file in the root directory of this source tree.
-"""
-Host the demo.
-
-Launch with `python -m metaseq_cli.interactive_hosted` to run locally.
-
-See docs/api.md for more information.
-"""
-
 import argparse
-import os
 import queue
-import pkg_resources
-import random
-import shutil
 import threading
+import os
 
+import random
 import torch
 from flask import Flask, request
 
-from metaseq import options
-from metaseq.dataclass.configs import MetaseqConfig
-from metaseq.dataclass.utils import convert_namespace_to_omegaconf
-from metaseq.distributed import utils as dist_utils
-
 from examples.opt.serving.generator import GeneratorInterface
 from examples.opt.serving.service.queue import PriorityQueueRingShard
-from examples.opt.serving.service.workers import WorkItem
-from examples.opt.serving.service.constants import (
-    MAX_SEQ_LEN,
-    MAX_BATCH_TOKENS,
-    DEFAULT_PORT,
-    TOTAL_WORLD_SIZE,
-    CHECKPOINT_LOCAL,
-    CHECKPOINT_FOLDER,
-    LAUNCH_ARGS,
-)
-from examples.opt.serving.service.utils import get_my_ip, encode_fn, build_logger
 from examples.opt.serving.service.responses import OAIResponse
+from examples.opt.serving.service.utils import encode_fn, build_logger
+from examples.opt.serving.service.workers import WorkItem
+from examples.opt.serving.service.constants import MAX_SEQ_LEN, MAX_BATCH_TOKENS, DEFAULT_PORT
 
 
 app = Flask(__name__)
 
-# global state (mutable!)
-cfg = None
+
 port = DEFAULT_PORT
 BATCH_QUEUE = PriorityQueueRingShard()
 
@@ -137,26 +108,19 @@ def batching_loop(timeout=100, max_tokens=MAX_BATCH_TOKENS):
                 # back to the loop
                 continue
 
-
-def worker_main(cfg1: MetaseqConfig, model_name, cluster, namespace_args=None):
+def worker_main(model_name, cluster):
     # disable multithreading in tokenizers and torch, as different Flask threads
     # may then fight for resources.
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     torch.set_num_threads(1)
     global generator
-    global MODE
+
     # make sure generations are stochastic since we have many workers
     torch.manual_seed(random.randint(1, 20000))
     torch.cuda.manual_seed(random.randint(1, 20000))
-    MODE = "worker"
-    cfg = cfg1
 
-    generator = GeneratorInterface(cfg)
-    logger.info(f"loaded model on driver...")
-
-    # TODO(Hao): setup Ray and Alpa here
-    generator.load_model(model_name, cluster)  # noqa: F841
-    logger.info(f"Driver engaged! {get_my_ip()}:{port}")
+    cfg1=None
+    generator = GeneratorInterface(model_name, cluster)
 
     thread = threading.Thread(target=batching_loop, daemon=True)
     thread.start()
@@ -248,32 +212,11 @@ def index():
         return f.read()
 
 
-def cli_main(model_name, cluster_name):
-    """
-    Hosted version of the web UI for generation.
-    """
-    # _copy_checkpoint_cache()
-
-    global port, MODE, cfg
-    parser = options.get_generation_parser()
-
-    # dumb defaults overriding
-    parser.set_defaults(lr_scheduler=None, criterion=None)
-    flat_launch_args = []
-    for s in LAUNCH_ARGS:
-        flat_launch_args += s.split()
-    args = options.parse_args_and_arch(parser, input_args=flat_launch_args)
-    args.data = os.path.dirname(args.path)  # hardcode the data arg
-    port = DEFAULT_PORT
-    cfg = convert_namespace_to_omegaconf(args)
-    cfg.distributed_training.distributed_world_size = TOTAL_WORLD_SIZE
-    # dist_utils.call_main(cfg, worker_main, namespace_args=args)
-    worker_main(cfg, model_name, cluster_name, args)
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="alpa/opt-125m")
-    parser.add_argument("--cluster", type=str, default="aws")
+    parser.add_argument("--cluster", type=str, default="aws", help="aws|mbzuai")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     args = parser.parse_args()
-    cli_main(args.model, args.cluster)
+
+    worker_main(args.model, args.cluster)

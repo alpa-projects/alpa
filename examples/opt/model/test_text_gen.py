@@ -9,7 +9,7 @@ import alpa
 from alpa.util import write_tsv
 import numpy as np
 import torch
-from transformers import GPT2Tokenizer, OPTForCausalLM, GPT2LMHeadModel
+from transformers import GPT2Tokenizer, OPTForCausalLM, GPT2LMHeadModel, GPT2TokenizerFast, AutoTokenizer
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
 from examples.opt.model.opt_utils import opt_specs, compute_gpt_tflops_inference_with_padding
 
@@ -30,7 +30,10 @@ class InferenceFuncOutput(ModelOutput):
 
 @dataclass
 class InferenceFuncConfig:
-    """Implements a minimal config class for using huggingface's generator."""
+    """Implements a minimal config class for using huggingface's generator.
+
+    Note: these paramerers might be overwritten by model.generate(**kwargs).
+    """
     bos_token_id: int = 0
     num_beams: int = 1
     num_beam_groups: int = 1
@@ -67,12 +70,12 @@ class WrappedInferenceFunc(GenerationMixin):
 
     This class also decomposes the first call of prompt during generation to one token by one token.
     """
-    def __init__(self, inference_func, config, executable, opt_config):
+    def __init__(self, inference_func, config, executable, model_config):
         self.inference_func = inference_func
         self.config = config
         self.main_input_name = "input_ids"
         self.executable = executable
-        self.opt_config = opt_config
+        self.model_config = model_config
 
     def forward(self, attention_mask):
         raise NotImplementedError()
@@ -118,6 +121,7 @@ def get_model(model_name, device, dummy, cluster="aws",
             return InferenceFuncOutput(out.logits, out.past_key_values)
 
         inference_func_config = raw_model.config
+        model_config = raw_model.config
 
     elif "facebook/opt" in model_name:
         raw_model = OPTForCausalLM.from_pretrained(
@@ -143,6 +147,7 @@ def get_model(model_name, device, dummy, cluster="aws",
         for key in inference_func_config.__dataclass_fields__.keys():
             setattr(inference_func_config, key, getattr(raw_model.config, key))
         print(inference_func_config)
+        model_config = raw_model.config
 
     elif "alpa/opt" in model_name:
         alpa.init()
@@ -162,7 +167,7 @@ def get_model(model_name, device, dummy, cluster="aws",
             config,
             support_output_attentions=support_output_attentions,
             support_output_hidden_states=support_output_hidden_states,
-            autoregressive=False)
+            autoregressive=True)
         params = load_params_dis_array(path, executable, params_aval, config, dummy)
         init_cache = init_cache_dis_array(executable, config, 1, dummy)
         executable.sync()
@@ -194,8 +199,9 @@ def get_model(model_name, device, dummy, cluster="aws",
                                        output.attentions)
 
         inference_func_config = InferenceFuncConfig()
+        model_config = config
 
-    return WrappedInferenceFunc(inference_func, inference_func_config, executable, config)
+    return WrappedInferenceFunc(inference_func, inference_func_config, executable, model_config)
 
 
 if __name__ == "__main__":
@@ -206,7 +212,11 @@ if __name__ == "__main__":
     parser.add_argument("--dummy", action="store_true")
     args = parser.parse_args()
 
-    tokenizer = GPT2Tokenizer.from_pretrained("facebook/opt-125m")
+    # tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+    # tokenizer = GPT2Tokenizer.from_pretrained("facebook/opt-30b")
+    # tokenizer = GPT2TokenizerFast.from_pretrained("facebook/opt-30b")
+    tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", use_fast=False)
+    tokenizer.add_bos_token = False
 
     tic = time.time()
     model = get_model(args.model, args.device, args.dummy, args.cluster)
@@ -223,14 +233,15 @@ if __name__ == "__main__":
         # "What do you think about the future of Cryptocurrency?"
     ]
 
-    H = model.opt_config.decoder_input_dim
-    L = model.opt_config.decoder_layers
-    num_head = model.opt_config.decoder_attention_heads
+    H = model.model_config.decoder_input_dim
+    L = model.model_config.decoder_layers
+    num_head = model.model_config.decoder_attention_heads
 
     for prompt in prompts:
-        tic = time.time()
         torch.manual_seed(8)
+        tic = time.time()
         input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(args.device)
+        tokenization_time = time.time() - tic
         output = model.generate(input_ids=input_ids, max_length=256, do_sample=False,
                                 return_dict_in_generate=True, output_hidden_states=False)
         generated_ids = output.sequences
@@ -246,9 +257,10 @@ if __name__ == "__main__":
 
         tflops = compute_gpt_tflops_inference_with_padding(1, gen_len, 2048, L, H, 50272, num_gpus, latency)
         speed = np.prod(generated_ids.shape) / latency
+        tokenization_speed = np.prod(generated_ids.shape) / tokenization_time
 
         print(f"{generated_string}")
-        print(f"speed: {speed:.2f} token/s, tflops: {tflops} tflops/s, exec_flops: {exec_flops}")
+        print(f"speed: {speed:.2f} tokens/s, tokenization: {tokenization_speed} tokens/s, tflops: {tflops} tflops/s, exec_flops: {exec_flops}")
 
     heads = ["Model", "Device", "Dummy", "Load (s)", "Speed (token/s)", "TFlops (TFlops/s)"]
     values = [args.model, args.device, args.dummy, f"{load_time:.2f}", f"{speed}", f"{tflops}"]

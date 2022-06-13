@@ -199,11 +199,11 @@ class GpuHost:
             self.profile_allreduce(1 << i, cp.float32, [list(range(self.world_size))])
             self.profile_allreduce(1 << i, cp.float32, [list(range(self.world_size//2))])
 
-            #self.profile_allreduce(1 << i, cp.float32, [[0, 3]])
-            #self.profile_allreduce(1 << i, cp.float32, [[0, 4], [1, 5], [2, 6], [3, 7]])
-            #self.profile_allreduce(1 << i, cp.float32, [[0, 2, 4, 6], [1, 3, 5, 7]])
-            #self.profile_allreduce(1 << i, cp.float32, [[0, 1, 2, 3], [4, 5, 6, 7]])
-            #self.profile_allreduce(1 << i, cp.float32, [[0, 1, 2, 3, 4, 5, 6, 7]])
+            # self.profile_allreduce(1 << i, cp.float32, [[0, 3]])
+            # self.profile_allreduce(1 << i, cp.float32, [[0, 4], [1, 5], [2, 6], [3, 7]])
+            # self.profile_allreduce(1 << i, cp.float32, [[0, 2, 4, 6], [1, 3, 5, 7]])
+            # self.profile_allreduce(1 << i, cp.float32, [[0, 1, 2, 3], [4, 5, 6, 7]])
+            # self.profile_allreduce(1 << i, cp.float32, [[0, 1, 2, 3, 4, 5, 6, 7]])
 
         # single Send-recv
         for i in range(29, 30):

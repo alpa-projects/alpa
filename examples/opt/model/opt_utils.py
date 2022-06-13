@@ -21,3 +21,9 @@ def compute_gpt_tflops_inference_with_padding(batch_size, gen_len, seq_len, num_
     # repsect Deepak's eq. instead.
     tflops = total_flop / latency / num_gpus / 1e12
     return tflops
+
+
+def compute_gpt_tflops_inference_with_padding_by_name(model_name: str):
+    if model_name not in opt_specs:
+        raise RuntimeError(f"There is no spec for {model_name}")
+    return 0

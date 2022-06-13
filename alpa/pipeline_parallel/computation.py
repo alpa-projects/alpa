@@ -390,9 +390,8 @@ def slice_closed_jaxpr_by_full_pipeline_marks(
         if eqn.primitive is pipeline_p and eqn.params["mark_type"] == "end":
             assert current_computation is not None, (
                 "Ending a pipeline computation before its start.")
-            assert current_computation.name == eqn.params["name"][:len(
-                current_computation.name
-            )], "Ending a pipeline computation different from its start."
+            assert current_computation.name == eqn.params["name"], (
+                "Ending a pipeline computation different from its start.")
             for var in eqn.outvars:
                 current_computation.outvars.append(var)
             result_computations.append(current_computation)
@@ -411,8 +410,7 @@ def mark_missing_vars_in_backward_computation_pipeline_marks(
     jax.grad or alpa.grad. Also remove unused variables in the pipeline
     markers.
     """
-    # TODO(zhuohan): fix this for inference schedule
-    # assert len(computations) % 2 == 0.
+    assert len(computations) % 2 == 0.
     num_forward_computations = len(computations) // 2
 
     var_computation_id = {}

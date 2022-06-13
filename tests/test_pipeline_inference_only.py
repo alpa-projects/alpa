@@ -102,7 +102,6 @@ class PipelineInferenceTest(unittest.TestCase):
         self.run_bert_layer_collection_inference(True)
 
     def test_output(self):
-
         method = PipeshardParallel(num_micro_batches=1,
                                    pipeline_schedule="inference")
 
@@ -112,12 +111,13 @@ class PipelineInferenceTest(unittest.TestCase):
             a = jnp.ones(32)
             mark_pipeline_boundary()
             b = jnp.ones(32) * 2
-            return a, b
+            return a, b, 3
 
-        a, b = func()
+        a, b, c = func()
 
         assert_allclose(a, np.ones(32))
         assert_allclose(b, np.ones(32) * 2)
+        assert_allclose(c, 3)
 
 
 def suite():

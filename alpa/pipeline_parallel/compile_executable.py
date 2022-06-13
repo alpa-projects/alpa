@@ -105,10 +105,11 @@ def compile_pipeshard_executable_internal(
 
     jax_pipeline_layers = slice_closed_jaxpr_by_full_pipeline_marks(
         acc_grad_jaxpr)
-    jax_pipeline_layers = (
-        mark_missing_vars_in_backward_computation_pipeline_marks(
-            jax_pipeline_layers, acc_grad_invars, acc_grad_outvars,
-            gensym_func))
+    if not inference_mode:
+        jax_pipeline_layers = (
+            mark_missing_vars_in_backward_computation_pipeline_marks(
+                jax_pipeline_layers, acc_grad_invars, acc_grad_outvars,
+                gensym_func))
     # TODO(yonghao): remove this pass. we can clear these vars when rewriting
     # compute grad to accumulate grad
     jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)

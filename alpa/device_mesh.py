@@ -1268,7 +1268,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                      self.num_hosts * self.num_devices_per_host))
                 ret_bufs.append(bufs)
             else:
-                if isinstance(arg, DistributedArray) and arg.indices == indices:
+                if (isinstance(arg, DistributedArray) and arg.device_mesh == self
+                        and arg.indices == indices):
                     # Fast path for DistributedArray
                     ret_bufs.append(arg.remote_buffers)
                 elif isinstance(arg, ReplicatedDistributedArray):

@@ -370,7 +370,8 @@ class PipeshardDriverExecutable:
 
     def __del__(self):
         for worker, uuid in self.worker_executable_uuid_mapping.items():
-            worker.delete_executable.remote(uuid)
+            if hasattr(worker, "core_worker"):
+                worker.delete_executable.remote(uuid)
 
 
 class PipeshardMeshWorkerExecuable:

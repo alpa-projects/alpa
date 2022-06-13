@@ -746,16 +746,17 @@ class PipelineInstEmitter:
             mesh_arg_list = mesh_arg_lists[mesh_idx]
             num_args = len(mesh_arg_list)
             # shape: (num_args, num_hosts, num_devices_per_host)
-            arg_uuids = self._get_next_uuids(
-                num_args * physical_mesh.num_devices).reshape(
-                    num_args, -1, physical_mesh.num_devices_per_host)
-            for arg_idx, info in enumerate(mesh_arg_lists[mesh_idx]):
-                var, batch_idx = info
-                self.env.set_var_mesh_uuids(var, batch_idx, mesh_idx,
-                                            arg_uuids[arg_idx])
-                for worker_idx, worker in enumerate(physical_mesh.workers):
-                    input_local_uuid_lists[worker].append(arg_uuids[arg_idx,
-                                                                    worker_idx])
+            if num_args > 0:
+                arg_uuids = self._get_next_uuids(
+                    num_args * physical_mesh.num_devices).reshape(
+                        num_args, -1, physical_mesh.num_devices_per_host)
+                for arg_idx, info in enumerate(mesh_arg_lists[mesh_idx]):
+                    var, batch_idx = info
+                    self.env.set_var_mesh_uuids(var, batch_idx, mesh_idx,
+                                                arg_uuids[arg_idx])
+                    for worker_idx, worker in enumerate(physical_mesh.workers):
+                        input_local_uuid_lists[worker].append(
+                            arg_uuids[arg_idx, worker_idx])
         input_config = PipeshardInputConfig(
             input_local_uuid_lists=input_local_uuid_lists,
             donate_invars=donate_invars,

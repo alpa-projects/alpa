@@ -1831,15 +1831,18 @@ class VirtualPhysicalMesh:
             threads[i].join()
 
         self.launched_physical_mesh_group = (
-            PhysicalDeviceMeshGroup(physical_meshes))
+            PhysicalDeviceMeshGroup(physical_meshes, self))
         return self.launched_physical_mesh_group
 
 
 class PhysicalDeviceMeshGroup:
     """A list of physical devices that forms a pipeline."""
 
-    def __init__(self, meshes: Sequence[DistributedPhysicalDeviceMesh]):
+    def __init__(self,
+                 meshes: Sequence[DistributedPhysicalDeviceMesh],
+                 parent: VirtualPhysicalMesh):
         self.meshes = list(meshes)
+        self.parent = parent
         self.collective_groups: List[List[Any]] = [
             [None for _ in range(len(self))] for _ in range(len(self))
         ]

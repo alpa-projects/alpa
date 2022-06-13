@@ -112,7 +112,8 @@ def compile_pipeshard_executable_internal(
     # TODO(yonghao): remove this pass. we can clear these vars when rewriting
     # compute grad to accumulate grad
     jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
-    jax_pipeline_layers = offload_remat(jax_pipeline_layers, gensym_func)
+    if not inference_mode:
+        jax_pipeline_layers = offload_remat(jax_pipeline_layers, gensym_func)
 
     (jax_apply_layers,
      apply_grad_global_info) = _slice_apply_grad_for_stage_construction(

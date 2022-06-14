@@ -6,6 +6,7 @@ from typing import List
 import numpy as np
 import ray
 from alpa.collective import types
+from alpa.global_env import global_config
 
 _NCCL_AVAILABLE = True
 _GLOO_AVAILABLE = True
@@ -20,6 +21,13 @@ except ImportError:
     logger.warning("NCCL seems unavailable. Please install Cupy "
                    "following the guide at: "
                    "https://docs.cupy.dev/en/stable/install.html.")
+
+try:
+    from alpa.collective.collective_group.xla_nccl_collective_group import (
+        XLANCCLGroup)
+except ImportError:
+    _NCCL_AVAILABLE = False
+    logger.warning("XLA NCCL seems unavailable.")
 
 try:
     from alpa.collective.collective_group.gloo_collective_group import (
@@ -68,7 +76,10 @@ class GroupManager:
             self._group_name_map[g] = group_name
         if backend == types.Backend.NCCL:
             logger.debug(f"Creating NCCL group: '{group_name}'...")
-            g = NCCLGroup(world_size, rank, group_name)
+            if global_config.nccl_mode == "xla_nccl":
+                g = XLANCCLGroup(world_size, rank, group_name)
+            else:
+                g = NCCLGroup(world_size, rank, group_name)
             self._name_group_map[group_name] = g
             self._group_name_map[g] = group_name
         return self._name_group_map[group_name]
@@ -387,7 +398,8 @@ def broadcast_partialgpu(tensor_list,
                          world_size,
                          devices_ids,
                          devices_global_rank,
-                         group_name: str = "default"):
+                         group_name: str = "default",
+                         local_start_pos_list: list[int] = []):
     """Broadcast the tensor from a source GPU to some other GPUs.
     This function is different from broadcast_multigpu that it only
     uses a subset of gpus in one host.
@@ -415,6 +427,7 @@ def broadcast_partialgpu(tensor_list,
     opts.world_size = world_size
     opts.devices_ids = devices_ids
     opts.devices_global_rank = devices_global_rank
+    opts.local_start_pos_list = local_start_pos_list
     g.broadcast_partialgpu(tensor_list, opts)
 
 
@@ -577,7 +590,8 @@ def send_multigpu(tensor,
                   dst_rank: int,
                   dst_gpu_index: int,
                   group_name: str = "default",
-                  n_elements: int = 0):
+                  start_pos = 0, 
+                  n_elements = 0):
     """Send a tensor to a remote GPU synchronously.
 
     The function asssume each process owns >1 GPUs, and the sender
@@ -607,6 +621,7 @@ def send_multigpu(tensor,
     opts = types.SendOptions()
     opts.dst_rank = dst_rank
     opts.dst_gpu_index = dst_gpu_index
+    opts.start_pos = start_pos
     opts.n_elements = n_elements
     g.send([tensor], opts)
 
@@ -636,7 +651,8 @@ def recv_multigpu(tensor,
                   src_rank: int,
                   src_gpu_index: int,
                   group_name: str = "default",
-                  n_elements: int = 0):
+                  start_pos = 0,
+                  n_elements = 0):
     """Receive a tensor from a remote GPU synchronously.
 
     The function asssume each process owns >1 GPUs, and the sender
@@ -664,6 +680,7 @@ def recv_multigpu(tensor,
     opts = types.RecvOptions()
     opts.src_rank = src_rank
     opts.src_gpu_index = src_gpu_index
+    opts.start_pos = start_pos
     opts.n_elements = n_elements
     g.recv([tensor], opts)
 

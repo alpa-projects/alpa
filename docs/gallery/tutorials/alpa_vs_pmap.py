@@ -34,14 +34,15 @@ is also attached at the end of the article.
 # TODO
 
 ################################################################################
-# Comparing ``alpa.parallelize``, ``pmap``, and ``xmap``
-# ------------------------------------------------------
+# Comparing ``alpa.parallelize``, ``pmap``, ``xmap``, and ``pjit``
+# -----------------------------------------------------------------
 # Besides ``pmap``, jax also provides
-# `xmap <https://jax.readthedocs.io/en/latest/notebooks/xmap_tutorial.html>`_
+# `xmap <https://jax.readthedocs.io/en/latest/notebooks/xmap_tutorial.html>`_ and 
+# `pjit <https://jax.readthedocs.io/en/latest/jax-101/08-pjit.html>`_
 # for more advanced parallelization.
-# The table below compares the features of ``alpa.parallelize``, ``pmap``, and ``xmap``.
-# In summary, ``alpa.parallelize`` supports more parallelism techniques in a
-# more automatic way.
+# The table below compares the features of ``alpa.parallelize``, ``pmap``, ``xmap`` 
+# and ``pjit``. In summary, ``alpa.parallelize`` supports more parallelism 
+# techniques in a more automatic way.
 #
 # ================  ================ ==================== ==================== =========
 # Transformation    Data Parallelism Operator Parallelism Pipeline Parallelism Automated
@@ -49,6 +50,7 @@ is also attached at the end of the article.
 # alpa.parallelize  yes              yes                  yes                  yes
 # pmap              yes              no                   no                   no
 # xmap              yes              yes                  no                   no
+# pjit              yes              yes                  no                   no
 # ================  ================ ==================== ==================== =========
 #
 # .. note::

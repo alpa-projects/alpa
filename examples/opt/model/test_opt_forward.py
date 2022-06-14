@@ -12,9 +12,14 @@ from examples.opt.model.opt_utils import compute_gpt_tflops_inference_with_paddi
 from transformers import GPT2Tokenizer
 
 
-def get_and_load_model(model_name, dummy, cluster="aws",
-              support_output_attentions=False,
-              support_output_hidden_states=False):
+def get_and_load_model(model_name,
+                       dummy,
+                       cluster="aws",
+                       batch_size=1,
+                       num_micro_batches=1,
+                       gen_len=1024,
+                       support_output_attentions=False,
+                       support_output_hidden_states=False):
     alpa.init()
     num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
 
@@ -30,6 +35,9 @@ def get_and_load_model(model_name, dummy, cluster="aws",
 
     executable, params_aval = get_pipeshard_executable(
         config,
+        batch_size=batch_size,
+        num_micro_batches=num_micro_batches,
+        gen_len=gen_len,
         support_output_attentions=support_output_attentions,
         support_output_hidden_states=support_output_hidden_states,
         autoregressive=False)
@@ -74,75 +82,64 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--cluster", type=str, default="aws")
     parser.add_argument("--dummy", action="store_true")
+    parser.add_argument("--nb", type=int, default=1)
     args = parser.parse_args()
 
     tokenizer = GPT2Tokenizer.from_pretrained("facebook/opt-125m")
+    num_micro_batches = args.nb
+
+    batch_size = 512
+    gen_len = 1024
 
     tic = time.time()
-
-    model, params, opt_config = get_and_load_model(args.model, args.dummy, args.cluster)
+    model, params, opt_config = get_and_load_model(args.model, args.dummy, args.cluster,
+                                                   num_micro_batches=num_micro_batches,
+                                                   batch_size=batch_size,
+                                                   gen_len=gen_len)
     load_time = time.time() - tic
 
-    prompts = [
-        "Computer science is the study of computation and",
-        "Ion Stoica is a Romanian-American computer scientist specializing in",
-        "The University of California, Berkeley is a public",
-        # "Today is a good day and I want to",
-        # "What is the valuation of Databricks?",
-        # "Paris is the capital city of",
-        # "Which country has the most population?",
-        # "What do you think about the future of Cryptocurrency?"
-    ]
+    # Hao: create the batch after alpa.init()
+    input_ids = jnp.ones((batch_size, gen_len), dtype=jnp.int32)
+    position_ids = jnp.ones((batch_size, gen_len), dtype=jnp.int32)
 
     H = opt_config.decoder_input_dim
     L = opt_config.decoder_layers
     num_head = opt_config.decoder_attention_heads
+    num_gpus = alpa.get_global_cluster().num_devices
 
+    # warm up
+    warmup_iters = 2
+    for _ in range(warmup_iters):
+        forward_results = model(params, {"input_ids": input_ids, "position_ids": position_ids})
 
-    batch_size = 512
-    seq_len = 1024
-    batch = {
-        "input_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
-        "attention_mask": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
-        "token_type_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
-        "position_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
-        "labels": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
-    }
-
-
-    for prompt in prompts:
-        tic = time.time()
+    n_iter = 10
+    speeds = []
+    tflopss = []
+    exec_tflopss = []
+    for _ in range(n_iter):
         torch.manual_seed(8)
-        # input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(args.device)
 
-
-        input_ids = batch["input_ids"]
-        position_ids = batch["position_ids"]
-        model(params, {
-            "input_ids": batch["input_ids"],
-            "position_ids": batch["position_ids"]
-
-        })
-
-        # output = model.generate(input_ids=input_ids, max_length=256, do_sample=False,
-        #                         return_dict_in_generate=True, output_hidden_states=False)
-        # generated_ids = output.sequences
-        # generated_string = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-        num_gpus = alpa.get_global_cluster().num_devices
-        print(f"input length: {input_ids.shape[1]}, output_length: {input_ids.shape[1]}, num_gpus: {num_gpus}")
-        print(f"hidden size: {H}, num layers: {L}, num attention heads: {num_head}")
+        tic = time.time()
+        forward_results = model(params, {"input_ids": input_ids, "position_ids": position_ids})
         latency = time.time() - tic
-        gen_len = input_ids.shape[1]
+        print(f"input length: {input_ids.shape[1]}, output_length: {input_ids.shape[1]}, num_gpus: {num_gpus}")
+        assert gen_len == input_ids.shape[1]
 
-        exec_flops = model.flop_count / 1e12 / latency / num_gpus * gen_len
+
+        exec_flops = model.flop_count / 1e12 / latency / num_gpus
         # print(model.executable.flop_count )
 
-        tflops = compute_gpt_tflops_inference_with_padding(1, gen_len, 2048, L, H, 50272, num_gpus, latency)
+        tflops = compute_gpt_tflops_inference_with_padding(batch_size, gen_len, 2048, L, H, 50272, num_gpus, latency)
         speed = np.prod(input_ids.shape) / latency
 
-        # print(f"{generated_string}")
-        print(f"speed: {speed:.2f} token/s, tflops: {tflops} tflops/s, exec_flops: {exec_flops}")
+        print(f"speed: {speed:.2f} token/s, tflops: {tflops:.4f} tflops/s, exec_flops: {exec_flops:.4f}")
+        speeds.append(speed)
+        tflopss.append(tflops)
+        exec_tflopss.append(exec_flops)
 
-    heads = ["Model", "Device", "Dummy", "Load (s)", "Speed (token/s)", "TFlops (TFlops/s)"]
-    values = [args.model, args.device, args.dummy, f"{load_time:.2f}", f"{speed}", f"{tflops}"]
+    avg_speed = sum(speeds) / n_iter
+    avg_tflops = sum(tflopss) / n_iter
+    avg_exec_tflops = sum(exec_tflopss) / n_iter
+    heads = ["Model", "Device", "Dummy", "Load (s)", "Batchsize", "#Microbatches", "#Stages", "Speed (token/s)", "TFlops (TFlops/s)", "Exec TFlops (TFlops/s)"]
+    values = [args.model, args.device, args.dummy, f"{load_time:.2f}", f"{batch_size}", f"{num_micro_batches}", "2", f"{avg_speed}", f"{avg_tflops:.4f}", f"{avg_exec_tflops:.4f}"]
     write_tsv(heads, values, "results.tsv")

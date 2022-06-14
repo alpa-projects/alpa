@@ -222,6 +222,11 @@ if __name__ == "__main__":
     model = get_model(args.model, args.device, args.dummy, args.cluster)
     load_time = time.time() - tic
 
+    # Warm up
+    input_ids = tokenizer("Paris is the capital city of", return_tensors="pt").input_ids.to(args.device)
+    output = model.generate(input_ids=input_ids, max_length=256, do_sample=False,
+                            return_dict_in_generate=True, output_hidden_states=False)
+
     prompts = [
         "Computer science is the study of computation and",
         "Ion Stoica is a Romanian-American computer scientist specializing in",
@@ -237,6 +242,9 @@ if __name__ == "__main__":
     L = model.model_config.decoder_layers
     num_head = model.model_config.decoder_attention_heads
 
+    speeds = []
+    tflopss = []
+    exec_tflopss = []
     for prompt in prompts:
         torch.manual_seed(8)
         tic = time.time()
@@ -260,8 +268,16 @@ if __name__ == "__main__":
         tokenization_speed = np.prod(generated_ids.shape) / tokenization_time
 
         print(f"{generated_string}")
-        print(f"speed: {speed:.2f} tokens/s, tokenization: {tokenization_speed} tokens/s, tflops: {tflops} tflops/s, exec_flops: {exec_flops}")
+        print(f"speed: {speed:.2f} tokens/s, tokenization: {tokenization_speed:.3f} tokens/s, tflops: "
+              f"{tflops:.4f} tflops/s, exec_flops: {exec_flops:.4f}")
+        speeds.append(speed)
+        tflopss.append(tflops)
+        exec_tflopss.append(exec_flops)
 
-    heads = ["Model", "Device", "Dummy", "Load (s)", "Speed (token/s)", "TFlops (TFlops/s)"]
-    values = [args.model, args.device, args.dummy, f"{load_time:.2f}", f"{speed}", f"{tflops}"]
+    avg_speed = sum(speeds) / len(prompts)
+    avg_tflops = sum(tflopss) / len(prompts)
+    avg_exec_tflops = sum(exec_tflopss) / len(prompts)
+    heads = ["Model", "Device", "Dummy", "Load (s)", "Speed (token/s)", "TFlops (TFlops/s)", "Exec TFlops (TFlops/s)"]
+    values = [args.model, args.device, args.dummy, f"{load_time:.2f}", f"{avg_speed:.4f}", f"{avg_tflops:.4f}",
+              f"{avg_exec_tflops:.4f}"]
     write_tsv(heads, values, "results.tsv")

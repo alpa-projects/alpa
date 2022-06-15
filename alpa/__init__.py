@@ -7,8 +7,7 @@ from alpa.device_mesh import (DeviceCluster, PhysicalDeviceMesh,
                               LocalPhysicalDeviceMesh,
                               DistributedPhysicalDeviceMesh, DistributedArray,
                               fetch, get_global_cluster,
-                              set_global_virtual_physical_mesh,
-                              set_seed)
+                              set_global_virtual_physical_mesh, set_seed)
 from alpa.global_env import global_config
 from alpa.mesh_profiling import ProfilingResultDatabase
 from alpa.parallel_method import (ShardParallel, PipeshardParallel,

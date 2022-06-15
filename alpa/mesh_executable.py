@@ -11,7 +11,7 @@ workers.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import logging
-from typing import Callable, Sequence, Optional
+from typing import Sequence, Optional
 import os
 
 import jax.numpy as jnp
@@ -374,8 +374,10 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
     def get_placement_specs(self):
         """Return the preferred placement specs for input arguments."""
-        placement_specs = [PlacementSpec((self.physical_mesh.mesh_id,), (sharding_spec,))
-                           for sharding_spec in self.input_sharding_specs]
+        placement_specs = [
+            PlacementSpec((self.physical_mesh.mesh_id,), (sharding_spec,))
+            for sharding_spec in self.input_sharding_specs
+        ]
         return tree_unflatten(self.in_tree, placement_specs)
 
     def preshard_dynamic_args(self, *args):
@@ -645,7 +647,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             for aval, spec in zip(grad_avals, grad_sharding_specs)
         ]
         grad_shard_dtypes = [aval.dtype for aval in grad_avals]
-        self.global_arg_sharding_specs = global_arg_sharding_specs 
+        self.global_arg_sharding_specs = global_arg_sharding_specs
         self.global_batch_arg_indices = global_batch_arg_indices
         self.global_arg_shard_indices = global_arg_shard_indices
         self.outs_handler = physical_mesh.get_outputs_handler(
@@ -808,8 +810,10 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
 
     def get_placement_specs(self):
         """Return the preferred placement specs for input arguments."""
-        placement_specs = [PlacementSpec((self.physical_mesh.mesh_id,), (sharding_spec,))
-                           for sharding_spec in self.global_arg_sharding_specs]
+        placement_specs = [
+            PlacementSpec((self.physical_mesh.mesh_id,), (sharding_spec,))
+            for sharding_spec in self.global_arg_sharding_specs
+        ]
         return tree_unflatten(self.in_tree, placement_specs)
 
     def get_execution_time_costs(self, warmup):

@@ -3,7 +3,6 @@ import time
 
 import numpy as np
 
-
 GB = 1 << 30
 
 
@@ -63,8 +62,14 @@ def get_torch_memory_usage(print_info=False):
     return allocated
 
 
-def compute_gpt_tflops(batch_size, seq_len, num_layers, hidden_size, vocab_size,
-                       num_gpus, latency, checkpoint_activations=False):
+def compute_gpt_tflops(batch_size,
+                       seq_len,
+                       num_layers,
+                       hidden_size,
+                       vocab_size,
+                       num_gpus,
+                       latency,
+                       checkpoint_activations=False):
     factor = 96 if checkpoint_activations else 72
     total_flop = factor * batch_size * seq_len * (hidden_size ** 2) * num_layers * \
           (1 + seq_len / (6 * hidden_size)) \
@@ -78,8 +83,16 @@ def compute_gpt_tflops(batch_size, seq_len, num_layers, hidden_size, vocab_size,
     return tflops
 
 
-def compute_moe_tflops(batch_size, seq_len, num_layers, hidden_size, group_size, vocab_size,
-                       num_expert, num_gpus, latency, mlp_factor=8,
+def compute_moe_tflops(batch_size,
+                       seq_len,
+                       num_layers,
+                       hidden_size,
+                       group_size,
+                       vocab_size,
+                       num_expert,
+                       num_gpus,
+                       latency,
+                       mlp_factor=8,
                        checkpoint_activations=False):
     factor = 4 if checkpoint_activations else 3
     # num_layers / 2 attention block
@@ -93,7 +106,7 @@ def compute_moe_tflops(batch_size, seq_len, num_layers, hidden_size, group_size,
         4 * batch_size * (seq_len ** 2) * hidden_size
     # expert FFNs:
     # moe_transformer += 2 * batch_size * seq_len * (hidden_size ** 2) * mlp_factor * 2
-    moe_transformer += 8 * batch_size *  seq_len * (hidden_size ** 2) * mlp_factor
+    moe_transformer += 8 * batch_size * seq_len * (hidden_size**2) * mlp_factor
 
     # softmax
     moe_transformer += 2 * batch_size * seq_len * hidden_size * num_expert
@@ -115,15 +128,13 @@ def compute_moe_tflops(batch_size, seq_len, num_layers, hidden_size, group_size,
 
 def compute_gpt_parameter_count(num_layers, hidden_size, vocab_size):
     return num_layers * (
-            # self-attention
-            hidden_size * (3 * hidden_size + 1) +
-            hidden_size * (hidden_size + 1) +
-            # mlp
-            hidden_size * (4 * hidden_size + 1) +
-            hidden_size * 4 * (hidden_size + 1) +
-            # layer norm
-            hidden_size * 4
-           ) + vocab_size * (hidden_size + 1)
+        # self-attention
+        hidden_size * (3 * hidden_size + 1) + hidden_size * (hidden_size + 1) +
+        # mlp
+        hidden_size * (4 * hidden_size + 1) + hidden_size * 4 *
+        (hidden_size + 1) +
+        # layer norm
+        hidden_size * 4) + vocab_size * (hidden_size + 1)
 
 
 def compute_moe_parameter_count(num_layers,
@@ -150,5 +161,3 @@ def compute_moe_parameter_count(num_layers,
     else:
         half = num_layers / 2
         return half * pure_transformer + half * moe_transformer + embedding
-
-

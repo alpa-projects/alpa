@@ -1269,8 +1269,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                      self.num_hosts * self.num_devices_per_host))
                 ret_bufs.append(bufs)
             else:
-                if (isinstance(arg, DistributedArray) and arg.device_mesh == self
-                        and arg.indices == indices):
+                if (isinstance(arg, DistributedArray) and
+                        arg.device_mesh == self and arg.indices == indices):
                     # Fast path for DistributedArray
                     ret_bufs.append(arg.remote_buffers)
                 elif isinstance(arg, ReplicatedDistributedArray):
@@ -1832,16 +1832,15 @@ class VirtualPhysicalMesh:
         for i in range(len(sliced_virtual_meshes)):
             threads[i].join()
 
-        self.launched_physical_mesh_group = (
-            PhysicalDeviceMeshGroup(physical_meshes, self))
+        self.launched_physical_mesh_group = (PhysicalDeviceMeshGroup(
+            physical_meshes, self))
         return self.launched_physical_mesh_group
 
 
 class PhysicalDeviceMeshGroup:
     """A list of physical devices that forms a pipeline."""
 
-    def __init__(self,
-                 meshes: Sequence[DistributedPhysicalDeviceMesh],
+    def __init__(self, meshes: Sequence[DistributedPhysicalDeviceMesh],
                  parent: VirtualPhysicalMesh):
         self.meshes = list(meshes)
         self.parent = parent
@@ -2158,7 +2157,8 @@ def set_seed(seed: int):
     if global_physical_mesh:
         global_physical_mesh.set_runtime_random_seed(seed)
     if global_virtual_physical_mesh:
-        global_virtual_physical_mesh.launched_physical_mesh_group.set_runtime_random_seed(seed)
+        global_virtual_physical_mesh.launched_physical_mesh_group.\
+            set_runtime_random_seed(seed)
 
 
 ########################################

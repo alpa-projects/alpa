@@ -1,7 +1,7 @@
 """The dirver part and worker part of a pipeshard executable."""
 import logging
 import time
-from typing import Optional, Sequence, Callable
+from typing import Optional, Sequence
 
 from jax.tree_util import tree_map, tree_flatten, tree_unflatten, PyTreeDef
 import numpy as np
@@ -10,20 +10,16 @@ import ray.exceptions
 from alpa.device_mesh import MeshHostWorker
 from alpa.global_env import global_config
 from alpa.device_mesh import PhysicalDeviceMeshGroup
-from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
-                                  ConcatMeshWorkerExecutable,
-                                  MemzeroWorkerExecutable,
-                                  PartialGradAccMeshWorkerExecutable,
-                                  next_mesh_executable_uuid, get_uuid_np_array,
-                                  next_remote_buffer_uuid, RemoteBufferRef,
-                                  PlacementSpec)
+from alpa.mesh_executable import (
+    AllocZeroBufferWorkerExecutable, ConcatMeshWorkerExecutable,
+    MemzeroWorkerExecutable, PartialGradAccMeshWorkerExecutable,
+    next_mesh_executable_uuid, get_uuid_np_array, next_remote_buffer_uuid,
+    RemoteBufferRef, PlacementSpec)
 from alpa.pipeline_parallel.runtime_emitter import (
     AllocateZeroWorkerExecutableConfig, ConcatWorkerExecutableConfig,
     ExecutableConfig, MemZeroWorkerExecutableConfig,
     PartialGradWorkerExecutableConfig, PipelineInstType, PipelineInstruction,
     PipeshardConfig)
-from alpa.pipeline_parallel.schedules import PipelineSchedule
-from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.timer import timers
 from alpa.util import OrderedSet
 
@@ -100,7 +96,8 @@ class PipeshardDriverExecutable:
                         acc_grad_local_uuids,
                         pipeshard_config.reduced_var_uuid_lists[worker],
                         self.donate_invars[mesh_idx])
-                worker.put_executable.remote(self.exec_uuid, PipeshardMeshWorkerExecuable,
+                worker.put_executable.remote(self.exec_uuid,
+                                             PipeshardMeshWorkerExecuable,
                                              *args)
 
     ##### Compilation Related Functions #####
@@ -203,10 +200,12 @@ class PipeshardDriverExecutable:
 
     def get_placement_specs(self):
         """Return the preferred placement specs for input arguments."""
-        def load_info_to_placement_spec(load_info):
-            return PlacementSpec([x.mesh_id for x in load_info.meshes], load_info.specs)
 
-        return tree_map(lambda x: load_info_to_placement_spec(x), self.load_info)
+        def load_info_to_placement_spec(load_info):
+            return PlacementSpec([x.mesh_id for x in load_info.meshes],
+                                 load_info.specs)
+
+        return tree_map(load_info_to_placement_spec, self.load_info)
 
     def __call__(self, *args):
         """Fast call without signature matching."""
@@ -295,7 +294,8 @@ class PipeshardDriverExecutable:
             for _, worker in enumerate(physical_mesh.workers):
                 worker: MeshHostWorker
                 all_worker_profiled.append(
-                    worker.profile_executable_with_dummy_inputs.remote(self.exec_uuid))
+                    worker.profile_executable_with_dummy_inputs.remote(
+                        self.exec_uuid))
             if len(all_worker_profiled) == 1:
                 all_worker_profiled = all_worker_profiled[0]
             all_profiled_handles.append(all_worker_profiled)
@@ -329,7 +329,8 @@ class PipeshardDriverExecutable:
 
     def _check_alive(self):
         """
-        Check whether all workers are alive. Shutdown the runtime if any worker dies.
+        Check whether all workers are alive.
+        Shutdown the runtime if any worker dies.
         """
         try:
             rets = [
@@ -358,6 +359,7 @@ class PipeshardMeshWorkerExecuable:
                  acc_local_uuids: np.ndarray, acc_out_uuids: np.ndarray,
                  donate_invars: Sequence[bool]):
         # Instruction Lists
+        self.exec_uuid = uuid
         self.instructions = instructions
         self.input_local_uuids = input_local_uuids
         self.output_local_uuids = output_local_uuids

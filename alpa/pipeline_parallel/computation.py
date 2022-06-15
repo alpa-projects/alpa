@@ -822,8 +822,7 @@ def generate_computations_from_modules(jax_computations, computation_names,
 
 
 def generate_sharded_xla_computations_arguments(
-        name: str,
-        jax_computations: Sequence[JaxPipelineComputation],
+        name: str, jax_computations: Sequence[JaxPipelineComputation],
         computation_donate_invars: Sequence[bool],
         output_sharding_dict: Dict[Var, pxla.ShardingSpec]):
     """
@@ -866,7 +865,9 @@ def generate_sharded_xla_computations_arguments(
                                      backend)
 
     if output_sharding_dict:
-        sharding_protos = [output_sharding_dict[x].sharding_proto() for x in outvars]
+        sharding_protos = [
+            output_sharding_dict[x].sharding_proto() for x in outvars
+        ]
         xe.set_hlo_module_output_shardings(hlo_module, sharding_protos)
 
     flops = xe.hlo_module_count_flop_dot_conv_only(hlo_module)

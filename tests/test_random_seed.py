@@ -12,6 +12,7 @@ from alpa.testing import assert_allclose
 class RandomSeedTest(unittest.TestCase):
 
     def test_random_generation(self):
+
         @parallelize(method=ShardParallel())
         def func():
             rngkey = jax.random.PRNGKey(0)
@@ -27,6 +28,7 @@ class RandomSeedTest(unittest.TestCase):
         assert len(a) == len(s)
 
     def test_set_seed(self):
+
         @parallelize(method=ShardParallel())
         def func():
             rngkey = jax.random.PRNGKey(0)

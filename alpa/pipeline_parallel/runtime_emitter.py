@@ -3,7 +3,7 @@ from collections import namedtuple, defaultdict
 from dataclasses import dataclass
 import enum
 import logging
-from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, Optional, Sequence, Union
 
 from jax._src.tree_util import PyTreeDef, tree_unflatten
 from jax.core import Var
@@ -21,9 +21,8 @@ from alpa.pipeline_parallel.cross_mesh_resharding import (
     CrossMeshCommunicator, SymbolicBroadcastReshardingTask,
     SymbolicReshardingTask, ReshardingTask)
 from alpa.serialization import LoadInfo
-from alpa.util import (DisjointDict, OrderedSet,
-                       get_shard_shape, get_microbatch_sharding_spec,
-                       compile_concatenate)
+from alpa.util import (DisjointDict, OrderedSet, get_shard_shape,
+                       get_microbatch_sharding_spec, compile_concatenate)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -256,10 +255,10 @@ class PipelineInstEmitter:
     """Pipeline Instruction Emitter."""
 
     def __init__(self, *, stages: Sequence[XlaShardedPipelineComputation],
-                 global_invars: Sequence[Var],
-                 grad_dummy_invars: Dict[Var, Var],
-                 global_outvars: Sequence[Var],
-                 concat_vars_mapping: Dict[Var, Var],
+                 global_invars: Sequence[Var], grad_dummy_invars: Dict[Var,
+                                                                       Var],
+                 global_outvars: Sequence[Var], concat_vars_mapping: Dict[Var,
+                                                                          Var],
                  mesh_group: PhysicalDeviceMeshGroup,
                  schedule: PipelineSchedule, is_batch: Sequence[bool],
                  num_batch: int, in_tree: PyTreeDef, flop_count: int):
@@ -411,7 +410,8 @@ class PipelineInstEmitter:
         # Compile information for outputs
         output_local_uuid_list, mesh_output_indices, output_spec_list = (
             self._compile_collect_outputs())
-        outs_handler = self._get_outs_handler(mesh_output_indices, output_spec_list)
+        outs_handler = self._get_outs_handler(mesh_output_indices,
+                                              output_spec_list)
 
         # Insert buffer free instructions
         reduced_var_uuid_lists = {}
@@ -423,7 +423,9 @@ class PipelineInstEmitter:
                 reduced_var_uuids = reduced_var_uuids[worker_idx]
             reduced_var_uuids = np.array([[
                 donation_mapping[mesh_idx].recursive_lookup(uuid)
-                for uuid in uuids] for uuids in reduced_var_uuids])
+                for uuid in uuids
+            ]
+                                          for uuids in reduced_var_uuids])
             donated = set(donation_mapping[mesh_idx].keys())
             used_outside.update(flatten_uuid_set(reduced_var_uuids))
             reduced_var_uuid_lists[worker] = reduced_var_uuids
@@ -826,7 +828,7 @@ class PipelineInstEmitter:
         indices to global indices, and output specs to each mesh.
         """
         # Dict[worker -> List[uuid]]
-        output_local_uuid_list = defaultdict(list)  
+        output_local_uuid_list = defaultdict(list)
         # List[arg_idx -> Dict[mesh_idx -> int]]
         mesh_output_indices = []
         # List[mesh_idx -> List[arg_idx -> sharding_spec]]
@@ -931,8 +933,7 @@ class PipelineInstEmitter:
         """
         outvar_idx_to_mesh_idx = {}  # Dict[var_idx -> List[mesh_idx]]
         for i, _ in enumerate(self.global_outvars):
-            outvar_idx_to_mesh_idx[i] = list(
-                mesh_output_indices[i].keys())
+            outvar_idx_to_mesh_idx[i] = list(mesh_output_indices[i].keys())
 
         avals = [outvar.aval for outvar in self.global_outvars]
         is_replicated = [
@@ -970,7 +971,8 @@ class PipelineInstEmitter:
                     mesh_idx_list[-1].append(mesh_idx)
                     outvar_index_on_mesh_list[-1].append(outvar_index_on_mesh)
                     spec_list[-1].append(spec)
-                    indices_list[-1].append(pxla.spec_to_indices(aval.shape, spec))
+                    indices_list[-1].append(
+                        pxla.spec_to_indices(aval.shape, spec))
 
         def outs_handler(mesh_group, bufs):
             ret = []
@@ -979,12 +981,12 @@ class PipelineInstEmitter:
                     # construct DistributedArray
                     mesh_idx = mesh_idx_list[i]
                     device_mesh = mesh_group[mesh_idx]
-                    arr = DistributedArray(
-                        device_mesh=device_mesh,
-                        aval=aval,
-                        sharding_spec=spec_list[i],
-                        remote_buffers=bufs[mesh_idx][outvar_index_on_mesh_list[i]],
-                        indices=indices_list[i])
+                    arr = DistributedArray(device_mesh=device_mesh,
+                                           aval=aval,
+                                           sharding_spec=spec_list[i],
+                                           remote_buffers=bufs[mesh_idx][
+                                               outvar_index_on_mesh_list[i]],
+                                           indices=indices_list[i])
                 else:
                     # construct RepliatedDistributedArray
                     meshes = []

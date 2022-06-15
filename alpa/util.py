@@ -7,7 +7,6 @@ import os
 import subprocess
 import time
 from collections import OrderedDict
-from datetime import datetime
 from functools import partial, partialmethod
 import threading
 from typing import Sequence, Any, Union
@@ -650,8 +649,9 @@ def trace_jaxpr_with_micro_batch(fun: lu.WrappedFun,
     return closed_jaxpr, batch_size
 
 
-def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
-                    sliced_eqns: Sequence[Sequence[JaxprEqn]]) -> Sequence[ClosedJaxpr]:
+def slices_to_jaxpr(
+        closed_jaxpr: ClosedJaxpr,
+        sliced_eqns: Sequence[Sequence[JaxprEqn]]) -> Sequence[ClosedJaxpr]:
     """Wrap sliced equations to a list of ClosedJaxpr."""
     n_eqns = len(sliced_eqns)
     global_invars = OrderedSet(closed_jaxpr.jaxpr.invars)
@@ -1090,7 +1090,9 @@ def compute_param_number(pytree: PyTreeDef):
             ret += np.prod(x.shape)
     return ret
 
+
 _DISABLE_NUMBA = False
+
 
 def maybe_numba_jit(func):
     """Decorator to mark a function as numba jitted if numba is available."""

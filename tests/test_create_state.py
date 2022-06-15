@@ -9,12 +9,12 @@ import jax.numpy as jnp
 import optax
 
 import alpa
-from alpa import (init, shutdown, parallelize, ShardParallel,
-                  PipeshardParallel, CreateStateParallel,
-                  manual_layer_construction, fetch)
+from alpa import (init, shutdown, parallelize, ShardParallel, PipeshardParallel,
+                  CreateStateParallel, manual_layer_construction, fetch)
 
 
 class CreateStateTest(unittest.TestCase):
+
     def setUp(self):
         init(cluster="ray")
 
@@ -64,17 +64,21 @@ class CreateStateTest(unittest.TestCase):
         }
 
         train_step = parallelize(train_step, method=method)
-        create_state = parallelize(create_state, method=CreateStateParallel(train_step, batch))
+        create_state = parallelize(create_state,
+                                   method=CreateStateParallel(
+                                       train_step, batch))
 
         state = create_state()
         state = train_step(state, batch)
 
         if isinstance(method, ShardParallel):
             actual = create_state.get_last_executable().output_sharding_specs
-            if method.num_micro_batches == None: # NormalMeshDriverExecutable
-                expected = train_step.get_last_executable().input_sharding_specs[:len(actual)]
-            else: # GradAccMeshDriverExecutable
-                expected = train_step.get_last_executable().global_arg_sharding_specs[:len(actual)]
+            if method.num_micro_batches == None:  # NormalMeshDriverExecutable
+                expected = train_step.get_last_executable(
+                ).input_sharding_specs[:len(actual)]
+            else:  # GradAccMeshDriverExecutable
+                expected = train_step.get_last_executable(
+                ).global_arg_sharding_specs[:len(actual)]
             for x, y in zip(actual, expected):
                 assert x == y, f"{x} vs. {y}"
         elif isinstance(method, PipeshardParallel):

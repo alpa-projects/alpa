@@ -261,15 +261,18 @@ class CreateStateParallel(ParallelMethod):
         as the first argument and `other_args` as successive arguments.
         See tests/test_create_state.py for example usages.
     """
-    def __init__(self, train_step: "ParallelizedFunc", other_args: Sequence[Any]):
+
+    def __init__(self, train_step: "ParallelizedFunc",
+                 other_args: Sequence[Any]):
+        # pylint: disable=import-outside-toplevel
         from alpa.api import ParallelizedFunc
         assert isinstance(train_step, ParallelizedFunc)
 
         self.train_step = train_step
         self.other_args = other_args
 
-        # TODO(lmzheng): support more flexible signatures. For example, the state does not
-        # have to be the first argument.
+        # TODO(lmzheng): support more flexible signatures.
+        # For example, the state does not have to be the first argument.
 
     def compile_executable(
         self,
@@ -281,6 +284,7 @@ class CreateStateParallel(ParallelMethod):
         batch_invars: Sequence[bool],
         *avals: Sequence[AbstractValue],
     ):
-        return compile_create_state_executable(fun, in_tree, out_tree_thunk, static_argnums,
-                                               donated_invars, batch_invars, self.train_step,
-                                               self.other_args, *avals)
+        return compile_create_state_executable(fun, in_tree, out_tree_thunk,
+                                               static_argnums, donated_invars,
+                                               self.train_step, self.other_args,
+                                               *avals)

@@ -81,14 +81,15 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
             # add a dummy equation to transform a Literal into a normal Var
             zero_literal = Literal(0, raise_to_shaped(get_aval(0)))
             new_var = gensym_func(var.aval)
-            new_eqn = new_jaxpr_eqn([var, zero_literal], [new_var],
-                                    lax.add_p, {})
+            new_eqn = new_jaxpr_eqn([var, zero_literal], [new_var], lax.add_p,
+                                    {})
             literal_outvar_eqns.append(new_eqn)
             literal_outvar_marker_invars.append(new_var)
             literal_outvar_marker_outvars.append(gensym_func(var.aval))
             var_mapping[idx] = literal_outvar_marker_outvars[-1]
         elif var in closed_jaxpr.jaxpr.constvars or var_layer_dict[var] == -1:
-            raise NotImplementedError("Does not support this use case of output var.")
+            raise NotImplementedError(
+                "Does not support this use case of output var.")
         else:
             layer_pipeline_outvars[var_layer_dict[var]].add(var)
 
@@ -119,8 +120,10 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
                               eqn.params, eqn.source_info))
 
         # pipeline end eqn
-        pipeline_end_invars = list(literal_outvar_marker_invars) if i == 0 else []
-        pipeline_end_outvars = list(literal_outvar_marker_outvars) if i == 0 else []
+        pipeline_end_invars = list(
+            literal_outvar_marker_invars) if i == 0 else []
+        pipeline_end_outvars = list(
+            literal_outvar_marker_outvars) if i == 0 else []
         for var in layer_pipeline_outvars[i]:
             new_var = gensym_func(var.aval)
             pipeline_end_invars.append(

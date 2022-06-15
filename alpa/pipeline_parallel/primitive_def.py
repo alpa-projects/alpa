@@ -2,7 +2,7 @@
 computations."""
 import numpy as np
 
-from jax.core import Primitive, abstract_unit, new_jaxpr_eqn, DropVar
+from jax.core import Primitive, new_jaxpr_eqn
 from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
 from jax.tree_util import tree_flatten, tree_unflatten
@@ -85,10 +85,10 @@ def xla_custom_call(c, call_name, op_type, op_name, *args):
         c.set_sharding(sharding)
 
     # Note that the custom call used here all act like an identity function,
-    # so the inputs and outputs are alias pairs. However, we do not set
-    # them here because the alias setting will be dropped during jaxpr->HLO conversion
-    # due to a bug in MLIR. We use a custom XLA pass RematIdentityFixer to set
-    # the alias for "identity" and "pipeline_marker" calls.
+    # so the inputs and outputs are alias pairs. However, we do not set them
+    # here because the alias setting will be dropped during jaxpr->HLO
+    # conversion due to a bug in MLIR. We use a custom XLA pass
+    # RematIdentityFixer to set the alias for "identity" and "pipeline_marker".
     output_tuple = xc.ops.CustomCall(c,
                                      call_name,
                                      operands=(input_params,),

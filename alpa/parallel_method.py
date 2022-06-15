@@ -20,6 +20,7 @@ from jax.core import AbstractValue
 from jax.tree_util import PyTreeDef
 import numpy as np
 
+from alpa.create_state_parallel import compile_create_state_executable
 from alpa.device_mesh import (PhysicalDeviceMesh, VirtualPhysicalMesh,
                               LocalPhysicalDeviceMesh, get_global_physical_mesh,
                               get_global_virtual_physical_mesh)
@@ -30,7 +31,6 @@ from alpa.pipeline_parallel.stage_construction import (AutoStageOption,
                                                        UniformStageOption)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption, LogicalDeviceMesh
 from alpa.shard_parallel.compile_executable import compile_shard_executable
-from alpa.create_state_parallel import compile_create_state_executable
 
 
 class ParallelMethod(ABC):
@@ -248,7 +248,7 @@ class LocalPipelineParallel(ParallelMethod):
 
 class CreateStateParallel(ParallelMethod):
     """
-    Follow a train_step function to create the initial states distirbutely.
+    Follow a train_step function to create the initial states distributedly.
 
     Args:
         train_step: The training step function.

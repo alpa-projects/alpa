@@ -9,8 +9,8 @@ from jax.interpreters import partial_eval as pe, pxla
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 
 from alpa.device_mesh import ReplicatedDistributedArray, PhysicalDeviceMeshGroup
-from alpa.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverExecutable, PlacementSpec
 from alpa.measure_record import StrategyConfig
+from alpa.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverExecutable, PlacementSpec
 from alpa.pipeline_parallel.compile_executable import compile_pipeshard_executable_internal
 from alpa.pipeline_parallel.layer_construction import add_pipeline_marks_for_sliced_eqns
 from alpa.pipeline_parallel.pipeshard_executable import PipeshardDriverExecutable
@@ -63,20 +63,20 @@ class CreateStateExecutable(PipeshardDriverExecutable):
 def compile_create_state_executable(fun, in_tree, out_tree_thunk, static_argnums,
                                     donated_invars, batch_invars, train_step,
                                     other_args, *avals):
-    # Trace to get jaxpr
+    # Trace to get jaxpr and HloModule
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
     out_tree = out_tree_thunk()
     state_aval = tree_unflatten(out_tree, out_avals)
 
-    # Compile train_step to get the placement specs.
-    executable = train_step.get_executable(state_aval, other_args)
-    placement_specs = executable.get_placement_specs()[0]
-
     name = f"{fun.__name__}_create_state_parallel"
     backend = xb.get_backend("gpu")
     hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr,
                                      donated_invars, backend)
+
+    # Compile train_step to get the placement specs.
+    executable = train_step.get_executable(state_aval, other_args)
+    placement_specs = executable.get_placement_specs()[0]
     placement_specs, _ = tree_flatten(placement_specs)
 
     if isinstance(executable, (NormalMeshDriverExecutable, GradAccMeshDriverExecutable)):
@@ -120,8 +120,7 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk, static_argnums
         eqns = slice_jaxpr_with_mesh_assignment(jaxpr, eqn2mesh, num_meshes)
         new_jaxpr = add_pipeline_marks_for_sliced_eqns(closed_jaxpr, eqns)
 
-        # Compile a pipeshard executable with predefined 
-        # output shardings
+        # Compile a pipeshard executable with predefined output shardings
         pipeshard_config = compile_pipeshard_executable_internal(
             new_jaxpr, None, 1, in_tree,
             [False] * len(avals), [False] * len(avals),

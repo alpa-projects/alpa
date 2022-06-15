@@ -1002,7 +1002,7 @@ def get_num_hosts_and_num_devices(args):
             num_hosts = 1
             num_devices_per_host = list_gpu_info().count("UUID")
         else:
-            ray.init(address="auto", namespace=get_ray_namespace_str())
+            ray.init(address="auto")
             num_hosts = len(ray.nodes())
             num_devices_per_host = int(
                 ray.cluster_resources()["GPU"]) // num_hosts

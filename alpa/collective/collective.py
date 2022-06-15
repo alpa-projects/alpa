@@ -7,7 +7,7 @@ import numpy as np
 import ray
 from alpa.collective import types
 from alpa.global_env import global_config
-
+from jax._src.lib import xla_extension as xe
 _NCCL_AVAILABLE = True
 _GLOO_AVAILABLE = True
 
@@ -76,7 +76,7 @@ class GroupManager:
             self._group_name_map[g] = group_name
         if backend == types.Backend.NCCL:
             logger.debug(f"Creating NCCL group: '{group_name}'...")
-            if global_config.nccl_mode == "xla_nccl":
+            if global_config.nccl_mode == "from_xla_extension":
                 g = XLANCCLGroup(world_size, rank, group_name)
             else:
                 g = NCCLGroup(world_size, rank, group_name)
@@ -749,7 +749,7 @@ check_and_get_group = _check_and_get_group
 
 def _check_single_tensor_input(tensor):
     """Check if the tensor is with a supported type."""
-    if isinstance(tensor, np.ndarray):
+    if isinstance(tensor, np.ndarray) or isinstance(tensor, xe.DeviceArray):
         return
     if types.cupy_available():
         if isinstance(tensor, types.cp.ndarray):

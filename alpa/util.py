@@ -864,18 +864,15 @@ def is_continuous_subset(tensor_slice, tensor_shape, row_major=True):
 
 
 def infer_slice_size(slice_shape):
-    size = 1
-    for i in slice_shape:
-        size = size * i
-    return size
-    
-def infer_start_position(tensor_shape, offset, n_elements):
-    block = 0
-    for i, pos in enumerate(offset):
-        dim_len = tensor_shape[i]
-        block = block * dim_len + pos
-    position = block * n_elements
-    return position
+    return np.prod(slice_shape)
+
+def infer_start_pos_and_n_elements(tensor_shape, tensor_slice):
+    start_pos = 0
+    n_elements = 1
+    for dim_len, dim_slice in zip(tensor_shape, tensor_slice):
+        start_pos = start_pos * dim_len + dim_slice.start
+        n_elements = n_elements * (dim_slice.stop - dim_slice.start)
+    return start_pos, n_elements
 
 def infer_offset_and_n_elements(tensor_slice):
     """Calculate the offset and #elements before making NCCL calls.

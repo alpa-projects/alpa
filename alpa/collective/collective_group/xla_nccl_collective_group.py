@@ -1,4 +1,4 @@
-"""NCCL-based collective operations."""
+"""NCCL-based collective operations with apis from xla extension."""
 import logging
 
 import ray
@@ -8,6 +8,9 @@ from alpa.collective.collective_group.nccl_collective_group import Rendezvous
 from alpa.collective.collective_group.base_collective_group import BaseGroup
 from alpa.collective.const import get_store_name
 from alpa.collective.types import (Backend, BroadcastOptions, 
+                                   AllReduceOptions, BarrierOptions, 
+                                   ReduceOptions, AllGatherOptions, 
+                                   ReduceScatterOptions,
                                    SendOptions, RecvOptions)
 
 from jax._src.lib import xla_extension as xe
@@ -15,7 +18,7 @@ from jax._src.lib import xla_extension as xe
 logger = logging.getLogger(__name__)
 
 class XLANCCLGroup(BaseGroup):
-    """NCCL-based collective operations."""
+    """NCCL-based collective operations with apis from xla extension."""
 
     def __init__(self, world_size, rank, group_name):
         """Init an NCCL collective group."""
@@ -77,7 +80,7 @@ class XLANCCLGroup(BaseGroup):
         comms = self._get_nccl_broadcast_communicator(
             key, broadcast_options.world_size, broadcast_options.devices_ids,
             broadcast_options.devices_global_rank)
-        xe.nccl_BroadcastPartialGPUs(len(comms), 
+        xe.nccl_BroadcastPartialGPUs(len(tensors), 
                                      comms, 
                                      tensors, 
                                      broadcast_options.local_start_pos_list, 
@@ -90,7 +93,7 @@ class XLANCCLGroup(BaseGroup):
                                          devices_ids,
                                          devices_global_rank,
                                          nccl_uid=None):
-        """Create or retrieve an NCCL communicator for broadcast from cache.
+        """Create or retrieve a list of NCCL communicators for broadcast from cache.
         Here we only use partial devices in a host, so we create this function
         besides _get_nccl_collective_communicator.
 
@@ -197,8 +200,6 @@ class XLANCCLGroup(BaseGroup):
                                    nccl_uid=None):
         """Create or retrieve an NCCL communicator for p2p tasks.
 
-        Note(Hao): this function is not thread-safe now.
-
         Args:
             comm_key (str): communicator key.
             my_gpu_idx (int): the gpu index on the current process.
@@ -299,7 +300,7 @@ class XLANCCLGroup(BaseGroup):
         when destroying the collective group.
 
         Args:
-            key (str): the key of the .
+            key (str): the key for storage of NCCLUniqueID.
 
         Returns:
             NCCLUniqueID (str): NCCL unique ID.
@@ -334,6 +335,30 @@ class XLANCCLGroup(BaseGroup):
                                            peer_gpu_idx)
         self._get_nccl_p2p_communicator(comm_key, my_gpu_idx, peer_rank,
                                         peer_gpu_idx, nccl_uid)
+
+    def allreduce(self, tensors, allreduce_options=AllReduceOptions()):
+        raise NotImplementedError()
+
+    def barrier(self, barrier_options=BarrierOptions()):
+        raise NotImplementedError()
+
+    def reduce(self, tensors, reduce_options=ReduceOptions()):
+        raise NotImplementedError()
+
+    def allgather(self,
+                  tensor_lists,
+                  tensors,
+                  allgather_options=AllGatherOptions()):
+        raise NotImplementedError()
+
+    def broadcast(self, tensors, broadcast_options=BroadcastOptions()):
+        raise NotImplementedError()
+
+    def reducescatter(self,
+                      tensors,
+                      tensor_lists,
+                      reducescatter_options=ReduceScatterOptions()):
+        raise NotImplementedError()
 
 def _get_comm_key_send_recv(my_rank, my_gpu_idx, peer_rank, peer_gpu_idx):
     """Return a key given source and destination ranks for p2p tasks.

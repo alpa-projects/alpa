@@ -51,4 +51,3 @@ def suite():
 if __name__ == '__main__':
     runner = unittest.TextTestRunner()
     runner.run(suite())
-#python3 run_all.py --filter test_pybind_nccl.py

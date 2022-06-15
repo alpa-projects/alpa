@@ -1,4 +1,4 @@
-"""Code to wrap NCCL API calls from XLA."""
+"""Code to wrap NCCL API calls from XLA extension."""
 from jax._src.lib import xla_extension as xe
 
 

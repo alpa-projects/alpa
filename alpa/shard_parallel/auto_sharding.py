@@ -129,6 +129,9 @@ class LogicalDeviceMesh:
 @dataclasses.dataclass
 class AutoShardingOption:
     """Options of the auto-sharding solver."""
+    # Whether enable auto-sharding. If it is False, then the solver
+    # does tho run ILP but only uses the ShardingPropagation pass.
+    enable_auto_sharding: bool = True
     # Whether to allow all-gather during re-sharding.
     allow_all_gather: bool = True
     # Whether to allow all-to-all during re-sharding.
@@ -158,9 +161,6 @@ class AutoShardingOption:
 
 def run_auto_sharding_pass(
         hlo_module: xe.HloModule,
-        avals: Sequence[ShapedArray],
-        out_avals: Sequence[ShapedArray],
-        donated_invars: Sequence[bool],
         logical_mesh: LogicalDeviceMesh,
         return_mode: str,
         num_micro_batches: int,
@@ -174,9 +174,6 @@ def run_auto_sharding_pass(
     Args:
       hlo_module: The hlo module got by tracing the jax function,
         whose status should be UNOPTIMIZED.
-      avals: The abstract values of input arguments.
-      out_avals: The abstract values of outputs.
-      donated_invars: Whether the arguments are donated.
       logical_mesh: The logical device mesh.
       return_mode: The mode of return value.
         The choices are {"single", "stages", "stage_and_hook_protos"}.
@@ -203,7 +200,7 @@ def run_auto_sharding_pass(
 
     multiple_stages = return_mode in ["stages", "stages_and_hook"]
     num_devices = logical_mesh.num_devices
-    build_random_seed = global_config.build_random_seed
+    build_random_seed = global_config.compile_random_seed
     compile_options = get_compile_options(
         num_replicas=1,
         num_partitions=num_devices,
@@ -273,6 +270,8 @@ def run_auto_sharding_pass(
 
     with XlaPassContext({
             # Auto-sharding solver options
+            "auto_sharding::enable":
+                as_option.enable_auto_sharding,
             "auto_sharding::memory_budget_per_device":
                 memory_budget_per_device,
             "auto_sharding::force_all_gather_cost":
@@ -385,7 +384,7 @@ def run_spmd_partitioner_pass(
         device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
         parameter_is_tupled_arguments=False,
-        build_random_seed=global_config.build_random_seed)
+        build_random_seed=global_config.compile_random_seed)
 
     if rewrite_for_grad_acc and rewrite_grad_acc_indices is None:
         rewrite_grad_acc_indices = tuple(

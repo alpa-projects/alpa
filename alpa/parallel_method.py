@@ -13,13 +13,14 @@ Based on this, alpa provides two base parallel methods:
 - PipeshardParallel: which combines pipeline parallelism and shard parallelism.
 """
 from abc import ABC, abstractmethod
-from typing import Callable, Optional, Sequence, Union
+from typing import Callable, Optional, Sequence, Union, Any
 
 from jax import linear_util as lu
 from jax.core import AbstractValue
 from jax.tree_util import PyTreeDef
 import numpy as np
 
+from alpa.create_state_parallel import compile_create_state_executable
 from alpa.device_mesh import (PhysicalDeviceMesh, VirtualPhysicalMesh,
                               LocalPhysicalDeviceMesh, get_global_physical_mesh,
                               get_global_virtual_physical_mesh)
@@ -51,10 +52,10 @@ class ParallelMethod(ABC):
 
 
 class ShardParallel(ParallelMethod):
-    """Use shard parallelism.
+    """Use shard parallelism to parallelize a function.
 
     Args:
-        devices: Specify the devices to use. If it is None, use all the devices
+        devices: Specify the devices to use. If it is None, use all devices
           in the cluster.
         num_micro_batches: The number of micro batches for gradient
           accumulation.
@@ -243,3 +244,47 @@ class LocalPipelineParallel(ParallelMethod):
         *avals: Sequence[AbstractValue],
     ):
         return compile_local_pipeline_executable(fun, *avals)
+
+
+class CreateStateParallel(ParallelMethod):
+    """
+    Follow a train_step function to create the initial states distributedly.
+
+    Args:
+        train_step: The training step function.
+          See notes below for requirements.
+        other_args: Other arguments for calling the train_step function.
+
+    Notes:
+        To use thie parallel method, the function being parallelized should
+        return a single output `state`. Then train_step should take `state`
+        as the first argument and `other_args` as successive arguments.
+        See tests/test_create_state.py for example usages.
+    """
+
+    def __init__(self, train_step: "ParallelizedFunc",
+                 other_args: Sequence[Any]):
+        # pylint: disable=import-outside-toplevel
+        from alpa.api import ParallelizedFunc
+        assert isinstance(train_step, ParallelizedFunc)
+
+        self.train_step = train_step
+        self.other_args = other_args
+
+        # TODO(lmzheng): support more flexible signatures.
+        # For example, the state does not have to be the first argument.
+
+    def compile_executable(
+        self,
+        fun: lu.WrappedFun,
+        in_tree: PyTreeDef,
+        out_tree_thunk: Callable[[], PyTreeDef],
+        static_argnums: Sequence[int],
+        donated_invars: Sequence[bool],
+        batch_invars: Sequence[bool],
+        *avals: Sequence[AbstractValue],
+    ):
+        return compile_create_state_executable(fun, in_tree, out_tree_thunk,
+                                               static_argnums, donated_invars,
+                                               self.train_step, self.other_args,
+                                               *avals)

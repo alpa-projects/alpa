@@ -51,10 +51,8 @@ CompileOutput = namedtuple("CompileOutput", [
     "apply_grad_input_sharding_protos"
 ])
 
-CompileConfig = namedtuple("CompileConfig", [
-    "model_proto", "input_avals", "output_avals", "donate_invars",
-    "output_acc_grad_indices"
-])
+CompileConfig = namedtuple("CompileConfig",
+                           ["model_proto", "output_acc_grad_indices"])
 
 ProfileConfig = namedtuple(
     "ProfileConfig",
@@ -149,8 +147,6 @@ class CompileWorker:
         self.cnt += 1
 
         # Compile with search to get sharding annotations.
-        jaxpr_args = (config.input_avals, config.output_avals,
-                      config.donate_invars)
         other_kwargs = {
             "logical_mesh": logical_mesh,
             "return_mode": "stages_and_hook",
@@ -163,7 +159,7 @@ class CompileWorker:
                 config.model_proto)
             # pylint: disable=unbalanced-tuple-unpacking
             module_names, modules, hooked_proto, strategy_config = (
-                run_auto_sharding_pass(hlo_module, *jaxpr_args, **other_kwargs))
+                run_auto_sharding_pass(hlo_module, **other_kwargs))
         except RuntimeError as e:
             logger.warning(f"Compilation error (auto-sharding pass) "
                            f"for stage {stage_id} : {e}")
@@ -213,13 +209,13 @@ class CompileWorker:
                                        apply_grad_input_sharding_protos)
 
     @staticmethod
-    def run_auto_sharding_pass(stage_id, proto, jaxpr_args, other_kwargs):
+    def run_auto_sharding_pass(stage_id, proto, other_kwargs):
         """Run auto-sharding pass on a proto."""
         hlo_module = xe.HloModule.from_serialized_hlo_module_proto(proto)
         assert other_kwargs["return_mode"] == "stages"
         # pylint: disable=unbalanced-tuple-unpacking
         hlo_stage_names, hlo_stages, strategy_config = run_auto_sharding_pass(
-            hlo_module, *jaxpr_args, **other_kwargs)
+            hlo_module, **other_kwargs)
         hlo_stages = [x.as_serialized_hlo_module_proto() for x in hlo_stages]
         return stage_id, (hlo_stage_names, hlo_stages, strategy_config)
 
@@ -670,7 +666,7 @@ def generate_stage_info(all_layers, selected_indices, donation_mapping,
             new_invars).difference(new_outvars)
         apply_info = ApplyGradConfig(merged_apply.jaxpr.invars,
                                      apply_only_invars)
-        names = ["merged", "merged" + APPLY_GRAD_MARKER_SUFFIX]
+        names = ["merged", "merged_" + APPLY_GRAD_MARKER_SUFFIX]
         all_outvars = OrderedSet(new_outvars).union(merged_apply.jaxpr.outvars)
         all_outvars = list(all_outvars)
         donation_map = dict(apply_grad_donation)
@@ -683,13 +679,9 @@ def generate_stage_info(all_layers, selected_indices, donation_mapping,
                                                       new_outvars,
                                                       selected_donation_mapping)
 
-    avals = [var.aval for var in merged.jaxpr.invars]
-    out_avals = [var.aval for var in merged.jaxpr.outvars]
-
     hlo_module = jaxpr_to_hlo_module(name, merged, is_donated, backend)
     proto = hlo_module.as_serialized_hlo_module_proto()
-    compile_config = CompileConfig(proto, avals, out_avals, is_donated,
-                                   output_acc_grad_indices)
+    compile_config = CompileConfig(proto, output_acc_grad_indices)
     stage_config = StageConfig(compile_config, profile_config, apply_info)
     return intermediate_vars, stage_config
 

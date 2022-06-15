@@ -9,15 +9,16 @@ workers. The driver part sends control commands to launch the worker parts on
 workers.
 """
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 import logging
-from typing import Callable, Sequence, Optional
+from typing import Sequence, Optional
 import os
 
 import jax.numpy as jnp
 from jax._src.lib import xla_bridge as xb, xla_extension as xe
 from jax.core import ShapedArray
 from jax.interpreters import pxla
-from jax.tree_util import tree_flatten, tree_unflatten
+from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 import numpy as np
 import ray
 
@@ -42,6 +43,13 @@ mesh_executable_counter = 0
 remote_buffer_counter = 0
 
 
+@dataclass
+class PlacementSpec:
+    """Specify how a tensor is stored distributedly."""
+    mesh_ids: Sequence[int]
+    sharding_specs: Sequence[pxla.ShardingSpec]
+
+
 class MeshDriverExecutable(ABC):
     """The base class of the driver part of a mesh executable."""
 
@@ -53,6 +61,10 @@ class MeshDriverExecutable(ABC):
             args: The original arguments of the parallelized function.
             kwargs: The additional arguments to control execution options.
         """
+        raise NotImplementedError()
+
+    def get_input_placement_specs(self):
+        """Return the preferred placement specs for input arguments."""
         raise NotImplementedError()
 
     def preshard_dynamic_args(self, *args):
@@ -213,7 +225,7 @@ def get_sync_func_worker(worker):
 
 def get_uuid_np_array(array: Sequence[Sequence[int]]):
     """Convert a 2d array of RemoteBufferRef to a np array of UUID (int64)."""
-    shape = (len(array), len(array[0]))
+    shape = (len(array), len(array[0]) if len(array) > 0 else 0)
     ret = np.empty(shape, dtype=np.int64)
     for i in range(shape[0]):
         for j in range(shape[1]):
@@ -232,7 +244,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                  out_avals: Sequence[ShapedArray],
                  donated_invars: Sequence[bool],
                  static_argnums: Optional[Sequence[int]] = None,
-                 out_tree_thunk: Optional[Callable] = None,
+                 in_tree: Optional[PyTreeDef] = None,
+                 out_tree: Optional[PyTreeDef] = None,
                  flop_count: Optional[int] = None):
         self.physical_mesh = physical_mesh
         self.hlo_module = hlo_module
@@ -240,8 +253,10 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         self.out_avals = out_avals
         self.donated_invars = donated_invars
         self.static_argnums = static_argnums
-        self.out_tree_thunk = out_tree_thunk
+        self.in_tree = in_tree
+        self.out_tree = out_tree
         self.flop_count = flop_count
+        self.strategy_config = strategy_config
         self.auto_sharding_objective = strategy_config.auto_sharding_objective
 
         # Read sharding specs
@@ -357,6 +372,14 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
         return self.outs_handler(output_bufs)
 
+    def get_input_placement_specs(self):
+        """Return the preferred placement specs for input arguments."""
+        placement_specs = [
+            PlacementSpec((self.physical_mesh.mesh_id,), (sharding_spec,))
+            for sharding_spec in self.input_sharding_specs
+        ]
+        return tree_unflatten(self.in_tree, placement_specs)
+
     def preshard_dynamic_args(self, *args):
         """Pre-shard the input arguments."""
         input_bufs = self.physical_mesh.shard_args_to_bufs(
@@ -378,7 +401,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             dyn_args = args
         args_flat, _ = tree_flatten(dyn_args)
         out = self.launch_on_driver(*args_flat)
-        return tree_unflatten(self.out_tree_thunk(), out)
+        return tree_unflatten(self.out_tree, out)
 
     def profile_with_dummy_inputs(self, **kwargs):
         """Profile the execution time costs with dummy inputs."""
@@ -536,7 +559,9 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                  accumulate_grad_invar_indices: Sequence[int],
                  apply_grad_invar_indices: Sequence[int],
                  num_micro_batches: int,
-                 flop_count: int = None):
+                 in_tree: Optional[PyTreeDef] = None,
+                 out_tree: Optional[PyTreeDef] = None,
+                 flop_count: Optional[int] = None):
         self.physical_mesh = physical_mesh
         self.avals = avals
         self.out_avals = out_avals
@@ -546,7 +571,10 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         self.accumulate_grad_invar_indices = accumulate_grad_invar_indices
         self.apply_grad_invar_indices = apply_grad_invar_indices
         self.num_micro_batches = num_micro_batches
+        self.in_tree = in_tree
+        self.out_tree = out_tree
         self.flop_count = flop_count
+        self.strategy_config = strategy_config
         self.auto_sharding_objective = strategy_config.auto_sharding_objective
 
         # Read sharding specs
@@ -619,6 +647,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             for aval, spec in zip(grad_avals, grad_sharding_specs)
         ]
         grad_shard_dtypes = [aval.dtype for aval in grad_avals]
+        self.global_arg_sharding_specs = global_arg_sharding_specs
         self.global_batch_arg_indices = global_batch_arg_indices
         self.global_arg_shard_indices = global_arg_shard_indices
         self.outs_handler = physical_mesh.get_outputs_handler(
@@ -778,6 +807,14 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
 
         # Wrap output buffers as ShardedArray
         return self.outs_handler(output_bufs)
+
+    def get_input_placement_specs(self):
+        """Return the preferred placement specs for input arguments."""
+        placement_specs = [
+            PlacementSpec((self.physical_mesh.mesh_id,), (sharding_spec,))
+            for sharding_spec in self.global_arg_sharding_specs
+        ]
+        return tree_unflatten(self.in_tree, placement_specs)
 
     def get_execution_time_costs(self, warmup):
         """Return the pure execution time costs recorded by an internal
@@ -1168,7 +1205,7 @@ class ConcatMeshWorkerExecutable(MeshWorkerExecutable):
             device_assignment=np.arange(num_devices).reshape((1, -1)),
             use_spmd_partitioning=False,
             parameter_is_tupled_arguments=False,
-            build_random_seed=global_config.build_random_seed)
+            build_random_seed=global_config.compile_random_seed)
         xla_computation = xe.XlaComputation(hlo_proto)
 
         self.concat = worker.backend.compile(xla_computation, compile_options)

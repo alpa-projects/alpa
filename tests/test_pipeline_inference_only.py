@@ -2,8 +2,10 @@ import unittest
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
-from alpa import init, shutdown, PipeshardParallel
+from alpa import (init, shutdown, PipeshardParallel, parallelize,
+                  mark_pipeline_boundary, manual_layer_construction)
 from alpa.model.bert_model import BertConfig, FlaxBertLayerCollection
 from alpa.testing import (MLPModel, create_train_state,
                           get_bert_layer_collection_inference_step,
@@ -99,11 +101,30 @@ class PipelineInferenceTest(unittest.TestCase):
     def test_bert(self):
         self.run_bert_layer_collection_inference(True)
 
+    def test_output(self):
+        method = PipeshardParallel(num_micro_batches=1,
+                                   pipeline_schedule="inference")
+
+        @parallelize(method=method)
+        @manual_layer_construction
+        def func():
+            a = jnp.ones(32)
+            mark_pipeline_boundary()
+            b = jnp.ones(32) * 2
+            return a, b, 3
+
+        a, b, c = func()
+
+        assert_allclose(a, np.ones(32))
+        assert_allclose(b, np.ones(32) * 2)
+        assert_allclose(c, 3)
+
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(PipelineInferenceTest("test_mlp"))
     suite.addTest(PipelineInferenceTest("test_bert"))
+    suite.addTest(PipelineInferenceTest("test_output"))
     return suite
 
 

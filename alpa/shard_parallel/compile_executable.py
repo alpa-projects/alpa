@@ -113,8 +113,7 @@ def shard_parallel_internal(
 
     # Compile a XLA executable
     hlo_module, strategy_config = run_auto_sharding_pass(
-        hlo_module, avals, out_avals, donated_invars, logical_mesh_choices[0],
-        "single", 1, as_option)
+        hlo_module, logical_mesh_choices[0], "single", 1, as_option)
 
     # Compile a mesh executable
     return NormalMeshDriverExecutable(physical_mesh,
@@ -124,7 +123,8 @@ def shard_parallel_internal(
                                       out_avals,
                                       donated_invars,
                                       static_argnums=static_argnums,
-                                      out_tree_thunk=out_tree_thunk,
+                                      in_tree=in_tree,
+                                      out_tree=out_tree_thunk(),
                                       flop_count=flop_count)
 
 
@@ -138,8 +138,8 @@ def shard_parallel_internal_gradient_accumulation(
     """Compile a gradient accumulation executable with auto-sharding pass."""
     # pylint: disable=unused-argument
     # Split the batch dimension
-    closed_jaxpr, avals, _ = trace_jaxpr_with_micro_batch(
-        fun, batch_invars, num_micro_batches, raw_avals)
+    closed_jaxpr, _ = trace_jaxpr_with_micro_batch(fun, batch_invars,
+                                                   num_micro_batches, raw_avals)
 
     (closed_jaxpr, accumulate_grad_invar_indices, apply_grad_invar_indices,
      num_grads) = (add_gradient_accumulation(closed_jaxpr, num_micro_batches))
@@ -159,8 +159,8 @@ def shard_parallel_internal_gradient_accumulation(
 
     # pylint: disable=unbalanced-tuple-unpacking
     hlo_stage_names, hlo_stages, strategy_config = run_auto_sharding_pass(
-        hlo_module, avals, out_avals, donated_invars, logical_mesh_choices[0],
-        "stages", num_micro_batches, as_option)
+        hlo_module, logical_mesh_choices[0], "stages", num_micro_batches,
+        as_option)
     assert len(hlo_stages) == 2
 
     if hlo_stage_names[0].endswith(APPLY_GRAD_MARKER_SUFFIX):
@@ -202,6 +202,8 @@ def shard_parallel_internal_gradient_accumulation(
                                        accumulate_grad_invar_indices,
                                        apply_grad_invar_indices,
                                        num_micro_batches,
+                                       in_tree=in_tree,
+                                       out_tree=out_tree_thunk(),
                                        flop_count=flop_count)
 
 
@@ -281,7 +283,7 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     combined_eqns.append(
         new_jaxpr_eqn(new_invars, old_invars, pipeline_p, {
             "mark_type": "start",
-            "name": "_accumulate_grad"
+            "name": "accumulate_grad"
         }, None))
     global_invar_substitute.update(zip(old_invars, new_invars))
     accumulate_grad_invars = new_invars
@@ -300,7 +302,7 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     combined_eqns.append(
         new_jaxpr_eqn(new_grad_vars, inter_grad_vars, pipeline_p, {
             "mark_type": "end",
-            "name": "_accumulate_grad"
+            "name": "accumulate_grad"
         }, None))
 
     # Wrap all invars of apply_grad

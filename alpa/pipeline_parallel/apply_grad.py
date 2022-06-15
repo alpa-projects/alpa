@@ -5,7 +5,7 @@ from typing import Sequence, Dict, Tuple
 
 from jax._src.util import safe_map
 from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, new_jaxpr_eqn,
-                      get_aval, raise_to_shaped)
+                      get_aval, raise_to_shaped, JaxprEqn)
 from jax.lax import add_p, div_p
 import numpy as np
 
@@ -21,7 +21,7 @@ logger.setLevel(logging.INFO)
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
-APPLY_GRAD_MARKER_SUFFIX = '_apply_grad'
+APPLY_GRAD_MARKER_SUFFIX = 'apply_grad'
 
 
 # TODO(yonghao): delaying the cross layer grad accmulation increases memory
@@ -36,6 +36,8 @@ def _rewrite_cross_layer_grad(compute_eqns, microbatch_bound, apply_eqns,
     If a parameter is used in multiple stages, its gradient is computed in
     multiple stages and then added together. We accumulate the results on each
     stage, and add them together exactly at the start of apply grad period.
+
+    A common use case is the tied embedding in language models.
     """
     unmarked_vars = set()
     layer_invars = set()
@@ -145,23 +147,23 @@ def jaxpr_have_apply_grad(closed_jaxpr: ClosedJaxpr):
 
 
 def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn,
-                                      num_microbatch):
+                                      num_microbatch: int,
+                                      inference_mode: bool):
     """Split the train_step jaxpr into two parts: compute_grad and
-    apply_grad."""
+    apply_grad. These two parts are separated by a gradient marker generated
+    by `alpa.grad`."""
     split_eqn = None
     for idx, eqn in enumerate(closed_jaxpr.eqns):
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'grad':
             split_eqn = eqn
             split_idx = idx
     if split_eqn is None:
-        logger.warning(
-            'Missing microbatch_bound between compute and apply. Assume there '
-            'is no apply gradient step. Hint: replace jax.grad by alpa.grad.')
+        if not inference_mode:
+            logger.warning(
+                'Missing microbatch_bound between compute and apply. '
+                'Assume there is no apply gradient step. '
+                'Hint: replace jax.grad by alpa.grad.')
         dummy_jaxpr = ClosedJaxpr(Jaxpr([], [], [], []), [])
-        dummy_bound = new_jaxpr_eqn([], [], pipeline_p, {
-            'mark_type': 'grad',
-            'name': ''
-        })
         invars = list(closed_jaxpr.jaxpr.outvars) if num_microbatch > 1 else []
         outvars = list(closed_jaxpr.jaxpr.outvars) if num_microbatch > 1 else []
         dummy_bound = new_jaxpr_eqn(invars, outvars, pipeline_p, {
@@ -185,6 +187,10 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn,
 
 
 def _get_post_to_pre_marker_mapping(compute_jaxpr):
+    """
+    Get a dict that maps an out_var of a pipeline marker to
+    its corresponding in_var.
+    """
     post_marker_outs = [
         outvar for outvar in compute_jaxpr.jaxpr.outvars
         if isinstance(outvar, Var)
@@ -207,11 +213,10 @@ def _get_post_to_pre_marker_mapping(compute_jaxpr):
                     #   invar' = pipeline end(invar)
                     #   outvar = pipeline start(invar')
                     #   final = pipeline end(outvar)
-                    # post_to_pre_marker_outs[final] = invar instead of outvar
+                    # post_to_pre_marker_outs[final] = invar' instead of outvar
                     final_outvar = pre_to_post_marker_outs[outvar]
                     post_to_pre_marker_outs[final_outvar] = eqn.invars[i]
                     pre_to_post_marker_outs[eqn.invars[i]] = final_outvar
-    # FIXME(zhuohan): Should support auxiliary outputs in the future (e.g. loss)
     for outvar in post_marker_outs:
         assert outvar in post_to_pre_marker_outs, (
             'all outputs should be captured by pipeline marker')
@@ -284,20 +289,27 @@ def _rewrite_jaxpr_to_reduced_outputs(compute_jaxpr, to_reduce_pre_marker_outs,
 # TODO(yonghao): support not only reduction and concate. Some outputs may not
 # rely on batch dimension.
 def compute_grad_to_accumulate_grad(
-        compute_jaxpr: ClosedJaxpr, reduction_vector,
-        gensym_fn) -> Tuple[ClosedJaxpr, Dict[Var, Var], Dict[Var, Var]]:
+        compute_jaxpr: ClosedJaxpr, microbatch_bound: JaxprEqn,
+        reduction_vector: Sequence[bool], gensym_fn,
+        num_microbatch) -> Tuple[ClosedJaxpr, JaxprEqn, Dict[Var, Var]]:
     """Transform compute_grad jaxpr with pipeline markers into accumulate_grad
     jaxpr.
 
     Args:
         compute_jaxpr: the original jaxpr
+        microbatch_bound: The boundary eqn that separates compute_grad and
+          apply_grad.
         reduction_vector: if the outvar is reduced(accumulated) or not
         gensym_fn: gensym function
+
     Returns:
         acc_grad_jaxpr: The accumulate grad jaxpr
-        update_outs: From original output(grad) to new output(acc grad)
+        microbatch_bound: The updated microbatch boundary
         reduced_in_to_out: From accumulated gradient inputs to outputs
     """
+    if num_microbatch <= 1:
+        return compute_jaxpr, microbatch_bound, {}
+
     post_to_pre_marker_outs = _get_post_to_pre_marker_mapping(compute_jaxpr)
     to_reduce_pre_marker_outs = []
     for var, reduced in zip(compute_jaxpr.jaxpr.outvars, reduction_vector):
@@ -339,12 +351,17 @@ def compute_grad_to_accumulate_grad(
 
     new_closed_jaxpr = clone_jaxpr(compute_jaxpr, new_glob_invars,
                                    new_glob_outvars, new_eqns)
-    # We do not modify donate_invars here, as it is only to append Trues
-    # Instead return grad outs to help modify apply_grad
-    return new_closed_jaxpr, update_outs, reduced_in_to_out
+
+    microbatch_bound_invars = [update_outs[x] for x in microbatch_bound.invars]
+    microbatch_bound = new_jaxpr_eqn(microbatch_bound_invars,
+                                     microbatch_bound.outvars,
+                                     microbatch_bound.primitive,
+                                     microbatch_bound.params,
+                                     microbatch_bound.source_info)
+    return new_closed_jaxpr, microbatch_bound, reduced_in_to_out
 
 
-def _get_apply_grad_outvar_constraints(jax_pipeline_stages, stage_to_mesh,
+def _get_apply_grad_outvar_constraints(pipeline_stages, stage_to_mesh,
                                        global_invars, donated_invars,
                                        donation_mapping):
     """Infer outvar constraints of apply gradient based on donation."""
@@ -352,7 +369,7 @@ def _get_apply_grad_outvar_constraints(jax_pipeline_stages, stage_to_mesh,
     donated_global_vars = {
         invar for invar, donate in zip(global_invars, donated_invars) if donate
     }
-    for stage_idx, stage in enumerate(jax_pipeline_stages):
+    for stage_idx, stage in enumerate(pipeline_stages):
         for invar in stage.invars:
             if invar in donated_global_vars:
                 outvar_mesh.setdefault(donation_mapping[invar],
@@ -361,11 +378,11 @@ def _get_apply_grad_outvar_constraints(jax_pipeline_stages, stage_to_mesh,
     return outvar_mesh
 
 
-def process_apply_gradient(apply_grad_jaxpr, microbatch_bound, acc_grad_dict,
-                           jax_pipeline_stages, stage_to_mesh, gensym_func,
-                           num_micro_batches, num_meshes, global_invars,
-                           global_outvars, donated_invars, reduction_vector):
-    """Slice apply_grad jaxpr into stages and assign them to the correspondig
+def process_apply_gradient(apply_grad_jaxpr, microbatch_bound, pipeline_stages,
+                           stage_to_mesh, gensym_func, num_micro_batches,
+                           num_meshes, global_invars, global_outvars,
+                           donated_invars, reduction_vector):
+    """Slice apply_grad jaxpr into stages and assign them to the corresponding
     meshes."""
     # TODO(yonghao): the condition of creating RDA variable should be extended.
 
@@ -375,19 +392,16 @@ def process_apply_gradient(apply_grad_jaxpr, microbatch_bound, acc_grad_dict,
         g for g in microbatch_bound.outvars if not isinstance(g, DropVar)
     ]
     assert len(gradients) == len(microbatch_bound.invars)
-    apply_in_to_acc_out = {
-        outv: acc_grad_dict[inv]
-        for outv, inv in zip(gradients, microbatch_bound.invars)
-    }
+    apply_in_to_acc_out = dict(zip(gradients, microbatch_bound.invars))
 
     # 2. Add compute mean and slice apply-grad stages
-    gradvar_to_mesh = get_var_to_mesh(gradients, jax_pipeline_stages,
-                                      stage_to_mesh, apply_in_to_acc_out)
+    gradvar_to_mesh = get_var_to_mesh(gradients, pipeline_stages, stage_to_mesh,
+                                      apply_in_to_acc_out)
     # FIXME (zhuohan): get_mean only works when we use jax.mean to
     #                  calculate loss. It will fail if we use sum.
     apply_grad_jaxpr, global_outvars = apply_grad_get_mean(
-        apply_grad_jaxpr, gradients, gensym_func, num_micro_batches,
-        global_outvars, reduction_vector)
+        apply_grad_jaxpr, global_outvars, gradients, gensym_func,
+        num_micro_batches, reduction_vector)
 
     # update donation mapping
     donation_mapping = {}
@@ -395,7 +409,7 @@ def process_apply_gradient(apply_grad_jaxpr, microbatch_bound, acc_grad_dict,
         if donated_invars[idx]:
             donation_mapping[invar] = global_outvars[idx]
     # create outvar constraints
-    outvar_mesh = _get_apply_grad_outvar_constraints(jax_pipeline_stages,
+    outvar_mesh = _get_apply_grad_outvar_constraints(pipeline_stages,
                                                      stage_to_mesh,
                                                      global_invars,
                                                      donated_invars,
@@ -404,7 +418,7 @@ def process_apply_gradient(apply_grad_jaxpr, microbatch_bound, acc_grad_dict,
     sliced_apply_grad, info = slice_apply_gradient(apply_grad_jaxpr,
                                                    gradvar_to_mesh, outvar_mesh,
                                                    num_meshes,
-                                                   len(jax_pipeline_stages),
+                                                   len(pipeline_stages),
                                                    donation_mapping)
     apply_grad_placement, _ = info
     sliced_apply_grad, out_map = apply_grad_add_marker(sliced_apply_grad,
@@ -413,15 +427,8 @@ def process_apply_gradient(apply_grad_jaxpr, microbatch_bound, acc_grad_dict,
                                                        computation=True)
     global_outvars = list(
         map(lambda x: get_var_mapping(out_map, x), global_outvars))
-    n_stages = len(jax_pipeline_stages) + len(sliced_apply_grad)
-    dependency = gen_dependency_with_stages(jax_pipeline_stages,
-                                            sliced_apply_grad)
-
-    used_simultaneously = OrderedSet()
-    used = OrderedSet()
-    for stage in sliced_apply_grad:
-        used_simultaneously.update(used.intersection(stage.invars))
-        used.update(stage.invars)
+    n_stages = len(pipeline_stages) + len(sliced_apply_grad)
+    dependency = gen_dependency_with_stages(pipeline_stages, sliced_apply_grad)
 
     return (sliced_apply_grad, n_stages, dependency, apply_grad_placement,
             global_outvars, donated_invars)
@@ -446,8 +453,8 @@ def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
     return new_jaxpr
 
 
-def apply_grad_get_mean(closed_jaxpr, gradients, gensym_fn, num_microbatch,
-                        global_outvars, reduce_invars):
+def apply_grad_get_mean(closed_jaxpr, global_outvars, gradients, gensym_fn,
+                        num_microbatch, reduce_invars):
     """
     Get the mean of input (accumulated) gradients and run apply gradient.
 
@@ -597,7 +604,6 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
               meshes need this invar.
     """
     var_mesh = {var: OrderedSet([mesh]) for var, mesh in grad_mesh.items()}
-    sliced_eqns = [[] for _ in range(num_mesh)]
     for var in outvar_mesh:
         var_mesh.setdefault(var, OrderedSet()).update(outvar_mesh[var])
     # propagate to get var_at_mesh
@@ -607,6 +613,7 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
         changed = _reverse_propagate_var_at_mesh(closed_jaxpr, donation_mapping,
                                                  eqn_mesh, var_mesh)
 
+    sliced_eqns = [[] for _ in range(num_mesh)]
     for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
         if eqn_mesh[eqn_idx]:
             assert len(eqn_mesh[eqn_idx])
@@ -688,7 +695,7 @@ def apply_grad_add_marker(jaxprs: Sequence[ClosedJaxpr],
                 jaxpr.jaxpr.invars))
         new_outvars = list(
             map(lambda x: get_var_mapping(outvar_map, x), jaxpr.jaxpr.outvars))
-        name = str(i) + APPLY_GRAD_MARKER_SUFFIX
+        name = f'{i}_{APPLY_GRAD_MARKER_SUFFIX}'
         start_marker = mark_pipeline_jaxpreqn(new_invars,
                                               replaced.invars,
                                               name=name,
@@ -712,7 +719,7 @@ def apply_grad_add_marker(jaxprs: Sequence[ClosedJaxpr],
 
 def get_var_to_mesh(invars: Sequence[Var],
                     computations: Sequence[JaxPipelineComputation],
-                    computation_to_mesh, apply_in_to_acc_out):
+                    computation_to_mesh: Dict[int, int], apply_in_to_acc_out):
     """Get the mapping from variables to mesh."""
     # TODO(yonghao): now assume all gradients are variables(not literal)
     outvar2mesh = {}

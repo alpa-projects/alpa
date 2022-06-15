@@ -105,7 +105,7 @@ class MeshHostWorker:
     host."""
 
     def __init__(self, server_address: str, num_hosts: int, host_id: int,
-                 mesh_id: int, node_resource: str):
+                 mesh_id: int, node_resource: str, runtime_random_seed: int):
         self.num_hosts = num_hosts
         self.host_id = host_id
         self.mesh_id = mesh_id
@@ -136,6 +136,8 @@ class MeshHostWorker:
 
         self.data_loaders = {}  # Dict[uuid -> MeshWorkerDataLoader]
         self.data_loader_iters = {}  # Dict[uuid -> iterator]
+
+        self.set_runtime_random_seed(runtime_random_seed)
 
         if global_config.pipeline_use_signal_send_recv:
             print("Use signal send recv.")
@@ -273,6 +275,10 @@ class MeshHostWorker:
 
     def get_exec_grad_sync_channel_ids(self, uuid: int):
         return self.executables[uuid].grad_sync_channel_ids
+
+    def set_runtime_random_seed(self, seed: int):
+        for d in self.local_devices:
+            d.set_seed(seed)
 
     ##### Serialization Related Functions #####
     def sync_move_worker(self):
@@ -758,6 +764,7 @@ class PhysicalDeviceMesh(ABC):
 
     num_hosts: int
     num_devices_per_host: int
+    mesh_id: int
 
     def get_signature(self) -> str:
         """Return a signature string that contains the mesh shape and GPU
@@ -890,6 +897,10 @@ class PhysicalDeviceMesh(ABC):
         arrays."""
         raise NotImplementedError()
 
+    @abstractmethod
+    def set_runtime_random_seed(self, seed: int):
+        raise NotImplementedError()
+
     ##### Profiling Related Functions #####
     @abstractmethod
     def get_remote_timer(self, timer_name: str):
@@ -937,7 +948,10 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.devices = devices if devices is not None else xb.local_devices()
         self.num_hosts = 1
         self.num_devices_per_host = len(self.devices)
+        self.mesh_id = 0
         self.device_strs = []
+
+        self.set_runtime_random_seed(global_config.runtime_random_seed)
 
     ##### Executable Related Functions #####
     def shard_args_to_bufs(self, shard_indices: Sequence[Sequence[Index]],
@@ -984,6 +998,11 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
         outs_handler = pxla.local_avals_to_results_handler(
             sharding_specs, avals)
         return outs_handler
+
+    def set_runtime_random_seed(self, seed: int):
+        for d in self.devices:
+            if d is not None:
+                d.set_seed(seed)
 
     ##### Profiling Related Functions #####
     def get_remote_timer(self, timer_name: str):
@@ -1134,7 +1153,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             worker = cls.options(runtime_env={
                 "env_vars": env_vars
             }).remote(self.server_address, self.num_hosts, i, self.mesh_id,
-                      node_resource)
+                      node_resource, global_config.runtime_random_seed)
             self.workers.append(worker)
         self.launched = True
 
@@ -1250,7 +1269,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                      self.num_hosts * self.num_devices_per_host))
                 ret_bufs.append(bufs)
             else:
-                if isinstance(arg, DistributedArray) and arg.indices == indices:
+                if (isinstance(arg, DistributedArray) and
+                        arg.device_mesh == self and arg.indices == indices):
                     # Fast path for DistributedArray
                     ret_bufs.append(arg.remote_buffers)
                 elif isinstance(arg, ReplicatedDistributedArray):
@@ -1318,8 +1338,12 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         if self.workers is None or not ray.is_initialized():
             return
 
-        for i in range(self.num_hosts):
-            self.workers[i].delete_executable.remote(exec_uuid)
+        for w in self.workers:
+            w.delete_executable.remote(exec_uuid)
+
+    def set_runtime_random_seed(self, seed: int):
+        for w in self.workers:
+            w.set_runtime_random_seed.remote(seed)
 
     ##### Profiling and Debugging Related Functions #####
     def profile_hlo_ops(self,
@@ -1808,16 +1832,18 @@ class VirtualPhysicalMesh:
         for i in range(len(sliced_virtual_meshes)):
             threads[i].join()
 
-        self.launched_physical_mesh_group = (
-            PhysicalDeviceMeshGroup(physical_meshes))
+        self.launched_physical_mesh_group = (PhysicalDeviceMeshGroup(
+            physical_meshes, self))
         return self.launched_physical_mesh_group
 
 
 class PhysicalDeviceMeshGroup:
     """A list of physical devices that forms a pipeline."""
 
-    def __init__(self, meshes: Sequence[DistributedPhysicalDeviceMesh]):
+    def __init__(self, meshes: Sequence[DistributedPhysicalDeviceMesh],
+                 parent: VirtualPhysicalMesh):
         self.meshes = list(meshes)
+        self.parent = parent
         self.collective_groups: List[List[Any]] = [
             [None for _ in range(len(self))] for _ in range(len(self))
         ]
@@ -1877,6 +1903,10 @@ class PhysicalDeviceMeshGroup:
                                               (arg,))[0])
 
         return rets
+
+    def set_runtime_random_seed(self, seed: int):
+        for m in self.meshes:
+            m.set_runtime_random_seed(seed + m.mesh_id << 20)
 
     def sync_workers(self):
         """Sync device activities on all workers."""
@@ -2121,6 +2151,16 @@ def get_global_virtual_physical_mesh():
     return global_virtual_physical_mesh
 
 
+def set_seed(seed: int):
+    global_config.runtime_random_seed = seed
+
+    if global_physical_mesh:
+        global_physical_mesh.set_runtime_random_seed(seed)
+    if global_virtual_physical_mesh:
+        global_virtual_physical_mesh.launched_physical_mesh_group.\
+            set_runtime_random_seed(seed)
+
+
 ########################################
 # Register ShardArg Handler
 ########################################
@@ -2168,7 +2208,9 @@ def _shard_array(array, device_mesh, indices, num_batch=1, batch_dim=0):
     else:
         # Create shards according to indices for a numpy array
         if array.shape == ():
-            datas = [array] * len(indices)
+            # need a special branch because np.ascontiguousarray does not
+            # correctly preserve the shapes of rank-0 arrays.
+            datas = [np.asarray(array)] * len(indices)
         else:
             datas = [np.ascontiguousarray(array[i]) for i in indices]
         if num_batch > 1:

@@ -24,5 +24,5 @@ python3 test_auto_sharding_basic.py
 
 - More similar to how CI runs a file
 ```
-python3 run_all.py --filter test_auto_sharding_basic.py
+python3 run_all.py --run-pattern test_auto_sharding_basic.py
 ```

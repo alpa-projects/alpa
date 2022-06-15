@@ -23,7 +23,7 @@ from alpa.pipeline_parallel.stage_profiling import (
     compute_apply_grad_invar_size)
 from alpa.testing import (BertLayerModel, create_train_state,
                           get_bert_layer_train_step)
-from alpa.util import get_ray_namespace_str, OrderedSet
+from alpa.util import OrderedSet
 
 
 def _aval_key(a):
@@ -84,16 +84,19 @@ class StageConstructUtilTest(unittest.TestCase):
                             closed_jaxpr: ClosedJaxpr,
                             donated_invars,
                             num_microbatch=2):
+        inference_mode = False
+
         gensym_func = gensym([closed_jaxpr.jaxpr])
-        closed_jaxpr, compute_grad_jaxpr, apply_grad_jaxpr, barrier = (
+        closed_jaxpr, compute_grad_jaxpr, apply_grad_jaxpr, microbatch_bound = (
             split_compute_grad_and_apply_grad(closed_jaxpr, gensym_func,
-                                              num_microbatch))
-        have_apply_grad = barrier is not None
+                                              num_microbatch, inference_mode))
+        have_apply_grad = microbatch_bound is not None
         assert have_apply_grad
         reduction_vector = [True] * len(compute_grad_jaxpr.jaxpr.outvars)
-        (acc_grad_jaxpr, acc_grad_dict,
+        (acc_grad_jaxpr, microbatch_bound,
          grad_in_to_out) = compute_grad_to_accumulate_grad(
-             compute_grad_jaxpr, reduction_vector, gensym_func)
+             compute_grad_jaxpr, microbatch_bound, reduction_vector,
+             gensym_func, num_microbatch)
         acc_grad_invars = acc_grad_jaxpr.jaxpr.invars
         acc_grad_outvars = acc_grad_jaxpr.jaxpr.outvars
 
@@ -112,11 +115,11 @@ class StageConstructUtilTest(unittest.TestCase):
         num_forward_layers = len(jax_pipeline_layers) // 2
         layer_to_dummy_mesh = (list(range(num_forward_layers)) +
                                list(reversed(range(num_forward_layers))))
-        reduce_invars = [True] * len(barrier.invars)
+        reduce_invars = [True] * len(microbatch_bound.invars)
 
         (jax_apply_layers, _, _, _, _,
          dummy_donated_invars) = process_apply_gradient(
-             apply_grad_jaxpr, barrier, acc_grad_dict, jax_pipeline_layers,
+             apply_grad_jaxpr, microbatch_bound, jax_pipeline_layers,
              layer_to_dummy_mesh, gensym_func, num_microbatch,
              len(jax_pipeline_layers) // 2, global_invars, global_outvars,
              donated_invars, reduce_invars)
@@ -199,30 +202,9 @@ class StageConstructUtilTest(unittest.TestCase):
             apply_grad_only_invars.difference_update(compute_layers[i].outvars)
         assert apply_grad_only_invars.issubset(config.apply_grad_only_invars)
         assert apply_grad_only_invars.issuperset(config.apply_grad_only_invars)
+
         # check compile config
         config: CompileConfig = stage_config.compile_config
-        input_vars = OrderedSet()
-        for idx in compute_layer_indices:
-            input_vars.update(compute_layers[idx].invars)
-        for idx in compute_layer_indices:
-            input_vars.difference_update(compute_layers[idx].outvars)
-        input_vars.update(apply_grad_only_invars)
-        input_avals = [var.aval for var in input_vars]
-        _assert_avals_allmatch(input_avals, config.input_avals)
-
-        available_outvars = OrderedSet(compute_outvars)
-        available_outvars.update(global_outvars)
-        for idx in range(len(compute_layers)):
-            if idx not in compute_layer_indices:
-                available_outvars.update(compute_layers[idx].invars)
-        output_vars = OrderedSet()
-        for idx in compute_layer_indices:
-            output_vars.update(compute_layers[idx].outvars)
-        for layer in apply_grad_selected:
-            output_vars.update(layer.outvars)
-        output_vars.intersection_update(available_outvars)
-        output_avals = [var.aval for var in output_vars]
-        _assert_avals_allmatch(output_avals, config.output_avals)
         # Check of the two below is based on that donated inputs/outputs are
         # prior than others.
         backward_outs = OrderedSet()
@@ -232,18 +214,12 @@ class StageConstructUtilTest(unittest.TestCase):
         backward_outs.intersection_update(compute_outvars)
         assert config.output_acc_grad_indices == list(range(len(backward_outs)))
 
-        assert len(config.donate_invars) == len(config.input_avals)
-        inputs = OrderedSet()
-        for idx in compute_layer_indices:
-            inputs.update(compute_layers[idx].invars)
-        for layer in apply_grad_selected:
-            inputs.update(layer.invars)
-        inputs.intersection_update(
-            OrderedSet(donation_mapping.keys()).union(
-                apply_grad_donate_map.keys()))
-        donate_invars = len(inputs)
-        for i, donate in enumerate(config.donate_invars):
-            assert (i >= donate_invars) ^ donate
+        available_outvars = OrderedSet(compute_outvars)
+        available_outvars.update(global_outvars)
+        for idx in range(len(compute_layers)):
+            if idx not in compute_layer_indices:
+                available_outvars.update(compute_layers[idx].invars)
+
         # check profile config
         config: ProfileConfig = stage_config.profile_config
         input_vars = OrderedSet()

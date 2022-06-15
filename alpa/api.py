@@ -10,7 +10,7 @@ from jax.core import AbstractValue
 from jax.experimental.maps import FrozenDict
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 
-from alpa.device_mesh import (init_global_cluster, shutdown_global_cluster)
+from alpa.device_mesh import init_global_cluster, shutdown_global_cluster
 from alpa.parallel_method import ParallelMethod, ShardParallel
 from alpa.pipeline_parallel.primitive_def import mark_gradient
 from alpa.util import (auto_donate_argnums, auto_static_argnums,
@@ -201,13 +201,6 @@ def _compile_parallel_executable(
                                      batch_invars, *avals)
 
 
-def set_parallelize_options(*args, **kwargs):
-    """Deprecated. see https://github.com/alpa-projects/alpa/pull/451"""
-    raise RuntimeError("The API `set_parallelize_options` is deprecated. "
-                       "Check https://github.com/alpa-projects/alpa/pull/451 "
-                       "on how to upgrade.")
-
-
 def clear_executable_cache():
     """Clear all cached executables."""
     _compile_parallel_executable.cache_clear()
@@ -242,7 +235,7 @@ def value_and_grad(*args, **kwargs):
 
     def ret(*call_args, **call_kwargs):
         func = api.value_and_grad(*args, **kwargs)
-        val, ggrad = func(*call_args, **call_kwargs)
-        return mark_gradient((val, ggrad))
+        val, grads = func(*call_args, **call_kwargs)
+        return mark_gradient((val, grads))
 
     return ret

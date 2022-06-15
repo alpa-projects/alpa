@@ -414,8 +414,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh,
                                       self.as_option, i, 1)
 
-    @unittest.skip("This test is broken after we disallow some replicated iota."
-                  )
+    @unittest.skip("This test is broken after we disallow some replicated iota")
     def test_bert_mlm_model_parallel(self):
         batch_size = 16
         seq_len = 16

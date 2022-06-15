@@ -1,8 +1,8 @@
-"""Define a new Jax primitive pipeline_maker to mark the boundary of pipeline
+"""Define a new Jax primitive pipeline_marker to mark the boundary of pipeline
 computations."""
 import numpy as np
 
-from jax.core import Primitive, abstract_unit, new_jaxpr_eqn, DropVar
+from jax.core import Primitive, new_jaxpr_eqn
 from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
 from jax.tree_util import tree_flatten, tree_unflatten
@@ -40,8 +40,6 @@ def mark_pipeline_jaxpreqn(invars, outvars, name: str, mark_type: str):
     """Make a new jaxpr equation."""
     if mark_type not in ("start", "end", "jvp_start", "jvp_end"):
         raise ValueError(f"Unknown mark type: {mark_type}")
-    if len(outvars) == 0:
-        outvars = [DropVar(abstract_unit)]
     return new_jaxpr_eqn(invars, outvars, pipeline_p, {
         "name": name,
         "mark_type": mark_type
@@ -78,12 +76,27 @@ def xla_custom_call(c, call_name, op_type, op_name, *args):
     flattened_byte_sizes = flatten_shape_byte_sizes(input_shape)
     op_metadata = xc.OpMetadata(op_type=op_type, op_name=op_name)
     c.set_op_metadata(op_metadata)
+
+    if len(args) == 0:
+        # If the custom call is an empty marker, it cannot be annotated
+        # by sharding propagation, so we set a sharding for it.
+        sharding = xc.OpSharding()
+        sharding.type = sharding.type.REPLICATED
+        c.set_sharding(sharding)
+
+    # Note that the custom call used here all act like an identity function,
+    # so the inputs and outputs are alias pairs. However, we do not set them
+    # here because the alias setting will be dropped during jaxpr->HLO
+    # conversion due to a bug in MLIR. We use a custom XLA pass
+    # RematIdentityFixer to set the alias for "identity" and "pipeline_marker".
     output_tuple = xc.ops.CustomCall(c,
                                      call_name,
                                      operands=(input_params,),
                                      shape=input_shape,
+                                     has_side_effect=True,
                                      opaque=flattened_byte_sizes.tobytes())
     c.clear_op_metadata()
+    c.clear_sharding()
     return output_tuple
 
 
@@ -101,12 +114,13 @@ def xla_pipeline_marker(c, mark_type, name, *args):
 def _pipeline_impl(*args, **kwargs):
     # pylint: disable=unused-argument
     # The pipeline marker acts as an identity function.
-    return args if len(args) > 0 else (None,)
+    return args
 
 
 def _pipeline_abstract_eval(*args, **kwargs):
     # pylint: disable=unused-argument
-    return args if len(args) > 0 else (abstract_unit,)
+    # The pipeline marker acts as an identity function.
+    return args
 
 
 def _pipeline_xla_translation(c, *args, **kwargs):

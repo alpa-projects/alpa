@@ -6,7 +6,7 @@ import jax
 import ray
 
 from alpa import init, global_config
-from alpa.util import run_cmd, get_ray_namespace_str, disable_tqdm_globally
+from alpa.util import run_cmd, disable_tqdm_globally
 
 from benchmark_3d_one_case_gpt_bert import benchmark_gpt_bert_internal
 from benchmark_3d_one_case_moe import benchmark_moe_internal
@@ -15,10 +15,14 @@ from benchmark_3d_one_case_wresnet import benchmark_wresnet_internal
 TMP_PICKLE_FILE_NAME = "/tmp/tmp_transfer.pkl"
 
 
-def benchmark_one_case(model, case, niter,
-                       num_hosts, num_devices_per_host,
+def benchmark_one_case(model,
+                       case,
+                       niter,
+                       num_hosts,
+                       num_devices_per_host,
                        use_separate_process=False,
-                       dump_result=False, disable_tqdm=False):
+                       dump_result=False,
+                       disable_tqdm=False):
     if disable_tqdm:
         disable_tqdm_globally()
 
@@ -30,15 +34,18 @@ def benchmark_one_case(model, case, niter,
 
         # Run benchmark
         if model in ["gpt", "bert"]:
-            result = benchmark_gpt_bert_internal(model, case, niter, num_hosts, num_devices_per_host)
+            result = benchmark_gpt_bert_internal(model, case, niter, num_hosts,
+                                                 num_devices_per_host)
         elif model == "moe":
-            result = benchmark_moe_internal(case, niter, num_hosts, num_devices_per_host)
+            result = benchmark_moe_internal(case, niter, num_hosts,
+                                            num_devices_per_host)
         elif model == "wresnet":
             global_config.xla_client_mem_fraction = 0.88
             # Due to legacy issues, we turn off auto-tuning. Although the performance
             # will be much better if we turn it on
             global_config.xla_gpu_autotune_level = 0
-            result = benchmark_wresnet_internal(case, niter, num_hosts, num_devices_per_host)
+            result = benchmark_wresnet_internal(case, niter, num_hosts,
+                                                num_devices_per_host)
         else:
             raise ValueError(f"Invalid model: {model}")
     else:
@@ -73,14 +80,19 @@ if __name__ == "__main__":
     parser.add_argument("--case", type=str, required=True)
     parser.add_argument("--num-hosts", type=int)
     parser.add_argument("--num-devices-per-host", type=int)
-    parser.add_argument("--dump-result", action="store_true",
-        help="Dump results into a temporary pickle file")
+    parser.add_argument("--dump-result",
+                        action="store_true",
+                        help="Dump results into a temporary pickle file")
     parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
 
     run_cmd("mkdir -p tmp")
     case = eval(args.case)
-    benchmark_one_case(args.model, case, args.niter,
-                       args.num_hosts, args.num_devices_per_host,
-                       use_separate_process=False, dump_result=args.dump_result,
+    benchmark_one_case(args.model,
+                       case,
+                       args.niter,
+                       args.num_hosts,
+                       args.num_devices_per_host,
+                       use_separate_process=False,
+                       dump_result=args.dump_result,
                        disable_tqdm=args.disable_tqdm)

@@ -7,7 +7,6 @@ import os
 import subprocess
 import time
 from collections import OrderedDict
-from datetime import datetime
 from functools import partial, partialmethod
 import threading
 from typing import Sequence, Any, Union
@@ -21,8 +20,9 @@ from jax._src.dlpack import from_dlpack, to_dlpack
 from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.api_util import shaped_abstractify
 from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
-                      ShapedArray, Var)
+                      ShapedArray, Var, AbstractValue)
 from jax.experimental.maps import FrozenDict
+from jax import linear_util as lu
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla, pxla
 from jax.interpreters.xla import _DeviceArray
@@ -517,7 +517,7 @@ def compile_concatenate(backend, mesh_shape, sharding_spec, batch_size,
                         batch_dim, aval):
     num_devices = np.prod(mesh_shape)
     sharding = pxla.sharding_spec_sharding_proto(sharding_spec)
-    build_random_seed = global_config.build_random_seed
+    build_random_seed = global_config.compile_random_seed
     compile_options = get_compile_options(
         num_replicas=1,
         num_partitions=num_devices,
@@ -620,9 +620,14 @@ def clone_jaxpr(closed_jaxpr: ClosedJaxpr,
     return ClosedJaxpr(jaxpr, consts)
 
 
-def trace_jaxpr_with_micro_batch(fun, batch_invars, num_micro_batches,
-                                 raw_avals):
+def trace_jaxpr_with_micro_batch(fun: lu.WrappedFun,
+                                 batch_invars: Sequence[bool],
+                                 num_micro_batches: int,
+                                 raw_avals: Sequence[AbstractValue],
+                                 batch_dim: int = 0):
     """Trace the jaxpr of the computation of a micro batch."""
+    assert batch_dim == 0, "Only support batch_dim == 0"
+
     avals = []
     batch_size = None
     for aval, is_batch_var in zip(raw_avals, batch_invars):
@@ -641,22 +646,24 @@ def trace_jaxpr_with_micro_batch(fun, batch_invars, num_micro_batches,
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    return closed_jaxpr, avals, batch_size
+    return closed_jaxpr, batch_size
 
 
-def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
-                    sliced_eqns) -> Sequence[ClosedJaxpr]:
+def slices_to_jaxpr(
+        closed_jaxpr: ClosedJaxpr,
+        sliced_eqns: Sequence[Sequence[JaxprEqn]]) -> Sequence[ClosedJaxpr]:
     """Wrap sliced equations to a list of ClosedJaxpr."""
     n_eqns = len(sliced_eqns)
     global_invars = OrderedSet(closed_jaxpr.jaxpr.invars)
-    global_consts = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
     global_outvars = OrderedSet(
         var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
-    result = []
+    global_consts = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
+
     layer_invars = [OrderedSet() for _ in range(n_eqns)]
     layer_outvars = [OrderedSet() for _ in range(n_eqns)]
     layer_consts = [{} for _ in range(n_eqns)]
-    var_layer_dict = {}
+
+    var_layer_dict = {}  # Dict[var -> layer_idx]
     for i, eqns in enumerate(sliced_eqns):
         for eqn in eqns:
             for var in eqn.invars:
@@ -676,6 +683,8 @@ def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
                     var_layer_dict[var] = i
                 if var in global_outvars:
                     layer_outvars[i].add(var)
+
+    result = []
     for i, eqns in enumerate(sliced_eqns):
         new_jaxpr = Jaxpr(list(layer_consts[i].keys()), list(layer_invars[i]),
                           list(layer_outvars[i]), eqns)
@@ -683,6 +692,14 @@ def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
                                        list(layer_consts[i].values()))
         result.append(new_closed_jaxpr)
     return result
+
+
+def get_var_mapping(mapping, var):
+    """map the var to a new value if var is Var and in the mapping."""
+    if isinstance(var, Var) and var in mapping:
+        return mapping[var]
+    else:
+        return var
 
 
 def log_jaxpr(jaxpr: ClosedJaxpr, filename: str):
@@ -793,6 +810,25 @@ def benchmark_func(run_func,
         costs.append(time.time() - tic)
 
     return np.array(costs) / number
+
+
+def run_with_timeout(func, args=(), kwargs=None, timeout=None):
+    """Run a function with timeout."""
+    ret_value = []
+
+    def _target_func():
+        ret_value.append(func(*args, **(kwargs or {})))
+
+    t = threading.Thread(target=_target_func)
+    t.start()
+    t.join(timeout=timeout)
+    if t.is_alive():
+        raise TimeoutError
+
+    if not ret_value:
+        raise RuntimeError
+
+    return ret_value[0]
 
 
 ########################################
@@ -936,25 +972,6 @@ def run_cmd(cmd: str):
     return ret
 
 
-def run_with_timeout(func, args=(), kwargs=None, timeout=None):
-    """Run a function with timeout."""
-    ret_value = []
-
-    def _target_func():
-        ret_value.append(func(*args, **(kwargs or {})))
-
-    t = threading.Thread(target=_target_func)
-    t.start()
-    t.join(timeout=timeout)
-    if t.is_alive():
-        raise TimeoutError
-
-    if not ret_value:
-        raise RuntimeError
-
-    return ret_value[0]
-
-
 def list_gpu_info():
     """List all gpu information by calling nvidia-sim."""
     ret = subprocess.getoutput("nvidia-smi -L")
@@ -985,18 +1002,11 @@ def get_num_hosts_and_num_devices(args):
             num_hosts = 1
             num_devices_per_host = list_gpu_info().count("UUID")
         else:
-            ray.init(address="auto", namespace=get_ray_namespace_str())
+            ray.init(address="auto")
             num_hosts = len(ray.nodes())
             num_devices_per_host = int(
                 ray.cluster_resources()["GPU"]) // num_hosts
     return num_hosts, num_devices_per_host
-
-
-def get_ray_namespace_str(prefix=global_config.default_ray_namespace_prefix):
-    """Get a unique ray namespace str to avoid some annoyed warnings."""
-    date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    namespace_str = f"{prefix}-{date_str}"
-    return namespace_str
 
 
 def write_tsv(heads: Sequence[str],
@@ -1079,14 +1089,6 @@ def compute_param_number(pytree: PyTreeDef):
         if hasattr(x, "shape"):
             ret += np.prod(x.shape)
     return ret
-
-
-def get_var_mapping(mapping, var):
-    """map the var to a new value if var is Var and in the mapping."""
-    if isinstance(var, Var) and var in mapping:
-        return mapping[var]
-    else:
-        return var
 
 
 _DISABLE_NUMBA = False

@@ -4,12 +4,12 @@ from functools import partial, wraps
 from typing import Callable, Union, Sequence
 
 import numpy as np
-from jax import tree_flatten
+from jax import tree_flatten, lax
 from jax._src.api import _check_callable
 from jax._src.api import make_jaxpr
 from jax._src.tree_util import tree_unflatten
 from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun,
-                      new_jaxpr_eqn, gensym)
+                      new_jaxpr_eqn, gensym, raise_to_shaped, get_aval)
 from jax.interpreters.partial_eval import remat_call_p
 
 from alpa.pipeline_parallel.layer_stats import (global_invar_size,
@@ -50,10 +50,13 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
     layer_pipeline_invars = [OrderedSet() for _ in range(layer_num)]
     layer_pipeline_outvars = [OrderedSet() for _ in range(layer_num)]
     var_layer_dict = {}
+    var_mapping = {}
 
+    # build mapping dicts for global invars
     for var in closed_jaxpr.jaxpr.invars:
         var_layer_dict[var] = -1
 
+    # build mapping dicts for all eqns
     for i, eqns in enumerate(sliced_eqns):
         for eqn in eqns:
             for var in eqn.invars:
@@ -68,15 +71,29 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
                 if not isinstance(var, DropVar):
                     var_layer_dict[var] = i
 
-    for var in closed_jaxpr.jaxpr.outvars:
-        if (not isinstance(var, Literal) and
-                var not in closed_jaxpr.jaxpr.constvars and
-                var_layer_dict[var] != -1):
+    # build mapping dict for global outvars
+    gensym_func = gensym([closed_jaxpr.jaxpr])
+    literal_outvar_eqns = []
+    literal_outvar_marker_invars = []
+    literal_outvar_marker_outvars = []
+    for idx, var in enumerate(closed_jaxpr.jaxpr.outvars):
+        if isinstance(var, Literal):
+            # add a dummy equation to transform a Literal into a normal Var
+            zero_literal = Literal(0, raise_to_shaped(get_aval(0)))
+            new_var = gensym_func(var.aval)
+            new_eqn = new_jaxpr_eqn([var, zero_literal], [new_var], lax.add_p,
+                                    {})
+            literal_outvar_eqns.append(new_eqn)
+            literal_outvar_marker_invars.append(new_var)
+            literal_outvar_marker_outvars.append(gensym_func(var.aval))
+            var_mapping[idx] = literal_outvar_marker_outvars[-1]
+        elif var in closed_jaxpr.jaxpr.constvars or var_layer_dict[var] == -1:
+            raise NotImplementedError(
+                "Does not support this use case of output var.")
+        else:
             layer_pipeline_outvars[var_layer_dict[var]].add(var)
 
-    gensym_func = gensym([closed_jaxpr.jaxpr])
-    var_mapping = {}
-
+    # build new equations
     new_eqns = []
     for i, eqns in enumerate(sliced_eqns):
         # pipeline start eqn
@@ -91,9 +108,10 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
             computation_var_mapping[var] = new_var
         new_eqns.append(
             mark_pipeline_jaxpreqn(pipeline_start_invars,
-                                   pipeline_start_outvars, str(i), "start"))
+                                   pipeline_start_outvars, f"layer_{i}",
+                                   "start"))
         # all other eqns
-        for eqn in eqns:
+        for eqn in (eqns + literal_outvar_eqns if i == 0 else eqns):
             new_invars = [
                 get_var_mapping(computation_var_mapping, var)
                 for var in eqn.invars
@@ -101,9 +119,12 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
             new_eqns.append(
                 new_jaxpr_eqn(new_invars, eqn.outvars, eqn.primitive,
                               eqn.params, eqn.source_info))
+
         # pipeline end eqn
-        pipeline_end_invars = []
-        pipeline_end_outvars = []
+        pipeline_end_invars = list(
+            literal_outvar_marker_invars) if i == 0 else []
+        pipeline_end_outvars = list(
+            literal_outvar_marker_outvars) if i == 0 else []
         for var in layer_pipeline_outvars[i]:
             new_var = gensym_func(var.aval)
             pipeline_end_invars.append(
@@ -112,10 +133,15 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
             var_mapping[var] = new_var
         new_eqns.append(
             mark_pipeline_jaxpreqn(pipeline_end_invars, pipeline_end_outvars,
-                                   str(i), "end"))
-    new_outvars = [
-        get_var_mapping(var_mapping, var) for var in closed_jaxpr.jaxpr.outvars
-    ]
+                                   f"layer_{i}", "end"))
+
+    new_outvars = []
+    for idx, var in enumerate(closed_jaxpr.jaxpr.outvars):
+        if isinstance(var, Literal):
+            new_outvars.append(var_mapping[idx])
+        else:
+            new_outvars.append(get_var_mapping(var_mapping, var))
+
     new_closed_jaxpr = clone_jaxpr(closed_jaxpr,
                                    outvars=new_outvars,
                                    eqns=new_eqns)

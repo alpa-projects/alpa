@@ -58,6 +58,8 @@ class PipeshardDriverExecutable:
         self.load_info = pipeshard_config.load_info
         # List[stage_idx -> str]
         self.hlo_texts_after_spmd_partitioner = []
+        self.hlo_texts_before_spmd_partitioner = (
+            pipeshard_config.hlo_texts_before_spmd_partitioner)
         # List[stage_idx -> executable_uuid]
         self.executable_uuids = pipeshard_config.executable_uuids
 
@@ -198,7 +200,7 @@ class PipeshardDriverExecutable:
 
         return self.outs_handler(self.mesh_group, output_bufs)
 
-    def get_placement_specs(self):
+    def get_input_placement_specs(self):
         """Return the preferred placement specs for input arguments."""
 
         def load_info_to_placement_spec(load_info):
@@ -276,10 +278,7 @@ class PipeshardDriverExecutable:
             self.hlo_texts_after_spmd_partitioner = ray.get(hlo_texts)
             return self.hlo_texts_after_spmd_partitioner
         else:
-            ret = []
-            for stage in self.stages:
-                ret.append(stage.get_hlo_text())
-            return ret
+            return self.hlo_texts_before_spmd_partitioner
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size on each mesh."""

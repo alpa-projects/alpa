@@ -291,7 +291,7 @@ def _rewrite_jaxpr_to_reduced_outputs(compute_jaxpr, to_reduce_pre_marker_outs,
 def compute_grad_to_accumulate_grad(
         compute_jaxpr: ClosedJaxpr, microbatch_bound: JaxprEqn,
         reduction_vector: Sequence[bool], gensym_fn,
-        num_microbatch) -> Tuple[ClosedJaxpr, Dict[Var, Var], Dict[Var, Var]]:
+        num_microbatch) -> Tuple[ClosedJaxpr, JaxprEqn, Dict[Var, Var]]:
     """Transform compute_grad jaxpr with pipeline markers into accumulate_grad
     jaxpr.
 
@@ -304,7 +304,7 @@ def compute_grad_to_accumulate_grad(
 
     Returns:
         acc_grad_jaxpr: The accumulate grad jaxpr
-        microbatch_bound: The updated microbatch boundary.
+        microbatch_bound: The updated microbatch boundary
         reduced_in_to_out: From accumulated gradient inputs to outputs
     """
     if num_microbatch <= 1:

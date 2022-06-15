@@ -248,6 +248,7 @@ class PipeshardConfig:
     outs_handler: Callable
     # Others
     load_info: LoadInfo
+    hlo_texts_before_spmd_partitioner: Sequence[str]
     flop_count: int
 
 
@@ -275,6 +276,9 @@ class PipelineInstEmitter:
         self.num_batch = num_batch
         self.in_tree = in_tree
         self.flop_count = flop_count
+        self.hlo_texts_before_spmd_partitioner = [
+            x.get_hlo_text() for x in stages
+        ]
 
         ##### Internal states #####
         self.uuid_counter = 0  # counter for local buffer uuid
@@ -437,24 +441,25 @@ class PipelineInstEmitter:
                                             input_shard_specs)
         return PipeshardConfig(
             # Executable configs
-            instruction_lists=instruction_lists,
-            xla_stages=self.stages,
-            executable_configs=executable_config_lists,
-            executable_uuids=executable_uuids,
-            schedule=self.schedule,
+            instruction_lists,
+            self.stages,
+            executable_config_lists,
+            executable_uuids,
+            self.schedule,
             # Resharding task configs
-            device_str_groups=device_str_groups,
-            resharding_tasks=self._gather_resharding_tasks(),
+            device_str_groups,
+            self._gather_resharding_tasks(),
             # Input configs
-            input_config=input_config,
-            grad_uuids=grad_uuids,
-            reduced_var_uuid_lists=reduced_var_uuid_lists,
+            input_config,
+            grad_uuids,
+            reduced_var_uuid_lists,
             # Output configs
-            output_local_uuid_list=output_local_uuid_list,
-            outs_handler=outs_handler,
+            output_local_uuid_list,
+            outs_handler,
             # Others
-            load_info=load_info,
-            flop_count=self.flop_count)
+            load_info,
+            self.hlo_texts_before_spmd_partitioner,
+            self.flop_count)
 
     def _compile_get_vars_from_mesh(self, invars, dst_specs, mesh_idx,
                                     batch_idx, instruction_lists,

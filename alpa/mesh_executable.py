@@ -63,7 +63,7 @@ class MeshDriverExecutable(ABC):
         """
         raise NotImplementedError()
 
-    def get_placement_specs(self):
+    def get_input_placement_specs(self):
         """Return the preferred placement specs for input arguments."""
         raise NotImplementedError()
 
@@ -372,7 +372,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
         return self.outs_handler(output_bufs)
 
-    def get_placement_specs(self):
+    def get_input_placement_specs(self):
         """Return the preferred placement specs for input arguments."""
         placement_specs = [
             PlacementSpec((self.physical_mesh.mesh_id,), (sharding_spec,))
@@ -808,7 +808,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         # Wrap output buffers as ShardedArray
         return self.outs_handler(output_bufs)
 
-    def get_placement_specs(self):
+    def get_input_placement_specs(self):
         """Return the preferred placement specs for input arguments."""
         placement_specs = [
             PlacementSpec((self.physical_mesh.mesh_id,), (sharding_spec,))

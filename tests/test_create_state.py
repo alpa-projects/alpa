@@ -24,7 +24,7 @@ class CreateStateTest(unittest.TestCase):
     def run_test(self, method):
         use_bias = True
         batch_size = 8
-        input_dim = output_dim = hidden_dim = 128
+        input_dim = output_dim = hidden_dim = 32
 
         class Model(nn.Module):
 

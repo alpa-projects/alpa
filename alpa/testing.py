@@ -155,19 +155,13 @@ def get_mlp_train_step(parallel_method, manual_pipeline_layer, use_remat,
 def get_mlp_inference_step(parallel_method, manual_pipeline_layer):
 
     def inference_step(state, batch):
-
-        def forward(params):
-            out = state.apply_fn(params, batch["x"])
-            loss = jnp.mean((out - batch["y"])**2)
-            return out, loss
-
-        if parallel_method:
-            forward = decorate_loss_fn(forward, manual_pipeline_layer, False, 2)
-
-        out = forward(state.params)
-        return out
+        out = state.apply_fn(state.params, batch["x"])
+        loss = jnp.mean((out - batch["y"])**2)
+        return out, loss
 
     if parallel_method:
+        inference_step = decorate_loss_fn(inference_step, manual_pipeline_layer,
+                                          False, 2)
         return parallelize(inference_step,
                            donate_argnums=(),
                            method=parallel_method)
@@ -179,29 +173,23 @@ def get_bert_layer_collection_inference_step(parallel_method,
                                              manual_pipeline_layer, num_layers):
 
     def inference_step(state, batch):
-
-        def forward(params):
-            out = state.apply_fn(params,
-                                 batch["x"],
-                                 batch["attention_mask"],
-                                 output_attentions=True,
-                                 output_hidden_states=True)
-            loss = jnp.mean((out.last_hidden_state - batch["y"])**2)
-            # FIXME(yonghao): Otherwise, the first hidden state is an input,
-            #   but we do not support outputing an input(not batch-related
-            #   outputs).
-            out = FlaxBaseModelOutput(last_hidden_state=out.last_hidden_state,
-                                      hidden_states=out.hidden_states[1:],
-                                      attentions=out.attentions)
-            return out, loss
-
-        if parallel_method:
-            forward = decorate_loss_fn(forward, manual_pipeline_layer, False,
-                                       num_layers)
-        out = forward(state.params)
-        return out
+        out = state.apply_fn(state.params,
+                             batch["x"],
+                             batch["attention_mask"],
+                             output_attentions=True,
+                             output_hidden_states=True)
+        loss = jnp.mean((out.last_hidden_state - batch["y"])**2)
+        # FIXME(yonghao): Otherwise, the first hidden state is an input,
+        #   but we do not support outputing an input(not batch-related
+        #   outputs).
+        out = FlaxBaseModelOutput(last_hidden_state=out.last_hidden_state,
+                                  hidden_states=out.hidden_states[1:],
+                                  attentions=out.attentions)
+        return out, loss
 
     if parallel_method:
+        inference_step = decorate_loss_fn(inference_step, manual_pipeline_layer,
+                                          False, num_layers)
         return parallelize(inference_step,
                            donate_argnums=(),
                            method=parallel_method)

@@ -28,7 +28,7 @@ class CreateStateExecutable(PipeshardDriverExecutable):
     def __init__(self,
                  mesh_group: PhysicalDeviceMeshGroup,
                  pipeshard_config: PipeshardConfig,
-                 placement_specs: Sequence[PlacementSpec],
+                 target_placement_specs: Sequence[PlacementSpec],
                  out_tree: Optional[PyTreeDef] = None,
                  static_argnums: Optional[Sequence[int]] = None):
         super().__init__(mesh_group=mesh_group,
@@ -36,13 +36,14 @@ class CreateStateExecutable(PipeshardDriverExecutable):
                          num_batch=1,
                          out_tree=out_tree,
                          static_argnums=static_argnums)
-        self.placement_specs = placement_specs
+        self.target_placement_specs = target_placement_specs
 
     def launch_on_driver(self, *args):
         outputs = super().launch_on_driver(*args)
 
         # Handle the creation of ReplicatedDistributedArray
-        for idx, (array, spec) in enumerate(zip(outputs, self.placement_specs)):
+        for idx, (array,
+                  spec) in enumerate(zip(outputs, self.target_placement_specs)):
             assert array.device_mesh.mesh_id == spec.mesh_ids[0]
             assert array.indices == pxla.spec_to_indices(
                 array.shape, spec.sharding_specs[0])
@@ -79,7 +80,7 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
 
     # Compile train_step to get the placement specs.
     executable = train_step.get_executable(state_aval, other_args)
-    placement_specs = executable.get_placement_specs()[0]
+    placement_specs = executable.get_input_placement_specs()[0]
     placement_specs, _ = tree_flatten(placement_specs)
 
     if isinstance(executable,
@@ -94,7 +95,7 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
         # Run sharding propagation
         xe.set_hlo_module_output_shardings(hlo_module, sharding_protos)
         hlo_module, strategy_config = run_auto_sharding_pass(
-            hlo_module, avals, out_avals, donated_invars,
+            hlo_module,
             physical_mesh.get_logical_mesh(
                 executable.strategy_config.logical_mesh_shape), "single", 1,
             AutoShardingOption(enable_auto_sharding=False))
@@ -130,7 +131,7 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
 
         return CreateStateExecutable(mesh_group=executable.mesh_group,
                                      pipeshard_config=pipeshard_config,
-                                     placement_specs=placement_specs,
+                                     target_placement_specs=placement_specs,
                                      out_tree=out_tree_thunk(),
                                      static_argnums=static_argnums)
 

@@ -161,9 +161,6 @@ class AutoShardingOption:
 
 def run_auto_sharding_pass(
         hlo_module: xe.HloModule,
-        avals: Sequence[ShapedArray],
-        out_avals: Sequence[ShapedArray],
-        donated_invars: Sequence[bool],
         logical_mesh: LogicalDeviceMesh,
         return_mode: str,
         num_micro_batches: int,
@@ -177,9 +174,6 @@ def run_auto_sharding_pass(
     Args:
       hlo_module: The hlo module got by tracing the jax function,
         whose status should be UNOPTIMIZED.
-      avals: The abstract values of input arguments.
-      out_avals: The abstract values of outputs.
-      donated_invars: Whether the arguments are donated.
       logical_mesh: The logical device mesh.
       return_mode: The mode of return value.
         The choices are {"single", "stages", "stage_and_hook_protos"}.

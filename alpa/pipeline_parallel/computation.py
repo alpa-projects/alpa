@@ -358,6 +358,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
 
     def get_hlo_text(self):
         """Get the HLO text."""
+        assert self.sharding_annotated_module is not None
         return self.sharding_annotated_module.to_string()
 
 
@@ -871,10 +872,7 @@ def generate_sharded_xla_computations_arguments(
         xe.set_hlo_module_output_shardings(hlo_module, sharding_protos)
 
     flops = xe.hlo_module_count_flop_dot_conv_only(hlo_module)
-    in_avals = [var.aval for var in invars]
-    out_avals = [var.aval for var in outvars]
-    jaxpr_args = in_avals, out_avals, dummy_donated_invars
-    return hlo_module, jaxpr_args, flops
+    return hlo_module, flops
 
 
 def generate_sharded_xla_computations(
@@ -889,14 +887,12 @@ def generate_sharded_xla_computations(
     Note: we merge the co-located forward and backward computation and compile
     them together to get a sharding strategy config.
     """
-    hlo_module, jaxpr_args, flops = generate_sharded_xla_computations_arguments(
+    hlo_module, flops = generate_sharded_xla_computations_arguments(
         name, jax_computations, computation_donate_invars, output_sharding_dict)
-    in_avals, out_avals, donated_invars = jaxpr_args
 
     #  pylint: disable=unbalanced-tuple-unpacking
     (computation_names, computation_modules,
-     strategy_config) = run_auto_sharding_pass(hlo_module, in_avals, out_avals,
-                                               donated_invars, logical_mesh,
+     strategy_config) = run_auto_sharding_pass(hlo_module, logical_mesh,
                                                "stages", num_micro_batches,
                                                autosharding_option)
 

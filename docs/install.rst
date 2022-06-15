@@ -130,9 +130,10 @@ You can check the installation by running the following test script.
   python3 tests/test_install.py
 
 
-Using Alpa for PyTorch [Experimental]
+PyTorch Frontend [Experimental]
 -------------------------------------
 
+While Alpa is mainly designed for Jax, Alpa also provides an experimental PyTorch frontend.
 Alpa supports PyTorch models that meet the following requirements:
 
 1. No input-dependent control flow
@@ -151,10 +152,7 @@ To enable Alpa for PyTorch, install the following dependencies:
     cd functorch/
     python3 setup.py install
 
-Please look at tests/test_torch_simple.py for usage example.
-
-TODO: add PyTorch examples in examples/ or tutorials/
-
+Please look at tests/test_torch_simple.py for usage examples.
 
 Troubleshooting
 ---------------

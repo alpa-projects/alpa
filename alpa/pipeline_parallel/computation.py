@@ -336,6 +336,9 @@ class XlaShardedPipelineComputation(PipelineComputation):
                                             strategy_config.logical_mesh_shape))
         self.input_sharding_specs = input_sharding_specs
         self.output_sharding_specs = output_sharding_specs
+        # The run_spmd_partitioner_pass modifies hlo module in-place,
+        # so the old hlo module cannot be accessed anymore
+        self.sharding_annotated_module = None
         self.spmd_partitioned_hlo_module = spmd_partitioned_hlo_module
         return spmd_partitioned_hlo_module
 
@@ -819,8 +822,10 @@ def generate_computations_from_modules(jax_computations, computation_names,
 
 
 def generate_sharded_xla_computations_arguments(
-        name: str, jax_computations: Sequence[JaxPipelineComputation],
-        computation_donate_invars):
+        name: str,
+        jax_computations: Sequence[JaxPipelineComputation],
+        computation_donate_invars: Sequence[bool],
+        output_sharding_dict: Dict[Var, pxla.ShardingSpec]):
     """
     Generates the arguments for distributed compilation.
 
@@ -859,6 +864,11 @@ def generate_sharded_xla_computations_arguments(
     backend = xb.get_backend(backend_name)
     hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, dummy_donated_invars,
                                      backend)
+
+    if output_sharding_dict:
+        sharding_protos = [output_sharding_dict[x].sharding_proto() for x in outvars]
+        xe.set_hlo_module_output_shardings(hlo_module, sharding_protos)
+
     flops = xe.hlo_module_count_flop_dot_conv_only(hlo_module)
     in_avals = [var.aval for var in invars]
     out_avals = [var.aval for var in outvars]
@@ -869,7 +879,8 @@ def generate_sharded_xla_computations_arguments(
 def generate_sharded_xla_computations(
         name: str, jax_computations: Sequence[JaxPipelineComputation],
         computation_donate_invars, donatable_lists, acc_grad_outvars,
-        num_micro_batches, logical_mesh, autosharding_option):
+        num_micro_batches, logical_mesh, autosharding_option,
+        output_sharding_dict):
     """
     Generate sharded XLA computations.
 
@@ -878,7 +889,7 @@ def generate_sharded_xla_computations(
     them together to get a sharding strategy config.
     """
     hlo_module, jaxpr_args, flops = generate_sharded_xla_computations_arguments(
-        name, jax_computations, computation_donate_invars)
+        name, jax_computations, computation_donate_invars, output_sharding_dict)
     in_avals, out_avals, donated_invars = jaxpr_args
 
     #  pylint: disable=unbalanced-tuple-unpacking
@@ -887,6 +898,7 @@ def generate_sharded_xla_computations(
                                                donated_invars, logical_mesh,
                                                "stages", num_micro_batches,
                                                autosharding_option)
+
     computations = generate_computations_from_modules(
         jax_computations, computation_names, computation_modules,
         computation_donate_invars, donatable_lists, acc_grad_outvars,

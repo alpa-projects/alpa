@@ -9,13 +9,17 @@ import jax.numpy as jnp
 import optax
 
 import alpa
-from alpa import (init, parallelize, ShardParallel, PipeshardParallel,
-                  CreateStateParallel, manual_layer_construction, fetch)
+from alpa import (init, shutdown, parallelize, ShardParallel,
+                  PipeshardParallel, CreateStateParallel,
+                  manual_layer_construction, fetch)
 
 
 class CreateStateTest(unittest.TestCase):
     def setUp(self):
         init(cluster="ray")
+
+    def tearDown(self):
+        shutdown()
 
     def run_test(self, method):
         use_bias = True
@@ -72,15 +76,16 @@ class CreateStateTest(unittest.TestCase):
             else: # GradAccMeshDriverExecutable
                 expected = train_step.get_last_executable().global_arg_sharding_specs[:len(actual)]
             for x, y in zip(actual, expected):
-                assert x == y
+                assert x == y, f"{x} vs. {y}"
         elif isinstance(method, PipeshardParallel):
+            # The assertion is already in CreateStateExecutable::launch_on_driver
             pass
-
 
     def test_shard_parallel(self):
         method = ShardParallel(num_micro_batches=None)
         self.run_test(method)
 
+    def test_shard_parallel_grad_acc(self):
         method = ShardParallel(num_micro_batches=2)
         self.run_test(method)
 
@@ -91,7 +96,8 @@ class CreateStateTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    #suite.addTest(CreateStateTest("test_shard_parallel"))
+    suite.addTest(CreateStateTest("test_shard_parallel"))
+    suite.addTest(CreateStateTest("test_shard_parallel_grad_acc"))
     suite.addTest(CreateStateTest("test_pipeshard_parallel"))
     return suite
 

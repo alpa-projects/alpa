@@ -129,6 +129,9 @@ class LogicalDeviceMesh:
 @dataclasses.dataclass
 class AutoShardingOption:
     """Options of the auto-sharding solver."""
+    # Whether enable auto-sharding. If it is False, then the solver
+    # does tho run ILP but only uses the ShardingPropagation pass.
+    enable_auto_sharding: bool = True
     # Whether to allow all-gather during re-sharding.
     allow_all_gather: bool = True
     # Whether to allow all-to-all during re-sharding.
@@ -273,6 +276,8 @@ def run_auto_sharding_pass(
 
     with XlaPassContext({
             # Auto-sharding solver options
+            "auto_sharding::enable":
+                as_option.enable_auto_sharding,
             "auto_sharding::memory_budget_per_device":
                 memory_budget_per_device,
             "auto_sharding::force_all_gather_cost":

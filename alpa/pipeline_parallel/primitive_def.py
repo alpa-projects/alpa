@@ -76,6 +76,14 @@ def xla_custom_call(c, call_name, op_type, op_name, *args):
     flattened_byte_sizes = flatten_shape_byte_sizes(input_shape)
     op_metadata = xc.OpMetadata(op_type=op_type, op_name=op_name)
     c.set_op_metadata(op_metadata)
+
+    if len(args) == 0:
+        # If the custom call is an empty marker, it cannot be annotated
+        # by sharding propagation, so we set a sharding for it.
+        sharding = xc.OpSharding()
+        sharding.type = sharding.type.REPLICATED
+        c.set_sharding(sharding)
+
     # Note that the custom call used here all act like an identity function,
     # so the inputs and outputs are alias pairs. However, we do not set
     # them here because the alias setting will be dropped during jaxpr->HLO conversion
@@ -88,6 +96,7 @@ def xla_custom_call(c, call_name, op_type, op_name, *args):
                                      has_side_effect=True,
                                      opaque=flattened_byte_sizes.tobytes())
     c.clear_op_metadata()
+    c.clear_sharding()
     return output_tuple
 
 

@@ -1001,7 +1001,8 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def set_runtime_random_seed(self, seed: int):
         for d in self.devices:
-            d.set_seed(seed)
+            if d is not None:
+                d.set_seed(seed)
 
     ##### Profiling Related Functions #####
     def get_remote_timer(self, timer_name: str):

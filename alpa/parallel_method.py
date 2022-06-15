@@ -13,7 +13,7 @@ Based on this, alpa provides two base parallel methods:
 - PipeshardParallel: which combines pipeline parallelism and shard parallelism.
 """
 from abc import ABC, abstractmethod
-from typing import Callable, Optional, Sequence, Union
+from typing import Callable, Optional, Sequence, Union, Any
 
 from jax import linear_util as lu
 from jax.core import AbstractValue
@@ -52,10 +52,10 @@ class ParallelMethod(ABC):
 
 
 class ShardParallel(ParallelMethod):
-    """Use shard parallelism.
+    """Use shard parallelism to parallelize a function.
 
     Args:
-        devices: Specify the devices to use. If it is None, use all the devices
+        devices: Specify the devices to use. If it is None, use all devices
           in the cluster.
         num_micro_batches: The number of micro batches for gradient
           accumulation.
@@ -248,14 +248,28 @@ class LocalPipelineParallel(ParallelMethod):
 
 class CreateStateParallel(ParallelMethod):
     """
-    Parallelize the state initialization.
+    Follow a train_step function to create the initial states distirbutely.
+
+    Args:
+        train_step: The training step function.
+          See notes below for requirements.
+        other_args: Other arguments for calling the train_step function.
+
+    Notes:
+        To use thie parallel method, the function being parallelized should
+        return a single output `state`. Then train_step should take `state`
+        as the first argument and `other_args` as successive arguments.
+        See tests/test_create_state.py for example usages.
     """
-    def __init__(self, train_step: Callable, other_args: Sequence):
+    def __init__(self, train_step: "ParallelizedFunc", other_args: Sequence[Any]):
         from alpa.api import ParallelizedFunc
         assert isinstance(train_step, ParallelizedFunc)
 
         self.train_step = train_step
         self.other_args = other_args
+
+        # TODO(lmzheng): support more flexible signatures. For example, the state does not
+        # have to be the first argument.
 
     def compile_executable(
         self,

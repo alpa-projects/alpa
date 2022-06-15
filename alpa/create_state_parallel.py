@@ -1,5 +1,6 @@
 """Compile executables for creating training state distributedly."""
 from collections import defaultdict, deque
+from typing import Sequence, Optional
 
 from jax._src.lib import xla_bridge as xb, xla_extension as xe
 from jax.core import (Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym,
@@ -7,34 +8,52 @@ from jax.core import (Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym,
 from jax.interpreters import partial_eval as pe, pxla
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 
-from alpa.device_mesh import ReplicatedDistributedArray
-from alpa.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverExecutable
+from alpa.device_mesh import ReplicatedDistributedArray, PhysicalDeviceMeshGroup
+from alpa.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverExecutable, PlacementSpec
 from alpa.measure_record import StrategyConfig
 from alpa.pipeline_parallel.compile_executable import compile_pipeshard_executable_internal
 from alpa.pipeline_parallel.layer_construction import add_pipeline_marks_for_sliced_eqns
+from alpa.pipeline_parallel.pipeshard_executable import PipeshardDriverExecutable
+from alpa.pipeline_parallel.runtime_emitter import PipeshardConfig
 from alpa.pipeline_parallel.stage_construction import UniformStageOption
-from alpa.shard_parallel.auto_sharding import run_spmd_partitioner_pass, AutoShardingOption
+from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass, AutoShardingOption,
+    run_spmd_partitioner_pass)
 from alpa.util import jaxpr_to_hlo_module, OrderedSet
 
 
-class CreateStateExecutable:
-    def __init__(self, executable, placement_specs):
-        self.executable = executable
-        self.mesh_group = executable.mesh_group
+class CreateStateExecutable(PipeshardDriverExecutable):
+    """
+    A distributed executable that creates a training state for a function
+    parallelized by PipeshardParallel.
+    """
+    def __init__(self,
+                 mesh_group: PhysicalDeviceMeshGroup,
+                 pipeshard_config: PipeshardConfig,
+                 placement_specs: Sequence[PlacementSpec],
+                 out_tree: Optional[PyTreeDef] = None,
+                 static_argnums: Optional[Sequence[int]] = None):
+        super().__init__(mesh_group=mesh_group,
+                         pipeshard_config=pipeshard_config,
+                         num_batch=1,
+                         out_tree=out_tree,
+                         static_argnums=static_argnums)
         self.placement_specs = placement_specs
 
     def launch_on_driver(self, *args):
-        outputs = self.executable.launch_on_driver(*args)
+        outputs = super().launch_on_driver(*args)
 
-        for idx, spec in enumerate(self.placement_specs):
+        # Handle the creation of ReplicatedDistributedArray
+        for idx, (array, spec) in enumerate(zip(outputs, self.placement_specs)):
+            assert array.device_mesh.mesh_id == spec.mesh_ids[0]
+            assert array.indices == pxla.spec_to_indices(array.shape, spec.sharding_specs[0])
+
             if len(spec.mesh_ids) > 1:
-                src = outputs[idx]
                 meshes = tuple(self.mesh_group[i] for i in spec.mesh_ids)
-                distributed_arrays = [src]
+                distributed_arrays = [array]
                 for mesh_id, sharding_spec in zip(spec.mesh_ids[1:], spec.sharding_specs[1:]):
-                    indices = pxla.spec_to_indices(src.shape, sharding_spec)
+                    indices = pxla.spec_to_indices(array.shape, sharding_spec)
                     dis_array = self.mesh_group[mesh_id].shard_args_to_arrays(
-                        (src.aval,), (indices,), (sharding_spec,), (src,))[0]
+                        (array.aval,), (indices,), (sharding_spec,), (array,))[0]
                     distributed_arrays.append(dis_array)
                 outputs[idx] = ReplicatedDistributedArray(meshes, distributed_arrays)
 
@@ -66,11 +85,15 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk, static_argnums
             assert len(spec.mesh_ids) == 1
             sharding_protos.append(spec.sharding_specs[0].sharding_proto())
 
-        xe.set_hlo_module_output_shardings(hlo_module, sharding_protos)
         physical_mesh = executable.physical_mesh
 
-        run_spmd_partitioner_pass(hlo_module, physical_mesh.num_devices)
-        strategy_config = executable.strategy_config
+        # Run sharding propagation
+        xe.set_hlo_module_output_shardings(hlo_module, sharding_protos)
+        hlo_module, strategy_config = run_auto_sharding_pass(
+            hlo_module, avals, out_avals, donated_invars,
+            physical_mesh.get_logical_mesh(
+                executable.strategy_config.logical_mesh_shape),
+            "single", 1, AutoShardingOption(enable_auto_sharding=False))
 
         return NormalMeshDriverExecutable(physical_mesh,
                                           hlo_module,
@@ -85,9 +108,11 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk, static_argnums
         var2mesh = {}  # Dict[var -> mesh_id]
         eqn2mesh = {}  # Dict[eqn_idx -> mesh_id]
 
+        output_shardings = []
         for var, spec in zip(outvars, placement_specs):
             if isinstance(var, Var):
                 var2mesh[var] = spec.mesh_ids[0]
+            output_shardings.append(spec.sharding_specs[0])
 
         num_meshes = len(executable.mesh_group)
 
@@ -95,14 +120,21 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk, static_argnums
         eqns = slice_jaxpr_with_mesh_assignment(jaxpr, eqn2mesh, num_meshes)
         new_jaxpr = add_pipeline_marks_for_sliced_eqns(closed_jaxpr, eqns)
 
-        # Compile a pipeshard executable
-        executable = compile_pipeshard_executable_internal(
-            new_jaxpr, None, 1, in_tree, out_tree_thunk,
-            None, [False] * len(avals), [False] * len(avals),
+        # Compile a pipeshard executable with predefined 
+        # output shardings
+        pipeshard_config = compile_pipeshard_executable_internal(
+            new_jaxpr, None, 1, in_tree,
+            [False] * len(avals), [False] * len(avals),
             executable.mesh_group.parent, 1,
-            "inference", AutoShardingOption(),
-            UniformStageOption())
-        return CreateStateExecutable(executable, placement_specs)
+            "inference", AutoShardingOption(enable_auto_sharding=False),
+            UniformStageOption(), output_shardings)
+
+        return CreateStateExecutable(
+            mesh_group=executable.mesh_group,
+            pipeshard_config=pipeshard_config,
+            placement_specs=placement_specs,
+            out_tree=out_tree_thunk(),
+            static_argnums=static_argnums)
 
 
 def propagate_mesh_assignment(jaxpr, var2mesh, eqn2mesh):

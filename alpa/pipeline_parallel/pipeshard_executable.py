@@ -247,20 +247,6 @@ class PipeshardDriverExecutable:
         out = self.launch_on_driver(*args_flat)
         return tree_unflatten(self.out_tree_thunk(), out)
 
-    def __call__(self, *args):
-        """Fast call without signature matching."""
-        if self.static_argnums:
-            dyn_args = [
-                args[i]
-                for i in range(len(args))
-                if i not in self.static_argnums
-            ]
-        else:
-            dyn_args = args
-        args_flat, _ = tree_flatten(dyn_args)
-        out = self.launch_on_driver(*args_flat)
-        return tree_unflatten(self.out_tree_thunk(), out)
-
     ##### Load/Store Related Functions #####
     def get_load_info(self):
         return self.load_info

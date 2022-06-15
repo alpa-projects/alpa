@@ -2,9 +2,17 @@
 Run each file in a separate process to avoid GPU memory conflicts.
 
 Usages:
+# Run all files
 python3 run_all.py
-python3 run_all.py --filter pipeline
-python3 run_all.py --filter auto_sharding
+
+# Run files whose names contain "pipeline"
+python3 run_all.py --run-pattern pipeline
+
+# Run files whose names contain "auto_sharding"
+python3 run_all.py --run-pattern auto_sharding
+
+# Run files whose names do not contain "torch"
+python3 run_all.py --skip-pattern torch
 """
 
 import argparse
@@ -31,7 +39,9 @@ def run_unittest_files(files, args):
     for filename in files:
         if not filename.startswith("test"):
             continue
-        if args.filter is not None and args.filter not in filename:
+        if args.run_pattern is not None and args.run_pattern not in filename:
+            continue
+        if args.skip_pattern is not None and args.skip_pattern in filename:
             continue
         if not args.enable_slow_tests and filename in slow_testcases:
             continue
@@ -62,10 +72,15 @@ def run_unittest_files(files, args):
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument(
-        "--filter",
+        "--run-pattern",
         type=str,
         default=None,
-        help="Run test cases whose names contain the filter string")
+        help="Run files whose names contain the provided string")
+    arg_parser.add_argument(
+        "--skip-pattern",
+        type=str,
+        default=None,
+        help="Do not run files whose names contain the provided string")
     arg_parser.add_argument(
         "--enable-slow-tests",
         action="store_true",
@@ -73,7 +88,7 @@ if __name__ == "__main__":
     arg_parser.add_argument(
         "--xla-client-mem-fraction",
         type=float,
-        default=0.2,
+        default=0.25,
         help="The fraction of GPU memory used to run unit tests")
     arg_parser.add_argument(
         "--time-limit-per-file",

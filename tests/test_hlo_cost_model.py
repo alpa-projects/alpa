@@ -78,7 +78,6 @@ class HloCostModelTest(unittest.TestCase):
                                             dot_range=(0, 1))
         prof_database.save("tmp_prof_database.pkl")
 
-    
     @unittest.skip("Temporary disabled due to being flaky")
     def test_n_layer_mlp(self):
         num_layers = 2

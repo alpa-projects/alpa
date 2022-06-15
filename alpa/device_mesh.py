@@ -1148,6 +1148,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             cls = ray.remote(resources={node_resource: 1e-3})(DaemonMoveWorker)
             move_worker = cls.remote()
 
+            # Launch the MeshHostWorker
             cls = ray.remote(num_gpus=self.num_devices_per_host,
                              resources={node_resource: 1e-3})(MeshHostWorker)
             worker = cls.options(runtime_env={

@@ -4,6 +4,7 @@ import time
 import numpy as np
 import torch
 import jax.numpy as jnp
+from jax import tree_flatten
 
 import alpa
 from alpa.util import write_tsv
@@ -88,8 +89,8 @@ if __name__ == "__main__":
     tokenizer = GPT2Tokenizer.from_pretrained("facebook/opt-125m")
     num_micro_batches = args.nb
 
-    batch_size = 512
-    gen_len = 1024
+    batch_size = 16
+    gen_len = 1
 
     tic = time.time()
     model, params, opt_config = get_and_load_model(args.model, args.dummy, args.cluster,
@@ -108,38 +109,50 @@ if __name__ == "__main__":
     num_gpus = alpa.get_global_cluster().num_devices
 
     # warm up
-    warmup_iters = 2
+    warmup_iters = 10
     for _ in range(warmup_iters):
         forward_results = model(params, {"input_ids": input_ids, "position_ids": position_ids})
+        model.sync()
 
     n_iter = 10
     speeds = []
     tflopss = []
-    exec_tflopss = []
-    for _ in range(n_iter):
+    compute_tflopss = []
+    for i in range(n_iter):
         torch.manual_seed(8)
 
         tic = time.time()
         forward_results = model(params, {"input_ids": input_ids, "position_ids": position_ids})
+        model.sync()
+        # a = np.array(forward_results)
+        # print(a)
         latency = time.time() - tic
-        print(f"input length: {input_ids.shape[1]}, output_length: {input_ids.shape[1]}, num_gpus: {num_gpus}")
+
+        compute_latency = model.get_execution_time_costs(warmup=0)[-1]
+        # print(f"input length: {input_ids.shape[1]}, output_length: {input_ids.shape[1]}, num_gpus: {num_gpus}")
         assert gen_len == input_ids.shape[1]
 
-
-        exec_flops = model.flop_count / 1e12 / latency / num_gpus
-        # print(model.executable.flop_count )
+        memory_allocated = model.mesh_group.get_memory_allocated() / 1e9
+        max_memory_allocated = model.mesh_group.get_max_memory_allocated() / 1e9
 
         tflops = compute_gpt_tflops_inference_with_padding(batch_size, gen_len, 2048, L, H, 50272, num_gpus, latency)
+        compute_tflops = compute_gpt_tflops_inference_with_padding(batch_size, gen_len, 2048, L, H, 50272, num_gpus, compute_latency)
         speed = np.prod(input_ids.shape) / latency
 
-        print(f"speed: {speed:.2f} token/s, tflops: {tflops:.4f} tflops/s, exec_flops: {exec_flops:.4f}")
+        print(f"speed: {speed:.2f} token/s, tflops: {tflops:.4f}, compute tflops: {compute_tflops:.4f}, "
+              f"memory: {memory_allocated}, max memory: {max_memory_allocated}")
         speeds.append(speed)
         tflopss.append(tflops)
-        exec_tflopss.append(exec_flops)
+        compute_tflopss.append(compute_tflops)
 
     avg_speed = sum(speeds) / n_iter
     avg_tflops = sum(tflopss) / n_iter
-    avg_exec_tflops = sum(exec_tflopss) / n_iter
-    heads = ["Model", "Device", "Dummy", "Load (s)", "Batchsize", "#Microbatches", "#Stages", "Speed (token/s)", "TFlops (TFlops/s)", "Exec TFlops (TFlops/s)"]
-    values = [args.model, args.device, args.dummy, f"{load_time:.2f}", f"{batch_size}", f"{num_micro_batches}", "2", f"{avg_speed}", f"{avg_tflops:.4f}", f"{avg_exec_tflops:.4f}"]
+    avg_compute_tflops = sum(compute_tflopss) / n_iter
+    latency_32_token = 32.0 / (avg_speed / batch_size)
+    heads = ["Model", "Device", "Dummy", "Load (s)", "Batchsize", "#Microbatches", "#Stages", "Decoder step",
+             "Speed (token/s)", "TFlops", "Compute TFlops", "latency (32 token)"]
+    values = [args.model, args.device, args.dummy, f"{load_time:.2f}", f"{batch_size}", f"{num_micro_batches}", "2", f"{gen_len}",
+              f"{avg_speed:.2f}", f"{avg_tflops:.4f}", f"{avg_compute_tflops:.4f}", f"{latency_32_token:.2f}"]
+    print(len(heads))
+    print(len(values))
     write_tsv(heads, values, "results.tsv")

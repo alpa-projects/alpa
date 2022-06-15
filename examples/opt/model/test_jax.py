@@ -1,9 +1,10 @@
 from functools import partial
 import os
+import time
 
 import jax
 import numpy as np
-from alpa.testing import assert_allclose
+#from alpa.testing import assert_allclose
 
 from opt_model import (get_config, init_model_aval, inference_step_no_cache,
                        init_cache_np, build_position_ids, load_params_np)
@@ -19,9 +20,9 @@ def print_params(params, prefix=""):
 
 def test_opt_125M():
     #TODO: align dtype
-    name = "2.7B"
+    # name = "2.7B"
+    name = "125M"
     config = get_config(name)
-    # np_weights_folder = f"/home/ubuntu/opt_weights/{name}_np"
     np_weights_folder = f"/dataset/opt_weights/{name}_np"
     batch_size = 1
 
@@ -33,13 +34,13 @@ def test_opt_125M():
 
     model, params = init_model_aval(config)
     params = load_params_np(params, np_weights_folder, config)
-    params = jax.tree_map(jnp.array, params)
 
     # Get expected results
     logits_no_cache = inference_step_no_cache(params, {
         "input_ids": input_ids,
         "position_ids": position_ids,
     }, model.apply)
+    logits_no_cache = np.array(logits_no_cache)
     print("logits_no_cache", logits_no_cache)
 
     # JIT
@@ -55,6 +56,7 @@ def test_opt_125M():
     cache = init_cache_np(config, input_ids.shape[0])
 
     for i in range(input_ids.shape[1]):
+        tic = time.time()
         input_ids_step = input_ids[:, i:i+1]
         position_ids_step = np.full_like(input_ids_step, i + config.pad + 1)
         logits_step, cache = inference_step_with_cache(params, {
@@ -62,7 +64,9 @@ def test_opt_125M():
             "position_ids": position_ids_step,
             "cache": cache
         })
-        assert_allclose(logits_step, logits_no_cache[:, i:i+1])
+        # np.testing.assert_allclose(logits_step, logits_no_cache[:, i:i+1], atol=1e-4)
+        latency = time.time() - tic
+        print(f"Latency: {latency:.2f} ms. Speed: {1/latency:.2f} token/s")
 
 
 if __name__ == "__main__":

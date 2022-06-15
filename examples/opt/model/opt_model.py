@@ -78,7 +78,7 @@ class OPTEmbeddings(nn.Module):
     """Construct the embeddings from word, position and token_type embeddings."""
 
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
         assert not self.config.use_stable_embedding
@@ -117,7 +117,7 @@ class OPTEmbeddings(nn.Module):
 
 class OPTSelfAttention(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
         if self.config.decoder_embed_dim % self.config.decoder_attention_heads != 0:
@@ -158,6 +158,8 @@ class OPTSelfAttention(nn.Module):
             attention_bias = jnp.expand_dims(jnp.triu(jnp.full(
                 (query_states.shape[1], key_states.shape[1]), -1e10), 1), (0, 1))
         else:
+            # attention_bias = jnp.expand_dims(jnp.triu(jnp.full(
+            #     (query_states.shape[1], key_states.shape[1]), -1e10), 1), (0, 1))
             cache_key, cache_value, cache_index = attention_cache
             cache_index_ = cache_index[0]
             key_states = lax.dynamic_update_slice(cache_key, key_states, (0, cache_index_, 0, 0))
@@ -186,7 +188,7 @@ class OPTSelfAttention(nn.Module):
 
 class OPTAttention(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float32
+    dtype: jnp.dtype = jnp.float16
 
     def setup(self):
         assert self.config.decoder_normalize_before
@@ -221,7 +223,7 @@ class OPTAttention(nn.Module):
 
 class OPTFFN(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
         self.fc1 = nn.Dense(
@@ -247,7 +249,7 @@ class OPTFFN(nn.Module):
 
 class OPTTransformerLayer(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
         assert self.config.decoder_normalize_before
@@ -280,7 +282,7 @@ class OPTTransformerLayer(nn.Module):
 
 class OPTTransformerLayerCollection(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
         self.layers = [
@@ -310,7 +312,7 @@ class OPTTransformerLayerCollection(nn.Module):
             if self.config.num_pp_stages is not None:
                 if i % layers_per_stage == 0 and i != 0:
                     stage_id = i // layers_per_stage
-                    mark_pipeline_boundary()
+                    # mark_pipeline_boundary()
 
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -342,7 +344,7 @@ class OPTTransformerLayerCollection(nn.Module):
 
 class OPTTransformerModule(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
         assert self.config.decoder_normalize_before
@@ -388,7 +390,7 @@ class OPTTransformerModule(nn.Module):
 
 class OPTForLMModule(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float32
+    dtype: jnp.dtype = jnp.float16
     bias_init: Callable[..., jnp.ndarray] = jax.nn.initializers.zeros
 
     def setup(self):
@@ -526,7 +528,7 @@ def init_model_aval(config):
 
 
 def init_cache_aval(config, batch_size):
-    dtype = jnp.float32
+    dtype = jnp.float16
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
     all_cache = []
@@ -545,7 +547,7 @@ def init_cache_aval(config, batch_size):
 
 
 def init_cache_np(config, batch_size):
-    dtype = np.float32
+    dtype = np.float16
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
     all_cache = []
@@ -666,9 +668,10 @@ def get_pipeshard_executable(config,
                                     pipeline_schedule="inference")
 
     if autoregressive:
-        @alpa.parallelize(batch_argnums=(1,), method=method)
+        # @alpa.parallelize(batch_argnums=(1,), method=method)
+        @jax.jit
         def inference_step_with_cache(params, batch):
-            @alpa.manual_layer_construction
+            # @alpa.manual_layer_construction
             def forward(params):
                 output = model.apply(params,
                                      batch["input_ids"],
@@ -678,14 +681,16 @@ def get_pipeshard_executable(config,
                                      output_hidden_states=support_output_hidden_states)
                 return output
 
+            print("compiled!")
             output = forward(params)
             return output
 
-        executable = inference_step_with_cache.get_executable(params, {
-            "input_ids": jax.core.ShapedArray((1, 1), jnp.int32),
-            "position_ids": jax.core.ShapedArray((1, 1), jnp.int32),
-            "cache": init_cache_aval(config, 1),
-        })
+        # executable = inference_step_with_cache.get_executable(params, {
+        #     "input_ids": jax.core.ShapedArray((1, 1), jnp.int32),
+        #     "position_ids": jax.core.ShapedArray((1, 1), jnp.int32),
+        #     "cache": init_cache_aval(config, 1),
+        # })
+        executable = inference_step_with_cache
     else:
         @alpa.parallelize(batch_argnums=(1,), method=method)
         def inference_step(params, batch):
@@ -705,8 +710,8 @@ def get_pipeshard_executable(config,
         micro_batch_size = batch_size // num_micro_batches
 
         executable = inference_step.get_executable(params, {
-            "input_ids": jax.core.ShapedArray((micro_batch_size, gen_len), jnp.int32),
-            "position_ids": jax.core.ShapedArray((micro_batch_size, gen_len), jnp.int32),
+            "input_ids": jax.core.ShapedArray((batch_size, gen_len), jnp.int32),
+            "position_ids": jax.core.ShapedArray((batch_size, gen_len), jnp.int32),
             # "input_ids": jax.core.ShapedArray((micro_batch_size, g), jnp.int32),
             # "position_ids": jax.core.ShapedArray((micro_batch_size, 1024), jnp.int32),
         })

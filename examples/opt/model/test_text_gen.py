@@ -1,5 +1,8 @@
 import argparse
 from collections import namedtuple
+
+import jax
+import jax.numpy as jnp
 import os
 import time
 from typing import Sequence, Any
@@ -15,10 +18,10 @@ from examples.opt.model.opt_utils import opt_specs, compute_gpt_tflops_inference
 
 try:
     from .opt_model import (get_config, get_pipeshard_executable,
-                            load_params_dis_array, init_cache_dis_array)
+                            load_params_dis_array, init_cache_dis_array, load_params_np, init_cache_np)
 except ImportError:
     from opt_model import (get_config, get_pipeshard_executable,
-                           load_params_dis_array, init_cache_dis_array)
+                           load_params_dis_array, init_cache_dis_array, load_params_np, init_cache_np)
 
 @dataclass
 class InferenceFuncOutput(ModelOutput):
@@ -148,13 +151,14 @@ def get_model(model_name, device, dummy, cluster="aws",
             setattr(inference_func_config, key, getattr(raw_model.config, key))
         print(inference_func_config)
         model_config = raw_model.config
+        executable = None
 
     elif "alpa/opt" in model_name:
-        alpa.init()
-        num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
+        # alpa.init()
+        # num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
 
         name = model_name.split("-")[1].upper()
-        config = get_config(name, num_pp_stages=num_pp_stages)
+        config = get_config(name, num_pp_stages=None)
 
         if cluster == "aws":
             path = f"/home/ubuntu/opt_weights/{name}_np"
@@ -168,11 +172,17 @@ def get_model(model_name, device, dummy, cluster="aws",
             support_output_attentions=support_output_attentions,
             support_output_hidden_states=support_output_hidden_states,
             autoregressive=True)
-        params = load_params_dis_array(path, executable, params_aval, config, dummy)
-        init_cache = init_cache_dis_array(executable, config, 1, dummy)
-        executable.sync()
+
+        # model, params = init_model_aval(config)
+        params = load_params_np(params_aval, path, config)
+        params = jax.tree_map(jnp.array, params)
+        init_cache = init_cache_np(config, 1)
+        # params = load_params_dis_array(path, executable, params_aval, config, dummy)
+        # init_cache = init_cache_dis_array(executable, config, 1, dummy)
+        # executable.sync()
 
         step_ct = 0
+        fake_logits = torch.ones((1, 1, 50272), device=device)
 
         def inference_func(input_ids, past_key_values, output_attentions=False,
                            output_hidden_states=False):
@@ -185,12 +195,20 @@ def get_model(model_name, device, dummy, cluster="aws",
             input_ids_step = input_ids.cpu().numpy()
             position_ids_step = np.full_like(input_ids_step, step_ct + config.pad + 1)
 
+            # tic = time.time()
             output = executable(params, {
                 "input_ids": input_ids_step,
                 "position_ids": position_ids_step,
                 "cache": past_key_values,
             })
-            logits_step = torch.from_numpy(np.array(output.logits)).to(device)
+            # executable.sync()
+            # latency1 = time.time() - tic
+            # print(f"latency1 : {latency1}")
+            # print(f"latency2: {executable.get_execution_time_costs(warmup=0)[-1]}")
+            # logits_step = torch.from_numpy(np.array(output.logits)).to(device)
+            # print(output.logits.shape)
+            logits_step = torch.ones(output.logits.shape, device=device)
+            # logits_step = fake_logits
 
             step_ct += 1
             return InferenceFuncOutput(logits_step,
@@ -231,53 +249,51 @@ if __name__ == "__main__":
         "Computer science is the study of computation and",
         "Ion Stoica is a Romanian-American computer scientist specializing in",
         "The University of California, Berkeley is a public",
-        # "Today is a good day and I want to",
-        # "What is the valuation of Databricks?",
-        # "Paris is the capital city of",
-        # "Which country has the most population?",
-        # "What do you think about the future of Cryptocurrency?"
+        "Today is a good day and I want to",
+        "What is the valuation of Databricks?",
+        "Paris is the capital city of",
+        "Which country has the most population?",
+        "What do you think about the future of Cryptocurrency?"
     ]
 
-    H = model.model_config.decoder_input_dim
-    L = model.model_config.decoder_layers
-    num_head = model.model_config.decoder_attention_heads
+    # H = model.model_config.decoder_input_dim
+    # L = model.model_config.decoder_layers
+    # num_head = model.model_config.decoder_attention_heads
+    H = 2560
+    L = 32
+    num_head = 32
 
     speeds = []
     tflopss = []
-    exec_tflopss = []
     for prompt in prompts:
         torch.manual_seed(8)
-        tic = time.time()
         input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(args.device)
-        tokenization_time = time.time() - tic
+        # tokenization_time = time.time() - tic
+        tic = time.time()
         output = model.generate(input_ids=input_ids, max_length=256, do_sample=False,
                                 return_dict_in_generate=True, output_hidden_states=False)
+        latency = time.time() - tic
         generated_ids = output.sequences
         generated_string = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-        num_gpus = alpa.get_global_cluster().num_devices
+        # num_gpus = alpa.get_global_cluster().num_devices
+        num_gpus = 1
         print(f"input length: {input_ids.shape[1]}, output_length: {generated_ids.shape[1]}, num_gpus: {num_gpus}")
-        print(f"hidden size: {H}, num layers: {L}, num attention heads: {num_head}")
-        latency = time.time() - tic
+        # print(f"hidden size: {H}, num layers: {L}, num attention heads: {num_head}")
         gen_len = generated_ids.shape[1]
-
-        exec_flops = model.executable.flop_count / 1e12 / latency / num_gpus * gen_len
-        # print(model.executable.flop_count )
 
         tflops = compute_gpt_tflops_inference_with_padding(1, gen_len, 2048, L, H, 50272, num_gpus, latency)
         speed = np.prod(generated_ids.shape) / latency
-        tokenization_speed = np.prod(generated_ids.shape) / tokenization_time
+        # tokenization_speed = np.prod(generated_ids.shape) / tokenization_time
 
         print(f"{generated_string}")
-        print(f"speed: {speed:.2f} tokens/s, tokenization: {tokenization_speed:.3f} tokens/s, tflops: "
-              f"{tflops:.4f} tflops/s, exec_flops: {exec_flops:.4f}")
+        print(f"speed: {speed:.2f} tokens/s, tflops: {tflops:.4f} tflops/s")
         speeds.append(speed)
         tflopss.append(tflops)
-        exec_tflopss.append(exec_flops)
 
     avg_speed = sum(speeds) / len(prompts)
     avg_tflops = sum(tflopss) / len(prompts)
-    avg_exec_tflops = sum(exec_tflopss) / len(prompts)
-    heads = ["Model", "Device", "Dummy", "Load (s)", "Speed (token/s)", "TFlops (TFlops/s)", "Exec TFlops (TFlops/s)"]
-    values = [args.model, args.device, args.dummy, f"{load_time:.2f}", f"{avg_speed:.4f}", f"{avg_tflops:.4f}",
-              f"{avg_exec_tflops:.4f}"]
+    batch_size = 1
+    latency_32_token_sentence = 32.0 / (avg_speed / batch_size)
+    heads = ["Model", "Device", "Dummy", "Load (s)", "Speed (token/s)", "TFlops (TFlops/s)", "Latency (32 tokens)"]
+    values = [args.model, args.device, args.dummy, f"{load_time:.2f}", f"{avg_speed:.4f}", f"{avg_tflops:.4f}", f"{latency_32_token_sentence:.2f}"]
     write_tsv(heads, values, "results.tsv")

@@ -10,7 +10,6 @@ from alpa import (init, parallelize, mark_pipeline_boundary,
                   manual_layer_construction, grad, PipeshardParallel)
 from alpa.model.model_util import TrainState
 from alpa.testing import assert_allclose
-from alpa.util import get_ray_namespace_str
 
 
 class PipelineTiedEmbeddingTest(unittest.TestCase):

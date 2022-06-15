@@ -666,7 +666,7 @@ def generate_stage_info(all_layers, selected_indices, donation_mapping,
             new_invars).difference(new_outvars)
         apply_info = ApplyGradConfig(merged_apply.jaxpr.invars,
                                      apply_only_invars)
-        names = ["merged", "merged" + APPLY_GRAD_MARKER_SUFFIX]
+        names = ["merged", "merged_" + APPLY_GRAD_MARKER_SUFFIX]
         all_outvars = OrderedSet(new_outvars).union(merged_apply.jaxpr.outvars)
         all_outvars = list(all_outvars)
         donation_map = dict(apply_grad_donation)

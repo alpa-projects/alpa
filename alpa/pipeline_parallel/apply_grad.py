@@ -21,7 +21,7 @@ logger.setLevel(logging.INFO)
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
-APPLY_GRAD_MARKER_SUFFIX = '_apply_grad'
+APPLY_GRAD_MARKER_SUFFIX = 'apply_grad'
 
 
 # TODO(yonghao): delaying the cross layer grad accmulation increases memory
@@ -695,7 +695,7 @@ def apply_grad_add_marker(jaxprs: Sequence[ClosedJaxpr],
                 jaxpr.jaxpr.invars))
         new_outvars = list(
             map(lambda x: get_var_mapping(outvar_map, x), jaxpr.jaxpr.outvars))
-        name = str(i) + APPLY_GRAD_MARKER_SUFFIX
+        name = f'{i}_{APPLY_GRAD_MARKER_SUFFIX}'
         start_marker = mark_pipeline_jaxpreqn(new_invars,
                                               replaced.invars,
                                               name=name,

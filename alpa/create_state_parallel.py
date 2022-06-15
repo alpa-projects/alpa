@@ -8,7 +8,8 @@ from jax.interpreters import partial_eval as pe, pxla
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 
 from alpa.device_mesh import ReplicatedDistributedArray, PhysicalDeviceMeshGroup
-from alpa.mesh_executable import NormalMeshDriverExecutable, GradAccMeshDriverExecutable, PlacementSpec
+from alpa.mesh_executable import (NormalMeshDriverExecutable,
+                                  GradAccMeshDriverExecutable, PlacementSpec)
 from alpa.pipeline_parallel.compile_executable import compile_pipeshard_executable_internal
 from alpa.pipeline_parallel.layer_construction import add_pipeline_marks_for_sliced_eqns
 from alpa.pipeline_parallel.pipeshard_executable import PipeshardDriverExecutable
@@ -127,7 +128,7 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
             new_jaxpr, None, 1, in_tree, [False] * len(avals),
             [False] * len(avals), executable.mesh_group.parent, 1, "inference",
             AutoShardingOption(enable_auto_sharding=False),
-            UniformStageOption(), output_shardings)
+            UniformStageOption(), name, output_shardings)
 
         return CreateStateExecutable(mesh_group=executable.mesh_group,
                                      pipeshard_config=pipeshard_config,

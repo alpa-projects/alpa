@@ -23,7 +23,7 @@ from alpa.pipeline_parallel.stage_profiling import (
     compute_apply_grad_invar_size)
 from alpa.testing import (BertLayerModel, create_train_state,
                           get_bert_layer_train_step)
-from alpa.util import get_ray_namespace_str, OrderedSet
+from alpa.util import OrderedSet
 
 
 def _aval_key(a):

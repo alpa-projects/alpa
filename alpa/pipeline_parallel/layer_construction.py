@@ -108,7 +108,8 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
             computation_var_mapping[var] = new_var
         new_eqns.append(
             mark_pipeline_jaxpreqn(pipeline_start_invars,
-                                   pipeline_start_outvars, str(i), "start"))
+                                   pipeline_start_outvars, f"layer_{i}",
+                                   "start"))
         # all other eqns
         for eqn in (eqns + literal_outvar_eqns if i == 0 else eqns):
             new_invars = [
@@ -132,7 +133,7 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
             var_mapping[var] = new_var
         new_eqns.append(
             mark_pipeline_jaxpreqn(pipeline_end_invars, pipeline_end_outvars,
-                                   str(i), "end"))
+                                   f"layer_{i}", "end"))
 
     new_outvars = []
     for idx, var in enumerate(closed_jaxpr.jaxpr.outvars):

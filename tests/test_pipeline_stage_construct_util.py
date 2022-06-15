@@ -94,11 +94,9 @@ class StageConstructUtilTest(unittest.TestCase):
         assert have_apply_grad
         reduction_vector = [True] * len(compute_grad_jaxpr.jaxpr.outvars)
         (acc_grad_jaxpr, microbatch_bound,
-         grad_in_to_out) = compute_grad_to_accumulate_grad(compute_grad_jaxpr,
-                                                           microbatch_bound,
-                                                           reduction_vector,
-                                                           gensym_func,
-                                                           num_microbatch)
+         grad_in_to_out) = compute_grad_to_accumulate_grad(
+             compute_grad_jaxpr, microbatch_bound, reduction_vector,
+             gensym_func, num_microbatch)
         acc_grad_invars = acc_grad_jaxpr.jaxpr.invars
         acc_grad_outvars = acc_grad_jaxpr.jaxpr.outvars
 

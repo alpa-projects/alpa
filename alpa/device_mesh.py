@@ -105,10 +105,12 @@ class MeshHostWorker:
     host."""
 
     def __init__(self, server_address: str, num_hosts: int, host_id: int,
-                 mesh_id: int, node_resource: str, runtime_random_seed: int):
+                 mesh_id: int, move_worker: DaemonMoveWorker,
+                 runtime_random_seed: int):
         self.num_hosts = num_hosts
         self.host_id = host_id
         self.mesh_id = mesh_id
+        self.move_worker = move_worker
         self.launched = False
         self.distributed_client = (
             xla_client._xla.get_distributed_runtime_client(
@@ -147,10 +149,6 @@ class MeshHostWorker:
                     jax_tensor_to_cupy(device_put(
                         jnp.ones((1,), dtype=jnp.int8), d),
                                        take_ownership=True))
-
-        # Launch the DaemonMoveWorker
-        cls = ray.remote(resources={node_resource: 1e-3})(DaemonMoveWorker)
-        self.move_worker = cls.remote()
         self.launched = True
 
     ##### Buffer Related Functions #####
@@ -1146,14 +1144,18 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                                                       ""),  # For libnccl-net.so
                 })
 
-            # Launch a ray actor
+            # Launch the DaemonMoveWorker
             node_resource = "node:" + self.host_info[i]["NodeManagerAddress"]
+            cls = ray.remote(resources={node_resource: 1e-3})(DaemonMoveWorker)
+            move_worker = cls.remote()
+
+            # Launch the MeshHostWorker
             cls = ray.remote(num_gpus=self.num_devices_per_host,
                              resources={node_resource: 1e-3})(MeshHostWorker)
             worker = cls.options(runtime_env={
                 "env_vars": env_vars
             }).remote(self.server_address, self.num_hosts, i, self.mesh_id,
-                      node_resource, global_config.runtime_random_seed)
+                      move_worker, global_config.runtime_random_seed)
             self.workers.append(worker)
         self.launched = True
 

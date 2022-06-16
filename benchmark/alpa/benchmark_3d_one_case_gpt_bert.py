@@ -132,10 +132,10 @@ def get_train_step(parallel_method, auto_layer, num_manual_pipeline_stages,
                 loss_func = automatic_layer_construction(
                     loss_func, remat_layer=use_remat, layer_num=num_auto_layers)
 
-        grads = alpa.grad(loss_func)(state.params)
-        new_state = state.apply_gradients(grads=grads)
+        #grads = alpa.grad(loss_func)(state.params)
+        #new_state = state.apply_gradients(grads=grads)
         # TODO(lmzheng): add dynamic scaling for mixed-precision training
-        return new_state
+        return loss_func(state.params)
 
     return train_step
 
@@ -179,11 +179,18 @@ def benchmark_gpt_bert_internal(model_type,
         auto_remat_mode = "fine_grained" if use_remat else None
         num_auto_remat_layers = num_layers
         add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
+        # method = PipeshardParallel(
+        #     stage_mode="auto",
+        #     num_micro_batches=num_micro_batches,
+        #     default_auto_sharding_option=AutoShardingOption(
+        #         prefer_reduce_scatter=prefer_reduce_scatter),
+        #     pipeline_schedule="inference")
         method = ManualPipeshardParallel(
             *manual_stage_option,
             num_micro_batches=num_micro_batches,
             default_auto_sharding_option=AutoShardingOption(
-                prefer_reduce_scatter=prefer_reduce_scatter))
+                prefer_reduce_scatter=prefer_reduce_scatter),
+            pipeline_schedule="inference")
     elif parallel_mode == "manual":
         (prefer_reduce_scatter, use_remat, (dp, op, pp),
          force_batch_dim_mapping) = parallel_args

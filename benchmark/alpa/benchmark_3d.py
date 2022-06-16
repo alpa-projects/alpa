@@ -13,9 +13,11 @@ import suite_auto_moe
 import suite_manual_gpt
 import suite_manual_moe
 import suite_wresnet
+import suite_auto_gpt_infer
 
 
 benchmark_suites = {
+    "gpt.infer_perf_test": suite_auto_gpt_infer.perf_test_suite,
     "gpt.tmp": suite_manual_gpt.tmp_suite,
     "gpt.tmp_auto": suite_auto_gpt.tmp_suite,
     "gpt.perf_test_manual": suite_manual_gpt.perf_test_suite,

@@ -45,6 +45,7 @@ Check out the [Alpa Documentation](https://alpa-projects.github.io) site for ins
 ## More Information
 - [Alpa paper](https://arxiv.org/pdf/2201.12023.pdf) (OSDI'22)
 - [Google AI Blog](https://ai.googleblog.com/2022/05/alpa-automated-model-parallel-deep.html)
+- [Alpa talk slides](https://docs.google.com/presentation/d/1CQ4S1ff8yURk9XmL5lpQOoMMlsjw4m0zPS6zYDcyp7Y/edit?usp=sharing)
 
 ## Getting Involved
 - Please read the [contributor guide](https://alpa-projects.github.io/developer/developer_guide.html) if you are interested in contributing to Alpa. 

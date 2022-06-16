@@ -105,7 +105,8 @@ class MeshHostWorker:
     host."""
 
     def __init__(self, server_address: str, num_hosts: int, host_id: int,
-                 mesh_id: int, move_worker: DaemonMoveWorker, runtime_random_seed: int):
+                 mesh_id: int, move_worker: DaemonMoveWorker,
+                 runtime_random_seed: int):
         self.num_hosts = num_hosts
         self.host_id = host_id
         self.mesh_id = mesh_id

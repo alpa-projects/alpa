@@ -149,10 +149,9 @@ class MeshHostWorker:
             for d in self.local_devices:
                 jax_tensor = device_put(jnp.ones((1,), dtype=jnp.int8), d)
                 self.signal_tensors.append(
-                    jax_tensor_to_xla_buffer(jax_tensor)
-                    if global_config.nccl_mode == "from_xla_extension" else
-                    jax_tensor_to_cupy(jax_tensor, take_ownership=True)
-                )
+                    jax_tensor_to_xla_buffer(jax_tensor) if global_config.
+                    nccl_mode == "from_xla_extension" else jax_tensor_to_cupy(
+                        jax_tensor, take_ownership=True))
 
         self.launched = True
 
@@ -379,8 +378,8 @@ class MeshHostWorker:
         g._get_nccl_broadcast_communicator(  # pylint: disable=protected-access
             comm_key, world_size, device_ids, devices_global_rank, nccl_uid)
 
-    def xla_nccl_send_tile(self, uuid: int, offset: Sequence[slice], dst_rank: int,
-                           dst_gpu_idx: int, group_name: str):
+    def xla_nccl_send_tile(self, uuid: int, offset: Sequence[slice],
+                           dst_rank: int, dst_gpu_idx: int, group_name: str):
 
         if global_config.pipeline_use_signal_send_recv:
             signal = self.signal_tensors[uuid % len(self.local_devices)]
@@ -388,8 +387,8 @@ class MeshHostWorker:
                               dst_rank,
                               dst_gpu_idx,
                               group_name,
-                              start_pos = 0,
-                              n_elements = 1)
+                              start_pos=0,
+                              n_elements=1)
             return
 
         tensor_shape = self.buffers[uuid].shape
@@ -400,8 +399,8 @@ class MeshHostWorker:
                               dst_rank,
                               dst_gpu_idx,
                               group_name,
-                              start_pos = start_pos,
-                              n_elements = n_elements)
+                              start_pos=start_pos,
+                              n_elements=n_elements)
         else:
             # slower path, because of indexing.
             logger.debug(
@@ -419,8 +418,8 @@ class MeshHostWorker:
                               dst_rank,
                               dst_gpu_idx,
                               group_name,
-                              start_pos = 0,
-                              n_elements = n_elements)
+                              start_pos=0,
+                              n_elements=n_elements)
 
     # Note: in this device mesh code, we will use 3 types of tensors:
     # (1) JAX high-level _DeviceArray, which is index-able, has __cuda_array__
@@ -473,8 +472,8 @@ class MeshHostWorker:
             col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
 
     def xla_nccl_recv_tile(self, uuid: int, device_id: int,
-                          indices_in_dst_tile: Sequence[slice], src_rank: int,
-                          src_gpu_idx: int, group_name: str):
+                           indices_in_dst_tile: Sequence[slice], src_rank: int,
+                           src_gpu_idx: int, group_name: str):
 
         if global_config.pipeline_use_signal_send_recv:
             signal = self.signal_tensors[uuid % len(self.local_devices)]
@@ -482,8 +481,8 @@ class MeshHostWorker:
                               src_rank,
                               src_gpu_idx,
                               group_name,
-                              start_pos = 0,
-                              n_elements = 1)
+                              start_pos=0,
+                              n_elements=1)
             return
 
         tensor_shape = self.buffers[uuid].shape
@@ -497,8 +496,8 @@ class MeshHostWorker:
                               src_rank,
                               src_gpu_idx,
                               group_name,
-                              start_pos = start_pos,
-                              n_elements = n_elements)
+                              start_pos=start_pos,
+                              n_elements=n_elements)
         else:
             tmp_buffer = device_put(
                 jnp.ones(slice_shape, dtype=self.buffers[uuid].dtype),
@@ -509,14 +508,13 @@ class MeshHostWorker:
                               src_rank,
                               src_gpu_idx,
                               group_name,
-                              start_pos = 0,
-                              n_elements = n_elements)
+                              start_pos=0,
+                              n_elements=n_elements)
             start_indices = tuple(
                 ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
             new_buffer = jax_tensor_set(
                 xla_buffer_to_jax_tensor(self.buffers[uuid]),
-                xla_buffer_to_jax_tensor(to_recv),
-                start_indices)
+                xla_buffer_to_jax_tensor(to_recv), start_indices)
             self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
         if is_bool:
             self.buffers[uuid] = _uint8_to_bool(self.buffers[uuid])
@@ -621,10 +619,8 @@ class MeshHostWorker:
         task: ReshardingSendTask = self.send_tasks[uuid]
         for send_tile_spec, buf_uuid in zip(task.tile_specs, buf_uuids):
             send_tile_spec: ReshardingTileSpec
-            self.send_tile_func(buf_uuid,
-                                send_tile_spec.offset,
-                                send_tile_spec.rank,
-                                send_tile_spec.gpu_idx,
+            self.send_tile_func(buf_uuid, send_tile_spec.offset,
+                                send_tile_spec.rank, send_tile_spec.gpu_idx,
                                 task.group_name)
 
     def run_resharding_recv_task(self, uuid, buf_uuids, set_empty_buffer=True):
@@ -637,8 +633,8 @@ class MeshHostWorker:
             for recv_tile_spec in recv_spec.tile_specs:
                 recv_tile_spec: ReshardingTileSpec
                 self.recv_tile_func(buf_uuid, recv_spec.device_id,
-                               recv_tile_spec.offset, recv_tile_spec.rank,
-                               recv_tile_spec.gpu_idx, task.group_name)
+                                    recv_tile_spec.offset, recv_tile_spec.rank,
+                                    recv_tile_spec.gpu_idx, task.group_name)
 
     def put_resharding_allgather_task(self, uuid, tasks):
         all_gather_task = ReshardingAllGatherTask(tasks)
@@ -655,14 +651,12 @@ class MeshHostWorker:
         allgather_specs = task.allgather_specs
         for allgather_spec in allgather_specs:
             self.allgather_func(buffer_uuids, allgather_spec.device_ids,
-                           allgather_spec.tensor_slices,
-                           allgather_spec.output_slice)
+                                allgather_spec.tensor_slices,
+                                allgather_spec.output_slice)
 
-    def xla_nccl_allgather(self, 
-                           uuids: Sequence[int], 
+    def xla_nccl_allgather(self, uuids: Sequence[int],
                            device_ids: Sequence[int],
-                           tensor_slices: Sequence[slice], 
-                           output_slice):
+                           tensor_slices: Sequence[slice], output_slice):
 
         if repr(sorted(device_ids)) not in self.allgather_communicators:
             communicators = \
@@ -673,25 +667,22 @@ class MeshHostWorker:
         communicators = self.allgather_communicators[repr(sorted(device_ids))]
         is_bool = self.buffers[uuids[device_ids[0]]].dtype == np.bool_
         tensor_shape = self.buffers[uuids[device_ids[0]]].shape
-        global_start_pos, _ = infer_start_pos_and_n_elements(tensor_shape, 
-                                                             output_slice)
+        global_start_pos, _ = infer_start_pos_and_n_elements(
+            tensor_shape, output_slice)
 
         buffers = []
         local_start_pos_list = []
         for device_id, tensor_slice in zip(device_ids, tensor_slices):
             uuid = uuids[device_id]
             xla_buffer = self.buffers[uuid]
-            start_pos, _ = infer_start_pos_and_n_elements(tensor_shape, 
-                                                          tensor_slice)
+            start_pos, _ = infer_start_pos_and_n_elements(
+                tensor_shape, tensor_slice)
             buffers.append(xla_buffer)
             local_start_pos_list.append(start_pos)
 
         _, local_n_elements = infer_offset_and_n_elements(tensor_slices[0])
-        xe.nccl_local_all_gather(communicators,
-                                 buffers,
-                                 local_start_pos_list,
-                                 global_start_pos,
-                                 local_n_elements)
+        xe.nccl_local_all_gather(communicators, buffers, local_start_pos_list,
+                                 global_start_pos, local_n_elements)
 
         for device_id, buf in zip(device_ids, buffers):
             uuid = uuids[device_id]
@@ -753,10 +744,10 @@ class MeshHostWorker:
                                                  broadcast_spec.dtype)
 
             self.broadcast_func(buffer_uuids, broadcast_spec.comm_key,
-                           broadcast_spec.world_size,
-                           broadcast_spec.devices_ids,
-                           broadcast_spec.devices_global_rank,
-                           broadcast_spec.tensor_slices, task.group_name)
+                                broadcast_spec.world_size,
+                                broadcast_spec.devices_ids,
+                                broadcast_spec.devices_global_rank,
+                                broadcast_spec.tensor_slices, task.group_name)
 
     def xla_nccl_broadcast(self, uuids, comm_key, world_size, devices_ids,
                            devices_global_rank, tensor_slices, group_name):
@@ -772,8 +763,8 @@ class MeshHostWorker:
             slice_shape = tuple(ind.stop - ind.start for ind in tensor_slice)
             if is_continuous_subset(tensor_slice, tensor_shape):
                 # fast path, two cases: (1) same shape, (2) continuous subset.
-                start_pos, _ = infer_start_pos_and_n_elements(tensor_shape, 
-                                                              tensor_slice)
+                start_pos, _ = infer_start_pos_and_n_elements(
+                    tensor_shape, tensor_slice)
                 local_start_pos_list.append(start_pos)
                 buffers.append(self.buffers[uuid])
             else:
@@ -790,13 +781,8 @@ class MeshHostWorker:
                 local_start_pos_list.append(0)
                 buffers.append(jax_tensor_to_xla_buffer(tmp))
 
-        col.broadcast_partialgpu(buffers,
-                                 n_elements,
-                                 comm_key,
-                                 world_size,
-                                 devices_ids,
-                                 devices_global_rank,
-                                 group_name,
+        col.broadcast_partialgpu(buffers, n_elements, comm_key, world_size,
+                                 devices_ids, devices_global_rank, group_name,
                                  local_start_pos_list)
 
         for xla_buffer, device_id, global_rank, tensor_slice in zip(
@@ -812,9 +798,8 @@ class MeshHostWorker:
                 start_indices = tuple(
                     ind_in_dst.start for ind_in_dst in tensor_slice)
                 new_buffer = jax_tensor_set(
-                    xla_buffer_to_jax_tensor(self.buffers[uuid]), 
-                    xla_buffer_to_jax_tensor(xla_buffer),
-                    start_indices)
+                    xla_buffer_to_jax_tensor(self.buffers[uuid]),
+                    xla_buffer_to_jax_tensor(xla_buffer), start_indices)
                 self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
             if is_bool:
                 self.buffers[uuid] = _uint8_to_bool(self.buffers[uuid])

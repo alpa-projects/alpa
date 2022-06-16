@@ -8,6 +8,3 @@ def get_nccl_runtime_version():
 
 def get_nccl_unique_id():
     return xe.nccl_get_unique_id()
-
-
-

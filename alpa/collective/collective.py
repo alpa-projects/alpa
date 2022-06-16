@@ -9,6 +9,7 @@ from jax._src.lib import xla_extension as xe
 
 from alpa.collective import types
 from alpa.global_env import global_config
+
 _NCCL_AVAILABLE = True
 _GLOO_AVAILABLE = True
 
@@ -21,8 +22,8 @@ if global_config.nccl_mode == "from_cupy":
     except ImportError:
         _NCCL_AVAILABLE = False
         logger.warning("NCCL seems unavailable. Please install Cupy "
-                    "following the guide at: "
-                    "https://docs.cupy.dev/en/stable/install.html.")
+                       "following the guide at: "
+                       "https://docs.cupy.dev/en/stable/install.html.")
 else:
     try:
         from alpa.collective.collective_group.xla_nccl_collective_group import (
@@ -407,7 +408,7 @@ def broadcast_partialgpu(tensor_list,
                          devices_ids,
                          devices_global_rank,
                          group_name: str = "default",
-                         local_start_pos_list = None):
+                         local_start_pos_list=None):
     """Broadcast the tensor from a source GPU to some other GPUs.
     This function is different from broadcast_multigpu that it only
     uses a subset of gpus in one host.
@@ -599,8 +600,8 @@ def send_multigpu(tensor,
                   dst_rank: int,
                   dst_gpu_index: int,
                   group_name: str = "default",
-                  start_pos = 0, 
-                  n_elements = 0):
+                  start_pos=0,
+                  n_elements=0):
     """Send a tensor to a remote GPU synchronously.
 
     The function asssume each process owns >1 GPUs, and the sender
@@ -660,8 +661,8 @@ def recv_multigpu(tensor,
                   src_rank: int,
                   src_gpu_index: int,
                   group_name: str = "default",
-                  start_pos = 0,
-                  n_elements = 0):
+                  start_pos=0,
+                  n_elements=0):
     """Receive a tensor from a remote GPU synchronously.
 
     The function asssume each process owns >1 GPUs, and the sender

@@ -8,13 +8,13 @@ from alpa.collective.collective_group import xla_nccl_util
 from alpa.collective.collective_group.nccl_collective_group import Rendezvous
 from alpa.collective.collective_group.base_collective_group import BaseGroup
 from alpa.collective.const import get_store_name
-from alpa.collective.types import (Backend, BroadcastOptions, 
-                                   AllReduceOptions, BarrierOptions, 
-                                   ReduceOptions, AllGatherOptions, 
-                                   ReduceScatterOptions,
+from alpa.collective.types import (Backend, BroadcastOptions, AllReduceOptions,
+                                   BarrierOptions, ReduceOptions,
+                                   AllGatherOptions, ReduceScatterOptions,
                                    SendOptions, RecvOptions)
 
 logger = logging.getLogger(__name__)
+
 
 class XLANCCLGroup(BaseGroup):
     """NCCL-based collective operations with apis from xla extension."""
@@ -77,15 +77,11 @@ class XLANCCLGroup(BaseGroup):
 
         key = broadcast_options.comm_key
         comms = self._get_nccl_broadcast_communicator(
-            key,
-            broadcast_options.world_size,
-            broadcast_options.devices_ids,
+            key, broadcast_options.world_size, broadcast_options.devices_ids,
             broadcast_options.devices_global_rank)
-        xe.nccl_broadcast_partial_gpus(comms, 
-                                tensors, 
-                                broadcast_options.local_start_pos_list, 
-                                broadcast_options.n_elements, 
-                                root_rank)
+        xe.nccl_broadcast_partial_gpus(comms, tensors,
+                                       broadcast_options.local_start_pos_list,
+                                       broadcast_options.n_elements, root_rank)
 
     def _get_nccl_broadcast_communicator(self,
                                          comm_key,
@@ -142,10 +138,8 @@ class XLANCCLGroup(BaseGroup):
                         "destroyed.")
                     rendezvous.destroy_store()
 
-        comms = xe.nccl_create_communicators(world_size, 
-                                            devices_global_rank, 
-                                            devices_ids, 
-                                            nccl_uid)
+        comms = xe.nccl_create_communicators(world_size, devices_global_rank,
+                                             devices_ids, nccl_uid)
         self._dev_comm_map[comm_key] = comms
         return comms
 
@@ -164,21 +158,14 @@ class XLANCCLGroup(BaseGroup):
         my_gpu_idx = xe.get_buffer_device_id(buffer)
         peer_rank, peer_gpu_idx = \
             send_options.dst_rank, send_options.dst_gpu_index
-        comm_key = _get_comm_key_send_recv(self.rank,
-                                           my_gpu_idx,
-                                           peer_rank,
+        comm_key = _get_comm_key_send_recv(self.rank, my_gpu_idx, peer_rank,
                                            peer_gpu_idx)
-        comms = self._get_nccl_p2p_communicator(comm_key,
-                                                my_gpu_idx,
-                                                peer_rank,
+        comms = self._get_nccl_p2p_communicator(comm_key, my_gpu_idx, peer_rank,
                                                 peer_gpu_idx)
 
         peer_p2p_rank = 0 if self.rank > peer_rank else 1
-        xe.nccl_send(comms,
-                     buffer,
-                     send_options.start_pos,
-                     send_options.n_elements,
-                     peer_p2p_rank)
+        xe.nccl_send(comms, buffer, send_options.start_pos,
+                     send_options.n_elements, peer_p2p_rank)
 
     def recv(self, tensors, recv_options=RecvOptions()):
         """Receive a tensor from a source gpu in the group.
@@ -195,21 +182,14 @@ class XLANCCLGroup(BaseGroup):
         my_gpu_idx = xe.get_buffer_device_id(buffer)
         peer_rank, peer_gpu_idx = \
             recv_options.src_rank, recv_options.src_gpu_index
-        comm_key = _get_comm_key_send_recv(self.rank,
-                                           my_gpu_idx,
-                                           peer_rank,
+        comm_key = _get_comm_key_send_recv(self.rank, my_gpu_idx, peer_rank,
                                            peer_gpu_idx)
-        comms = self._get_nccl_p2p_communicator(comm_key,
-                                                my_gpu_idx,
-                                                peer_rank,
+        comms = self._get_nccl_p2p_communicator(comm_key, my_gpu_idx, peer_rank,
                                                 peer_gpu_idx)
 
         peer_p2p_rank = 0 if self.rank > peer_rank else 1
-        xe.nccl_recv(comms,
-                     buffer,
-                     recv_options.start_pos,
-                     recv_options.n_elements,
-                     peer_p2p_rank)
+        xe.nccl_recv(comms, buffer, recv_options.start_pos,
+                     recv_options.n_elements, peer_p2p_rank)
 
     def _get_nccl_p2p_communicator(self,
                                    comm_key,
@@ -275,9 +255,7 @@ class XLANCCLGroup(BaseGroup):
                         "destroyed.")
                     rendezvous.destroy_store()
 
-        comms = xe.nccl_create_communicators(2,
-                                             [my_p2p_rank],
-                                             [my_gpu_idx],
+        comms = xe.nccl_create_communicators(2, [my_p2p_rank], [my_gpu_idx],
                                              nccl_uid)
         self._dev_comm_map[comm_key] = comms
         return comms
@@ -330,7 +308,7 @@ class XLANCCLGroup(BaseGroup):
         group_uid = xla_nccl_util.get_nccl_unique_id()
         store_name = get_store_name(key)
         # Avoid a potential circular dependency in ray/actor.py
-        from alpa.collective.util import NCCLUniqueIDStore # pylint: disable=import-outside-toplevel
+        from alpa.collective.util import NCCLUniqueIDStore  # pylint: disable=import-outside-toplevel
         store = NCCLUniqueIDStore.options(
             name=store_name, lifetime="detached").remote(store_name)
         ray.get([store.set_id.remote(group_uid)])
@@ -381,6 +359,7 @@ class XLANCCLGroup(BaseGroup):
                       tensor_lists,
                       reducescatter_options=ReduceScatterOptions()):
         raise NotImplementedError()
+
 
 def _get_comm_key_send_recv(my_rank, my_gpu_idx, peer_rank, peer_gpu_idx):
     """Return a key given source and destination ranks for p2p tasks.

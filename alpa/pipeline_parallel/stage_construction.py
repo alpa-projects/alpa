@@ -244,10 +244,10 @@ def get_all_submesh_autosharding_config_choices(virtual_mesh, submesh_choices,
     # dim).
     autosharding_configs = []
     for submesh in submesh_choices:
-        num_hosts, num_devices = submesh
+        num_hosts, num_devices_per_host = submesh
         virtual_submesh = virtual_mesh.slice_2d(
-            list(range(num_hosts)),
-            [list(range(num_devices)) for _ in range(num_hosts)])
+            tuple(range(num_hosts)),
+            (tuple(range(num_devices_per_host)),) * num_hosts)
         submesh_autosharding_configs = (
             get_one_submesh_autosharding_config_choices(virtual_submesh, space,
                                                         batch_size))
@@ -489,10 +489,10 @@ def get_sliced_virtual_submeshes(virtual_mesh, submesh_shapes):
             assert current_host_id + required_num_hosts <= num_hosts, (
                 "Do not have enough hosts for the solution.")
             virtual_submeshes[i] = virtual_mesh.slice_2d(
-                range(current_host_id, current_host_id + required_num_hosts), [
-                    range(num_devices_per_host)
-                    for _ in range(required_num_hosts)
-                ])
+                tuple(
+                    range(current_host_id,
+                          current_host_id + required_num_hosts)),
+                (tuple(range(num_devices_per_host)),) * required_num_hosts)
             current_host_id += required_num_hosts
         else:
             assert required_num_hosts == 1
@@ -501,8 +501,9 @@ def get_sliced_virtual_submeshes(virtual_mesh, submesh_shapes):
                     num_devices_per_host), (
                         "Do not have enough devices in a host for the solution")
             virtual_submeshes[i] = virtual_mesh.slice_2d([current_host_id], [
-                range(current_device_id,
-                      current_device_id + required_num_devices)
+                tuple(
+                    range(current_device_id,
+                          current_device_id + required_num_devices))
             ])
             current_device_id += required_num_devices
             if current_device_id == num_devices_per_host:

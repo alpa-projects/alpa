@@ -751,10 +751,9 @@ def profile_all(device_cluster,
         print(f"Mesh shape: {(num_hosts, num_devices_per_host)}")
 
         # Slice a mesh
-        tmp_mesh = virtual_mesh.slice_2d(
-            list(range(num_hosts)),
-            np.arange(num_hosts * num_devices_per_host).reshape(
-                (num_hosts, num_devices_per_host)))
+        tmp_mesh = virtual_mesh.slice_2d(tuple(range(num_hosts)),
+                                         (tuple(range(num_devices_per_host)),) *
+                                         num_hosts)
         all_specs = enumerate_all_collective_spec(num_hosts,
                                                   num_devices_per_host,
                                                   max_comm_size_intra_node,

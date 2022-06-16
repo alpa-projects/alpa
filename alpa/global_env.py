@@ -55,7 +55,7 @@ class GlobalConfig:
         self.resharding_mode = "send_recv"
         # Which nccl to use. Possible choices: {"from_cupy",
         # "from_xla_extension"}
-        self.nccl_mode = "from_xla_extension" # "from_cupy" 
+        self.nccl_mode = "from_xla_extension" # "from_cupy"
 
         ########## Options of XLA compilation ##########
         # Whether to use xla while instruction for preventing CSE in

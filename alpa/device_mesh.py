@@ -59,7 +59,7 @@ from alpa.util import (benchmark_func, list_gpu_info, jax_tensor_to_cupy,
                        xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
                        xla_buffer_to_cupy, cupy_to_xla_buffer,
                        is_continuous_subset, infer_offset_and_n_elements,
-                       jax_tensor_index, OrderedSet, update_jax_platform, 
+                       jax_tensor_index, OrderedSet, update_jax_platform,
                        infer_slice_size, infer_start_pos_and_n_elements)
 
 logger = logging.getLogger(__name__)
@@ -155,6 +155,19 @@ class MeshHostWorker:
                 )
 
         self.launched = True
+
+        if global_config.nccl_mode == "from_xla_extension":
+            self.send_tile_func = self.xla_nccl_send_tile
+            self.recv_tile_func = self.xla_nccl_recv_tile
+            self.allgather_func = self.xla_nccl_allgather
+            self.broadcast_func = self.xla_nccl_broadcast
+            self.nccl_local_allgather_init_comms = xe.nccl_init_communicator
+        else:
+            self.send_tile_func = self.send_tile
+            self.recv_tile_func = self.recv_tile
+            self.allgather_func = self.allgather
+            self.broadcast_func = self.broadcast
+            self.nccl_local_allgather_init_comms = nccl.NcclCommunicator.initAll
 
     ##### Buffer Related Functions #####
     def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
@@ -371,12 +384,18 @@ class MeshHostWorker:
 
         if global_config.pipeline_use_signal_send_recv:
             signal = self.signal_tensors[uuid % len(self.local_devices)]
-            col.send_multigpu(signal, dst_rank, dst_gpu_idx, group_name, start_pos = 0, n_elements = 1)
+            col.send_multigpu(signal,
+                              dst_rank,
+                              dst_gpu_idx,
+                              group_name,
+                              start_pos = 0,
+                              n_elements = 1)
             return
 
         tensor_shape = self.buffers[uuid].shape
         if is_continuous_subset(offset, tensor_shape):
-            start_pos, n_elements = infer_start_pos_and_n_elements(tensor_shape, offset)
+            start_pos, n_elements = \
+                infer_start_pos_and_n_elements(tensor_shape, offset)
             col.send_multigpu(self.buffers[uuid],
                               dst_rank,
                               dst_gpu_idx,
@@ -396,11 +415,11 @@ class MeshHostWorker:
                 slice_sizes)
             to_send = jax_tensor_to_xla_buffer(src_buffer)
             n_elements = infer_slice_size(slice_sizes)
-            col.send_multigpu(to_send, 
-                              dst_rank, 
-                              dst_gpu_idx, 
-                              group_name, 
-                              start_pos = 0, 
+            col.send_multigpu(to_send,
+                              dst_rank,
+                              dst_gpu_idx,
+                              group_name,
+                              start_pos = 0,
                               n_elements = n_elements)
 
     # Note: in this device mesh code, we will use 3 types of tensors:
@@ -459,19 +478,26 @@ class MeshHostWorker:
 
         if global_config.pipeline_use_signal_send_recv:
             signal = self.signal_tensors[uuid % len(self.local_devices)]
-            col.recv_multigpu(signal, src_rank, src_gpu_idx, group_name, start_pos = 0, n_elements = 1)
+            col.recv_multigpu(signal,
+                              src_rank,
+                              src_gpu_idx,
+                              group_name,
+                              start_pos = 0,
+                              n_elements = 1)
             return
 
         tensor_shape = self.buffers[uuid].shape
         slice_shape = tuple(ind.stop - ind.start for ind in indices_in_dst_tile)
         is_bool = self.buffers[uuid].dtype == np.bool_
         if is_continuous_subset(indices_in_dst_tile, tensor_shape):
-            start_pos, n_elements = infer_start_pos_and_n_elements(tensor_shape, indices_in_dst_tile)
+            start_pos, n_elements = \
+                infer_start_pos_and_n_elements(tensor_shape,
+                                               indices_in_dst_tile)
             col.recv_multigpu(self.buffers[uuid],
                               src_rank,
                               src_gpu_idx,
                               group_name,
-                              start_pos = start_pos, 
+                              start_pos = start_pos,
                               n_elements = n_elements)
         else:
             tmp_buffer = device_put(
@@ -479,16 +505,17 @@ class MeshHostWorker:
                 self.local_devices[device_id])
             to_recv = jax_tensor_to_xla_buffer(tmp_buffer)
             n_elements = infer_slice_size(slice_shape)
-            col.recv_multigpu(to_recv, 
-                              src_rank, 
-                              src_gpu_idx, 
+            col.recv_multigpu(to_recv,
+                              src_rank,
+                              src_gpu_idx,
                               group_name,
-                              start_pos = 0, 
+                              start_pos = 0,
                               n_elements = n_elements)
             start_indices = tuple(
                 ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
             new_buffer = jax_tensor_set(
-                xla_buffer_to_jax_tensor(self.buffers[uuid]), xla_buffer_to_jax_tensor(to_recv), 
+                xla_buffer_to_jax_tensor(self.buffers[uuid]),
+                xla_buffer_to_jax_tensor(to_recv),
                 start_indices)
             self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
         if is_bool:
@@ -594,12 +621,11 @@ class MeshHostWorker:
         task: ReshardingSendTask = self.send_tasks[uuid]
         for send_tile_spec, buf_uuid in zip(task.tile_specs, buf_uuids):
             send_tile_spec: ReshardingTileSpec
-            if global_config.nccl_mode == "from_xla_extension":
-                send_tile_func = self.xla_nccl_send_tile
-            else:
-                send_tile_func = self.send_tile
-            send_tile_func(buf_uuid, send_tile_spec.offset, send_tile_spec.rank,
-                           send_tile_spec.gpu_idx, task.group_name)
+            self.send_tile_func(buf_uuid,
+                                send_tile_spec.offset,
+                                send_tile_spec.rank,
+                                send_tile_spec.gpu_idx,
+                                task.group_name)
 
     def run_resharding_recv_task(self, uuid, buf_uuids, set_empty_buffer=True):
         task: ReshardingRecvTask = self.recv_tasks[uuid]
@@ -610,11 +636,7 @@ class MeshHostWorker:
                                          recv_spec.shape, recv_spec.dtype)
             for recv_tile_spec in recv_spec.tile_specs:
                 recv_tile_spec: ReshardingTileSpec
-                if global_config.nccl_mode == "from_xla_extension":
-                    recv_tile_func = self.xla_nccl_recv_tile
-                else:
-                    recv_tile_func = self.recv_tile
-                recv_tile_func(buf_uuid, recv_spec.device_id,
+                self.recv_tile_func(buf_uuid, recv_spec.device_id,
                                recv_tile_spec.offset, recv_tile_spec.rank,
                                recv_tile_spec.gpu_idx, task.group_name)
 
@@ -624,54 +646,52 @@ class MeshHostWorker:
         for allgather_spec in allgather_specs:
             device_ids = sorted(allgather_spec.device_ids)
             if repr(device_ids) not in self.allgather_communicators:
-                if global_config.nccl_mode == "from_xla_extension":
-                    communicators = xe.nccl_InitCommunicator(len(device_ids), list(device_ids))
-                else:
-                    communicators = nccl.NcclCommunicator.initAll(list(device_ids))
-                self.allgather_communicators[repr(device_ids)] = communicators
+                self.allgather_communicators[repr(device_ids)] = \
+                    self.nccl_local_allgather_init_comms(list(device_ids))
         self.allgather_tasks[uuid] = all_gather_task
 
     def run_allgather_task(self, uuid, buffer_uuids):
         task: ReshardingAllGatherTask = self.allgather_tasks[uuid]
         allgather_specs = task.allgather_specs
         for allgather_spec in allgather_specs:
-            if global_config.nccl_mode == "from_xla_extension":
-                allgather_func = self.xla_nccl_allgather
-            else:
-                allgather_func = self.allgather
-            allgather_func(buffer_uuids, allgather_spec.device_ids,
+            self.allgather_func(buffer_uuids, allgather_spec.device_ids,
                            allgather_spec.tensor_slices,
                            allgather_spec.output_slice)
 
-    def xla_nccl_allgather(self, uuids: Sequence[int], device_ids: Sequence[int],
-                           tensor_slices: Sequence[slice], output_slice):
+    def xla_nccl_allgather(self, 
+                           uuids: Sequence[int], 
+                           device_ids: Sequence[int],
+                           tensor_slices: Sequence[slice], 
+                           output_slice):
 
         if repr(sorted(device_ids)) not in self.allgather_communicators:
-            communicators = xe.nccl_InitCommunicator(len(device_ids), list(sorted(device_ids)))
-            self.allgather_communicators[repr(sorted(device_ids))] = communicators
+            communicators = \
+                self.nccl_local_allgather_init_comms(list(sorted(device_ids)))
+            self.allgather_communicators[repr(sorted(device_ids))] = \
+                communicators
 
         communicators = self.allgather_communicators[repr(sorted(device_ids))]
         is_bool = self.buffers[uuids[device_ids[0]]].dtype == np.bool_
         tensor_shape = self.buffers[uuids[device_ids[0]]].shape
-        global_start_pos, _ = infer_start_pos_and_n_elements(tensor_shape, output_slice)
+        global_start_pos, _ = infer_start_pos_and_n_elements(tensor_shape, 
+                                                             output_slice)
 
         buffers = []
         local_start_pos_list = []
         for device_id, tensor_slice in zip(device_ids, tensor_slices):
             uuid = uuids[device_id]
             xla_buffer = self.buffers[uuid]
-            start_pos, _ = infer_start_pos_and_n_elements(tensor_shape, tensor_slice)
+            start_pos, _ = infer_start_pos_and_n_elements(tensor_shape, 
+                                                          tensor_slice)
             buffers.append(xla_buffer)
             local_start_pos_list.append(start_pos)
-        
+
         _, local_n_elements = infer_offset_and_n_elements(tensor_slices[0])
-        xe.nccl_LocalAllGather(len(device_ids), 
-                               communicators, 
-                               buffers, 
-                               device_ids, 
-                               local_start_pos_list, 
-                               global_start_pos, 
-                               local_n_elements)
+        xe.nccl_local_all_gather(communicators,
+                                 buffers,
+                                 local_start_pos_list,
+                                 global_start_pos,
+                                 local_n_elements)
 
         for device_id, buf in zip(device_ids, buffers):
             uuid = uuids[device_id]
@@ -732,12 +752,7 @@ class MeshHostWorker:
                                                  broadcast_spec.recv_tile_shape,
                                                  broadcast_spec.dtype)
 
-            broadcast_func = None
-            if global_config.nccl_mode == "from_xla_extension":
-                broadcast_func = self.xla_nccl_broadcast
-            else:
-                broadcast_func = self.broadcast
-            broadcast_func(buffer_uuids, broadcast_spec.comm_key,
+            self.broadcast_func(buffer_uuids, broadcast_spec.comm_key,
                            broadcast_spec.world_size,
                            broadcast_spec.devices_ids,
                            broadcast_spec.devices_global_rank,
@@ -757,7 +772,8 @@ class MeshHostWorker:
             slice_shape = tuple(ind.stop - ind.start for ind in tensor_slice)
             if is_continuous_subset(tensor_slice, tensor_shape):
                 # fast path, two cases: (1) same shape, (2) continuous subset.
-                start_pos, _ = infer_start_pos_and_n_elements(tensor_shape, tensor_slice)
+                start_pos, _ = infer_start_pos_and_n_elements(tensor_shape, 
+                                                              tensor_slice)
                 local_start_pos_list.append(start_pos)
                 buffers.append(self.buffers[uuid])
             else:
@@ -774,13 +790,13 @@ class MeshHostWorker:
                 local_start_pos_list.append(0)
                 buffers.append(jax_tensor_to_xla_buffer(tmp))
 
-        col.broadcast_partialgpu(buffers, 
-                                 n_elements, 
-                                 comm_key, 
-                                 world_size, 
-                                 devices_ids, 
-                                 devices_global_rank, 
-                                 group_name, 
+        col.broadcast_partialgpu(buffers,
+                                 n_elements,
+                                 comm_key,
+                                 world_size,
+                                 devices_ids,
+                                 devices_global_rank,
+                                 group_name,
                                  local_start_pos_list)
 
         for xla_buffer, device_id, global_rank, tensor_slice in zip(
@@ -796,7 +812,8 @@ class MeshHostWorker:
                 start_indices = tuple(
                     ind_in_dst.start for ind_in_dst in tensor_slice)
                 new_buffer = jax_tensor_set(
-                    xla_buffer_to_jax_tensor(self.buffers[uuid]), xla_buffer_to_jax_tensor(xla_buffer),
+                    xla_buffer_to_jax_tensor(self.buffers[uuid]), 
+                    xla_buffer_to_jax_tensor(xla_buffer),
                     start_indices)
                 self.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
             if is_bool:

@@ -5,29 +5,37 @@ from typing import List
 
 import numpy as np
 import ray
+from jax._src.lib import xla_extension as xe
+
 from alpa.collective import types
 from alpa.global_env import global_config
-from jax._src.lib import xla_extension as xe
 _NCCL_AVAILABLE = True
 _GLOO_AVAILABLE = True
 
 logger = logging.getLogger(__name__)
 
-try:
-    from alpa.collective.collective_group.nccl_collective_group import (
-        NCCLGroup)
-except ImportError:
-    _NCCL_AVAILABLE = False
-    logger.warning("NCCL seems unavailable. Please install Cupy "
-                   "following the guide at: "
-                   "https://docs.cupy.dev/en/stable/install.html.")
-
-try:
-    from alpa.collective.collective_group.xla_nccl_collective_group import (
-        XLANCCLGroup)
-except ImportError:
-    _NCCL_AVAILABLE = False
-    logger.warning("XLA NCCL seems unavailable.")
+if global_config.nccl_mode == "from_cupy":
+    try:
+        from alpa.collective.collective_group.nccl_collective_group import (
+            NCCLGroup)
+    except ImportError:
+        _NCCL_AVAILABLE = False
+        logger.warning("NCCL seems unavailable. Please install Cupy "
+                    "following the guide at: "
+                    "https://docs.cupy.dev/en/stable/install.html.")
+else:
+    try:
+        from alpa.collective.collective_group.xla_nccl_collective_group import (
+            XLANCCLGroup)
+        from alpa.collective.collective_group.xla_nccl_util import get_nccl_runtime_version
+        nccl_version = get_nccl_runtime_version()
+    except ImportError:
+        _NCCL_AVAILABLE = False
+        print("NCCL from xla_extention seems unavailable! "
+              "Please check whether your local tensorflow-alpa "
+              "has already been up-to-date. You could also set "
+              "global_config.nccl_mode == \"from_cupy\" to "
+              "use another set of nccl apis from cupy. ")
 
 try:
     from alpa.collective.collective_group.gloo_collective_group import (
@@ -399,7 +407,7 @@ def broadcast_partialgpu(tensor_list,
                          devices_ids,
                          devices_global_rank,
                          group_name: str = "default",
-                         local_start_pos_list: list[int] = []):
+                         local_start_pos_list = None):
     """Broadcast the tensor from a source GPU to some other GPUs.
     This function is different from broadcast_multigpu that it only
     uses a subset of gpus in one host.
@@ -427,7 +435,8 @@ def broadcast_partialgpu(tensor_list,
     opts.world_size = world_size
     opts.devices_ids = devices_ids
     opts.devices_global_rank = devices_global_rank
-    opts.local_start_pos_list = local_start_pos_list
+    opts.local_start_pos_list = \
+        local_start_pos_list if local_start_pos_list is not None else []
     g.broadcast_partialgpu(tensor_list, opts)
 
 
@@ -749,7 +758,7 @@ check_and_get_group = _check_and_get_group
 
 def _check_single_tensor_input(tensor):
     """Check if the tensor is with a supported type."""
-    if isinstance(tensor, np.ndarray) or isinstance(tensor, xe.DeviceArray):
+    if isinstance(tensor, (np.ndarray, xe.DeviceArray)):
         return
     if types.cupy_available():
         if isinstance(tensor, types.cp.ndarray):

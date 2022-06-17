@@ -29,7 +29,7 @@ perf_test_suite = {}
 model_sizes = list(gpt_specs.keys())
 model_size = model_sizes[0] 
 num_micro_batch_config = [1, 4, 16, 64, 256]
-batch_size_config = [16, 64, 256, 1024]
+batch_size_config = [1, 16, 64, 256, 1024]
 
 for num_hosts in [1, 2, 4]: 
     for num_devices_per_host in [1, 2, 4, 8]:

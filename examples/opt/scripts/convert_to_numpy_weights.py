@@ -1,7 +1,7 @@
+"""Convert Metaseq's OPT model weights into Alpa numpy weights."""
 import numpy as np
 import os
 
-from metaseq.dataclass.configs import MetaseqConfig
 from metaseq.file_io import torch_load_cpu
 
 
@@ -16,14 +16,14 @@ def save_numpy(weight_dict, to_folder):
             np.save(g, t)
 
 
-def worker_main(cfg: MetaseqConfig):
-    # raw_weights_path = "/home/ubuntu/parax-efs/pycharm/opt/raw_weights/175B_resharded/consolidated.pt"
-    # raw_weights_path = "/home/ubuntu/parax-efs/pycharm/opt/opt_metaseq_2700m/model/restored.pt"
-    raw_weights_path = "/home/ubuntu/parax-efs/pycharm/opt/opt_metaseq_30000m/model/restored.pt"
-    state = torch_load_cpu(raw_weights_path)
+def worker_main():
+    PATH = "/home/ubuntu/parax-efs/pycharm/opt/opt_metaseq_30000m/model/"
+    # Path to the single
+    consolidated_weight = os.path.join(PATH, "restored.pt")
+    state = torch_load_cpu(consolidated_weight)
     to_folder = "/home/ubuntu/parax-efs/pycharm/opt/raw_weights/30B_resharded/"
     save_numpy(state["model"], to_folder)
 
 
 if __name__ == "__main__":
-    worker_main(None)
+    worker_main()

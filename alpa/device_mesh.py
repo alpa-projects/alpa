@@ -162,10 +162,10 @@ class MeshHostWorker:
             self.broadcast_func = self.xla_nccl_broadcast
             self.nccl_local_allgather_init_comms = xe.nccl_init_communicator
         else:
-            self.send_tile_func = self.send_tile
-            self.recv_tile_func = self.recv_tile
-            self.allgather_func = self.allgather
-            self.broadcast_func = self.broadcast
+            self.send_tile_func = self.cupy_nccl_send_tile
+            self.recv_tile_func = self.cupy_nccl_recv_tile
+            self.allgather_func = self.cupy_nccl_allgather
+            self.broadcast_func = self.cupy_nccl_broadcast
             self.nccl_local_allgather_init_comms = nccl.NcclCommunicator.initAll
 
     ##### Buffer Related Functions #####
@@ -426,8 +426,8 @@ class MeshHostWorker:
     #     interface
     # (2) XLA low-level PyLocalBuffer, which is not index-able
     # (3) cupy array, which is an intermediate format for ray collective
-    def send_tile(self, uuid: int, offset: Sequence[slice], dst_rank: int,
-                  dst_gpu_idx: int, group_name: str):
+    def cupy_nccl_send_tile(self, uuid: int, offset: Sequence[slice], dst_rank: int,
+                            dst_gpu_idx: int, group_name: str):
         """
         Send a slice of a source buffer to a target GPU.
 
@@ -519,9 +519,9 @@ class MeshHostWorker:
         if is_bool:
             self.buffers[uuid] = _uint8_to_bool(self.buffers[uuid])
 
-    def recv_tile(self, uuid: int, device_id: int,
-                  indices_in_dst_tile: Sequence[slice], src_rank: int,
-                  src_gpu_idx: int, group_name: str):
+    def cupy_nccl_recv_tile(self, uuid: int, device_id: int,
+                            indices_in_dst_tile: Sequence[slice], src_rank: int,
+                            src_gpu_idx: int, group_name: str):
         """
         Receive a slice from a source GPU and in-place write it on the target
         buffer.
@@ -690,8 +690,8 @@ class MeshHostWorker:
                 buf = _uint8_to_bool(buf)
             self.buffers[uuid] = buf
 
-    def allgather(self, uuids: Sequence[int], device_ids: Sequence[int],
-                  tensor_slices: Sequence[slice], output_slice):
+    def cupy_nccl_allgather(self, uuids: Sequence[int], device_ids: Sequence[int],
+                            tensor_slices: Sequence[slice], output_slice):
         cupy_buffers = []
         communicators = self.allgather_communicators[repr(sorted(device_ids))]
         relative_idx = dict(zip(sorted(device_ids), range(len(device_ids))))
@@ -804,8 +804,8 @@ class MeshHostWorker:
             if is_bool:
                 self.buffers[uuid] = _uint8_to_bool(self.buffers[uuid])
 
-    def broadcast(self, uuids, comm_key, world_size, devices_ids,
-                  devices_global_rank, tensor_slices, group_name):
+    def cupy_nccl_broadcast(self, uuids, comm_key, world_size, devices_ids,
+                            devices_global_rank, tensor_slices, group_name):
         to_use = []
         for_buffer = []
         is_bool = self.buffers[uuids[devices_ids[0]]].dtype == np.bool_

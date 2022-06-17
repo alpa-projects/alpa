@@ -23,7 +23,7 @@ class FlaxGPTForLMModule(nn.Module):
     bias_init: Callable[..., np.ndarray] = jax.nn.initializers.zeros
 
     def setup(self):
-        self.transformers = FlaxBertModule(config=self.config,  
+        self.transformers = FlaxBertModule(config=self.config,
                                            add_pooling_layer=False,
                                            dtype=self.dtype)
 

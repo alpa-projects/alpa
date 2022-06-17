@@ -70,7 +70,8 @@ def compute_gpt_tflops(batch_size,
                        num_gpus,
                        latency,
                        checkpoint_activations=False):
-    factor = 96 if checkpoint_activations else 72
+    #factor = 96 if checkpoint_activations else 72
+    factor = 24
     total_flop = factor * batch_size * seq_len * (hidden_size ** 2) * num_layers * \
           (1 + seq_len / (6 * hidden_size)) \
           + 6 * batch_size * seq_len * hidden_size * vocab_size

@@ -100,44 +100,23 @@ def create_train_state_aval(rngkey, model, batch, dtype):
 def get_train_step(parallel_method, auto_layer, num_manual_pipeline_stages,
                    num_auto_layers, auto_remat_mode, num_auto_remat_layers):
 
-    @parallelize(method=parallel_method)
     def train_step(state, batch, rng_key):
+        rngs = {"dropout": rng_key}
+        logits = state.apply_fn(state.params,
+                                batch["input_ids"],
+                                batch["attention_mask"],
+                                batch["token_type_ids"],
+                                batch["position_ids"],
+                                deterministic=True,
+                                rngs=rngs)[0]
+        label_mask = jnp.where(batch["labels"] > 0, 1.0, 0.0)
+        labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
+        loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
+        loss = (label_mask * loss).sum() / label_mask.sum()
+        return loss
 
-        def loss_func(params):
-            rngs = {"dropout": rng_key}
-            logits = state.apply_fn(params,
-                                    batch["input_ids"],
-                                    batch["attention_mask"],
-                                    batch["token_type_ids"],
-                                    batch["position_ids"],
-                                    deterministic=True,
-                                    rngs=rngs)[0]
-            label_mask = jnp.where(batch["labels"] > 0, 1.0, 0.0)
-            labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
-            loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1),
-                            axis=-1)
-            loss = (label_mask * loss).sum() / label_mask.sum()
-            return loss
-
-        if not auto_layer:
-            loss_func = manual_layer_construction(loss_func)
-        else:
-            if auto_remat_mode == "fine_grained":
-                loss_func = automatic_remat(loss_func,
-                                            layer_num=num_auto_remat_layers)
-                loss_func = automatic_layer_construction(
-                    loss_func, layer_num=num_auto_layers)
-            else:
-                use_remat = True if auto_remat_mode is "coarse_grained" else False
-                loss_func = automatic_layer_construction(
-                    loss_func, remat_layer=use_remat, layer_num=num_auto_layers)
-
-        #grads = alpa.grad(loss_func)(state.params)
-        #new_state = state.apply_gradients(grads=grads)
-        # TODO(lmzheng): add dynamic scaling for mixed-precision training
-        return loss_func(state.params)
-
-    return train_step
+    train_step = manual_layer_construction(train_step)
+    return parallelize(train_step, method=parallel_method, donate_argnums=())
 
 
 def benchmark_gpt_bert_internal(model_type,
@@ -149,7 +128,7 @@ def benchmark_gpt_bert_internal(model_type,
     print_used_time(None)
 
     # Model configs
-    (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
+    (model_name, batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
      num_micro_batches, parallel_mode, parallel_args) = benchmark_case
     dtype = jnp.float16
     tie_word_embeddings = False
@@ -175,16 +154,10 @@ def benchmark_gpt_bert_internal(model_type,
             **auto_stage_option)
     elif parallel_mode == "load_solution":
         prefer_reduce_scatter, use_remat, num_auto_layers, manual_stage_option = parallel_args
-        auto_layer = True
-        auto_remat_mode = "fine_grained" if use_remat else None
-        num_auto_remat_layers = num_layers
-        add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
-        # method = PipeshardParallel(
-        #     stage_mode="auto",
-        #     num_micro_batches=num_micro_batches,
-        #     default_auto_sharding_option=AutoShardingOption(
-        #         prefer_reduce_scatter=prefer_reduce_scatter),
-        #     pipeline_schedule="inference")
+        auto_layer = add_manual_remat = False
+        num_auto_remat_layers = auto_remat_mode = None
+        num_manual_pipeline_stages = num_auto_layers
+        add_manual_layer_marker = True
         method = ManualPipeshardParallel(
             *manual_stage_option,
             num_micro_batches=num_micro_batches,
@@ -299,7 +272,7 @@ def benchmark_gpt_bert_internal(model_type,
     # Benchmark latency without driver overhead
     for i in range(niter):
         print(f"Iteration {i} ...")
-        state = train_step(state, batch, rngkey)
+        _ = train_step(state, batch, rngkey)
         executable.sync()
 
     latencies = executable.get_execution_time_costs(warmup=1)

@@ -130,8 +130,8 @@ class RemoteBufferRef:
         self.device_mesh = device_mesh
         self.host_id = host_id
         self.device_id = device_id
-        self.uuid = (uuid
-                     if uuid is not None else next_remote_buffer_uuid().item())
+        self.uuid = uuid if uuid is not None else next_remote_buffer_uuid(
+        ).item()
         self.is_deleted_on_workers = False
         logger.debug(f"RemoteBufferRef uuid: {self.uuid} created on mesh "
                      f"with devices {self.device_mesh.device_strs}.")

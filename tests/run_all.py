@@ -24,8 +24,6 @@ import time
 from typing import Sequence
 import unittest
 
-from alpa.util import run_with_timeout
-
 slow_testcases = set([
     "test_pipeline_stage_construction.py",
 ])
@@ -35,6 +33,8 @@ def run_unittest_files(files, args):
     """Run unit test files one by one in separates processes."""
     os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = str(
         args.xla_client_mem_fraction)
+    # Must import alpa after setting the global env
+    from alpa.util import run_with_timeout
 
     for filename in files:
         if args.run_pattern is not None and args.run_pattern not in filename:

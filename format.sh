@@ -22,7 +22,6 @@ builtin cd "$ROOT" || exit 1
 
 YAPF_VERSION=$(yapf --version | awk '{print $2}')
 PYLINT_VERSION=$(pylint --version | head -n 1 | awk '{print $2}')
-PYLINT_QUOTES_VERSION=$(pip3 list | grep pylint | awk '{print $2}')
 
 # params: tool name, tool version, required version
 tool_version_check() {

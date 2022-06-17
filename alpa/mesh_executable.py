@@ -132,7 +132,8 @@ class RemoteBufferRef:
         self.device_mesh = device_mesh
         self.host_id = host_id
         self.device_id = device_id
-        self.uuid = uuid if uuid is not None else next_remote_buffer_uuid()
+        self.uuid = (uuid
+                     if uuid is not None else next_remote_buffer_uuid().item())
         self.is_deleted_on_workers = False
         logger.debug(f"RemoteBufferRef uuid: {self.uuid} created on mesh "
                      f"with devices {self.device_mesh.device_strs}.")
@@ -166,10 +167,7 @@ def next_mesh_executable_uuid():
 def next_remote_buffer_uuid(number=1):
     """Return the next uuid of a remote buffer."""
     global remote_buffer_counter
-    if number == 1:
-        ret = remote_buffer_counter
-    else:
-        ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
+    ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
     remote_buffer_counter = (remote_buffer_counter + number) % (1 << 60)
     return ret
 
@@ -186,8 +184,6 @@ def create_remote_buffer_refs(device_mesh,
         device_indices = range(device_mesh.num_devices_per_host)
     size = len(host_indices) * len(device_indices) * num_batches
     uuids = next_remote_buffer_uuid(size)
-    if size == 1:
-        uuids = (uuids,)
     uuid_iter = iter(uuids)
     refs = []
     for host_id in host_indices:

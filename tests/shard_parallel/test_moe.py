@@ -15,9 +15,9 @@ from alpa.util import map_to_shape, count_communication_primitives
 from alpa.model.moe import FlaxMoELayer, FlaxMoEForLMModule, MoEConfig, TrainState
 from alpa.model.model_util import optax_adafactor
 
-from test_auto_sharding_mlp import (assert_all_replicated, assert_close,
-                                    assert_expert_partitioned,
-                                    assert_sharding_zero_stage_3)
+from tests.shard_parallel.test_mlp import (assert_all_replicated, assert_close,
+                                           assert_expert_partitioned,
+                                           assert_sharding_zero_stage_3)
 
 
 class AutoShardingMoETest(unittest.TestCase):

@@ -44,6 +44,39 @@ logger.setLevel(logging.INFO)
 INFINITY_COST = 1e13
 
 
+@dataclasses.dataclass
+class AutoShardingOption:
+    """Options of the auto-sharding solver."""
+    # Whether enable auto-sharding. If it is False, then the solver
+    # does tho run ILP but only uses the ShardingPropagation pass.
+    enable_auto_sharding: bool = True
+    # Whether to allow all-gather during re-sharding.
+    allow_all_gather: bool = True
+    # Whether to allow all-to-all during re-sharding.
+    allow_all_to_all: bool = True
+    # Whether to allow replicated parameters.
+    allow_replicated_parameters: bool = True
+    # Whether to forcibly generate data-parallel.
+    force_data_parallel: bool = False
+    # Forcibly map the batch dimension to a mesh dimension.
+    force_batch_dim_to_mesh_dim: Optional[int] = None
+    # Whether to forcibly generate a strategy similar to ZeRO optimizer stage 3.
+    force_zero_stage_3: bool = False
+    # The threshold of all-gather combiner if force_zero_stage_3 is true.
+    force_zero_stage_3_all_gather_threshold: int = 1 << 25
+    # Prefer reduce-scatter over all-reduce.
+    prefer_reduce_scatter: bool = False
+    # Allow mixed 1d mesh and 2d mesh shape.
+    allow_mixed_mesh_shape: bool = False
+    # Allow replicated dot computation.
+    allow_recompute_heavy_op: bool = False
+    # If it is not empty, forcibly use a simple heuristic instead of the ILP
+    # solver.
+    force_simple_heuristic: str = ""
+    # The threshold of all-reduce combiner in bytes.
+    all_reduce_threshold: int = 1 << 60
+
+
 class LogicalDeviceMesh:
     """A logical view of a physical mesh. The logical view is used in the
     auto-sharding pass.
@@ -74,6 +107,15 @@ class LogicalDeviceMesh:
     @property
     def num_devices(self):
         return np.prod(self.id_mesh.shape)
+
+    def flatten(self):
+        """
+        Flatten the logical mesh into an effective 1d logical mesh,
+        """
+        return LogicalDeviceMesh(
+            self.physical_mesh, self.id_mesh.reshape(-1, 1),
+            [max(self.mesh_alpha), max(self.mesh_alpha)],
+            [min(self.mesh_beta), min(self.mesh_beta)])
 
     def all_gather_cost(self, num_bytes, mesh_dim):
         num_devices = self.id_mesh.shape[mesh_dim]
@@ -124,39 +166,6 @@ class LogicalDeviceMesh:
         return ((self.flatten_ids, self.id_mesh.shape, self.mesh_alpha,
                  self.mesh_beta) == (other.flatten_ids, other.id_mesh.shape,
                                      other.mesh_alpha, other.mesh_beta))
-
-
-@dataclasses.dataclass
-class AutoShardingOption:
-    """Options of the auto-sharding solver."""
-    # Whether enable auto-sharding. If it is False, then the solver
-    # does tho run ILP but only uses the ShardingPropagation pass.
-    enable_auto_sharding: bool = True
-    # Whether to allow all-gather during re-sharding.
-    allow_all_gather: bool = True
-    # Whether to allow all-to-all during re-sharding.
-    allow_all_to_all: bool = True
-    # Whether to allow replicated parameters.
-    allow_replicated_parameters: bool = True
-    # Whether to forcibly generate data-parallel.
-    force_data_parallel: bool = False
-    # Forcibly map the batch dimension to a mesh dimension.
-    force_batch_dim_to_mesh_dim: Optional[int] = None
-    # Whether to forcibly generate a strategy similar to ZeRO optimizer stage 3.
-    force_zero_stage_3: bool = False
-    # The threshold of all-gather combiner if force_zero_stage_3 is true.
-    force_zero_stage_3_all_gather_threshold: int = 1 << 25
-    # Prefer reduce-scatter over all-reduce.
-    prefer_reduce_scatter: bool = False
-    # Allow mixed 1d mesh and 2d mesh shape.
-    allow_mixed_mesh_shape: bool = False
-    # Allow replicated dot computation.
-    allow_recompute_heavy_op: bool = False
-    # If it is not empty, forcibly use a simple heuristic instead of the ILP
-    # solver.
-    force_simple_heuristic: str = ""
-    # The threshold of all-reduce combiner in bytes.
-    all_reduce_threshold: int = 1 << 60
 
 
 def run_auto_sharding_pass(
@@ -224,21 +233,13 @@ def run_auto_sharding_pass(
         all_gather_threshold = 1 << 60
 
     # Set configs for force_data_parallel
-    mesh_shape = logical_mesh.shape
     if force_data_parallel:
         # Forcibly generate data-parallel strategy
         allow_all_gather = False
         allow_all_to_all = False
 
-        if mesh_shape[0] == 1:
-            force_batch_dim_to_mesh_dim = 1
-        elif mesh_shape[1] == 1:
-            force_batch_dim_to_mesh_dim = 0
-        else:
-            raise ValueError(
-                f"Cannot force data parallel for the mesh shape {mesh_shape}. "
-                "Please make sure the mesh shape only has a single non-one "
-                "dimension.")
+        logical_mesh = logical_mesh.flatten()
+        force_batch_dim_to_mesh_dim = 0
     else:
         # Use default settings
         allow_all_gather = as_option.allow_all_gather

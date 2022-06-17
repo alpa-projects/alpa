@@ -12,7 +12,7 @@ from alpa import parallelize, ShardParallel
 from alpa.util import count_communication_primitives
 from alpa.testing import assert_allclose
 
-from test_auto_sharding_mlp import assert_close
+from tests.shard_parallel.test_mlp import assert_close
 
 MB = 1024**2
 

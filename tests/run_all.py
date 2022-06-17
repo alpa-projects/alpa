@@ -37,8 +37,6 @@ def run_unittest_files(files, args):
         args.xla_client_mem_fraction)
 
     for filename in files:
-        if not filename.startswith("test"):
-            continue
         if args.run_pattern is not None and args.run_pattern not in filename:
             continue
         if args.skip_pattern is not None and args.skip_pattern in filename:
@@ -101,7 +99,7 @@ if __name__ == "__main__":
                             choices=["sorted", "random", "reverse_sorted"])
     args = arg_parser.parse_args()
 
-    files = glob.glob("*.py")
+    files = glob.glob("**/test_*.py", recursive=True)
     if args.order == "sorted":
         files.sort()
     elif args.order == "random":

@@ -11,7 +11,8 @@ from alpa.device_mesh import (DeviceCluster, PhysicalDeviceMesh,
 from alpa.global_env import global_config
 from alpa.mesh_profiling import ProfilingResultDatabase
 from alpa.parallel_method import (ShardParallel, PipeshardParallel,
-                                  ManualPipeshardParallel, CreateStateParallel)
+                                  ManualPipeshardParallel, CreateStateParallel,
+                                  DataParallel, Zero2Parallel, Zero3Parallel)
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 from alpa.pipeline_parallel.layer_construction import (
     manual_remat, automatic_remat, automatic_layer_construction,

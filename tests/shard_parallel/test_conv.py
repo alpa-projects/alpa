@@ -13,7 +13,7 @@ import optax
 from alpa import parallelize, ShardParallel, LocalPhysicalDeviceMesh, AutoShardingOption
 from alpa.util import map_to_shape, count_communication_primitives
 
-from test_auto_sharding_mlp import assert_close, assert_all_replicated, is_sharded
+from tests.shard_parallel.test_mlp import assert_close, assert_all_replicated, is_sharded
 
 
 class TrainState(train_state.TrainState):

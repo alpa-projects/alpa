@@ -11,7 +11,7 @@ from alpa import parallelize, ShardParallel, LocalPhysicalDeviceMesh, AutoShardi
 from alpa.model.bert_model import (BertConfig, FlaxBertLayerCollection,
                                    FlaxBertForMaskedLMModule)
 from alpa.util import count_communication_primitives
-from test_auto_sharding_mlp import (
+from tests.shard_parallel.test_mlp import (
     assert_all_replicated, assert_close, assert_column_partitioned,
     assert_data_parallel_cost, assert_fully_sharded, assert_less_equal,
     assert_sharded, assert_replicated_column_partitioned,

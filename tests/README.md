@@ -15,14 +15,18 @@ ray start --head
 python3 run_all.py
 ```
 
-## Run a specific file
+## Run specific files
 
 - For debug usage:
 ```
-python3 test_auto_sharding_basic.py
+python3 shard_parallel/test_basic.py
 ```
 
-- More similar to how CI runs a file
+- More similar to how CI runs files
 ```
-python3 run_all.py --run-pattern test_auto_sharding_basic.py
+# Run one file
+python3 run_all.py --run-pattern shard_parallel/test_basic.py
+
+# Run a folder
+python3 run_all.py --run-pattern shard_parallel
 ```

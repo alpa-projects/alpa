@@ -12,7 +12,8 @@ from flax.training.train_state import TrainState
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 import optax
 
-from alpa import parallelize, ShardParallel, LocalPhysicalDeviceMesh, AutoShardingOption
+from alpa import (parallelize, LocalPhysicalDeviceMesh, AutoShardingOption,
+                  ShardParallel, DataParallel, Zero2Parallel, Zero3Parallel)
 from alpa.util import map_to_shape, count_communication_primitives
 
 
@@ -168,7 +169,7 @@ class AutoShardingMLPTest(unittest.TestCase):
     def setUp(self):
         assert len(jax.local_devices()) >= 4
         self.physical_mesh = LocalPhysicalDeviceMesh(jax.local_devices()[:4])
-        self.as_option = AutoShardingOption()
+        self.method = ShardParallel(auto_sharding_option=AutoShardingOption())
         self.optimizer_type = "adam"
 
     def get_device_mesh(self, shape, mesh_alpha, mesh_beta):
@@ -193,8 +194,9 @@ class AutoShardingMLPTest(unittest.TestCase):
                 x = nn.Dense(features=output_dim, use_bias=use_bias)(x)
                 return x
 
-        @parallelize(method=ShardParallel(devices=device_mesh,
-                                          auto_sharding_option=self.as_option))
+        self.method.devices = device_mesh
+
+        @parallelize(method=self.method)
         def train_step(state, batch):
 
             def loss_func(params):
@@ -244,7 +246,7 @@ class AutoShardingMLPTest(unittest.TestCase):
                                       hlo_ir,
                                       objective,
                                       device_mesh,
-                                      self.as_option,
+                                      self.method.as_option,
                                       i,
                                       optimizer_type=self.optimizer_type)
 
@@ -268,7 +270,7 @@ class AutoShardingMLPTest(unittest.TestCase):
 
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
                 count_communication_primitives(hlo_ir))
-            if self.as_option.prefer_reduce_scatter:
+            if self.method.as_option.prefer_reduce_scatter:
                 assert n_all_reduce + n_reduce_scatter == num_layers - 1
                 assert n_reduce_scatter == n_all_gather
                 assert n_total == n_all_reduce + n_reduce_scatter + n_all_gather
@@ -307,7 +309,7 @@ class AutoShardingMLPTest(unittest.TestCase):
 
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
             count_communication_primitives(hlo_ir))
-        if self.as_option.prefer_reduce_scatter:
+        if self.method.as_option.prefer_reduce_scatter:
             assert n_all_reduce == num_layers - 1
             assert n_all_gather == 1
             assert n_reduce_scatter == 2
@@ -317,7 +319,7 @@ class AutoShardingMLPTest(unittest.TestCase):
             assert n_total == n_all_reduce
 
         # Check sharding specification
-        if self.as_option.prefer_reduce_scatter:
+        if self.method.as_option.prefer_reduce_scatter:
             for weight in jax.tree_util.tree_leaves(state.opt_state):
                 if len(weight.shape) > 1:
                     assert_fully_sharded(weight)
@@ -335,21 +337,22 @@ class AutoShardingMLPTest(unittest.TestCase):
         hidden_dim = 256
 
         # Test on different device meshes
-        for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
+        for i, mesh_shape in enumerate([(4, 1), (2, 2)]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-            self.as_option.force_data_parallel = True
+            self.method.as_option.force_data_parallel = True
             state, hlo_ir, objective = self.run_n_layer_mlp(
                 num_layers, batch_size, hidden_dim, hidden_dim, hidden_dim,
                 device_mesh)
 
-            assert_data_parallel_cost(state, hlo_ir, objective, device_mesh,
-                                      self.as_option, i)
+            assert_data_parallel_cost(state, hlo_ir, objective,
+                                      device_mesh.flatten(),
+                                      self.method.as_option, 0)
 
     def test_n_layer_mlp_force_batch_dim_mapping(self):
         num_layers = 6
         batch_size = 32
         hidden_dim = 256
-        self.as_option.force_batch_dim_to_mesh_dim = 0
+        self.method.as_option.force_batch_dim_to_mesh_dim = 0
 
         # Data parallel
         device_mesh = self.get_device_mesh([4, 1], [1, 1], [1, 1])
@@ -357,7 +360,7 @@ class AutoShardingMLPTest(unittest.TestCase):
                                                         hidden_dim, hidden_dim,
                                                         hidden_dim, device_mesh)
         assert_data_parallel_cost(state, hlo_ir, objective, device_mesh,
-                                  self.as_option, 0)
+                                  self.method.as_option, 0)
 
         # Model parallel
         device_mesh = self.get_device_mesh([1, 4], [1, 1], [1, 1])
@@ -369,26 +372,26 @@ class AutoShardingMLPTest(unittest.TestCase):
         assert_close(objective, expected)
 
     def test_n_layer_mlp_data_parallel_reduce_scatter(self):
-        self.as_option.prefer_reduce_scatter = True
+        self.method = Zero2Parallel()
         self.test_n_layer_mlp_data_parallel()
 
     def test_n_layer_mlp_model_parallel_reduce_scatter(self):
-        self.as_option.prefer_reduce_scatter = True
+        self.method.as_option.prefer_reduce_scatter = True
         self.test_n_layer_mlp_model_parallel()
 
     def test_n_layer_mlp_2d_mesh_reduce_scatter(self):
-        self.as_option.prefer_reduce_scatter = True
+        self.method.as_option.prefer_reduce_scatter = True
         self.test_n_layer_mlp_2d_mesh()
 
     def test_n_layer_mlp_data_parallel_reduce_scatter_adafactor(self):
-        self.as_option.prefer_reduce_scatter = True
+        self.method.as_option.prefer_reduce_scatter = True
         self.optimizer_type = "adafactor"
         self.test_n_layer_mlp_data_parallel()
 
     def test_n_layer_mlp_data_parallel_reduce_scatter_zero_stage_3(self):
-        self.as_option.force_zero_stage_3 = True
-        self.as_option.force_zero_stage_3_all_gather_threshold = (32 * 32 +
-                                                                  32) * 6 * 4
+        self.method = Zero3Parallel()
+        self.method.as_option.force_zero_stage_3_all_gather_threshold = (
+            (32 * 32 + 32) * 6 * 4)
         self.test_n_layer_mlp_data_parallel()
 
     def test_weight_init(self):

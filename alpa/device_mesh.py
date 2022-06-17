@@ -1999,7 +1999,7 @@ class DeviceCluster:
         self.host_info = []
         for node in ray.nodes():
             for key in node["Resources"]:
-                if ishost(key):
+                if is_host(key):
                     self.host_info.append(node)
 
         # Gather device info

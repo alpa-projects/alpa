@@ -121,57 +121,11 @@ class MeshWorkerExecutable(ABC):
         raise NotImplementedError()
 
 
-class RemoteBufferRef:
-    """A reference to a remote device buffer."""
-
-    def __init__(self,
-                 device_mesh,
-                 host_id: int,
-                 device_id: int,
-                 uuid: int = None):
-        self.device_mesh = device_mesh
-        self.host_id = host_id
-        self.device_id = device_id
-        self.uuid = uuid if uuid is not None else next_remote_buffer_uuid()
-        self.is_deleted_on_workers = False
-        logger.debug(f"RemoteBufferRef uuid: {self.uuid} created on mesh "
-                     f"with devices {self.device_mesh.device_strs}.")
-
-    def set_deleted_on_workers(self):
-        """
-        Set the buffer as deleted on workers.
-
-        For some buffers (e.g., donated buffers), if we know the workers has
-        already deleted them, then we do not need to do the remote call
-        "delete_remote_buffers" again.
-        """
-        self.is_deleted_on_workers = True
-
-    def __repr__(self):
-        return (f"RemoteBufferRef(uuid = {self.uuid}, "
-                f"loc = ({self.host_id}, {self.device_id}))")
-
-    def __del__(self):
-        if not self.is_deleted_on_workers:
-            self.device_mesh.delete_remote_buffers((self,))
-
-
 def next_mesh_executable_uuid():
     """Return the next uuid of a mesh executable."""
     global mesh_executable_counter
     mesh_executable_counter = (mesh_executable_counter + 1) % (1 << 60)
     return mesh_executable_counter
-
-
-def next_remote_buffer_uuid(number=1):
-    """Return the next uuid of a remote buffer."""
-    global remote_buffer_counter
-    if number == 1:
-        ret = remote_buffer_counter
-    else:
-        ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
-    remote_buffer_counter = (remote_buffer_counter + number) % (1 << 60)
-    return ret
 
 
 def create_remote_buffer_refs(device_mesh,

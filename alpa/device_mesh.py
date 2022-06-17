@@ -58,7 +58,8 @@ from alpa.util import (benchmark_func, list_gpu_info, jax_tensor_to_cupy,
                        xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
                        xla_buffer_to_cupy, cupy_to_xla_buffer,
                        is_continuous_subset, infer_offset_and_n_elements,
-                       jax_tensor_index, OrderedSet, update_jax_platform, is_host)
+                       jax_tensor_index, OrderedSet, update_jax_platform,
+                       is_host)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

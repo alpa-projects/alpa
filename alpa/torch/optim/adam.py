@@ -26,9 +26,9 @@ def adam(lr=1e-4):
 
     def optim_gen(params):
 
-        def optim_func(optim_state, params, params_grad):
+        def optim_func(params, optim_state, params_grad):
             for k in params:
-                params[k] = params[k] + params_grad[k] * lr + optim_state[k]
+                params[k] = params[k] + params_grad[k] * lr
                 optim_state[k] = optim_state[k] + 1
             return params, optim_state
 

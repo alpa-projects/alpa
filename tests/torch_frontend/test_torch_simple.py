@@ -19,7 +19,8 @@ class MyModule(torch.nn.Module):
         x = self.linear1(x)
         # do some debugging when in local mode
         if getattr(torch, "local_mode", True):
-            print(x)
+            pass
+            #print(x)
         x = self.linear2(x)
         x = self.linear3(x)
         x = self.linear4(x)
@@ -37,13 +38,16 @@ def weight_init_func(pt_module, name_map, params, bufs):
 
 
 class TorchSimpleTest(unittest.TestCase):
+    def setUp(self):
+        torch.manual_seed(123)
+        alpa.set_seed(123)
 
     def test_simple_shard(self):
         pt_module_gen = lambda: MyModule()
 
         dataloader = [
-            (torch.randn(8, 16), torch.randn(8, 16)),
-            (torch.randn(8, 16), torch.randn(8, 16)),
+            (torch.randn(128, 16), torch.randn(128, 16)),
+            (torch.randn(128, 16), torch.randn(128, 16)),
         ]
         loss_func = lambda *args, **kwargs: torch.nn.functional.mse_loss(
             *args, **kwargs)
@@ -74,7 +78,7 @@ class TorchSimpleTest(unittest.TestCase):
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(TorchSimpleTest("test_simple_shard"))
-    suite.addTest(TorchSimpleTest("test_simple_pipeshard"))
+    #suite.addTest(TorchSimpleTest("test_simple_pipeshard"))
     return suite
 
 

@@ -60,6 +60,7 @@ def manual_seed(seed: int):
     TODO: add XLA seed setting
     """
     torch.manual_seed(seed)
+    alpa.set_seed(seed)
 
 
 def functorch_value_and_grad(func: Callable,

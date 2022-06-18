@@ -37,6 +37,7 @@ def weight_init_func(pt_module, name_map, params, bufs):
 
 
 class TorchSimpleTest(unittest.TestCase):
+
     def setUp(self):
         torch.manual_seed(123)
         alpa.set_seed(123)

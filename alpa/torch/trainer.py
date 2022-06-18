@@ -1,6 +1,5 @@
-# pylint: disable=line-too-long, pointless-string-statement
+# pylint: disable=line-too-long, pointless-string-statement, cell-var-from-loop
 """Example trainer that runs an SGD training loop"""
-import functools
 from collections import namedtuple
 
 import alpa

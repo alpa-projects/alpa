@@ -1,10 +1,9 @@
-"""Maps PyTorch ops to JAX ops
-"""
+# pylint: disable=line-too-long, unused-argument
+"""Maps PyTorch ops to JAX ops"""
 import contextlib
 import math
 from typing import Any, Optional, Sequence, Callable
 
-import functools
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -108,7 +107,6 @@ def torch_conv2d(x,
                  groups=1):
     # References:
     # - torch-xla impl and haiku / flax impl
-    # pylint: disable=line-too-long
     # - https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/convolutions.ipynb
     conv_out = lax.conv_general_dilated(
         x,
@@ -362,16 +360,15 @@ def _normalize(x, mean, var, weight, bias, reduction_axes, feature_axes, eps):
 
 
 def torch_batch_norm(
-        x: torch.Tensor,
-        running_mean: Optional[torch.Tensor],
-        running_var: Optional[torch.Tensor],
-        weight: Optional[torch.Tensor] = None,
-        bias: Optional[torch.Tensor] = None,
-        training: bool = False,
-        momentum: float = 0.1,
-        eps: float = 1e-5,
+    x: torch.Tensor,
+    running_mean: Optional[torch.Tensor],
+    running_var: Optional[torch.Tensor],
+    weight: Optional[torch.Tensor] = None,
+    bias: Optional[torch.Tensor] = None,
+    training: bool = False,
+    momentum: float = 0.1,
+    eps: float = 1e-5,
 ):
-    # pylint: disable=line-too-long
     # Ref: https://flax.readthedocs.io/en/latest/_autosummary/flax.linen.BatchNorm.html
     def _abs_sq(x):
         """Computes the elementwise square of the absolute value |x|^2."""
@@ -421,14 +418,14 @@ def torch_batch_norm(
 
 
 def torch_nn_functional_batch_norm(
-        x: torch.Tensor,
-        running_mean: Optional[torch.Tensor],
-        running_var: Optional[torch.Tensor],
-        weight: Optional[torch.Tensor] = None,
-        bias: Optional[torch.Tensor] = None,
-        training: bool = False,
-        momentum: float = 0.1,
-        eps: float = 1e-5,
+    x: torch.Tensor,
+    running_mean: Optional[torch.Tensor],
+    running_var: Optional[torch.Tensor],
+    weight: Optional[torch.Tensor] = None,
+    bias: Optional[torch.Tensor] = None,
+    training: bool = False,
+    momentum: float = 0.1,
+    eps: float = 1e-5,
 ):
     return torch_batch_norm(
         x=x,

@@ -72,8 +72,19 @@ def init_buffer(
         init_func(**init_func_kwargs), worker.local_devices[device_id])
 
 
+def torch_abs(x):
+    return jnp.absolute(x)
+
+
 def torch_add(x, other):
     return jnp.add(x, other)
+
+
+def torch_addmm(x, mat1, mat2, beta=1, alpha=1):
+    out = alpha * torch.matmul(mat1, mat2)
+    if beta == 0:
+        return out
+    return beta * x + out
 
 
 def torch_bmm(x, mat2):
@@ -140,6 +151,20 @@ def torch_div(x, other, rounding_mode=None):
         raise NotImplementedError(f"{rounding_mode} is not supported")
 
 
+def torch_dropout(x, p=0.5, training=True, inplace=False):
+    assert not inplace, "Inplace dropout is not supported"
+    if p == 0.0:
+        return x
+    if training:
+        # Copied from flax.linen.Dropout impl
+        keep_prob = 1.0 - p
+        # NOTE: pass None for rng, since Alpa ignores it anyway.
+        mask = jax.random.bernoulli(None, p=keep_prob, shape=x.shape)
+        return lax.select(mask, x, jnp.zeros_like(x))
+    else:
+        return x
+
+
 def torch_exp(x):
     return jnp.exp(x)
 
@@ -152,9 +177,68 @@ def torch_expand(x, sizes):
     return lax.broadcast_in_dim(x, computed_sizes, list(range(len(x.shape))))
 
 
+def maybe_wrap_dim(dim: int, dim_post_expr: int, wrap_scalar: bool = True):
+    if dim_post_expr <= 0:
+        assert wrap_scalar
+        dim_post_expr = 1
+    min_dim = -dim_post_expr
+    max_dim = dim_post_expr - 1
+    assert not (dim < min_dim or dim > max_dim)
+    if dim < 0:
+        dim += dim_post_expr
+    return dim
+
+
+def torch_flatten(x, start_dim=0, end_dim=-1):
+    input_shape = x.shape
+    start_dim = maybe_wrap_dim(start_dim, len(input_shape))
+    end_dim = maybe_wrap_dim(end_dim, len(input_shape))
+    assert start_dim <= end_dim
+    if start_dim == end_dim:
+        return x
+    slice_numel = 1
+    for i in range(start_dim, end_dim + 1):
+        slice_numel *= input_shape[i]
+    shape = []
+    for i in range(start_dim):
+        shape.append(input_shape[i])
+    shape.append(slice_numel)
+    for i in range(end_dim + 1, len(input_shape)):
+        shape.append(input_shape[i])
+    return torch_view(x, shape)
+
+
+def torch_full_like(x,
+                    fill_value,
+                    dtype=None,
+                    layout=torch.strided,
+                    device=None,
+                    requires_grad=False,
+                    memory_format=torch.preserve_format):
+    return jnp.full_like(x, fill_value, dtype=dtype)
+
+
 def torch_gelu(x, approximate=False):
     # TODO: use approximate=True or not?
     return jax.nn.gelu(x)
+
+
+def torch_layer_norm(x,
+                     normalized_shape,
+                     weight=None,
+                     bias=None,
+                     eps=1e-05,
+                     cudnn_enable=True):
+    # TODO: this formula might be wrong
+    axis = len(x.shape) - len(normalized_shape)
+    mean_val = jnp.mean(x, axis=axis, keepdims=True)
+    var = jnp.mean((x - mean_val)**2, axis=axis, keepdims=True)
+    out = (x - mean_val) / jnp.sqrt(var + eps)
+    if weight is not None:
+        out = out * weight
+    if bias is not None:
+        out = out + bias
+    return out
 
 
 def torch_matmul(x, other):
@@ -185,6 +269,10 @@ def torch_pow(x, exponent):
     return jnp.power(x, exponent)
 
 
+def torch_relu(x):
+    return jax.nn.relu(x)
+
+
 def torch_select(x, dim, index):
     # TODO: likely inefficient. What's the better way?
     return lax.slice_in_dim(x, index, index + 1, stride=1, axis=dim)[0]
@@ -194,6 +282,12 @@ def torch_slice(x, dim, start, end, step=1):
     if end > x.shape[dim]:
         end = x.shape[dim]
     return lax.slice_in_dim(x, start, end, stride=step, axis=dim)
+
+
+def torch_softmax(x, dim):
+    x_max = jnp.max(x, axis=dim, keepdims=True)[0]
+    unnormalized = jnp.exp(x - x_max)
+    return unnormalized / jnp.sum(unnormalized, axis=dim, keepdims=True)
 
 
 def torch_split(x, split_size_or_sections, dim=0):
@@ -248,38 +342,6 @@ def torch_zeros_like(x,
     return jnp.zeros_like(x, dtype=dtype)
 
 
-def torch_softmax(x, dim):
-    x_max = jnp.max(x, axis=dim, keepdims=True)[0]
-    unnormalized = jnp.exp(x - x_max)
-    return unnormalized / jnp.sum(unnormalized, axis=dim, keepdims=True)
-
-
-def torch_nn_functional_softmax(x, dim):
-    return torch_softmax(x=x, dim=dim)
-
-
-def torch_dropout(x, p=0.5, training=True, inplace=False):
-    assert not inplace, "Inplace dropout is not supported"
-    if p == 0.0:
-        return x
-    if training:
-        # Copied from flax.linen.Dropout impl
-        keep_prob = 1.0 - p
-        # NOTE: pass None for rng, since Alpa ignores it anyway.
-        mask = jax.random.bernoulli(None, p=keep_prob, shape=x.shape)
-        return lax.select(mask, x, jnp.zeros_like(x))
-    else:
-        return x
-
-
-def torch_nn_functional_dropout(x, p=0.5, training=True, inplace=False):
-    return torch_dropout(x, p=p, training=training, inplace=inplace)
-
-
-def torch_abs(x):
-    return jnp.absolute(x)
-
-
 def _normalize(x, mean, var, weight, bias, reduction_axes, feature_axes, eps):
     stats_shape = list(x.shape)
     for axis in reduction_axes:
@@ -300,14 +362,14 @@ def _normalize(x, mean, var, weight, bias, reduction_axes, feature_axes, eps):
 
 
 def torch_batch_norm(
-    x: torch.Tensor,
-    running_mean: Optional[torch.Tensor],
-    running_var: Optional[torch.Tensor],
-    weight: Optional[torch.Tensor] = None,
-    bias: Optional[torch.Tensor] = None,
-    training: bool = False,
-    momentum: float = 0.1,
-    eps: float = 1e-5,
+        x: torch.Tensor,
+        running_mean: Optional[torch.Tensor],
+        running_var: Optional[torch.Tensor],
+        weight: Optional[torch.Tensor] = None,
+        bias: Optional[torch.Tensor] = None,
+        training: bool = False,
+        momentum: float = 0.1,
+        eps: float = 1e-5,
 ):
     # pylint: disable=line-too-long
     # Ref: https://flax.readthedocs.io/en/latest/_autosummary/flax.linen.BatchNorm.html
@@ -358,85 +420,15 @@ def torch_batch_norm(
     return out, running_mean, running_var
 
 
-def torch_relu(x):
-    return jax.nn.relu(x)
-
-
-def maybe_wrap_dim(dim: int, dim_post_expr: int, wrap_scalar: bool = True):
-    if dim_post_expr <= 0:
-        assert wrap_scalar
-        dim_post_expr = 1
-    min_dim = -dim_post_expr
-    max_dim = dim_post_expr - 1
-    assert not (dim < min_dim or dim > max_dim)
-    if dim < 0:
-        dim += dim_post_expr
-    return dim
-
-
-def torch_flatten(x, start_dim=0, end_dim=-1):
-    input_shape = x.shape
-    start_dim = maybe_wrap_dim(start_dim, len(input_shape))
-    end_dim = maybe_wrap_dim(end_dim, len(input_shape))
-    assert start_dim <= end_dim
-    if start_dim == end_dim:
-        return x
-    slice_numel = 1
-    for i in range(start_dim, end_dim + 1):
-        slice_numel *= input_shape[i]
-    shape = []
-    for i in range(start_dim):
-        shape.append(input_shape[i])
-    shape.append(slice_numel)
-    for i in range(end_dim + 1, len(input_shape)):
-        shape.append(input_shape[i])
-    return torch_view(x, shape)
-
-
-def torch_addmm(x, mat1, mat2, beta=1, alpha=1):
-    out = alpha * torch.matmul(mat1, mat2)
-    if beta == 0:
-        return out
-    return beta * x + out
-
-
-def torch_layer_norm(x,
-                     normalized_shape,
-                     weight=None,
-                     bias=None,
-                     eps=1e-05,
-                     cudnn_enable=True):
-    # TODO: this formula might be wrong
-    axis = len(x.shape) - len(normalized_shape)
-    mean_val = jnp.mean(x, axis=axis, keepdims=True)
-    var = jnp.mean((x - mean_val)**2, axis=axis, keepdims=True)
-    out = (x - mean_val) / jnp.sqrt(var + eps)
-    if weight is not None:
-        out = out * weight
-    if bias is not None:
-        out = out + bias
-    return out
-
-
-def torch_full_like(x,
-                    fill_value,
-                    dtype=None,
-                    layout=torch.strided,
-                    device=None,
-                    requires_grad=False,
-                    memory_format=torch.preserve_format):
-    return jnp.full_like(x, fill_value, dtype=dtype)
-
-
 def torch_nn_functional_batch_norm(
-    x: torch.Tensor,
-    running_mean: Optional[torch.Tensor],
-    running_var: Optional[torch.Tensor],
-    weight: Optional[torch.Tensor] = None,
-    bias: Optional[torch.Tensor] = None,
-    training: bool = False,
-    momentum: float = 0.1,
-    eps: float = 1e-5,
+        x: torch.Tensor,
+        running_mean: Optional[torch.Tensor],
+        running_var: Optional[torch.Tensor],
+        weight: Optional[torch.Tensor] = None,
+        bias: Optional[torch.Tensor] = None,
+        training: bool = False,
+        momentum: float = 0.1,
+        eps: float = 1e-5,
 ):
     return torch_batch_norm(
         x=x,
@@ -450,6 +442,17 @@ def torch_nn_functional_batch_norm(
     )
 
 
+def torch_nn_functional_dropout(x, p=0.5, training=True, inplace=False):
+    return torch_dropout(x, p=p, training=training, inplace=inplace)
+
+
+def torch_nn_functional_linear(x, weight, bias=None):
+    output = torch.matmul(x, torch.t(weight))
+    if bias is not None:
+        output = output + bias
+    return output
+
+
 def torch_nn_functional_mse_loss(
     x: torch.Tensor,
     target: torch.Tensor,
@@ -461,11 +464,8 @@ def torch_nn_functional_mse_loss(
     return jnp.mean((x - target)**2)
 
 
-def torch_nn_functional_linear(x, weight, bias=None):
-    output = torch.matmul(x, torch.t(weight))
-    if bias is not None:
-        output = output + bias
-    return output
+def torch_nn_functional_softmax(x, dim):
+    return torch_softmax(x=x, dim=dim)
 
 
 def _calculate_fan_in_and_fan_out(tensor):
@@ -543,11 +543,11 @@ op_patch_list = [
     (torch, "unbind", torch_unbind),
     (torch, "view", torch_view),
     (torch, "zeros_like", torch_zeros_like),
-    (torch.nn.functional, "softmax", torch_nn_functional_softmax),
-    (torch.nn.functional, "dropout", torch_nn_functional_dropout),
     (torch.nn.functional, "batch_norm", torch_nn_functional_batch_norm),
-    (torch.nn.functional, "mse_loss", torch_nn_functional_mse_loss),
+    (torch.nn.functional, "dropout", torch_nn_functional_dropout),
     (torch.nn.functional, "linear", torch_nn_functional_linear),
+    (torch.nn.functional, "mse_loss", torch_nn_functional_mse_loss),
+    (torch.nn.functional, "softmax", torch_nn_functional_softmax),
     (torch.nn.init, "xavier_uniform", torch_nn_init_xavier_uniform),
     (torch.nn.init, "normal", torch_nn_init_normal),
     # TODO: add hard error for in-place ops

@@ -22,7 +22,7 @@ TrainState = namedtuple("TrainState", ["params", "bufs", "optim_state"])
 
 def train_torch_module(pt_module_gen, weight_init_func, dataloader, loss_func,
                        optim_gen, parallel_method):
-    for mode in ["local"]:
+    for mode in ["local", "dist"]:
         # "local": pure PT eager mode on a single GPU,
         #     allows print in middle of graph, no dist training
         # "dist": graph mode by lowering PT program to JAX,
@@ -33,22 +33,15 @@ def train_torch_module(pt_module_gen, weight_init_func, dataloader, loss_func,
         # Prints verbose log for debugging.
         atorch.debug = True
 
-        # Functionalize the PyTorch model and optimizer
-        pt_module = atorch.meta_init(pt_module_gen)
-        module_func, params_aval, bufs_aval, name_map = atorch.functionalize(pt_module)
-        optim_func, optim_state_init_func, optim_state_aval = optim_gen(params_aval)
-
-        # Enable dist mode for all user-defined functions
         if atorch.mode() == "dist":
             alpa.init(cluster="ray")
-            (module_func, weight_init_func, loss_func, optim_func,
-             optim_state_init_func) = atorch.enable_dist_for_funcs(
-                 module_func,
-                 weight_init_func,
-                 loss_func,
-                 optim_func,
-                 optim_state_init_func,
-             )
+
+        # Functionalize the PyTorch model and optimizer
+        pt_module = atorch.meta_init(pt_module_gen)
+        module_func, params_aval, bufs_aval, name_map = atorch.functionalize(
+            pt_module)
+        optim_func, optim_state_init_func, optim_state_aval = optim_gen(
+            params_aval)
 
         # Define one gradient descent step
         def train_step(state, batch):
@@ -70,11 +63,12 @@ def train_torch_module(pt_module_gen, weight_init_func, dataloader, loss_func,
 
             # do model forward + backward pass
             (loss_value, bufs), params_grad = atorch.value_and_grad(
-                compute_loss, has_aux=True)(state.params,
-                    state.bufs, inputs, targets)
+                compute_loss, has_aux=True)(state.params, state.bufs, inputs,
+                                            targets)
 
             # do optimizer step
-            params, optim_state = optim_func(state.params, state.optim_state, params_grad)
+            params, optim_state = optim_func(state.params, state.optim_state,
+                                             params_grad)
 
             return TrainState(params, bufs, optim_state), loss_value
 
@@ -89,7 +83,7 @@ def train_torch_module(pt_module_gen, weight_init_func, dataloader, loss_func,
         # Parallelize train function and state initialization function
         if atorch.mode() == "dist":
             train_step = alpa.parallelize(
-                train_step,
+                atorch.enable_dist_for_func(train_step),
                 method=parallel_method,
                 # NOTE: preserves mem addr and sharding spec for the first argument
                 donate_argnums=(0,),
@@ -104,17 +98,15 @@ def train_torch_module(pt_module_gen, weight_init_func, dataloader, loss_func,
             pt_batch = atorch.make_shaped_array_from_pt_tensor(pt_batch)
 
             create_train_state = alpa.parallelize(
-                create_train_state,
-                method=alpa.CreateStateParallel(train_step, pt_batch)
-            )
+                atorch.enable_dist_for_func(create_train_state),
+                method=alpa.CreateStateParallel(train_step, pt_batch))
 
-        # Initialize weights and optimizer states 
+        # Initialize weights and optimizer states
         state = create_train_state()
 
         # Run training loops
         for i, pt_batch in enumerate(dataloader):
             pt_batch = atorch.to_format(atorch.mode(), pt_batch)
-            print(pt_batch[0].shape)
             state, loss_value = train_step(state, pt_batch)
 
             # do whatever with the loss value, e.g. plot it on a graph

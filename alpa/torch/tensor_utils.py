@@ -33,6 +33,7 @@ torch_to_numpy_dtype_dict = {
 
 
 def make_shaped_array_from_pt_tensor(pt_tensors):
+
     def transform(pt_tensor):
         shape = list(pt_tensor.shape)
         np_dtype = torch_to_numpy_dtype_dict[pt_tensor.dtype]
@@ -43,7 +44,8 @@ def make_shaped_array_from_pt_tensor(pt_tensors):
 
 def initialize_with_zeros(*args):
     if atorch.mode() == "local":
-        return jax.tree_map(lambda x: torch.zeros(*x.shape, dtype=x.dtype), args)
+        return jax.tree_map(lambda x: torch.zeros(*x.shape, dtype=x.dtype),
+                            args)
     else:
         return jax.tree_map(lambda x: jnp.zeros(x.shape, x.dtype), args)
 

@@ -19,8 +19,7 @@ class MyModule(torch.nn.Module):
         x = self.linear1(x)
         # do some debugging when in local mode
         if getattr(torch, "local_mode", True):
-            pass
-            #print(x)
+            print(x)
         x = self.linear2(x)
         x = self.linear3(x)
         x = self.linear4(x)

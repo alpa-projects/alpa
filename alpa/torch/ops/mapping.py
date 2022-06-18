@@ -238,7 +238,12 @@ def torch_view(x, shape):
     return lax.reshape(x, infer_size(shape, x.size))
 
 
-def torch_zeros_like(x, *, dtype=None, layout=None, device=None, requires_grad=False,
+def torch_zeros_like(x,
+                     *,
+                     dtype=None,
+                     layout=None,
+                     device=None,
+                     requires_grad=False,
                      memory_format=torch.preserve_format):
     return jnp.zeros_like(x, dtype=dtype)
 
@@ -584,7 +589,7 @@ def bind_ops(enabled=True):
             unpatch_ops()
 
 
-def _enable_jax_backend_for_func(func: Callable = None):
+def enable_dist_for_func(func: Callable = None):
     """Returns a callable that executes `func` within `bind_ops` context.
     """
 
@@ -593,7 +598,3 @@ def _enable_jax_backend_for_func(func: Callable = None):
             return func(*args, **kwargs)
 
     return wrapped_func
-
-
-def enable_dist_for_funcs(*funcs):
-    return tuple(_enable_jax_backend_for_func(func) for func in funcs)

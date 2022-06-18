@@ -1,5 +1,4 @@
-"""Adam optimizer
-"""
+"""Adam optimizer"""
 import copy
 
 import torch
@@ -9,11 +8,10 @@ def adam(lr=1e-4):
     """torchoptim.adam(**adam_config)(params)
         Factory that generates functional version of Adam optimizer.
         Implementation has no in-place op and no data-dependent control flow.
-        NOTE: we will need similar implementation for other torch.optim
-        optimizers.
+
         Returns:
             - `optim_func`: a function that:
-                - takes (`params`, `params_grad`, `optim_state`) as input
+                - takes (`params`, `optim_state`, `params_grad`) as input
                 - returns (`params`, `optim_state`)
                   after applying Adam algorithm
             - `optim_state_init_func`: a function that:

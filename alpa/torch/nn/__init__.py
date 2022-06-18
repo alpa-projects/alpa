@@ -1,13 +1,15 @@
 """PyTorch module conversion related functions.
 """
 import copy
-from typing import List, Callable
+from typing import List, Callable, Dict
+from collections import OrderedDict
 
 import torch
 from torch import Tensor, nn
 from torch.fx.experimental.normalize import NormalizeOperators
 from torchdistx import deferred_init as torchdistx_deferred_init
 from torchdistx.fake import meta_like
+
 import alpa.torch as atorch
 from alpa.torch.tensor_utils import make_shaped_array_from_pt_tensor
 from alpa.torch.nn.utils import (DONT_EXPAND_MODULES, extract_buffers,
@@ -258,7 +260,7 @@ def _get_nested_attr(obj: nn.Module, names: List[str]) -> None:
         return _get_nested_attr(getattr(obj, names[0]), names[1:])
 
 
-def _swap_state(mod: nn.Module, names_map: List[str], elems):
+def _swap_state(mod: nn.Module, names_map: Dict[str, List[str]], elems):
     result = []
     for (_, attr_names), elem in zip(names_map.items(), elems):
         for i, attr_name in enumerate(attr_names):
@@ -299,8 +301,8 @@ class FunctionalModuleWithBuffersInInputAndOutput(torch.nn.Module):
         param_values, param_names, param_names_map = extract_weights(model_copy)
         buffer_values, buffer_names, buffer_names_map = extract_buffers(
             model_copy)
-        params = dict(zip(param_names, param_values))
-        buffers = dict(zip(buffer_names, buffer_values))
+        params = OrderedDict(zip(param_names, param_values))
+        buffers = OrderedDict(zip(buffer_names, buffer_values))
         if disable_autograd_tracking:
             for param in param_values:
                 param.requires_grad_(False)

@@ -2161,7 +2161,7 @@ def set_seed(seed: int):
     if global_physical_mesh:
         global_physical_mesh.set_runtime_random_seed(seed)
     if (global_virtual_physical_mesh and
-        global_virtual_physical_mesh.launched_physical_mesh_group):
+            global_virtual_physical_mesh.launched_physical_mesh_group):
         global_virtual_physical_mesh.launched_physical_mesh_group.\
             set_runtime_random_seed(seed)
 

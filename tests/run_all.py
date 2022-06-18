@@ -24,7 +24,10 @@ import time
 from typing import Sequence
 import unittest
 
-slow_testcases = set(["pipeline_parallel/test_stage_construction.py"])
+slow_testcases = set([
+    "pipeline_parallel/test_stage_construction.py",
+    "torch_frontend/test_zhen.py",
+])
 
 
 def run_unittest_files(files, args):

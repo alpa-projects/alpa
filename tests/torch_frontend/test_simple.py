@@ -38,12 +38,16 @@ def weight_init_func(pt_module, name_map, params, bufs):
 
 class TorchSimpleTest(unittest.TestCase):
 
+    def setUp(self):
+        torch.manual_seed(123)
+        alpa.set_seed(123)
+
     def test_simple_shard(self):
         pt_module_gen = lambda: MyModule()
 
         dataloader = [
-            (torch.randn(8, 16), torch.randn(8, 16)),
-            (torch.randn(8, 16), torch.randn(8, 16)),
+            (torch.randn(128, 16), torch.randn(128, 16)),
+            (torch.randn(128, 16), torch.randn(128, 16)),
         ]
         loss_func = lambda *args, **kwargs: torch.nn.functional.mse_loss(
             *args, **kwargs)
@@ -57,8 +61,8 @@ class TorchSimpleTest(unittest.TestCase):
         pt_module_gen = lambda: MyModule()
 
         dataloader = [
-            (torch.randn(8, 16), torch.randn(8, 16)),
-            (torch.randn(8, 16), torch.randn(8, 16)),
+            (torch.randn(128, 16), torch.randn(128, 16)),
+            (torch.randn(128, 16), torch.randn(128, 16)),
         ]
         loss_func = lambda *args, **kwargs: torch.nn.functional.mse_loss(
             *args, **kwargs)

@@ -3,9 +3,12 @@
 from typing import Any
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import torch
+
 import alpa
+import alpa.torch as atorch
 
 # Copied from torch/testing/_internal/common_utils.py#L349
 # Dict of NumPy dtype -> torch dtype (when the correspondence exists)
@@ -29,10 +32,22 @@ torch_to_numpy_dtype_dict = {
 }
 
 
-def make_shaped_array_from_pt_tensor(pt_tensor):
-    shape = list(pt_tensor.shape)
-    np_dtype = torch_to_numpy_dtype_dict[pt_tensor.dtype]
-    return jax.abstract_arrays.ShapedArray(shape, np_dtype)
+def make_shaped_array_from_pt_tensor(pt_tensors):
+
+    def transform(pt_tensor):
+        shape = list(pt_tensor.shape)
+        np_dtype = torch_to_numpy_dtype_dict[pt_tensor.dtype]
+        return jax.abstract_arrays.ShapedArray(shape, np_dtype)
+
+    return jax.tree_map(transform, pt_tensors)
+
+
+def initialize_with_zeros(*args):
+    if atorch.mode() == "local":
+        return jax.tree_map(lambda x: torch.zeros(*x.shape, dtype=x.dtype),
+                            args)
+    else:
+        return jax.tree_map(lambda x: jnp.zeros(x.shape, x.dtype), args)
 
 
 def to_format(target_format: str, inp: Any):
@@ -94,29 +109,3 @@ def assert_format(target_format: str, *inputs):
                 target_format == "dist"
             ), f"This input is not of {target_format} format: {inp}, " + \
             "of type {type(inp)}"
-
-
-def _meta_like_single_input(inp):
-    ret = None
-    if isinstance(inp, tuple):
-        ret = tuple(_meta_like_single_input(x) for x in inp)
-    elif isinstance(inp, list):
-        ret = [_meta_like_single_input(x) for x in inp]
-    elif isinstance(inp, dict):
-        ret = dict(
-            zip(inp.keys(), [_meta_like_single_input(x) for x in inp.values()]))
-    elif isinstance(inp, torch.Tensor):
-        ret = torch.empty_like(inp, device="meta")
-    if ret is not None:
-        return ret
-    else:
-        raise NotImplementedError(
-            f"Value of type {type(inp)} is not supported yet.")
-
-
-def meta_like(*inps):
-    return tuple(_meta_like_single_input(inp) for inp in inps)
-
-
-def is_torch_tensor_type(x):
-    return isinstance(x, (torch.Tensor, torch.fx.proxy.Proxy))

@@ -181,7 +181,7 @@ class PipeshardParallel(ParallelMethod):
             pipeline_schedule: str = "1f1b",
             stage_mode: str = "uniform",
             submesh_physical_shape_space: str = "power_of_two",
-            submesh_logical_shape_space: str = "default",
+            submesh_logical_shape_space: str = "single_node_model_parallel",
             auto_stage_imbalance_tolerance: float = np.inf,
             use_hlo_cost_model: bool = False,
             profiling_database_filename: Optional[str] = None,

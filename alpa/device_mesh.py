@@ -1561,7 +1561,8 @@ class DistributedArray:
     #   (jax/_src/device_array.py)
 
     def __str__(self):
-        return str(self._value)
+        return (f"DistributedArray(sharding_spec={self.sharding_spec}, "
+                f"value={self._value})")
 
 
 def fetch(distributed_arrays: Any):
@@ -2159,7 +2160,8 @@ def set_seed(seed: int):
 
     if global_physical_mesh:
         global_physical_mesh.set_runtime_random_seed(seed)
-    if global_virtual_physical_mesh:
+    if (global_virtual_physical_mesh and
+            global_virtual_physical_mesh.launched_physical_mesh_group):
         global_virtual_physical_mesh.launched_physical_mesh_group.\
             set_runtime_random_seed(seed)
 

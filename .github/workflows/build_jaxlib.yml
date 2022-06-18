@@ -1,4 +1,4 @@
-name: Build Jaxlib and Jax
+name: Build Jaxlib
 
 on:
   workflow_dispatch:

@@ -441,6 +441,10 @@ def weight_init_func(pt_module, name_map, params, bufs):
 
 class TorchZHENTest(unittest.TestCase):
 
+    def setUp(self):
+        torch.manual_seed(123)
+        alpa.set_seed(123)
+
     def test_zhen_homogeneous(self):
         B = 64  # 59  # made multiples of 8
         F = 37

@@ -40,6 +40,10 @@ def weight_init_func(pt_module, name_map, params, bufs):
 
 class TorchDictInputTest(unittest.TestCase):
 
+    def setUp(self):
+        torch.manual_seed(123)
+        alpa.set_seed(123)
+
     def test_dict_input(self):
         pt_module_gen = lambda: MyModule()
 

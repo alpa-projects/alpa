@@ -32,6 +32,10 @@ def weight_init_func(pt_module, name_map, params, bufs):
 
 class TorchReshapeTest(unittest.TestCase):
 
+    def setUp(self):
+        torch.manual_seed(123)
+        alpa.set_seed(123)
+
     def test_reshape(self):
         B = 64
 

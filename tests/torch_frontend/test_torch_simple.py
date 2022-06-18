@@ -78,7 +78,7 @@ class TorchSimpleTest(unittest.TestCase):
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(TorchSimpleTest("test_simple_shard"))
-    #suite.addTest(TorchSimpleTest("test_simple_pipeshard"))
+    suite.addTest(TorchSimpleTest("test_simple_pipeshard"))
     return suite
 
 

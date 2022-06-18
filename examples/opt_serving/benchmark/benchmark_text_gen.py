@@ -15,6 +15,8 @@ python benchmark_text_gen.py --model alpa/opt-27.b --cluster aws --forward
     --decoder_length 1024 --nb 1 --batch-size 256 --debug
 """
 import argparse
+from warnings import warn
+
 import jax.numpy as jnp
 import numpy as np
 import time
@@ -37,6 +39,7 @@ if __name__ == "__main__":
     parser.add_argument("--nb", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--dtype", type=str, default="fp16")
     args = parser.parse_args()
 
     # Some global params
@@ -52,6 +55,10 @@ if __name__ == "__main__":
     decoder_length_per_step = args.decoder_length
     batch_size = args.batch_size
     autoregressive = not args.forward
+    dtype = jnp.float16 if args.dtype == "fp16" else jnp.float32
+
+    if dtype == jnp.float16:
+        warn(f"dtype=fp16 is for benchmarking, but cannot generate meaningful text now.")
 
     if autoregressive:
         assert num_micro_batches == 1, "we only support num_micro_batches=1 for autoregressive!"
@@ -69,6 +76,7 @@ if __name__ == "__main__":
                                                       args.device,
                                                       args.cluster,
                                                       autoregressive,
+                                                      dtype,
                                                       dummy=args.dummy,
                                                       decoding_length_per_step=decoder_length_per_step,
                                                       num_micro_batches=num_micro_batches)
@@ -123,17 +131,16 @@ if __name__ == "__main__":
             decode_speeds.append(speed)
             tflopss.append(tflops)
             compute_tflopss.append(compute_tflops)
-
-    # Warm up
     else:
+        # generation mode
         tic = time.time()
         model = get_model(args.model,
                           args.device,
                           args.cluster,
                           autoregressive,
+                          dtype,
                           dummy=args.dummy)
         load_time = time.time() - tic
-
 
         input_ids = tokenizer("Paris is the capital city of", return_tensors="pt").input_ids.to(args.device)
         output = model.generate(input_ids=input_ids, max_length=256, do_sample=False,
@@ -145,11 +152,7 @@ if __name__ == "__main__":
         seq_len = model.transformer_config.seq_len
         vocab_size = model.transformer_config.vocab_size
 
-        if "alpa" in model:
-            num_gpus = alpa.get_global_cluster().num_devices
-        else:
-            num_gpus = 1
-
+        num_gpus = alpa.get_global_cluster().num_devices if "alpa" in args.model else 1
         for i in range(n_iters):
             prompt = test_prompts[i]
             torch.manual_seed(8)
@@ -163,11 +166,12 @@ if __name__ == "__main__":
 
             gen_len = generated_ids.shape[1]
 
-            if "alpa" in model:
+            if "alpa" in args.model:
                 compute_latency = sum(model.executable.get_execution_time_costs(warmup=0)[-gen_len:])
             else:
                 compute_latency = latency
-            tflops = compute_gpt_tflops_inference_with_padding(batch_size, gen_len, seq_len, L, H, vocab_size, num_gpus, latency)
+            tflops = compute_gpt_tflops_inference_with_padding(batch_size, gen_len, seq_len,
+                                                               L, H, vocab_size, num_gpus, latency)
             compute_tflops = compute_gpt_tflops_inference_with_padding(batch_size, gen_len, seq_len,
                                                                        L, H, vocab_size, num_gpus,
                                                                        compute_latency)
@@ -175,6 +179,7 @@ if __name__ == "__main__":
             if args.debug:
                 print(f"input length: {input_ids.shape[1]}, output_length: {generated_ids.shape[1]}, "
                       f"num_gpus: {num_gpus}, speed: {speed:.2f} tokens/s, tflops: {tflops:.4f} tflops/s")
+                print(generated_string)
             decode_speeds.append(speed)
             tflopss.append(tflops)
 

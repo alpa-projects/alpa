@@ -80,7 +80,7 @@ class OPTEmbeddings(nn.Module):
     """Construct the embeddings from word, position and token_type embeddings."""
 
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         assert not self.config.use_stable_embedding
@@ -119,7 +119,7 @@ class OPTEmbeddings(nn.Module):
 
 class OPTSelfAttention(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         if self.config.decoder_embed_dim % self.config.decoder_attention_heads != 0:
@@ -190,7 +190,7 @@ class OPTSelfAttention(nn.Module):
 
 class OPTAttention(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float16
+    dtype: jnp.dtype = jnp.float32
 
     def setup(self):
         assert self.config.decoder_normalize_before
@@ -225,7 +225,7 @@ class OPTAttention(nn.Module):
 
 class OPTFFN(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         self.fc1 = nn.Dense(
@@ -251,7 +251,7 @@ class OPTFFN(nn.Module):
 
 class OPTTransformerLayer(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         assert self.config.decoder_normalize_before
@@ -284,7 +284,7 @@ class OPTTransformerLayer(nn.Module):
 
 class OPTTransformerLayerCollection(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         self.layers = [
@@ -347,7 +347,7 @@ class OPTTransformerLayerCollection(nn.Module):
 
 class OPTTransformerModule(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         assert self.config.decoder_normalize_before
@@ -393,7 +393,7 @@ class OPTTransformerModule(nn.Module):
 
 class OPTForLMModule(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float16
+    dtype: jnp.dtype = jnp.float32
     bias_init: Callable[..., jnp.ndarray] = jax.nn.initializers.zeros
 
     def setup(self):
@@ -517,8 +517,8 @@ def get_config(name, **kwargs):
     return dataclasses.replace(config, **kwargs)
 
 
-def init_model_aval(config):
-    model = OPTForLMModule(config)
+def init_model_aval(config, dtype):
+    model = OPTForLMModule(config, dtype=dtype)
     rngkey = jax.core.ShapedArray((2,), jnp.uint32)
     input_ids = jax.core.ShapedArray((1, 128), jnp.int32)
     position_ids = jax.core.ShapedArray((1, 128), jnp.int32)
@@ -530,8 +530,7 @@ def init_model_aval(config):
     return model, params
 
 
-def init_cache_aval(config, batch_size):
-    dtype = jnp.float16
+def init_cache_aval(config, batch_size, dtype):
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
     all_cache = []
@@ -549,8 +548,8 @@ def init_cache_aval(config, batch_size):
     return tuple(all_cache)
 
 
-def init_cache_np(config, batch_size):
-    dtype = np.float16
+def init_cache_np(config, batch_size, dtype):
+    np_dtype = np.float32 if dtype == jnp.float32 else np.float16
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
     all_cache = []
@@ -558,10 +557,10 @@ def init_cache_np(config, batch_size):
         layer_cache = (
             np.zeros((batch_size, config.max_target_positions,
                        config.decoder_attention_heads, head_dim),
-                       dtype=dtype),
+                       dtype=np_dtype),
             np.zeros((batch_size, config.max_target_positions,
                        config.decoder_attention_heads, head_dim),
-                       dtype=dtype),
+                       dtype=np_dtype),
             np.zeros((batch_size,), np.int32),
         )
         all_cache.append(layer_cache)
@@ -653,9 +652,10 @@ def load_params_np(params, path, config, dummy=False):
 
 
 def get_jax_executable(config,
+                       dtype,
                        support_output_attentions=False,
                        support_output_hidden_states=False):
-    model, params = init_model_aval(config)
+    model, params = init_model_aval(config, dtype)
 
     @jax.jit
     def inference_step(params, batch):
@@ -668,7 +668,6 @@ def get_jax_executable(config,
                                  output_hidden_states=support_output_hidden_states)
             return output
 
-        print("compiled!")
         output = forward(params)
         return output
 
@@ -677,6 +676,7 @@ def get_jax_executable(config,
 
 
 def get_pipeshard_executable(config,
+                             dtype,
                              batch_size=1,
                              num_micro_batches=1,
                              decoding_length_per_step=1024,
@@ -688,7 +688,7 @@ def get_pipeshard_executable(config,
         assert batch_size == 1, "we only support batch_sie = 1 for autoregressive..."
 
     # Init model
-    model, params = init_model_aval(config)
+    model, params = init_model_aval(config, dtype)
 
     # Parallelize
     method = alpa.PipeshardParallel(num_micro_batches=num_micro_batches,
@@ -713,7 +713,7 @@ def get_pipeshard_executable(config,
         executable = inference_step_with_cache.get_executable(params, {
             "input_ids": jax.core.ShapedArray((1, 1), jnp.int32),
             "position_ids": jax.core.ShapedArray((1, 1), jnp.int32),
-            "cache": init_cache_aval(config, 1),
+            "cache": init_cache_aval(config, 1, dtype),
         })
     else:
         @alpa.parallelize(batch_argnums=(1,), method=method)
@@ -824,9 +824,9 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
         raise ValueError()
 
 
-def init_cache_dis_array(executable, config, batch_size, dummy=False):
+def init_cache_dis_array(executable, config, batch_size, dtype=jnp.float32, dummy=False):
     alpa.global_config.use_dummy_value_for_benchmarking = dummy
-    cache = init_cache_np(config, batch_size)
+    cache = init_cache_np(config, batch_size, dtype)
     _, batch_info = executable.get_load_info()
     cache_info = batch_info["cache"]
     flat_args, in_tree = tree_flatten(cache)

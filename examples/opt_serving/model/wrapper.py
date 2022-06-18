@@ -157,6 +157,7 @@ def get_model(model_name,
               device,
               cluster,
               autoregressive,
+              dtype,
               dummy=False,
               batch_size=1,
               decoding_length_per_step=1,
@@ -171,9 +172,9 @@ def get_model(model_name,
     if not model_name.startswith("alpa") and not autoregressive:
         raise NotImplementedError(f"Cannot support {model_name} in forward-only mode.")
     if autoregressive and decoding_length_per_step > 1:
-        raise RuntimeError(f"Autoressive requires decoder_length_per_step == 1")
+        raise RuntimeError(f"Autoregressive requires decoder_length_per_step == 1")
     if autoregressive and num_micro_batches > 1:
-        raise NotImplementedError(f"Cannot support num_micro_batches > 1 in autoressive mode.")
+        raise NotImplementedError(f"Cannot support num_micro_batches > 1 in autoregressive mode.")
 
     if "gpt" in model_name:
         return get_hf_gpt_model(model_name, device)
@@ -193,12 +194,12 @@ def get_model(model_name,
 
     if "jax/opt" in model_name:
         config = get_config(name, num_pp_stages=None, mark_boundary=False)
-        executable, params_aval = get_jax_executable(config)
+        executable, params_aval = get_jax_executable(config, dtype)
 
         # init params for single GPU for JAX
         params = load_params_np(params_aval, path, config)
         params = jax.tree_map(jnp.array, params)
-        init_cache = init_cache_np(config, 1)
+        init_cache = init_cache_np(config, 1, dtype)
     else:
         assert "alpa/opt" in model_name
         alpa.init()
@@ -213,6 +214,7 @@ def get_model(model_name,
 
         executable, params_aval = get_pipeshard_executable(
             config,
+            dtype,
             batch_size=batch_size,
             num_micro_batches=num_micro_batches,
             decoding_length_per_step=decoding_length_per_step,
@@ -222,7 +224,7 @@ def get_model(model_name,
         # Load params
         params = load_params_dis_array(path, executable, params_aval, config, dummy)
         if autoregressive:
-            init_cache = init_cache_dis_array(executable, config, 1, dummy)
+            init_cache = init_cache_dis_array(executable, config, 1, dtype=dtype, dummy=dummy)
         executable.sync()
 
         # return executable directly if not autoregressive

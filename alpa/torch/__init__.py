@@ -17,10 +17,11 @@ from functools import partial, wraps
 import numpy as np
 import alpa
 from alpa.device_mesh import DistributedArray
-from alpa.torch.nn import functionalize, materialize, meta_init
-from alpa.torch.ops.mapping import enable_dist_for_funcs, zeros_like_on_device
+from alpa.torch.nn import functionalize, meta_init
+from alpa.torch.ops.mapping import enable_dist_for_funcs
 from alpa.torch.tensor_utils import (make_shaped_array_from_pt_tensor,
-                                     meta_like, to_format, assert_format)
+                                     initialize_with_zeros,
+                                     to_format, assert_format)
 from alpa.torch import trainer
 
 # If True, prints verbose log for debugging.

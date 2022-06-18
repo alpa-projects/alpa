@@ -10,7 +10,6 @@ from torchdistx import deferred_init as torchdistx_deferred_init
 from torchdistx.fake import meta_like
 import alpa.torch as atorch
 from alpa.torch.tensor_utils import make_shaped_array_from_pt_tensor
-from alpa.torch.ops.mapping import zeros_like_on_device
 from alpa.torch.nn.utils import (DONT_EXPAND_MODULES, extract_buffers,
                                  extract_weights, named_buffers, named_members,
                                  named_parameters, normalize)
@@ -449,16 +448,6 @@ def functionalize(module: torch.nn.Module):
             name_map[elem["orig_name"]] = elem["orig_name"]
 
     return module_func, params, bufs, name_map
-
-
-def materialize(*tensor_dicts):
-
-    def _zeros_init_dict(tensor_dict):
-        for k, p in tensor_dict.items():
-            tensor_dict[k] = zeros_like_on_device(p)
-        return tensor_dict
-
-    return tuple(_zeros_init_dict(tensor_dict) for tensor_dict in tensor_dicts)
 
 
 def meta_init(module_fn: Callable[..., torch.nn.Module], *args, **kwargs):

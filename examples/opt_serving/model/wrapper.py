@@ -192,7 +192,7 @@ def get_model(model_name,
         raise RuntimeError("Unrecognized cluster.")
 
     if "jax/opt" in model_name:
-        config = get_config(name, num_pp_stages=None)
+        config = get_config(name, num_pp_stages=None, mark_boundary=False)
         executable, params_aval = get_jax_executable(config)
 
         # init params for single GPU for JAX

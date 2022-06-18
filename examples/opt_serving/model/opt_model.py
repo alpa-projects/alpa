@@ -72,6 +72,8 @@ class OPTConfig:
     vocab_size: int = 50272
     layer_norm_eps: float = 0.00001
     num_pp_stages: int = None
+    # parallelize
+    mark_boundary: bool = True
 
 
 class OPTEmbeddings(nn.Module):
@@ -312,7 +314,8 @@ class OPTTransformerLayerCollection(nn.Module):
             if self.config.num_pp_stages is not None:
                 if i % layers_per_stage == 0 and i != 0:
                     stage_id = i // layers_per_stage
-                    # mark_pipeline_boundary()
+                    if self.config.mark_boundary:
+                        mark_pipeline_boundary()
 
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)

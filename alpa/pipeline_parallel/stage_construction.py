@@ -455,7 +455,7 @@ def get_compute_cost(
         max_n_succ_stages[:, :, mesh_id, :] = mesh_max_n_succ_stages
         is_profiled[:, :, mesh_id, :] = mesh_profiled
         toc = time()
-        print(f"Profiling for submesh {mesh_id} {submesh} takes {toc - tic}"
+        print(f"Profiling for submesh {mesh_id} {submesh} takes {toc - tic:.2f}"
               f" seconds")
         print(f"Profiled costs are: {mesh_compute_cost}")
         print(f"Profiled max_n_succ_stages are: {mesh_max_n_succ_stages}")
@@ -609,7 +609,7 @@ def cluster_layers_and_slice_mesh(
 
         # Print and store the results
         print("Result forward_stage_layer_ids:", forward_stage_layer_ids)
-        print("Result meshes:", submesh_shapes)
+        print("Result mesh_shapes:", submesh_shapes)
         print("Result logical_mesh_shapes:", logical_mesh_shapes)
         print("Result autosharding_option_dicts:", autosharding_option_dicts)
         global last_forward_stage_layer_ids, last_submesh_shapes

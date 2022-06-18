@@ -61,8 +61,8 @@ class TorchSimpleTest(unittest.TestCase):
         pt_module_gen = lambda: MyModule()
 
         dataloader = [
-            (torch.randn(8, 16), torch.randn(8, 16)),
-            (torch.randn(8, 16), torch.randn(8, 16)),
+            (torch.randn(128, 16), torch.randn(128, 16)),
+            (torch.randn(128, 16), torch.randn(128, 16)),
         ]
         loss_func = lambda *args, **kwargs: torch.nn.functional.mse_loss(
             *args, **kwargs)

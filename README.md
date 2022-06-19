@@ -2,8 +2,8 @@
 [**Documentation**](https://alpa-projects.github.io) |
 [**Slack**](https://forms.gle/YEZTCrtZD6EAVNBQ7)
 
-[![Build Jaxlib and Jax](https://github.com/alpa-projects/alpa/actions/workflows/build_jax.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/build_jax.yml)
 [![CI](https://github.com/alpa-projects/alpa/actions/workflows/ci.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/ci.yml)
+[![Build Jaxlib](https://github.com/alpa-projects/alpa/actions/workflows/build_jaxlib.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/build_jaxlib.yml)
 
 Alpa is a system for training large-scale neural networks.
 Scaling neural networks to hundreds of billions of parameters has enabled dramatic breakthroughs such as GPT-3, but training these large-scale neural networks requires complicated distributed training techniques.

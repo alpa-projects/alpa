@@ -361,10 +361,10 @@ class PipeshardDriverExecutable:
 
     def __del__(self):
         for worker, uuid in self.worker_executable_uuid_mapping.items():
-            try:
+            if worker is None or not ray or not ray.worker or not ray.is_initialized():
+                continue
+            else:
                 worker.delete_executable.remote(uuid)
-            except:
-                print(f"delete executable {uuid} failed")
 
 
 class PipeshardMeshWorkerExecuable:

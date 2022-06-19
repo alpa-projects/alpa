@@ -80,7 +80,7 @@ class OPTEmbeddings(nn.Module):
     """Construct the embeddings from word, position and token_type embeddings."""
 
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
         assert not self.config.use_stable_embedding
@@ -119,7 +119,7 @@ class OPTEmbeddings(nn.Module):
 
 class OPTSelfAttention(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
         if self.config.decoder_embed_dim % self.config.decoder_attention_heads != 0:
@@ -190,7 +190,7 @@ class OPTSelfAttention(nn.Module):
 
 class OPTAttention(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float32
+    dtype: jnp.dtype = jnp.float16
 
     def setup(self):
         assert self.config.decoder_normalize_before
@@ -225,7 +225,7 @@ class OPTAttention(nn.Module):
 
 class OPTFFN(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
         self.fc1 = nn.Dense(
@@ -251,7 +251,7 @@ class OPTFFN(nn.Module):
 
 class OPTTransformerLayer(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
         assert self.config.decoder_normalize_before
@@ -284,7 +284,7 @@ class OPTTransformerLayer(nn.Module):
 
 class OPTTransformerLayerCollection(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
         self.layers = [
@@ -347,7 +347,7 @@ class OPTTransformerLayerCollection(nn.Module):
 
 class OPTTransformerModule(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
+    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
         assert self.config.decoder_normalize_before
@@ -393,7 +393,7 @@ class OPTTransformerModule(nn.Module):
 
 class OPTForLMModule(nn.Module):
     config: OPTConfig
-    dtype: jnp.dtype = jnp.float32
+    dtype: jnp.dtype = jnp.float16
     bias_init: Callable[..., jnp.ndarray] = jax.nn.initializers.zeros
 
     def setup(self):
@@ -524,6 +524,7 @@ def init_model_aval(config, dtype):
     position_ids = jax.core.ShapedArray((1, 128), jnp.int32)
     params = jax.eval_shape(model.init, rngkey, input_ids, position_ids)
 
+    # TODO: this is always True
     if config.fp16:
         params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, jnp.float16), params)
 
@@ -684,8 +685,8 @@ def get_pipeshard_executable(config,
                              support_output_hidden_states=False,
                              autoregressive=True):
     if autoregressive:
-        assert num_micro_batches == 1, "we only support num_micro_batches=1 for autoregressive..."
-        assert batch_size == 1, "we only support batch_sie = 1 for autoregressive..."
+        assert num_micro_batches == 1, "we only support num_micro_batches=1 for autoregressive!"
+        assert batch_size == 1, "we only support batch_sie = 1 for autoregressive!"
 
     # Init model
     model, params = init_model_aval(config, dtype)
@@ -824,7 +825,7 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
         raise ValueError()
 
 
-def init_cache_dis_array(executable, config, batch_size, dtype=jnp.float32, dummy=False):
+def init_cache_dis_array(executable, config, batch_size, dtype, dummy=False):
     alpa.global_config.use_dummy_value_for_benchmarking = dummy
     cache = init_cache_np(config, batch_size, dtype)
     _, batch_info = executable.get_load_info()

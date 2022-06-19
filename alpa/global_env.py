@@ -10,7 +10,7 @@ class GlobalConfig:
         self.xla_client_mem_fraction = float(
         os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", 0.85))
         self.xla_gpu_autotune_level = 4
-        self.delete_remote_buffers_threshold = 500
+        self.delete_remote_buffers_threshold = 200
         # use AWS EFA network interface
         self.use_aws_efa = os.environ.get("ALPA_USE_AWS_EFA", "").lower() in [
             "true", "1"

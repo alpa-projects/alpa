@@ -144,10 +144,10 @@ def get_hf_opt_model(model_name, device):
     inference_func_config = InferenceFuncConfig()
     for key in inference_func_config.__dataclass_fields__.keys():
         setattr(inference_func_config, key, getattr(raw_model.config, key))
-    transformer_config = TransformerModelConfig(H=raw_model.config.n_embd,
-                                                L=raw_model.config.n_layer,
-                                                n_head=raw_model.config.n_head,
-                                                seq_len=raw_model.config.n_positions,
+    transformer_config = TransformerModelConfig(H=raw_model.config.hidden_size,
+                                                L=raw_model.config.num_hidden_layers,
+                                                n_head=raw_model.config.num_attention_heads,
+                                                seq_len=raw_model.config.max_position_embeddings,
                                                 vocab_size=raw_model.config.vocab_size)
     executable = None
     return WrappedInferenceFunc(inference_func, inference_func_config, executable, transformer_config)
@@ -169,7 +169,7 @@ def get_model(model_name,
     Args:
         model_name: "gpt", "facebook/opt-", or "alpa/opt-".
     """
-    if not model_name.startswith("alpa") and not autoregressive:
+    if not model_name.startswith("alpa")  and not autoregressive:
         raise NotImplementedError(f"Cannot support {model_name} in forward-only mode.")
     if autoregressive and decoding_length_per_step > 1:
         raise RuntimeError(f"Autoregressive requires decoder_length_per_step == 1")
@@ -200,6 +200,11 @@ def get_model(model_name,
         params = load_params_np(params_aval, path, config)
         params = jax.tree_map(jnp.array, params)
         init_cache = init_cache_np(config, 1, dtype)
+        transformer_config = TransformerModelConfig(H=config.decoder_embed_dim,
+                                                    L=config.decoder_layers,
+                                                    n_head=config.decoder_attention_heads,
+                                                    seq_len=config.max_target_positions,
+                                                    vocab_size=config.vocab_size)
     else:
         assert "alpa/opt" in model_name
         alpa.init()
@@ -224,7 +229,7 @@ def get_model(model_name,
         # Load params
         params = load_params_dis_array(path, executable, params_aval, config, dummy)
         if autoregressive:
-            init_cache = init_cache_dis_array(executable, config, 1, dtype=dtype, dummy=dummy)
+            init_cache = init_cache_dis_array(executable, config, 1, dtype, dummy=dummy)
         executable.sync()
 
         # return executable directly if not autoregressive
@@ -251,12 +256,7 @@ def get_model(model_name,
             "cache": past_key_values,
         })
         # executable.sync()
-        # latency1 = time.time() - tic
-        # print(f"latency1 : {latency1}")
-        # print(f"latency2: {executable.get_execution_time_costs(warmup=0)[-1]}")
-        # logits_step = torch.from_numpy(np.array(output.logits)).to(device)
-        # print(output.logits.shape)
-        logits_step = torch.ones(output.logits.shape, device=device)
+        logits_step = torch.from_numpy(np.array(output.logits)).to(device)
 
         step_ct += 1
         return InferenceFuncOutput(logits_step,

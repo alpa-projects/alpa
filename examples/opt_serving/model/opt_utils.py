@@ -37,6 +37,7 @@ def compute_gpt_tflops_inference_with_padding(batch_size, gen_len, seq_len, num_
     tflops = total_flop / latency / num_gpus / 1e12
     return tflops
 
+
 test_prompts = [
     "Computer science is the study of computation and",
     "Ion Stoica is a Romanian-American computer scientist specializing in",

@@ -13,6 +13,9 @@ python benchmark_text_gen.py --model jax/opt-125m --cluster aws
 4. benchmark alpa parallelized OPT forward computation, batch_size, decoder length, and #micro_batches can be configured.
 python benchmark_text_gen.py --model alpa/opt-27.b --cluster aws --forward
     --decoder_length 1024 --nb 1 --batch-size 256 --debug
+
+Notes:
+1. fp32 does not work now because of embedding
 """
 import argparse
 from warnings import warn
@@ -23,10 +26,12 @@ import time
 import torch
 
 import alpa
+from alpa.global_env import global_config
 from alpa.util import write_tsv
 from examples.opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding, test_prompts
 from examples.opt_serving.model.wrapper import get_model
 from transformers import AutoTokenizer
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -45,10 +50,14 @@ if __name__ == "__main__":
     # Some global params
     warmup_iters = 5
     n_iters = 10
+    global_config.pipeline_sync_for_timer = True
 
     # Note(Hao): we need to use "opt-30b" and disable "add_bos_token".
-    tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", use_fast=False)
-    tokenizer.add_bos_token = False
+    if args.model.startswith("alpa") or args.model.startswith("jax"):
+        tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", use_fast=False)
+        tokenizer.add_bos_token = False
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
 
     # Do some param check
     num_micro_batches = args.nb
@@ -56,9 +65,6 @@ if __name__ == "__main__":
     batch_size = args.batch_size
     autoregressive = not args.forward
     dtype = jnp.float16 if args.dtype == "fp16" else jnp.float32
-
-    if dtype == jnp.float16:
-        warn(f"dtype=fp16 is for benchmarking, but cannot generate meaningful text now.")
 
     if autoregressive:
         assert num_micro_batches == 1, "we only support num_micro_batches=1 for autoregressive!"
@@ -70,6 +76,9 @@ if __name__ == "__main__":
     compute_tflopss = []
 
     if not autoregressive:
+        # Increase the frequency of deleting buffers to avoid OOM.
+        global_config.delete_remote_buffers_threshold = 4
+
         # forward mode
         tic = time.time()
         model, params, transformer_config = get_model(args.model,
@@ -78,6 +87,7 @@ if __name__ == "__main__":
                                                       autoregressive,
                                                       dtype,
                                                       dummy=args.dummy,
+                                                      batch_size=batch_size,
                                                       decoding_length_per_step=decoder_length_per_step,
                                                       num_micro_batches=num_micro_batches)
         load_time = time.time() - tic
@@ -92,7 +102,8 @@ if __name__ == "__main__":
         num_head = transformer_config.n_head
         seq_len = transformer_config.seq_len
         vocab_size = transformer_config.vocab_size
-        num_gpus = alpa.get_global_cluster().num_devices
+
+        num_gpus = alpa.get_global_cluster().num_devices if "alpa" in args.model else 1
 
         # warm up
         for _ in range(warmup_iters):
@@ -182,14 +193,16 @@ if __name__ == "__main__":
                 print(generated_string)
             decode_speeds.append(speed)
             tflopss.append(tflops)
+            compute_tflopss.append(compute_tflops)
 
     avg_speed = sum(decode_speeds) / n_iters
     avg_tflops = sum(tflopss) / n_iters
     avg_compute_tflops = sum(compute_tflopss) / n_iters
     latency_32_tokens = 32.0 / (avg_speed / batch_size)
 
-    heads = ["Model", "Device", "Dummy", "Load (s)", "Batchsize", "#Microbatches", "#Stages", "Decoder step-len",
-             "Speed (token/s)", "TFlops", "Compute TFlops", "latency (32 token)"]
-    values = [args.model, args.device, args.dummy, f"{load_time:.2f}", f"{batch_size}", f"{num_micro_batches}", "2", f"{decoder_length_per_step}",
-              f"{avg_speed:.2f}", f"{avg_tflops:.4f}", f"{avg_compute_tflops:.4f}", f"{latency_32_tokens:.2f}"]
+    heads = ["Model", "Device", "Dummy", "Load (s)", "Autoregressive", "Batchsize", "#Microbatches", "#Stages", "Decoder step length",
+             "TFlops", "Compute TFlops", "Speed (token/s)", "latency (32 token)"]
+    values = [args.model, args.device, args.dummy, f"{load_time:.2f}", f"{autoregressive}", f"{batch_size}",
+              f"{num_micro_batches}", "2", f"{decoder_length_per_step}",
+              f"{avg_tflops:.4f}", f"{avg_compute_tflops:.4f}", f"{avg_speed:.2f}", f"{latency_32_tokens:.2f}"]
     write_tsv(heads, values, "results.tsv")

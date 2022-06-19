@@ -490,24 +490,7 @@ class GeneratorInterface:
 
     def max_sequence_len(self):
         """Resolve the max sequence length allowed from multiple sources."""
-        sources = []
-        # source 1: model config
-        source1 = MAX_SEQ_LEN
-        if getattr(self.model_wrapper.model_config, "n_positions", None):
-            source1 = getattr(self.model_wrapper.model_config, "n_positions", None)
-        sources.append(source1)
-
-        source2 = MAX_SEQ_LEN
-        if getattr(self.model_wrapper.model_config, "max_position_embeddings", None):
-            source2 = getattr(self.model_wrapper.model_config, "max_position_embeddings", None)
-        sources.append(source2)
-
-        source3 = MAX_SEQ_LEN
-        if getattr(self.model_wrapper.model_config, "max_target_positions", None):
-            source3 = getattr(self.model_wrapper.model_config, "max_target_positions", None)
-        sources.append(source3)
-        # source 4: from user request, handled later
-        return min(sources)
+        return self.model_wrapper.transformer_config.seq_len
 
     def build_dataset_for_inference(self, src_tokens, src_lengths, **kwargs):
         """Build a batched dataset for inference"""

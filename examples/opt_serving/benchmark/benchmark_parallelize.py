@@ -22,7 +22,7 @@ def test_opt_125M_shard_parallel():
     position_ids = build_position_ids(input_ids, config.pad)
     print("input_ids", input_ids)
 
-    model, params = init_model_aval(config)
+    model, params = init_model_aval(config, jnp.float16)
     params = load_params_np(params, np_weights_folder, config)
 
     # Get expected results

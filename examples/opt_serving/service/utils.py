@@ -26,12 +26,12 @@ def encode_fn(generator, x):
     return generator.tokenizer.encode(normalize_newlines(x))
 
 
-def build_logger():
-    logging.basicConfig(
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        level=os.environ.get("LOGLEVEL", "INFO").upper(),
-        stream=sys.stdout,
-    )
-    logger = logging.getLogger("metaseq_cli.interactive")
-    return logger
+# def build_logger():
+#     logging.basicConfig(
+#         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+#         datefmt="%Y-%m-%d %H:%M:%S",
+#         level=os.environ.get("LOGLEVEL", "INFO").upper(),
+#         stream=sys.stdout,
+#     )
+#     logger = logging.getLogger("metaseq_cli.interactive")
+#     return logger

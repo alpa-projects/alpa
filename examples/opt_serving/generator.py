@@ -1,6 +1,7 @@
 import numpy as np
 import time
 from typing import List, Optional
+import logging
 
 import torch
 from transformers import AutoTokenizer
@@ -12,9 +13,9 @@ from examples.opt_serving.dataset import data_utils
 from examples.opt_serving.dataset.prepend_token_dataset import PrependTokenDataset
 from examples.opt_serving.dataset.strip_token_dataset import StripTokenDataset
 from examples.opt_serving.service.constants import MAX_SEQ_LEN
-from examples.opt_serving.service.utils import build_logger
 
-logger = build_logger()
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 def apply_to_sample(f, sample):
     if hasattr(sample, "__len__") and len(sample) == 0:

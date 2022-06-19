@@ -119,7 +119,6 @@ def worker_main(model_name, cluster):
     torch.manual_seed(random.randint(1, 20000))
     torch.cuda.manual_seed(random.randint(1, 20000))
 
-    cfg1=None
     generator = GeneratorInterface(model_name, cluster)
 
     thread = threading.Thread(target=batching_loop, daemon=True)

@@ -18,7 +18,6 @@ Notes:
 1. fp32 does not work now because of embedding
 """
 import argparse
-from warnings import warn
 
 import jax.numpy as jnp
 import numpy as np
@@ -85,7 +84,7 @@ if __name__ == "__main__":
                                                       args.device,
                                                       args.cluster,
                                                       autoregressive,
-                                                      dtype,
+                                                      dtype=dtype,
                                                       dummy=args.dummy,
                                                       batch_size=batch_size,
                                                       decoding_length_per_step=decoder_length_per_step,
@@ -149,7 +148,7 @@ if __name__ == "__main__":
                           args.device,
                           args.cluster,
                           autoregressive,
-                          dtype,
+                          dtype=dtype,
                           dummy=args.dummy)
         load_time = time.time() - tic
 

@@ -3,7 +3,7 @@ import time
 from typing import List, Optional
 
 import torch
-from transformers import GPT2Tokenizer
+from transformers import AutoTokenizer
 
 from examples.opt_serving.model.wrapper import get_model
 from examples.opt_serving.dataset import TokenBlockDataset, PadDataset, NestedDictionaryDataset, NumelDataset, \
@@ -105,11 +105,14 @@ class GeneratorInterface:
     def load_model(self):
         """Load model and return the model wrapper."""
         tic = time.time()
-        self.model_wrapper = get_model(self.model_name, "cuda", False, cluster=self.cluster)
+        self.model_wrapper = get_model(self.model_name,
+                                       "cuda",
+                                       self.cluster,
+                                       True)
         load_time = time.time() - tic
 
         # Init tokenizer
-        self.tokenizer = GPT2Tokenizer.from_pretrained(self.tokenizer_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
         # Disable default add_bos_token behavior and decide if to add it later.
         self.tokenizer.add_bos_token = False
 

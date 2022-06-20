@@ -4,6 +4,7 @@ from typing import Callable, Optional, Sequence, Union
 from jax import linear_util as lu
 from jax._src import api
 from jax._src.util import HashableFunction
+from jax._src.traceback_util import api_boundary
 from jax.api_util import (argnums_partial, donation_vector,
                           flatten_fun_nokwargs, rebase_donate_argnums)
 from jax.core import AbstractValue
@@ -96,6 +97,7 @@ class ParallelizedFunc:
 
         self.last_executable = None
 
+    @api_boundary
     def __call__(self, *args):
         """Launch the computation on the driver."""
         executable, _, out_tree, args_flat = (

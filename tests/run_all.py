@@ -8,8 +8,8 @@ python3 run_all.py
 # Run files whose names contain "pipeline"
 python3 run_all.py --run-pattern pipeline
 
-# Run files whose names contain "auto_sharding"
-python3 run_all.py --run-pattern auto_sharding
+# Run files whose names contain "shard_parallel"
+python3 run_all.py --run-pattern shard_parallel
 
 # Run files whose names do not contain "torch"
 python3 run_all.py --skip-pattern torch

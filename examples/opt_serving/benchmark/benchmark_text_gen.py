@@ -98,7 +98,6 @@ if __name__ == "__main__":
         # get model config
         H = transformer_config.H
         L = transformer_config.L
-        num_head = transformer_config.n_head
         seq_len = transformer_config.seq_len
         vocab_size = transformer_config.vocab_size
 
@@ -158,7 +157,6 @@ if __name__ == "__main__":
 
         H = model.transformer_config.H
         L = model.transformer_config.L
-        n_head = model.transformer_config.n_head
         seq_len = model.transformer_config.seq_len
         vocab_size = model.transformer_config.vocab_size
 

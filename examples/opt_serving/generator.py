@@ -1,7 +1,6 @@
 import numpy as np
 import time
 from typing import List, Optional
-import logging
 
 import torch
 from transformers import AutoTokenizer
@@ -48,6 +47,21 @@ def move_to_cuda(sample, device=None):
         return tensor.to(device=device, non_blocking=True)
 
     return apply_to_sample(_move_to_cuda, sample)
+
+
+
+batch_request_counter = 0
+
+
+def next_batch_request_uuid(number=1):
+    """Return the next uuid of a remote buffer."""
+    global batch_request_counter
+    if number == 1:
+        ret = batch_request_counter
+    else:
+        ret = np.arange(batch_request_counter, batch_request_counter + number)
+    batch_request_counter = (batch_request_counter + number) % (1 << 60)
+    return ret
 
 
 def filter_indices_by_size(
@@ -99,6 +113,7 @@ class GeneratorInterface:
         self.model_wrapper = None
         self.task = None
         self.tokenizer = None
+        self.num_gpus = 1
         self.dataset_to_epoch_iter = dict()
 
         self.load_model()
@@ -117,7 +132,9 @@ class GeneratorInterface:
         self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
         # Disable default add_bos_token behavior and decide if to add it later.
         self.tokenizer.add_bos_token = False
-
+        if "alpa" in self.model_name:
+            import alpa
+            self.num_gpus = alpa.get_global_cluster().num_devices
         logger.info(f"Loading model time: {load_time:.2f}")
 
     def legacy_generate(
@@ -335,6 +352,7 @@ class GeneratorInterface:
         """
         # if seed:
         #     utils.set_torch_seed(seed)
+        batch_request_uuid = next_batch_request_uuid()
         if self.tokenizer is None or self.model_wrapper is None:
             raise RuntimeError("Model is not loaded.")
 
@@ -372,7 +390,7 @@ class GeneratorInterface:
             max_positions=None,
             ignore_invalid_inputs=False,
         ).next_epoch_itr(shuffle=False)
-        logger.info(f"Outer batch | #samples: {len(lengths)}, len: {lengths}, #inner batch: {len(batches)}")
+        logger.info(f"Request {batch_request_uuid}")
         for batch_idx, batch in enumerate(batches):
             src_tokens = batch["src_tokens"]
             src_lengths = batch["src_lengths"]
@@ -408,8 +426,14 @@ class GeneratorInterface:
             inference_start_time = time.time()
             translations = generator.generate(batch["src_tokens"])
             inference_time = time.time() - inference_start_time
+            flops, speed, token_32_latency = self.estimate_performance(translations, inference_time)
             logger.info(
-                f"- Inner batch {batch_idx} | #samples: {batchsize}, len: {src_lengths}, gen args: {generator_args}, latency (s): {inference_time}")
+                "- Request {} / batch {} | #batch_size: {}, max_len: {} shape: {}, args: {}, "
+                "batch latency (s): {:.2f}, flops: {:.4f}, speed: {:.4f}, 32-token latency: {:.2f}".format(
+                    batch_request_uuid, batch_idx, batchsize, max(src_lengths), src_lengths, generator_args,
+                    inference_time, flops, speed, token_32_latency
+                )
+            )
             total_inference_time += inference_time
 
             # possibly cut off any bsz padding we did
@@ -447,16 +471,30 @@ class GeneratorInterface:
                     }
                     beams.append(result)
                 retval.append(beams)
-
-        logger.info(
-            "Outer batch | E2E latency (s): {:.4f}; gen latency (s): {:.3f}".format(
-                time.time() - start_time, total_inference_time
-            )
-        )
+        logger.info("Request {} completed!  | #samples: {},  #batches: {}, e2e latency (s): {:.2f}, inference (s): {:.2f}".format(
+            batch_request_uuid, len(lengths), len(batches), time.time() - start_time, total_inference_time
+        ))
         return retval
 
-    def log_performance(self, batch_size, length, latency, prefix=None):
-        raise NotImplementedError("TODO: Hao")
+    def estimate_performance(self, translations, latency):
+        """Report the tflops, decoding speed, and latency for decoding 32 tokens."""
+        # TODO(Hao): (1) we are still over-computing (2) support beam > 1
+        transformer_config = self.model_wrapper.transformer_config
+
+        beam_size = len(translations[0])
+        assert beam_size == 1, "we do not support beam > 1 now."
+        batch_size = beam_size * len(translations)
+        gen_len = max(t[0]["tokens"].shape[0] for t in translations)
+        seq_len = transformer_config.seq_len
+        H = transformer_config.H
+        L = transformer_config.L
+        vocab_size = transformer_config.vocab_size
+        flops = compute_gpt_tflops_inference_with_padding(batch_size, gen_len, seq_len,
+                                                          L, H, vocab_size, self.num_gpus,
+                                                          latency)
+        speed = batch_size * gen_len / latency
+        token_32_latency = 32.0 / (speed / len(translations))
+        return flops, speed, token_32_latency
 
     # @staticmethod
     # def _filter_special(

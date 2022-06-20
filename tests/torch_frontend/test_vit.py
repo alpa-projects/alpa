@@ -263,20 +263,16 @@ class TorchViTTest(unittest.TestCase):
         optim_gen = torchoptim.adam(lr=1e-3)
         num_micro_batches = 2
 
-        # TODO: remove after debug
-        alpa.global_config.pipeline_sync_for_timer = True
-        alpa.global_config.shard_parallel_sync_for_timer = True
-
         parallel_method = alpa.PipeshardParallel(
             stage_mode="auto", num_micro_batches=num_micro_batches)
 
-        _xla_client_mem_fraction_orig_value = alpa.global_config.xla_client_mem_fraction
-        alpa.global_config.xla_client_mem_fraction = 0.7
+        # _xla_client_mem_fraction_orig_value = alpa.global_config.xla_client_mem_fraction
+        # alpa.global_config.xla_client_mem_fraction = 0.7
 
         train_torch_module(pt_module_gen, weight_init_func, dataloader,
                            loss_func, optim_gen, parallel_method)
 
-        alpa.global_config.xla_client_mem_fraction = _xla_client_mem_fraction_orig_value
+        # alpa.global_config.xla_client_mem_fraction = _xla_client_mem_fraction_orig_value
 
 
 def suite():

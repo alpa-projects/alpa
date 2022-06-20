@@ -1,8 +1,12 @@
 """Adapted from Metaseq."""
 import socket
 import logging
+import logging.handlers
 import sys
 import os
+import datetime
+
+from examples.opt_serving.service.constants import LOGDIR
 
 
 def normalize_newlines(s: str):
@@ -26,12 +30,28 @@ def encode_fn(generator, x):
     return generator.tokenizer.encode(normalize_newlines(x))
 
 
-# def build_logger():
-#     logging.basicConfig(
-#         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-#         datefmt="%Y-%m-%d %H:%M:%S",
-#         level=os.environ.get("LOGLEVEL", "INFO").upper(),
-#         stream=sys.stdout,
-#     )
-#     logger = logging.getLogger("metaseq_cli.interactive")
-#     return logger
+handler = None
+
+def build_logger():
+    formatter = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+    logging.basicConfig(
+        format=formatter,
+        datefmt="%Y-%m-%d %H:%M:%S",
+        level=os.environ.get("LOGLEVEL", "INFO").upper(),
+        stream=sys.stdout,
+    )
+    logger = logging.getLogger("alpa.opt_serving")
+    global handler
+    os.makedirs(LOGDIR,exist_ok=True)
+    logfile_path = os.path.join(LOGDIR, f"alpa.opt_serving.log.{datetime.datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}")
+    if handler == None:
+        handler = logging.handlers.RotatingFileHandler(
+            logfile_path,
+            maxBytes=1024 * 1024,
+            backupCount=100000)
+        handler.setFormatter(logging.Formatter(formatter))
+    logger.addHandler(handler)
+
+    # Set the webserver logger
+    logging.getLogger("werkzeug").addHandler(handler)
+    return logger

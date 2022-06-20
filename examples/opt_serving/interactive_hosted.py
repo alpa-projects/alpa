@@ -1,7 +1,11 @@
+import logging
+
 import argparse
 import queue
 import threading
 import os
+import logging
+import logging.handlers
 
 import random
 import torch
@@ -16,13 +20,11 @@ from examples.opt_serving.service.constants import MAX_SEQ_LEN, MAX_BATCH_TOKENS
 
 
 app = Flask(__name__)
-
-
 port = DEFAULT_PORT
 BATCH_QUEUE = PriorityQueueRingShard()
 
 logger = build_logger()
-
+werkzeug_logger = logging.getLogger("werkzeug")
 
 def batching_loop(timeout=100, max_tokens=MAX_BATCH_TOKENS):
     """
@@ -136,9 +138,8 @@ def completions(engine=None):
     # - list of ints. Pretokenized. Return one generation
     # - list of str. Multiple generations, one per prompt
     # - list of list of ints. Pretokenized multiple generations.
-
+    werkzeug_logger.info("Received new serving request.")
     # our approach is to turn everything into the last case
-
     prompts = request.json["prompt"]
     del request.json["prompt"]
     generation_args = request.json
@@ -205,7 +206,6 @@ def completions(engine=None):
 
 @app.route("/")
 def index():
-    # TODO(roller): decouple demopage.html
     fn = "./service/index.html"
     with open(fn) as f:
         return f.read()

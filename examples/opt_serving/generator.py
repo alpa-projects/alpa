@@ -9,13 +9,14 @@ from transformers import AutoTokenizer
 from examples.opt_serving.model.wrapper import get_model
 from examples.opt_serving.dataset import TokenBlockDataset, PadDataset, NestedDictionaryDataset, NumelDataset, \
     BaseDataset, iterators
+from examples.opt_serving.service.utils import build_logger
 from examples.opt_serving.dataset import data_utils
 from examples.opt_serving.dataset.prepend_token_dataset import PrependTokenDataset
 from examples.opt_serving.dataset.strip_token_dataset import StripTokenDataset
 from examples.opt_serving.service.constants import MAX_SEQ_LEN
+from examples.opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger = build_logger()
 
 def apply_to_sample(f, sample):
     if hasattr(sample, "__len__") and len(sample) == 0:
@@ -338,7 +339,7 @@ class GeneratorInterface:
             raise RuntimeError("Model is not loaded.")
 
         if logprobs > 0:
-            # TODO(Hao): suppot this
+            # TODO(Hao): support this
             raise NotImplementedError("logprob>0 is not supported at this moment.")
 
         start_time = time.time()
@@ -371,7 +372,8 @@ class GeneratorInterface:
             max_positions=None,
             ignore_invalid_inputs=False,
         ).next_epoch_itr(shuffle=False)
-        for batch in batches:
+        logger.info(f"Outer batch | #samples: {len(lengths)}, len: {lengths}, #inner batch: {len(batches)}")
+        for batch_idx, batch in enumerate(batches):
             src_tokens = batch["src_tokens"]
             src_lengths = batch["src_lengths"]
             batchsize = src_tokens.size(0)
@@ -397,17 +399,17 @@ class GeneratorInterface:
                 "sampling": sampling,
                 "top_p": sampling_topp,
             }
-            logger.info(f"Preparing generator with settings {generator_args}")
             generator = Generator(self.model_wrapper, **generator_args)
 
             # okay actually generate
-            logger.info(f"Executing generation on input tensor size {src_tokens.shape}")
             if use_cuda:
                 batch = move_to_cuda(batch)
 
             inference_start_time = time.time()
             translations = generator.generate(batch["src_tokens"])
             inference_time = time.time() - inference_start_time
+            logger.info(
+                f"- Inner batch {batch_idx} | #samples: {batchsize}, len: {src_lengths}, gen args: {generator_args}, latency (s): {inference_time}")
             total_inference_time += inference_time
 
             # possibly cut off any bsz padding we did
@@ -447,11 +449,14 @@ class GeneratorInterface:
                 retval.append(beams)
 
         logger.info(
-            "Total time: {:.3f} seconds; generation time: {:.3f}".format(
+            "Outer batch | E2E latency (s): {:.4f}; gen latency (s): {:.3f}".format(
                 time.time() - start_time, total_inference_time
             )
         )
         return retval
+
+    def log_performance(self, batch_size, length, latency, prefix=None):
+        raise NotImplementedError("TODO: Hao")
 
     # @staticmethod
     # def _filter_special(
@@ -491,7 +496,7 @@ class GeneratorInterface:
 
     def max_sequence_len(self):
         """Resolve the max sequence length allowed from multiple sources."""
-        return self.model_wrapper.transformer_config.seq_len
+        return min(MAX_SEQ_LEN, self.model_wrapper.transformer_config.seq_len)
 
     def build_dataset_for_inference(self, src_tokens, src_lengths, **kwargs):
         """Build a batched dataset for inference"""

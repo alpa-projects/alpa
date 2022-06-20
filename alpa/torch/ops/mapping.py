@@ -319,7 +319,8 @@ def torch_transpose(x, dim0, dim1):
 
 
 def torch_unbind(x, dim=0):
-    return jnp.split(x, x.shape[dim], axis=dim)
+    return tuple(
+        jnp.squeeze(p, axis=dim) for p in jnp.split(x, x.shape[dim], axis=dim))
 
 
 def torch_view(x, shape):

@@ -439,6 +439,11 @@ def torch_nn_functional_dropout(x, p=0.5, training=True, inplace=False):
     return torch_dropout(x, p=p, training=training, inplace=inplace)
 
 
+def torch_nn_functional_gelu(x, approximate=False):
+    # TODO: use approximate=True or not?
+    return jax.nn.gelu(x)
+
+
 def torch_nn_functional_linear(x, weight, bias=None):
     output = torch.matmul(x, torch.t(weight))
     if bias is not None:
@@ -541,6 +546,7 @@ op_patch_list = [
     (torch.nn.functional, "linear", torch_nn_functional_linear),
     (torch.nn.functional, "mse_loss", torch_nn_functional_mse_loss),
     (torch.nn.functional, "softmax", torch_nn_functional_softmax),
+    (torch.nn.functional, "gelu", torch_nn_functional_gelu),
     (torch.nn.init, "xavier_uniform", torch_nn_init_xavier_uniform),
     (torch.nn.init, "normal", torch_nn_init_normal),
     # TODO: add hard error for in-place ops

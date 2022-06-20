@@ -79,13 +79,27 @@ def fx_ir_to_alpa_func_code(fx_ir, alpa_func_name):
                                         ")." +
                                         line_rhs.split(").")[1].split("(")[0])
                 else:
-                    attr_access_stmt = "_tmp_value = " + line_rhs.replace(
-                        "self.", "locals()['fx_ir'].")
+                    # Example 1: line in IR:
+                    # `... = self.conv`
+                    # Attribute access statement should be
+                    # `locals()['fx_ir'].conv`
+                    #
+                    # Example 2: line in IR:
+                    # `... = self.conv(reshape_7)`
+                    # Attribute access statement should be
+                    # `locals()['fx_ir'].conv`
+                    rhs_of_self_dot = line_rhs.split("self.")[1]
+                    attr_access_stmt = "_tmp_value = " + "locals()['fx_ir']." + rhs_of_self_dot.split("(")[0]
             except IndexError as e:
                 print(line_rhs)
                 raise e
             # pylint: disable=exec-used
-            exec(attr_access_stmt)
+            try:
+                exec(attr_access_stmt)
+            except Exception as e:
+                if atorch.debug == True:
+                    print("attr_access_stmt: ", attr_access_stmt)
+                raise e
             attr_value = locals()["_tmp_value"]
             if isinstance(attr_value, torch.nn.Module):
                 # Full list of NN modules that need this handling is at
@@ -179,6 +193,12 @@ def fx_ir_to_alpa_func_code(fx_ir, alpa_func_name):
         if ".size()" in line:
             tensor_name = line.split(" = ")[1].split(".size()")[0]
             line = line.replace(f"{tensor_name}.size()", f"{tensor_name}.shape")
+        if ".size(" in line:
+            # "a = b.size(0)" -> "a = b.shape[0]"
+            chunks_sep_by_equal = line.split(" = ")
+            tensor_name = chunks_sep_by_equal[1].split(".size(")[0]
+            rhs_of_dot_size = chunks_sep_by_equal[1].split(".size")[1]
+            line = f"{chunks_sep_by_equal[0]} = {tensor_name}.shape{rhs_of_dot_size}".replace("(", "[").replace(")", "]")
         if ".permute(" in line:
             tensor_name = line.split(" = ")[1].split(".permute(")[0]
             line = line.replace(f"{tensor_name}.permute(",
@@ -379,6 +399,10 @@ def functionalize(module: torch.nn.Module):
 
         def convert_pt_module_to_alpa_func(module):
             fx_ir = torch.fx.symbolic_trace(module)
+
+            if atorch.debug:
+                print("FX IR before normalize: ")
+                print(fx_ir.code)
 
             fx_ir = normalize_ir_no_run(fx_ir)
 

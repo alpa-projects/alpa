@@ -970,8 +970,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
                 # "NCCL_LAUNCH_MODE": "PARALLEL",
                 # "XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
-                # "NCCL_DEBUG": "INFO" if i == 0 else "VERSION",
-                # "NCCL_DEBUG_SUBSYS": "ALL",
+                "NCCL_DEBUG": "INFO" if i == 0 else "VERSION",
+                "NCCL_DEBUG_SUBSYS": "ALL",
                 # "RAY_IGNORE_UNHANDLED_ERRORS": "True",
             }
 

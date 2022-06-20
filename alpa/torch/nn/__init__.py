@@ -94,12 +94,7 @@ def fx_ir_to_alpa_func_code(fx_ir, alpa_func_name):
                 print(line_rhs)
                 raise e
             # pylint: disable=exec-used
-            try:
-                exec(attr_access_stmt)
-            except Exception as e:
-                if atorch.debug == True:
-                    print("attr_access_stmt: ", attr_access_stmt)
-                raise e
+            exec(attr_access_stmt)
             attr_value = locals()["_tmp_value"]
             if isinstance(attr_value, torch.nn.Module):
                 # Full list of NN modules that need this handling is at

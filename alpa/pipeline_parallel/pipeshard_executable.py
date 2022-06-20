@@ -3,7 +3,6 @@ import logging
 import os
 import time
 from typing import Optional, Sequence
-import os
 
 from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves, PyTreeDef
 import numpy as np

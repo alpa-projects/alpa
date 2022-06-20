@@ -187,8 +187,8 @@ class ViT(nn.Module):
         ViT.check_params(p)
         self.stem = ViTStemPatchify(3, p["hidden_d"], p["patch_size"])
         seq_len = (p["image_size"] // p["patch_size"]) ** 2
-        class_token_len = 8  # NOTE: make class token length to be multiple of 8, to work better with Alpa
-        self.class_token = nn.Parameter(torch.zeros(class_token_len, 1, p["hidden_d"]))
+        class_token_len = 1  # NOTE: make class token length to be multiple of 8, to work better with Alpa
+        self.class_token = nn.Parameter(torch.zeros(1, class_token_len, p["hidden_d"]))
         seq_len += class_token_len
         self.pos_embedding = nn.Parameter(torch.zeros(1, seq_len, p["hidden_d"]))
         self.encoder = ViTEncoder(

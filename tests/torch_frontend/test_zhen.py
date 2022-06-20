@@ -165,7 +165,7 @@ class TransformerEncoderLayer(nn.Module):
         #                    key_padding_mask=key_padding_mask,
         #                    need_weights=False)[0]
         # TODO: add support for `attn_mask` / `key_padding_mask` if needed.
-        x = self.self_attn(x)[0]
+        x = self.self_attn(x)
         return self.dropout1(x)
 
     # feed forward block
@@ -447,7 +447,7 @@ class TorchZHENTest(unittest.TestCase):
 
     def test_zhen_homogeneous(self):
         B = 64  # 59  # made multiples of 8
-        F = 37
+        F = 48  # 37  # made multiples of 8
         D = 64
         LAYERS = 5
         OUTPUT_PER_ENSEMBLE = 48  # 50  # made multiples of 8
@@ -460,8 +460,8 @@ class TorchZHENTest(unittest.TestCase):
                                                OUTPUT_PER_ENSEMBLE)
 
         dataloader = [
-            (torch.empty(B, D, F), torch.empty(B, 15360)),
-            (torch.empty(B, D, F), torch.empty(B, 15360)),
+            (torch.empty(B, D, F), torch.empty(B, 3072 * len(TOKENS))),
+            (torch.empty(B, D, F), torch.empty(B, 3072 * len(TOKENS))),
         ]
         loss_func = lambda *args, **kwargs: torch.nn.functional.mse_loss(
             *args, **kwargs)

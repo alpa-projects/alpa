@@ -283,7 +283,7 @@ def torch_slice(x, dim, start, end, step=1):
 
 
 def torch_softmax(x, dim):
-    x_max = jnp.max(x, axis=dim, keepdims=True)[0]
+    x_max = jnp.max(x, axis=dim, keepdims=True)
     unnormalized = jnp.exp(x - x_max)
     return unnormalized / jnp.sum(unnormalized, axis=dim, keepdims=True)
 
@@ -319,11 +319,7 @@ def torch_transpose(x, dim0, dim1):
 
 
 def torch_unbind(x, dim=0):
-    ret = []
-    for index in range(x.shape[dim]):
-        # TODO: likely inefficient. What's the better way?
-        ret.append(lax.slice_in_dim(x, index, index + 1, stride=1, axis=dim)[0])
-    return tuple(ret)
+    return jnp.split(x, x.shape[dim], axis=dim)
 
 
 def torch_view(x, shape):

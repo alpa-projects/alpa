@@ -337,6 +337,7 @@ class ProfileWorker:
     def restart(self, forced):
         """Restart the physical mesh."""
         self.mesh.shutdown(forced=forced)
+        self.virtual_mesh.launched_physical_mesh = None
         self.mesh = self.virtual_mesh.get_physical_mesh()
 
 

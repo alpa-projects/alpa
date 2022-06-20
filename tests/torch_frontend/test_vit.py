@@ -121,7 +121,7 @@ class ViTEncoderBlock(nn.Module):
     def __init__(self, hidden_d, n_heads, mlp_d):
         super().__init__()
         self.ln_1 = layernorm(hidden_d)
-        self.self_attention = MultiheadAttention(hidden_d, n_heads)
+        self.self_attention = torch.nn.MultiheadAttention(hidden_d, n_heads)
         # # NOTE: PyTorch original MHA module causes graph break under TorchDynamo,
         # # so use our own impl of MHA for now.
         # self.self_attention = Attention(hidden_d, num_heads=n_heads)

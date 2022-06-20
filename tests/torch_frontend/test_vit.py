@@ -79,7 +79,7 @@ class Attention(nn.Module):
     def forward(self, x):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv.unbind(0)   # make torchscript happy (cannot use tensor as tuple)
+        q, k, v = qkv.unbind(0)
 
         attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = attn.softmax(dim=-1)
@@ -188,9 +188,9 @@ class ViT(nn.Module):
         self.stem = ViTStemPatchify(3, p["hidden_d"], p["patch_size"])
         seq_len = (p["image_size"] // p["patch_size"]) ** 2
         class_token_len = 8  # NOTE: make class token length to be multiple of 8, to work better with Alpa
-        self.class_token = nn.Parameter(torch.zeros(class_token_len, 1, p["hidden_d"]))  
+        self.class_token = nn.Parameter(torch.zeros(class_token_len, 1, p["hidden_d"]))
         seq_len += class_token_len
-        self.pos_embedding = nn.Parameter(torch.zeros(seq_len, 1, p["hidden_d"]))
+        self.pos_embedding = nn.Parameter(torch.zeros(1, seq_len, p["hidden_d"]))
         self.encoder = ViTEncoder(
             p["n_layers"], p["hidden_d"], p["n_heads"], p["mlp_d"]
         )
@@ -201,16 +201,16 @@ class ViT(nn.Module):
         x = self.stem(x)
         # (n, hidden_d, n_h, n_w) -> (n, hidden_d, (n_h * n_w))
         x = x.reshape(x.size(0), x.size(1), -1)
-        # (n, hidden_d, (n_h * n_w)) -> ((n_h * n_w), n, hidden_d)
-        x = x.permute(2, 0, 1)
+        # (n, hidden_d, (n_h * n_w)) -> (n, (n_h * n_w), hidden_d)
+        x = x.permute(0, 2, 1)
         if self.class_token is not None:
             # Expand the class token to the full batch
-            class_token = self.class_token.expand(-1, x.size(1), -1)
-            x = torch.cat([class_token, x], dim=0)
+            class_token = self.class_token.expand(x.size(0), -1, -1)
+            x = torch.cat([class_token, x], dim=1)
         x = x + self.pos_embedding
         x = self.encoder(x)
         # `token` or `pooled` features for classification
-        x = x[-1, :, :] if self.class_token is not None else x.mean(dim=0)
+        x = x[:, 0, :] if self.class_token is not None else x.mean(dim=1)
         x = self.head(x)
         return x
 

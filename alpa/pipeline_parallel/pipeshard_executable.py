@@ -465,11 +465,11 @@ class PipeshardMeshWorkerExecuable:
         # Execute
         timers("overall").start(sync_func=sync_func)
         for instruction in self.instructions:
-            print("here1")
-            sync_func()
-            print("here2")
-            print(f"before inst {instruction}")
-            os.system("nvidia-smi")
+            # print("here1")
+            # sync_func()
+            # print("here2")
+            # print(f"before inst {instruction}")
+            # os.system("nvidia-smi")
             # print(f"memory_allocated: "
             #       f"{self.worker.get_memory_allocated()/1024**3:.3f} GB  "
             #       f"max_memory_allocated: "

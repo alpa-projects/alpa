@@ -54,7 +54,7 @@ class AutoShardingOption:
     # Whether to allow all-gather during re-sharding.
     allow_all_gather: bool = True
     # Whether to allow all-to-all during re-sharding.
-    allow_all_to_all: bool = False
+    allow_all_to_all: bool = True
     # Whether to allow replicated parameters.
     allow_replicated_parameters: bool = True
     # Whether to forcibly generate data-parallel.

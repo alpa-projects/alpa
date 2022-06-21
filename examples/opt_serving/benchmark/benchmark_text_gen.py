@@ -2,16 +2,16 @@
 
 Usages:
 1. benchmark huggingface torch-based OPT or GPT-2 generation:
-python benchmark_text_gen.py --model facebook/opt-125m --cluster aws --debug
+python benchmark_text_gen.py --model facebook/opt-125m --debug
 
 2. benchmark alpa parallelized OPT generation:
-python benchmark_text_gen.py --model alpa/opt-2.7b --cluster aws --debug
+python benchmark_text_gen.py --model alpa/opt-2.7b --debug
 
 3. benchmark jax.jit based OPT generation without alpa, on a single GPU:
-python benchmark_text_gen.py --model jax/opt-125m --cluster aws
+python benchmark_text_gen.py --model jax/opt-125m
 
 4. benchmark alpa parallelized OPT forward computation, batch_size, decoder length, and #micro_batches can be configured.
-python benchmark_text_gen.py --model alpa/opt-27.b --cluster aws --forward
+python benchmark_text_gen.py --model alpa/opt-2.7b --forward
     --decoder_length 1024 --nb 1 --batch-size 256 --debug
 
 Notes:
@@ -19,24 +19,24 @@ Notes:
 """
 import argparse
 
+import alpa
+from alpa.global_env import global_config
+from alpa.util import write_tsv
 import jax.numpy as jnp
 import numpy as np
 import time
 import torch
+from transformers import AutoTokenizer
 
-import alpa
-from alpa.global_env import global_config
-from alpa.util import write_tsv
 from examples.opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding, test_prompts
 from examples.opt_serving.model.wrapper import get_model
-from transformers import AutoTokenizer
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="alpa/opt-125m")
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--cluster", type=str, default="aws")
+    parser.add_argument("--path", type=str, default="/home/ubuntu/opt_weights/")
     parser.add_argument("--dummy", action="store_true")
     parser.add_argument("--forward", action="store_true")
     parser.add_argument("--decoder-length", type=int, default=1)
@@ -82,7 +82,7 @@ if __name__ == "__main__":
         tic = time.time()
         model, params, transformer_config = get_model(args.model,
                                                       args.device,
-                                                      args.cluster,
+                                                      args.path,
                                                       autoregressive,
                                                       dtype=dtype,
                                                       dummy=args.dummy,
@@ -145,7 +145,7 @@ if __name__ == "__main__":
         tic = time.time()
         model = get_model(args.model,
                           args.device,
-                          args.cluster,
+                          args.path,
                           autoregressive,
                           dtype=dtype,
                           dummy=args.dummy)

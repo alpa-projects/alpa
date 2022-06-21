@@ -7,10 +7,10 @@ import os
 from typing import Callable, Optional, Tuple, Dict
 
 import alpa
-from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
-from alpa.model.model_util import ModelOutput
+from alpa.device_mesh import DistributedArray, ReplicatedDistributedArray, MeshHostWorker
 from alpa.mesh_executable import create_remote_buffer_refs
-from alpa.device_mesh import DistributedArray, ReplicatedDistributedArray
+from alpa.model.model_util import ModelOutput
+from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 import flax.linen as nn
 import jax
 import flax
@@ -61,7 +61,7 @@ class OPTConfig:
     batch_size: int = 1
     pad: int = 1
     activation_fn: str = 'relu'
-    fp16: bool = True
+    dtype: any = jnp.float16
     use_stable_embedding: bool = False
     no_scale_embedding: bool = True
     decoder_learned_pos: bool = True
@@ -460,7 +460,7 @@ class OPTForLMModule(nn.Module):
         )
 
 
-def get_config(name, **kwargs):
+def get_opt_config(name, **kwargs):
     if name == "125M":
         config = OPTConfig(
             max_target_positions=2048,
@@ -517,21 +517,17 @@ def get_config(name, **kwargs):
     return dataclasses.replace(config, **kwargs)
 
 
-def init_model_aval(config, dtype):
-    model = OPTForLMModule(config, dtype=dtype)
+def init_model_aval(config):
+    model = OPTForLMModule(config, dtype=config.dtype)
     rngkey = jax.core.ShapedArray((2,), jnp.uint32)
     input_ids = jax.core.ShapedArray((1, 128), jnp.int32)
     position_ids = jax.core.ShapedArray((1, 128), jnp.int32)
     params = jax.eval_shape(model.init, rngkey, input_ids, position_ids)
-
-    # TODO: this is always True
-    if config.fp16:
-        params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, jnp.float16), params)
-
+    params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, config.dtype), params)
     return model, params
 
 
-def init_cache_aval(config, batch_size, dtype):
+def init_cache_aval(config, batch_size):
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
     all_cache = []
@@ -539,18 +535,18 @@ def init_cache_aval(config, batch_size, dtype):
         layer_cache = (
             jax.core.ShapedArray((batch_size, config.max_target_positions,
                                   config.decoder_attention_heads, head_dim),
-                                  dtype),
+                                  config.dtype),
             jax.core.ShapedArray((batch_size, config.max_target_positions,
                                   config.decoder_attention_heads, head_dim),
-                                  dtype),
+                                  config.dtype),
             jax.core.ShapedArray((batch_size,), jnp.int32),
         )
         all_cache.append(layer_cache)
     return tuple(all_cache)
 
 
-def init_cache_np(config, batch_size, dtype):
-    np_dtype = np.float32 if dtype == jnp.float32 else np.float16
+def init_cache_np(config, batch_size):
+    np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
     all_cache = []
@@ -582,9 +578,11 @@ def inference_step_no_cache(params, batch, apply_func):
 
 
 def load_params_np(params, path, config, dummy=False):
+    if dummy:
+        np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
+        return jax.tree_map(lambda x: np.full(x.shape, 1e-9, np_dtype), params)
+
     def load_array(key):
-        if dummy:
-            return np.ones((1,))
         return np.load(os.path.join(path, key))
 
     def load_param(param_key, loaded_array):
@@ -653,23 +651,18 @@ def load_params_np(params, path, config, dummy=False):
 
 
 def get_jax_executable(config,
-                       dtype,
                        support_output_attentions=False,
                        support_output_hidden_states=False):
-    model, params = init_model_aval(config, dtype)
+    model, params = init_model_aval(config)
 
     @jax.jit
     def inference_step(params, batch):
-        def forward(params):
-            output = model.apply(params,
-                                 batch["input_ids"],
-                                 batch["position_ids"],
-                                 attention_cache=batch["cache"],
-                                 output_attentions=support_output_attentions,
-                                 output_hidden_states=support_output_hidden_states)
-            return output
-
-        output = forward(params)
+        output = model.apply(params,
+                             batch["input_ids"],
+                             batch["position_ids"],
+                             attention_cache=batch["cache"],
+                             output_attentions=support_output_attentions,
+                             output_hidden_states=support_output_hidden_states)
         return output
 
     executable = inference_step
@@ -677,7 +670,6 @@ def get_jax_executable(config,
 
 
 def get_pipeshard_executable(config,
-                             dtype,
                              batch_size=1,
                              num_micro_batches=1,
                              decoding_length_per_step=1024,
@@ -689,7 +681,7 @@ def get_pipeshard_executable(config,
         assert batch_size == 1, "we only support batch_sie = 1 for autoregressive!"
 
     # Init model
-    model, params = init_model_aval(config, dtype)
+    model, params = init_model_aval(config)
 
     # Parallelize
     method = alpa.PipeshardParallel(num_micro_batches=num_micro_batches,
@@ -697,38 +689,31 @@ def get_pipeshard_executable(config,
 
     if autoregressive:
         @alpa.parallelize(batch_argnums=(1,), method=method)
+        @alpa.manual_layer_construction
         def inference_step_with_cache(params, batch):
-            @alpa.manual_layer_construction
-            def forward(params):
-                output = model.apply(params,
-                                     batch["input_ids"],
-                                     batch["position_ids"],
-                                     attention_cache=batch["cache"],
-                                     output_attentions=support_output_attentions,
-                                     output_hidden_states=support_output_hidden_states)
-                return output
-
-            output = forward(params)
+            output = model.apply(params,
+                                 batch["input_ids"],
+                                 batch["position_ids"],
+                                 attention_cache=batch["cache"],
+                                 output_attentions=support_output_attentions,
+                                 output_hidden_states=support_output_hidden_states)
             return output
 
+        alpa.global_config.always_donate_micro_batch_vars = False
         executable = inference_step_with_cache.get_executable(params, {
             "input_ids": jax.core.ShapedArray((1, 1), jnp.int32),
             "position_ids": jax.core.ShapedArray((1, 1), jnp.int32),
-            "cache": init_cache_aval(config, 1, dtype),
+            "cache": init_cache_aval(config, 1),
         })
     else:
         @alpa.parallelize(batch_argnums=(1,), method=method)
+        @alpa.manual_layer_construction
         def inference_step(params, batch):
-            @alpa.manual_layer_construction
-            def forward(params):
-                output = model.apply(params,
-                                     batch["input_ids"],
-                                     batch["position_ids"],
-                                     output_attentions=support_output_attentions,
-                                     output_hidden_states=support_output_hidden_states)
-                return output
-
-            output = forward(params)
+            output = model.apply(params,
+                                 batch["input_ids"],
+                                 batch["position_ids"],
+                                 output_attentions=support_output_attentions,
+                                 output_hidden_states=support_output_hidden_states)
             return output
 
         assert batch_size % num_micro_batches == 0, "cannot divide batch_size by num_micro_batches"
@@ -739,10 +724,105 @@ def get_pipeshard_executable(config,
             "position_ids": jax.core.ShapedArray((batch_size, decoding_length_per_step), jnp.int32),
         })
 
+    # Dump IR for debugging
+    os.system("mkdir -p tmp")
+    stage_hlo_texts = executable.get_hlo_text()
+    for i in range(len(stage_hlo_texts)):
+        with open(f"tmp/stage_{i}.hlo", "w") as fout:
+            fout.write(stage_hlo_texts[i])
+    with open(f"tmp/resharding_tasks.txt", "w") as fout:
+        fout.write(executable.print_resharding_tasks())
+
     return executable, params
 
 
-def load_opt_params_fast_path(path, executable, params_aval, config, dummy=False):
+def load_opt_params_worker_func(self, path, prefix_to_idx, config,
+                                shapes, uuids, indices, mesh_ids):
+    def load_array(key):
+        return np.load(os.path.join(path, key))
+
+    def load_param(param_key, loaded_array):
+        i = prefix_to_idx[param_key]
+
+        for j in range(len(mesh_ids[i])):
+            if self.mesh_id != mesh_ids[i][j]:
+                continue
+
+            assert shapes[i][j] == loaded_array.shape
+            for k in range(len(self.local_devices)):
+                idx = self.host_id * len(self.local_devices) + k
+                uuid = uuids[i][j][idx]
+                data = loaded_array[indices[i][j][idx]]
+                self.put_buffer(uuid, k, data)
+
+    load_param("params.transformers.embeddings.word_embeddings.embedding",
+               load_array("decoder.embed_tokens.weight"))
+    load_param("params.transformers.embeddings.position_embeddings.embedding",
+               load_array("decoder.embed_positions.weight"))
+
+    if config.version > 2:
+        load_param("params.transformers.layer_norm.scale",
+                   load_array("decoder.layer_norm.weight"))
+        load_param("params.transformers.layer_norm.bias",
+                   load_array("decoder.layer_norm.bias"))
+
+    layers_per_stage = config.decoder_layers // config.num_pp_stages
+
+    for i in range(config.decoder_layers):
+        stage_id = i // layers_per_stage
+        if stage_id != self.mesh_id:
+            continue
+
+        param_prefix = f"params.transformers.encoder.{i}."
+        load_prefix = f"decoder.layers.{i}."
+        # Attention weights
+        wq = load_array(load_prefix + "self_attn.q_proj.weight")
+        wk = load_array(load_prefix + "self_attn.k_proj.weight")
+        wv = load_array(load_prefix + "self_attn.v_proj.weight")
+        dim = wq.shape[-1]
+        w_qvk = np.concatenate([wq, wv, wk], axis=0).reshape((3, -1, dim)).transpose([2, 1, 0]).reshape((dim, -1))
+        load_param(param_prefix + "attention.self.qvk_combined.kernel", w_qvk)
+        bq = load_array(load_prefix + "self_attn.q_proj.bias")
+        bk = load_array(load_prefix + "self_attn.k_proj.bias")
+        bv = load_array(load_prefix + "self_attn.v_proj.bias")
+        b_qvk = np.concatenate([bq, bv, bk], axis=0).reshape((3, dim)).transpose([1, 0]).reshape((-1,))
+        load_param(param_prefix + "attention.self.qvk_combined.bias", b_qvk)
+        load_param(param_prefix + "attention.dense.kernel",
+                   np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))
+        load_param(param_prefix + "attention.dense.bias",
+                   load_array(load_prefix + "self_attn.out_proj.bias"))
+        load_param(param_prefix + "attention.layer_norm.scale",
+                   load_array(load_prefix + "self_attn_layer_norm.weight"))
+        load_param(param_prefix + "attention.layer_norm.bias",
+                   load_array(load_prefix + "self_attn_layer_norm.bias"))
+        # FFN weights
+        load_param(param_prefix + "ffn.fc1.bias",
+                   load_array(load_prefix + "fc1.bias"))
+        load_param(param_prefix + "ffn.fc1.kernel",
+                   np.transpose(load_array(load_prefix + "fc1.weight")))
+        load_param(param_prefix + "ffn.fc2.bias",
+                   load_array(load_prefix + "fc2.bias"))
+        load_param(param_prefix + "ffn.fc2.kernel",
+                   np.transpose(load_array(load_prefix + "fc2.weight")))
+        load_param(param_prefix + "ffn.layer_norm.scale",
+                   load_array(load_prefix + "final_layer_norm.weight"))
+        load_param(param_prefix + "ffn.layer_norm.bias",
+                   load_array(load_prefix + "final_layer_norm.bias"))
+
+
+setattr(MeshHostWorker, "load_opt_params_worker_func", load_opt_params_worker_func)
+
+
+def load_params_dis_array(path, executable, params_aval, config, dummy=False):
+    if dummy:
+        alpa.global_config.use_dummy_value_for_benchmarking = True
+        params_info, _ = executable.get_load_info()
+        flat_args, in_tree = tree_flatten(params_aval)
+        flat_info = tree_leaves(params_info)
+        ret = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
+        alpa.global_config.use_dummy_value_for_benchmarking = False
+        return ret
+
     params_info, _ = executable.get_load_info()
 
     prefix_to_flat_idx = {}
@@ -765,6 +845,7 @@ def load_opt_params_fast_path(path, executable, params_aval, config, dummy=False
     flat_arrays = []
 
     for info in flat_infos:
+        aval = info.aval
         if info.is_replicated():
             tmp_shapes = []
             tmp_uuids = []
@@ -772,7 +853,7 @@ def load_opt_params_fast_path(path, executable, params_aval, config, dummy=False
             tmp_mesh_ids = []
             tmp_arrays = []
             tmp_meshes = []
-            for aval, mesh, spec in info.get_info():
+            for mesh, spec in info.get_info():
                 indices = pxla.spec_to_indices(aval.shape, spec)
                 buf_refs, buf_uuids = create_remote_buffer_refs(mesh, 1)
                 array = DistributedArray(mesh, aval, spec, buf_refs, indices)
@@ -788,7 +869,7 @@ def load_opt_params_fast_path(path, executable, params_aval, config, dummy=False
             flat_mesh_ids.append(tuple(tmp_mesh_ids))
             flat_arrays.append(ReplicatedDistributedArray(tmp_meshes, tmp_arrays))
         else:
-            aval, mesh, spec = info.get_info()
+            mesh, spec = info.get_info()
             indices = pxla.spec_to_indices(aval.shape, spec)
             buf_refs, buf_uuids = create_remote_buffer_refs(mesh, 1)
             flat_shapes.append([aval.shape])
@@ -799,35 +880,16 @@ def load_opt_params_fast_path(path, executable, params_aval, config, dummy=False
 
     for m in executable.mesh_group.meshes:
         for w in m.workers:
-            w.load_opt_params_fast_path.remote(path, prefix_to_flat_idx, config,
+            w.load_opt_params_worker_func.remote(
+                path, prefix_to_flat_idx, config,
                 flat_shapes, flat_uuids, flat_indices, flat_mesh_ids)
 
     return flat_arrays
 
 
-def load_params_dis_array(path, executable, params_aval, config, dummy=False):
-    if path[-2:] == "np" or path[-10:] == "np_reshard":
-        if not dummy:
-            return load_opt_params_fast_path(path, executable, params_aval, config, dummy)
-
-        alpa.global_config.use_dummy_value_for_benchmarking = dummy
-        params_info, _ = executable.get_load_info()
-        params = load_params_np(params_aval, path, config, dummy)
-        flat_args, in_tree = tree_flatten(params)
-        flat_info = tree_leaves(params_info)
-        ret = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
-        alpa.global_config.use_dummy_value_for_benchmarking = False
-        return ret
-    elif path[-2:] == "ts":
-        params_info, _ = executable.get_load_info()
-        return alpa.restore_checkpoint(path, 1, params_info, params_info)
-    else:
-        raise ValueError()
-
-
-def init_cache_dis_array(executable, config, batch_size, dtype, dummy=False):
+def init_cache_dis_array(executable, config, batch_size, dummy=False):
     alpa.global_config.use_dummy_value_for_benchmarking = dummy
-    cache = init_cache_np(config, batch_size, dtype)
+    cache = init_cache_np(config, batch_size)
     _, batch_info = executable.get_load_info()
     cache_info = batch_info["cache"]
     flat_args, in_tree = tree_flatten(cache)

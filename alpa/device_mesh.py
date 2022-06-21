@@ -753,79 +753,6 @@ class MeshHostWorker:
         ray.kill(self.move_worker)
         self.move_worker = None
 
-    def load_opt_params_fast_path(self, path, prefix_to_idx, config,
-                                  shapes, uuids, indices, mesh_ids):
-        def load_array(key):
-            return np.load(os.path.join(path, key))
-
-        def load_param(param_key, loaded_array):
-            i = prefix_to_idx[param_key]
-
-            for j in range(len(mesh_ids[i])):
-                if self.mesh_id != mesh_ids[i][j]:
-                    continue
-
-                assert shapes[i][j] == loaded_array.shape
-                for k in range(len(self.local_devices)):
-                    idx = self.host_id * len(self.local_devices) + k
-                    uuid = uuids[i][j][idx]
-                    data = loaded_array[indices[i][j][idx]]
-                    self.put_buffer(uuid, k, data)
-
-        load_param("params.transformers.embeddings.word_embeddings.embedding",
-                   load_array("decoder.embed_tokens.weight"))
-        load_param("params.transformers.embeddings.position_embeddings.embedding",
-                   load_array("decoder.embed_positions.weight"))
-
-        if config.version > 2:
-            load_param("params.transformers.layer_norm.scale",
-                       load_array("decoder.layer_norm.weight"))
-            load_param("params.transformers.layer_norm.bias",
-                       load_array("decoder.layer_norm.bias"))
-
-        layers_per_stage = config.decoder_layers // config.num_pp_stages
-
-        for i in range(config.decoder_layers):
-            stage_id = i // layers_per_stage
-            if stage_id != self.mesh_id:
-                continue
-
-            param_prefix = f"params.transformers.encoder.{i}."
-            load_prefix = f"decoder.layers.{i}."
-            # Attention weights
-            wq = load_array(load_prefix + "self_attn.q_proj.weight")
-            wk = load_array(load_prefix + "self_attn.k_proj.weight")
-            wv = load_array(load_prefix + "self_attn.v_proj.weight")
-            dim = wq.shape[-1]
-            w_qvk = np.concatenate([wq, wv, wk], axis=0).reshape((3, -1, dim)).transpose([2, 1, 0]).reshape((dim, -1))
-            load_param(param_prefix + "attention.self.qvk_combined.kernel", w_qvk)
-            bq = load_array(load_prefix + "self_attn.q_proj.bias")
-            bk = load_array(load_prefix + "self_attn.k_proj.bias")
-            bv = load_array(load_prefix + "self_attn.v_proj.bias")
-            b_qvk = np.concatenate([bq, bv, bk], axis=0).reshape((3, dim)).transpose([1, 0]).reshape((-1,))
-            load_param(param_prefix + "attention.self.qvk_combined.bias", b_qvk)
-            load_param(param_prefix + "attention.dense.kernel",
-                       np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))
-            load_param(param_prefix + "attention.dense.bias",
-                       load_array(load_prefix + "self_attn.out_proj.bias"))
-            load_param(param_prefix + "attention.layer_norm.scale",
-                       load_array(load_prefix + "self_attn_layer_norm.weight"))
-            load_param(param_prefix + "attention.layer_norm.bias",
-                       load_array(load_prefix + "self_attn_layer_norm.bias"))
-            # FFN weights
-            load_param(param_prefix + "ffn.fc1.bias",
-                       load_array(load_prefix + "fc1.bias"))
-            load_param(param_prefix + "ffn.fc1.kernel",
-                       np.transpose(load_array(load_prefix + "fc1.weight")))
-            load_param(param_prefix + "ffn.fc2.bias",
-                       load_array(load_prefix + "fc2.bias"))
-            load_param(param_prefix + "ffn.fc2.kernel",
-                       np.transpose(load_array(load_prefix + "fc2.weight")))
-            load_param(param_prefix + "ffn.layer_norm.scale",
-                       load_array(load_prefix + "final_layer_norm.weight"))
-            load_param(param_prefix + "ffn.layer_norm.bias",
-                       load_array(load_prefix + "final_layer_norm.bias"))
-
 
 class PhysicalDeviceMesh(ABC):
     """The base class of physical device mesh.
@@ -1333,7 +1260,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             slow_path = False
 
             if is_batch_var:
-                if isinstance(arg, DistributedArray):
+                if (isinstance(arg, DistributedArray) and
+                        arg.skip_shard_args_check == True):
                     assert num_micro_batches == 1
                     ret_bufs.append([arg.remote_buffers])
                 else:
@@ -1343,7 +1271,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                     bufs = _shard_array(arg, self, indices, num_micro_batches)
                     bufs = np.array(bufs).reshape(
                         (self.num_hosts, self.num_devices_per_host,
-                        num_micro_batches))
+                         num_micro_batches))
                     bufs = bufs.transpose([2, 0, 1]).reshape(
                         (num_micro_batches,
                          self.num_hosts * self.num_devices_per_host))
@@ -1515,6 +1443,7 @@ class DistributedArray:
         self._npy_value = None
         self._one_replica_buffer_indices = None
         self._fetched_np_buffers = None
+        self.skip_shard_args_check = False
 
     def block_until_ready(self):
         """Block until all remote buffers of this array are ready."""
@@ -1967,9 +1896,10 @@ class PhysicalDeviceMeshGroup:
         rets = []
 
         for info, arg in zip(load_infos, args):
+            aval = info.aval
             if info.is_replicated():
                 meshes, arrays = [], []
-                for aval, mesh, spec in info.get_info():
+                for mesh, spec in info.get_info():
                     meshes.append(mesh)
                     indices = pxla.spec_to_indices(aval.shape, spec)
                     arrays.append(
@@ -1977,7 +1907,7 @@ class PhysicalDeviceMeshGroup:
                                                   (arg,))[0])
                 rets.append(ReplicatedDistributedArray(meshes, arrays))
             else:
-                aval, mesh, spec = info.get_info()
+                mesh, spec = info.get_info()
                 indices = pxla.spec_to_indices(aval.shape, spec)
                 rets.append(
                     mesh.shard_args_to_arrays((aval,), (indices,), (spec,),

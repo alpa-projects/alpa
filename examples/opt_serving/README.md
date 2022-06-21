@@ -12,7 +12,7 @@ As a serving system, Alpa provides the following unique features:
 1. Install Alpa following the [installation guide](https://alpa-projects.github.io/install.html) 
 2. Install additional requirements for serving:
 ```shell
-cd examples/opt_serving && pip3 install -r requirement.txt
+cd examples/opt_serving && pip3 install -r requirements.txt
 ```
 3. Compile several cython files for faster data processing:
 ```shell

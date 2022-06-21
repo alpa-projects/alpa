@@ -1,18 +1,19 @@
-import numpy as np
+import os
 from typing import Sequence, Any
 
+import alpa
+import jax
+import jax.numpy as jnp
+import numpy as np
 import torch
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
 from transformers import OPTForCausalLM, GPT2LMHeadModel
-import jax
-import jax.numpy as jnp
 
-from examples.opt_serving.model.opt_model import (get_config, get_pipeshard_executable,
+from examples.opt_serving.model.opt_model import (get_opt_config, get_pipeshard_executable,
                                                   load_params_dis_array, init_cache_dis_array,
                                                   load_params_np, init_cache_np, get_jax_executable)
 from examples.opt_serving.model.opt_utils import TransformerModelConfig
 
-import alpa
 
 @dataclass
 class InferenceFuncOutput(ModelOutput):
@@ -155,7 +156,7 @@ def get_hf_opt_model(model_name, device):
 
 def get_model(model_name,
               device,
-              cluster,
+              path,
               autoregressive,
               dtype=jnp.float16,
               dummy=False,
@@ -185,32 +186,30 @@ def get_model(model_name,
     name = model_name.split("-")[1].upper()
 
     # weight path
-    if cluster == "aws":
-        path = f"/home/ubuntu/opt_weights/{name}_np"
-    elif cluster == "mbzuai":
-        path = f"/dataset/opt_weights/{name}_np"
-    else:
-        raise RuntimeError("Unrecognized cluster.")
+    path = os.path.join(path, f"{name}_np")
 
     if "jax/opt" in model_name:
-        config = get_config(name, num_pp_stages=None, mark_boundary=False)
-        executable, params_aval = get_jax_executable(config, dtype)
-
-        # init params for single GPU for JAX
-        params = load_params_np(params_aval, path, config)
-        params = jax.tree_map(jnp.array, params)
-        init_cache = init_cache_np(config, 1, dtype)
+        config = get_opt_config(name, num_pp_stages=None, mark_boundary=False, dtype=dtype)
         transformer_config = TransformerModelConfig(H=config.decoder_embed_dim,
                                                     L=config.decoder_layers,
                                                     n_head=config.decoder_attention_heads,
                                                     seq_len=config.max_target_positions,
                                                     vocab_size=config.vocab_size)
+
+        executable, params_aval = get_jax_executable(
+            config,
+            support_output_attentions=support_output_attentions,
+            support_output_hidden_states=support_output_hidden_states)
+
+        # Load params
+        params = load_params_np(params_aval, path, config, dummy)
+        params = jax.tree_map(jnp.array, params)
+        init_cache = init_cache_np(config, 1)
     else:
         assert "alpa/opt" in model_name
         alpa.init()
         num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
-        config = get_config(name, num_pp_stages=num_pp_stages)
-
+        config = get_opt_config(name, num_pp_stages=num_pp_stages, dtype=dtype)
         transformer_config = TransformerModelConfig(H=config.decoder_embed_dim,
                                                     L=config.decoder_layers,
                                                     n_head=config.decoder_attention_heads,
@@ -219,17 +218,18 @@ def get_model(model_name,
 
         executable, params_aval = get_pipeshard_executable(
             config,
-            dtype,
             batch_size=batch_size,
             num_micro_batches=num_micro_batches,
             decoding_length_per_step=decoding_length_per_step,
             support_output_attentions=support_output_attentions,
             support_output_hidden_states=support_output_hidden_states,
             autoregressive=autoregressive)
+
         # Load params
         params = load_params_dis_array(path, executable, params_aval, config, dummy)
         if autoregressive:
-            init_cache = init_cache_dis_array(executable, config, 1, dtype, dummy=dummy)
+            init_cache = init_cache_dis_array(executable, config, 1, dummy=dummy)
+            set_skip_shard_args_check(init_cache)
         executable.sync()
 
         # return executable directly if not autoregressive
@@ -255,7 +255,9 @@ def get_model(model_name,
             "position_ids": position_ids_step,
             "cache": past_key_values,
         })
+        set_skip_shard_args_check(output.attention_cache)
         # executable.sync()
+
         logits_step = torch.from_numpy(np.array(output.logits)).to(device)
 
         step_ct += 1
@@ -266,3 +268,13 @@ def get_model(model_name,
 
     inference_func_config = InferenceFuncConfig()
     return WrappedInferenceFunc(inference_func, inference_func_config, executable, transformer_config)
+
+
+def set_skip_shard_args_check(attention_cache):
+    if isinstance(attention_cache[0], alpa.device_mesh.DistributedArray):
+        for x in attention_cache:
+            x.skip_shard_args_check = True
+    else:
+        for y in attention_cache:
+            for x in y:
+                x.skip_shard_args_check = True

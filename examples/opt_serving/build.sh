@@ -1,1 +1,1 @@
-python setup.py build_ext --verbose --inplace
+python3 setup.py build_ext --verbose --inplace

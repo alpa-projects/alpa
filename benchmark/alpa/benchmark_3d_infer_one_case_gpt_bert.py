@@ -62,6 +62,7 @@ def create_infer_state_aval(rngkey, model, batch, dtype):
 
 
 def get_infer_step(parallel_method):
+
     def infer_step(state, batch, rng_key):
         rngs = {"dropout": rng_key}
         logits = state.apply_fn(state.params,
@@ -197,7 +198,7 @@ def benchmark_gpt_bert_internal(model_type,
     _ = infer_step(state, batch, rngkey)
     executable.sync()
 
-    # Benchmark latency 
+    # Benchmark latency
     tic = time.time()
     for i in range(niter):
         print(f"Iteration {i} ...")
@@ -216,16 +217,20 @@ def benchmark_gpt_bert_internal(model_type,
 
     latencies = []
     for timer_type in timer_types:
-        latencies.append(np.mean(executable.get_execution_time_costs(warmup=1, timer_name=timer_type)))
+        latencies.append(
+            np.mean(
+                executable.get_execution_time_costs(warmup=1,
+                                                    timer_name=timer_type)))
 
     max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
 
     print_used_time("Benchmark")
 
     # Compute statistics
-    tflops = compute_inference_gpt_tflops(batch_size, seq_len, num_layers, hidden_size,
-                                vocab_size, virtual_mesh.num_devices,
-                                latencies[0])
+    tflops = compute_inference_gpt_tflops(batch_size, seq_len, num_layers,
+                                          hidden_size, vocab_size,
+                                          virtual_mesh.num_devices,
+                                          latencies[0])
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size,
                                                   vocab_size)
 

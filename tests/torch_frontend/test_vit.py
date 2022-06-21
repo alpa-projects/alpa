@@ -244,12 +244,36 @@ class TorchViTTest(unittest.TestCase):
             "c_stem_dims": [],
         }
 
-        # ViT-L model
+        # # ViT-L model
+        # arch_params = {
+        #     "n_layers": 24,
+        #     "n_heads": 16,
+        #     "hidden_d": 1024,
+        #     "mlp_d": 4096,
+        # }
+
+        # # ViT-H model
+        # arch_params = {
+        #     "n_layers": 32,
+        #     "n_heads": 16,
+        #     "hidden_d": 1280,
+        #     "mlp_d": 5120,
+        # }
+
+        # # ViT-10B model
+        # arch_params = {
+        #     "n_layers": 32,
+        #     "n_heads": 32,
+        #     "hidden_d": 5120,
+        #     "mlp_d": 20480,
+        # }
+
+        # ViT-25B model
         arch_params = {
-            "n_layers": 24,
-            "n_heads": 16,
-            "hidden_d": 1024,
-            "mlp_d": 4096,
+            "n_layers": 36,
+            "n_heads": 32,
+            "hidden_d": 7680,
+            "mlp_d": 30720,
         }
 
         params.update(arch_params)

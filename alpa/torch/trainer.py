@@ -9,7 +9,7 @@ FAQ: When to use atorch vs. torch?
 
 Answer:
 - All `atorch` usage is contained within the trainer code (i.e. this file),
-no `atorch` mentions in user code (e.g. test_torch_simple.py).
+no `atorch` mentions in user code (e.g. test_vit.py).
 - No `torch` usage in trainer code. e.g. PyTorch dataloader will be
 encapsulated in alpa.torch dataloader (TBD), where we will add features
 related to dist dataloading.

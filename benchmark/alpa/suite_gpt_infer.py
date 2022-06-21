@@ -1,7 +1,5 @@
 """Benchmark suites for gpt with auto parallelization."""
 from suite_manual_gpt import gpt_specs
-import numpy as np
-import pprint
 
 auto_stage_option = {
     "submesh_physical_shape_space": "small_power_of_two",
@@ -28,9 +26,7 @@ def get_solution_case(model_name, num_micro_batches, max_global_batch_size, num_
 perf_test_suite = {}
 model_sizes = ["125M", "350M", "760M", "1.3B", "2.6B", "6.7B", "15B", "39B", "76B"]
 model_size = model_sizes[4] 
-#num_micro_batch_config = [1, 4, 16, 64]
-#batch_size_config = [1, 4, 16, 64]
-num_micro_batch_config = [1]
+num_micro_batch_config = [1, 4, 16, 64]
 batch_size_config = [1, 4, 16, 64]
 
 def get_config(pp_list, dp_list, op_list, ignore_one_device_case=False, debug=False):
@@ -69,11 +65,11 @@ def get_config(pp_list, dp_list, op_list, ignore_one_device_case=False, debug=Fa
 
 if __name__ == "__main__":
     get_config([1, 2, 4, 8], [1], [1], False, True)
-    #get_config([1], [1, 2, 4, 8], [1], True, True)
-    #get_config([1], [1], [1, 2, 4, 8], True, True)
+    get_config([1], [1, 2, 4, 8], [1], True, True)
+    get_config([1], [1], [1, 2, 4, 8], True, True)
 else:
     get_config([1, 2, 4, 8], [1], [1], False)
-    #get_config([1], [1, 2, 4, 8], [1], True)
-    #get_config([1], [1], [1, 2, 4, 8], True)
+    get_config([1], [1, 2, 4, 8], [1], True)
+    get_config([1], [1], [1, 2, 4, 8], True)
 
 

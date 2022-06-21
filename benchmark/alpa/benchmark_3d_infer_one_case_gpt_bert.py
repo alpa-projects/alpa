@@ -195,6 +195,7 @@ def benchmark_gpt_bert_internal(model_type,
 
     # Warmup for e2e latency
     _ = infer_step(state, batch, rngkey)
+    executable.sync()
 
     # Benchmark latency 
     tic = time.time()
@@ -204,7 +205,19 @@ def benchmark_gpt_bert_internal(model_type,
         executable.sync()
     e2e_latency = (time.time() - tic) / niter
 
-    latencies = executable.get_execution_time_costs(warmup=1)
+    timer_types = [
+        "overall",
+        "compute",
+        "resharding_send",
+        "resharding_recv",
+        "resharding_broadcast",
+        "free",
+    ]
+
+    latencies = []
+    for timer_type in timer_types:
+        latencies.append(np.mean(executable.get_execution_time_costs(warmup=1, timer_name=timer_type)))
+
     max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
 
     print_used_time("Benchmark")
@@ -212,7 +225,7 @@ def benchmark_gpt_bert_internal(model_type,
     # Compute statistics
     tflops = compute_inference_gpt_tflops(batch_size, seq_len, num_layers, hidden_size,
                                 vocab_size, virtual_mesh.num_devices,
-                                np.mean(latencies))
+                                latencies[0])
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size,
                                                   vocab_size)
 

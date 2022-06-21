@@ -93,14 +93,16 @@ if __name__ == "__main__":
          submesh_shapes, logical_mesh_shapes,
          autosharding_option_dicts) = result
 
+        overall_latency, compute_latency, reshard_send_latency, reshard_recv_latency, reshard_broadcast, free_latency = latencies
         heads = [
             "Type", "Model Size", "BatchSize", "#MicroBatch", "TotalBatchSize", "#Hosts", "#GPUsPerHost", "#PP", "#DP", "#OP",
-            "Latency Mean", "Latency Std", "E2E Latency", "Ray Overhead", "TFLOPs", "Peak Mem",
+            "E2E Latency", "Ray Overhead", "Overall Latency", "Compute Latency", "Reshard Send Latency", "Reshard Recv Latency", 
+            "Reshard Broadcast Latency", "Free Latency", "TFLOPs", "Peak Mem",
         ]
         values = [
             model_type, model_name, batch_size // num_micro_batches, num_micro_batches, batch_size, num_hosts, num_gpus,
-            parallel_args[2], *parallel_args[3][2][0], f"{np.mean(latencies):.3f}s",
-            f"{np.std(latencies):.3f}", f"{e2e_latency:.3f}s", f"{(e2e_latency - np.mean(latencies)):.3f}s"
+            parallel_args[2], *parallel_args[3][2][0], f"{e2e_latency:.3f}s", f"{(e2e_latency - overall_latency):.3f}s", f"{overall_latency:.3f}s", 
+            f"{compute_latency:.3f}", f"{reshard_send_latency:.5f}", f"{reshard_recv_latency:.5f}", f"{reshard_broadcast:.5f}", f"{free_latency:.5f}",
             f"{tflops:.2f}", f"{max_mem_allocated/GB:.3f}G",
         ]
         write_tsv(heads, values, output_name)

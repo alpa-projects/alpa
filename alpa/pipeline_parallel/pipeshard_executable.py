@@ -34,6 +34,7 @@ timer_names = {
     "compute": "sum",
     "resharding_send": "sum",
     "resharding_recv": "sum",
+    "resharding_broadcast": "sum",
     "free": "sum",
 }
 
@@ -237,8 +238,12 @@ class PipeshardDriverExecutable:
         if return_all_costs:
             return mesh_costs
 
-        min_costs = [1.0e9] * len(mesh_costs[0])
-        max_costs = [0] * len(mesh_costs[0])
+        lens = [len(mesh_cost) for mesh_cost in mesh_costs]
+        maxlen = max(lens)
+        if maxlen == 0:
+            return [0]
+        min_costs = [1.0e9] * maxlen
+        max_costs = [0] * maxlen
         for mesh_cost in mesh_costs:
             for i, cost in enumerate(mesh_cost):
                 if cost > max_costs[i]:

@@ -10,13 +10,14 @@ import time
 from collections import OrderedDict
 from functools import partial, partialmethod
 import threading
-from typing import Iterable, Sequence, Any, Union, List
+from typing import Iterable, Dict, Sequence, Any, Union, List
 from warnings import warn
 
 import flax
 from flax.training import train_state
 from flax.training.common_utils import stack_forest
 import jax
+from jax._src.source_info_util import SourceInfo
 import jax.numpy as jnp
 from jax._src import dispatch, util
 from jax._src.api import FLAGS, ShapeDtypeStruct
@@ -24,7 +25,8 @@ from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.api_util import shaped_abstractify
 from jax import core
 from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
-                      ShapedArray, Var, AbstractValue)
+                      Primitive, ShapedArray, Var, AbstractValue, gensym,
+                      new_jaxpr_eqn)
 from jax.experimental.maps import FrozenDict
 from jax import linear_util as lu
 from jax.interpreters import partial_eval as pe
@@ -40,6 +42,7 @@ import tqdm
 import alpa
 from alpa.global_env import global_config, is_worker
 from alpa.monkey_patch import restore_random, monkey_patch_random
+from alpa.pipeline_parallel.primitive_def import pipeline_p
 
 PLACEMENT_GROUP_TIMEOUT_S_ENV = "ALPA_PLACEMENT_GROUP_TIMEOUT_S_ENV"
 
@@ -693,6 +696,142 @@ def clone_jaxpr(closed_jaxpr: ClosedJaxpr,
     return ClosedJaxpr(jaxpr, consts)
 
 
+def clone_jaxpr_eqn(eqn: JaxprEqn,
+                    invars: Sequence[Atom] = None,
+                    outvars: Sequence[Var] = None,
+                    primitive: Primitive = None,
+                    params: Dict[str, Any] = None,
+                    source_info: SourceInfo = None):
+    invars = invars or eqn.invars
+    outvars = outvars or eqn.outvars
+    primitive = primitive or eqn.primitive
+    params = params or eqn.params
+    source_info = source_info or eqn.source_info
+    return new_jaxpr_eqn(invars, outvars, primitive, params, source_info)
+
+
+def process_remat(closed_jaxpr: ClosedJaxpr):
+    """Offload remat call from forward to backward.
+
+    remat in Jax generates some remat_call in the forward part, but these
+    remat_call only outputs constant and does not rely on inputs.
+    Hence, offloading them into the backward part does not enlong any liveness
+    interval, while helps reduce forward output size.
+
+    As Alpa monkey patches random number generation to stateful version,
+    this function also gets and sets rng keys.
+
+    Args:
+        closed_jaxpr: the original jaxpr.
+
+    Returns:
+        new_jaxpr: the processed jaxpr
+    """
+
+    def only_create_consts(jaxpr: Jaxpr):
+        const_vars = OrderedSet()
+        for eqn in jaxpr.eqns:
+            for var in eqn.invars:
+                if isinstance(var, Var) and var not in const_vars:
+                    return False
+            const_vars.update(
+                [v for v in eqn.outvars if not isinstance(v, DropVar)])
+        return True
+
+    def only_input_consts(eqn: JaxprEqn):
+        in_bytes = 0
+        for var in eqn.invars:
+            if not isinstance(var, Var):
+                continue
+            if isinstance(var, DropVar):
+                continue
+            in_bytes += np.prod(var.aval.shape) * np.dtype(
+                var.aval.dtype).itemsize
+        return in_bytes == 0
+
+    def is_meaningful(inv: Atom):
+        return isinstance(inv, Var) and not isinstance(inv, DropVar)
+
+    def _offload_remat_process_pipeline(eqn: JaxprEqn,
+                                        discard_invars: Sequence[Var]):
+        discard_invars = set(discard_invars)
+        new_invars = []
+        new_outvars = []
+        for inv, outv in zip(eqn.invars, eqn.outvars):
+            if not (is_meaningful(inv) and inv in discard_invars):
+                new_invars.append(inv)
+                new_outvars.append(outv)
+        return clone_jaxpr_eqn(eqn, new_invars, new_outvars)
+
+    # Find offloaded eqns
+    offloaded_eqns = []
+    gensym_fn = gensym([closed_jaxpr.jaxpr])
+
+    for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
+        if (eqn.primitive == pe.remat_call_p and only_input_consts(eqn) and
+                only_create_consts(eqn.params["call_jaxpr"])):
+            offloaded_eqns.append(eqn_idx)
+    # Find where each eqn is offloaded
+    # A faster way is to rewrite remat to set each call's name unique, but users
+    # may use 'from jax import remat' instead of 'jax.remat()' which disables
+    # monkey patch to remat.
+    # Dict[fwd_outvar -> fwd_remat_call_idx]
+    offloaded_vars_from = {}
+    # Dict[var -> var]
+    var_pipeline_mapping = {}
+    # Dict[fwd_remat_call_idx -> bwd_remat_call_idx]
+    offload_to = {}
+    for eqn_idx in offloaded_eqns:
+        for var in closed_jaxpr.eqns[eqn_idx].outvars:
+            if is_meaningful(var):
+                offloaded_vars_from[var] = eqn_idx
+    for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
+        if (eqn.primitive == pe.remat_call_p and eqn.params["differentiated"]):
+            for inv in eqn.invars:
+                if is_meaningful(inv) and inv in offloaded_vars_from:
+                    fwd_eqn_idx = offloaded_vars_from[inv]
+                    offload_to.setdefault(eqn_idx, []).append(fwd_eqn_idx)
+        elif eqn.primitive == pipeline_p:
+            for inv, outv in zip(eqn.invars, eqn.outvars):
+                if is_meaningful(inv) and inv in offloaded_vars_from:
+                    offloaded_vars_from[outv] = eqn
+                    var_pipeline_mapping[inv] = outv
+    # Insert the fwd remat call and rewrite corresponding bwd remat call
+    new_eqns = []
+    # FIXME(yonghao): we cannot discard outputs post pipeline marker
+    discarded = set(offloaded_vars_from.keys()).difference(closed_jaxpr.jaxpr.outvars)
+    for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
+        # Rewrite pipeline_markers
+        if eqn.primitive is pipeline_p:
+            new_eqns.append(_offload_remat_process_pipeline(eqn, discarded))
+            continue
+        if eqn_idx not in offload_to:
+            new_eqns.append(eqn)
+            continue
+        inserted_eqns = offload_to[eqn_idx]
+        var_mapping = {}
+        # insert forward remat call
+        for inserted_idx in inserted_eqns:
+            inserted = closed_jaxpr.eqns[inserted_idx]
+            new_outvars = []
+            for v in inserted.outvars:
+                if isinstance(v, DropVar):
+                    new_outvars.append(v)
+                else:
+                    new_v = gensym_fn(v.aval)
+                    new_outvars.append(new_v)
+                    var_mapping[v] = new_v
+                    while v in var_pipeline_mapping:
+                        v = var_pipeline_mapping[v]
+                        var_mapping[v] = new_v
+            cloned_fwd = clone_jaxpr_eqn(inserted, outvars=new_outvars)
+            new_eqns.append(cloned_fwd)
+        # rewrite invars for bwd remat call
+        new_invars = [get_var_mapping(var_mapping, v) for v in eqn.invars]
+        new_eqns.append(clone_jaxpr_eqn(eqn, invars=new_invars))
+    return clone_jaxpr(closed_jaxpr, eqns=new_eqns)
+
+
 def trace_jaxpr_with_micro_batch(fun: lu.WrappedFun,
                                  batch_invars: Sequence[bool],
                                  num_micro_batches: int,
@@ -724,6 +863,7 @@ def trace_jaxpr_with_micro_batch(fun: lu.WrappedFun,
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
     # Restore jax.random to original stateless version
+    closed_jaxpr = process_remat(closed_jaxpr)
     restore_random()
     return closed_jaxpr, batch_size
 

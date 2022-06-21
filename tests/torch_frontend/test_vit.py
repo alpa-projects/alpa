@@ -223,27 +223,37 @@ class TorchViTTest(unittest.TestCase):
         alpa.set_seed(123)
 
     def test_vit_pipeshard(self):
-        batch_size = 16
+        batch_size = 512
         num_channels = 3
         image_size = 224
         patch_size = 14
-        num_classes = 8
+        num_classes = 1000
 
-        vit_params = {
+        params = {
             "image_size": image_size,
             "patch_size": patch_size,
             "stem_type": "patchify",
-            "n_layers": 2,
-            "n_heads": 8,
-            "hidden_d": 8,
-            "mlp_d": 32,
+            "n_layers": -1,  # dummy value, to be overwritten later
+            "n_heads": -1,  # dummy value, to be overwritten later
+            "hidden_d": -1,  # dummy value, to be overwritten later
+            "mlp_d": -1,  # dummy value, to be overwritten later
             "cls_type": "token",
             "num_classes": num_classes,
             "c_stem_kernels": [],
             "c_stem_strides": [],
             "c_stem_dims": [],
         }
-        pt_module_gen = lambda: ViT(params=vit_params)
+
+        # ViT-L model
+        arch_params = {
+            "n_layers": 24,
+            "n_heads": 16,
+            "hidden_d": 1024,
+            "mlp_d": 4096,
+        }
+
+        params.update(arch_params)
+        pt_module_gen = lambda: ViT(params=params)
 
         dataloader = [
             (torch.randn(batch_size, num_channels, image_size, image_size), torch.randn(batch_size, num_classes)),
@@ -252,7 +262,7 @@ class TorchViTTest(unittest.TestCase):
         loss_func = lambda *args, **kwargs: nn.functional.mse_loss(
             *args, **kwargs)
         optim_gen = torchoptim.adam(lr=1e-3)
-        num_micro_batches = 2
+        num_micro_batches = 8
 
         parallel_method = alpa.PipeshardParallel(
             stage_mode="auto", num_micro_batches=num_micro_batches)

@@ -16,7 +16,7 @@ from examples.opt_serving.service.queue import PriorityQueueRingShard
 from examples.opt_serving.service.responses import OAIResponse
 from examples.opt_serving.service.utils import encode_fn, build_logger
 from examples.opt_serving.service.workers import WorkItem
-from examples.opt_serving.service.constants import MAX_SEQ_LEN, MAX_BATCH_TOKENS, DEFAULT_PORT
+from examples.opt_serving.service.constants import MAX_SEQ_LEN, MAX_BATCH_TOKENS, DEFAULT_PORT, TIMEOUT_MS
 
 
 app = Flask(__name__)
@@ -26,7 +26,7 @@ BATCH_QUEUE = PriorityQueueRingShard()
 logger = build_logger()
 werkzeug_logger = logging.getLogger("werkzeug")
 
-def batching_loop(timeout=100, max_tokens=MAX_BATCH_TOKENS):
+def batching_loop(timeout=TIMEOUT_MS, max_tokens=MAX_BATCH_TOKENS):
     """
     batching_loop is an infinite loop responsible for executing generations.
 
@@ -62,6 +62,7 @@ def batching_loop(timeout=100, max_tokens=MAX_BATCH_TOKENS):
             # dynamic batching: group like-sized items to reduce the cost
             # of padding. See PR#20 for additional context.
             item = target_queue.get(timeout=timeout / 1000)
+            logger.debug(f"Get item: {item} into batch")
             # accumulate the batch until it gets too big
             longest = max([item] + batch).cost
             batch_cost = longest * (len(batch) + 1)
@@ -73,6 +74,7 @@ def batching_loop(timeout=100, max_tokens=MAX_BATCH_TOKENS):
                 # batch is empty or under budget
                 batch.append(item)
         except queue.Empty:
+            logger.debug(f"Prepare to process batch: {batch}")
             if batch:
                 request_object = {
                     "inputs": [],

@@ -50,17 +50,17 @@ def move_to_cuda(sample, device=None):
 
 
 
-batch_request_counter = 0
+serve_batch_counter = 0
 
 
-def next_batch_request_uuid(number=1):
+def next_serve_batch_uuid(number=1):
     """Return the next uuid of a remote buffer."""
-    global batch_request_counter
+    global serve_batch_counter
     if number == 1:
-        ret = batch_request_counter
+        ret = serve_batch_counter
     else:
-        ret = np.arange(batch_request_counter, batch_request_counter + number)
-    batch_request_counter = (batch_request_counter + number) % (1 << 60)
+        ret = np.arange(serve_batch_counter, serve_batch_counter + number)
+    serve_batch_counter = (serve_batch_counter + number) % (1 << 60)
     return ret
 
 
@@ -352,7 +352,7 @@ class GeneratorInterface:
         """
         # if seed:
         #     utils.set_torch_seed(seed)
-        batch_request_uuid = next_batch_request_uuid()
+        batch_request_uuid = next_serve_batch_uuid()
         if self.tokenizer is None or self.model_wrapper is None:
             raise RuntimeError("Model is not loaded.")
 
@@ -367,10 +367,10 @@ class GeneratorInterface:
         if not best_of:
             best_of = n
         assert best_of >= n
-        beam = best_of
+        beam_size = best_of
 
         # TODO (Hao & Yonghao): support beam search
-        if beam > 1:
+        if beam_size > 1:
             raise NotImplementedError("We only support beam=1 now.")
 
         sampling_topp = top_p if top_p > 0 else -1
@@ -390,7 +390,7 @@ class GeneratorInterface:
             max_positions=None,
             ignore_invalid_inputs=False,
         ).next_epoch_itr(shuffle=False)
-        logger.info(f"Request {batch_request_uuid}")
+        logger.info(f"Serve batch {batch_request_uuid}")
         for batch_idx, batch in enumerate(batches):
             src_tokens = batch["src_tokens"]
             src_lengths = batch["src_lengths"]
@@ -410,13 +410,14 @@ class GeneratorInterface:
             max_len = total_max_tokens
 
             generator_args = {
-                "beam_size": beam,
+                "beam_size": beam_size,
                 "max_len": max_len,
                 "min_len": min_len,
                 "temperature": temperature,
                 "sampling": sampling,
                 "top_p": sampling_topp,
             }
+            logger.debug(generator_args)
             generator = Generator(self.model_wrapper, **generator_args)
 
             # okay actually generate
@@ -428,7 +429,7 @@ class GeneratorInterface:
             inference_time = time.time() - inference_start_time
             flops, speed, token_32_latency = self.estimate_performance(translations, inference_time)
             logger.info(
-                "- Request {} / batch {} | #batch_size: {}, max_len: {} shape: {}, args: {}, "
+                "- Serve batch {} / compute batch {} | #batch_size: {}, max_len: {} shape: {}, args: {}, "
                 "batch latency (s): {:.2f}, flops: {:.4f}, speed: {:.4f}, 32-token latency: {:.2f}".format(
                     batch_request_uuid, batch_idx, batchsize, max(src_lengths), src_lengths, generator_args,
                     inference_time, flops, speed, token_32_latency
@@ -471,7 +472,7 @@ class GeneratorInterface:
                     }
                     beams.append(result)
                 retval.append(beams)
-        logger.info("Request {} completed!  | #samples: {},  #batches: {}, e2e latency (s): {:.2f}, inference (s): {:.2f}".format(
+        logger.info("Serve batch {} completed!  | #samples: {},  #batches: {}, e2e latency (s): {:.2f}, inference (s): {:.2f}".format(
             batch_request_uuid, len(lengths), len(batches), time.time() - start_time, total_inference_time
         ))
         return retval

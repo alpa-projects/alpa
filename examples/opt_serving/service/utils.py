@@ -40,6 +40,8 @@ def build_logger():
         level=os.environ.get("LOGLEVEL", "INFO").upper(),
         stream=sys.stdout,
     )
+    print(os.environ.get("LOGLEVEL", "INFO").upper())
+    logging.getLogger("absl").setLevel("WARNING")
     logger = logging.getLogger("alpa.opt_serving")
     global handler
     os.makedirs(LOGDIR,exist_ok=True)

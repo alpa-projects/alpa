@@ -260,21 +260,21 @@ class TorchViTTest(unittest.TestCase):
         #     "mlp_d": 5120,
         # }
 
-        # # ViT-10B model
-        # arch_params = {
-        #     "n_layers": 32,
-        #     "n_heads": 32,
-        #     "hidden_d": 5120,
-        #     "mlp_d": 20480,
-        # }
-
-        # ViT-25B model
+        # ViT-10B model
         arch_params = {
-            "n_layers": 36,
+            "n_layers": 32,
             "n_heads": 32,
-            "hidden_d": 7680,
-            "mlp_d": 30720,
+            "hidden_d": 5120,
+            "mlp_d": 20480,
         }
+
+        # # ViT-25B model
+        # arch_params = {
+        #     "n_layers": 36,
+        #     "n_heads": 32,
+        #     "hidden_d": 7680,
+        #     "mlp_d": 30720,
+        # }
 
         params.update(arch_params)
         pt_module_gen = lambda: ViT(params=params)

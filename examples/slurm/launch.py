@@ -90,6 +90,7 @@ if __name__ == '__main__':
     print("Start to submit job!")
     subprocess.Popen(["sbatch", script_file])
     print(
-        "Job submitted! Script file is at:{script_file}. Log file is at:\n\n{job_name}.log.\n\nYou can track the log with e.g.:\n\ntail -f {job_name}.log\n"
+        f"Job submitted! Script file is at: {script_file}. Log file is at: {job_name}.log.\n\n"
+        f"You can track the log with:\n\ntail -f {job_name}.log\n"
     )
     sys.exit(0)

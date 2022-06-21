@@ -216,57 +216,42 @@ def weight_init_func(pt_module, name_map, params, bufs):
     return params, bufs
 
 
-class TorchViTTest(unittest.TestCase):
+torch.manual_seed(123)
+alpa.set_seed(123)
 
-    def setUp(self):
-        torch.manual_seed(123)
-        alpa.set_seed(123)
+batch_size = 16
+num_channels = 3
+image_size = 224
+patch_size = 14
+num_classes = 8
 
-    def test_vit_pipeshard(self):
-        batch_size = 16
-        num_channels = 3
-        image_size = 224
-        patch_size = 14
-        num_classes = 8
+vit_params = {
+    "image_size": image_size,
+    "patch_size": patch_size,
+    "stem_type": "patchify",
+    "n_layers": 2,
+    "n_heads": 8,
+    "hidden_d": 8,
+    "mlp_d": 32,
+    "cls_type": "token",
+    "num_classes": num_classes,
+    "c_stem_kernels": [],
+    "c_stem_strides": [],
+    "c_stem_dims": [],
+}
+pt_module_gen = lambda: ViT(params=vit_params)
 
-        vit_params = {
-            "image_size": image_size,
-            "patch_size": patch_size,
-            "stem_type": "patchify",
-            "n_layers": 2,
-            "n_heads": 8,
-            "hidden_d": 8,
-            "mlp_d": 32,
-            "cls_type": "token",
-            "num_classes": num_classes,
-            "c_stem_kernels": [],
-            "c_stem_strides": [],
-            "c_stem_dims": [],
-        }
-        pt_module_gen = lambda: ViT(params=vit_params)
+dataloader = [
+    (torch.randn(batch_size, num_channels, image_size, image_size), torch.randn(batch_size, num_classes)),
+    (torch.randn(batch_size, num_channels, image_size, image_size), torch.randn(batch_size, num_classes)),
+]
+loss_func = lambda *args, **kwargs: nn.functional.mse_loss(
+    *args, **kwargs)
+optim_gen = torchoptim.adam(lr=1e-3)
+num_micro_batches = 2
 
-        dataloader = [
-            (torch.randn(batch_size, num_channels, image_size, image_size), torch.randn(batch_size, num_classes)),
-            (torch.randn(batch_size, num_channels, image_size, image_size), torch.randn(batch_size, num_classes)),
-        ]
-        loss_func = lambda *args, **kwargs: nn.functional.mse_loss(
-            *args, **kwargs)
-        optim_gen = torchoptim.adam(lr=1e-3)
-        num_micro_batches = 2
+parallel_method = alpa.PipeshardParallel(
+    stage_mode="auto", num_micro_batches=num_micro_batches)
 
-        parallel_method = alpa.PipeshardParallel(
-            stage_mode="auto", num_micro_batches=num_micro_batches)
-
-        train_torch_module(pt_module_gen, weight_init_func, dataloader,
-                           loss_func, optim_gen, parallel_method)
-
-
-def suite():
-    suite = unittest.TestSuite()
-    suite.addTest(TorchViTTest("test_vit_pipeshard"))
-    return suite
-
-
-if __name__ == '__main__':
-    runner = unittest.TextTestRunner()
-    runner.run(suite())
+train_torch_module(pt_module_gen, weight_init_func, dataloader,
+                   loss_func, optim_gen, parallel_method)

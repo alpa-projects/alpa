@@ -23,7 +23,7 @@ LOAD_ENV = "{{LOAD_ENV}}"
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--exp-name", type=str, default="alpa_run",
+        "--exp-name", type=str, default="exp",
         help="The job name and path to logging file (exp_name.log)."
     )
     parser.add_argument(

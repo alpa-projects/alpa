@@ -68,10 +68,14 @@ def train_torch_module(pt_module_gen, weight_init_func, dataloader, loss_func,
 
         # Define the state initialization function
         def create_train_state():
+            print("create_train_state here0")
             params, bufs, optim_state = atorch.initialize_with_zeros(
                 params_aval, bufs_aval, optim_state_aval)
+            print("create_train_state here1")
             params, bufs = weight_init_func(pt_module, name_map, params, bufs)
+            print("create_train_state here2")
             optim_state = optim_state_init_func(optim_state)
+            print("create_train_state here3")
             return TrainState(params, bufs, optim_state)
 
         # Parallelize train function and state initialization function
@@ -96,10 +100,13 @@ def train_torch_module(pt_module_gen, weight_init_func, dataloader, loss_func,
                 method=alpa.CreateStateParallel(train_step, pt_batch))
 
         # Initialize weights and optimizer states
+        print("here0: before creating state")
         state = create_train_state()
+        print("here1: done creating state")
 
         # Run training loops
         for i, pt_batch in enumerate(dataloader):
+            print(f"here2: starting iter {i}")
             pt_batch = atorch.to_format(atorch.mode(), pt_batch)
             state, loss_value = train_step(state, pt_batch)
 

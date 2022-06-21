@@ -56,11 +56,8 @@ class LocalPipelineExecutable:
         global_outvars (Sequence[Var]): Global output variables.
     """
 
-    def __init__(self,
-                 *,
-                 stages: Sequence[PipelineComputation],
-                 global_invars: Sequence[Var],
-                 global_outvars: Sequence[Var]):
+    def __init__(self, *, stages: Sequence[PipelineComputation],
+                 global_invars: Sequence[Var], global_outvars: Sequence[Var]):
         self.stages = stages
         self.global_invars = global_invars
         self.global_outvars = global_outvars
@@ -77,7 +74,8 @@ class LocalPipelineExecutable:
         for stage in self.stages:
             for var in stage.invars:
                 if var not in global_invals:
-                    assert var in var_stage_mapping, f"referred to an unknown var {var}"
+                    assert var in var_stage_mapping, (
+                        f"referred to an unknown var {var}")
                     var_reference_count[var] = var_reference_count.get(var,
                                                                        0) + 1
             for var in stage.outvars:
@@ -85,7 +83,8 @@ class LocalPipelineExecutable:
 
         for var in self.global_outvars:
             if not isinstance(var, Literal):
-                assert var in var_stage_mapping, f"referred to an unknown var {var}"
+                assert var in var_stage_mapping, (
+                    f"referred to an unknown var {var}")
                 var_reference_count[var] = var_reference_count.get(var, 0) + 1
 
         for stage in self.stages:
@@ -94,7 +93,8 @@ class LocalPipelineExecutable:
                 if var in global_invals:
                     stage_invals[var] = global_invals[var]
                 else:
-                    assert var in var_stage_mapping, f"referred to an unknown var {var}"
+                    assert var in var_stage_mapping, (
+                        f"referred to an unknown var {var}")
                     sender_runner = runners[var_stage_mapping[var]]
                     stage_invals[var] = sender_runner.get_val(var)
                     var_reference_count[var] -= 1
@@ -111,7 +111,8 @@ class LocalPipelineExecutable:
             if isinstance(var, Literal):
                 global_outvals_list.append(var.val)
             else:
-                assert var in var_stage_mapping, f"referred to an unknown var {var}"
+                assert var in var_stage_mapping, (
+                    f"referred to an unknown var {var}")
                 sender_runner = runners[var_stage_mapping[var]]
                 global_outvals_list.append(sender_runner.get_val(var))
                 var_reference_count[var] -= 1
@@ -130,14 +131,14 @@ def compile_local_pipeline_executable(fun: lu.WrappedFun, *avals):
     gensym_func = gensym([closed_jaxpr.jaxpr])
     jax_pipeline_stages = slice_closed_jaxpr_by_full_pipeline_marks(
         closed_jaxpr)
-    jax_pipeline_stages = mark_missing_vars_in_backward_computation_pipeline_marks(
-        jax_pipeline_stages, global_invars, global_outvars, gensym_func)
+    jax_pipeline_stages = (
+        mark_missing_vars_in_backward_computation_pipeline_marks(
+            jax_pipeline_stages, global_invars, global_outvars, gensym_func))
     xla_pipeline_stages = [
         XlaPipelineComputation.from_jax_pipeline_computation(stage)
         for stage in jax_pipeline_stages
     ]
 
-    return LocalPipelineExecutable(
-        stages=xla_pipeline_stages,
-        global_invars=global_invars,
-        global_outvars=global_outvars)
+    return LocalPipelineExecutable(stages=xla_pipeline_stages,
+                                   global_invars=global_invars,
+                                   global_outvars=global_outvars)

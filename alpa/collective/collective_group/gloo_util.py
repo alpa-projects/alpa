@@ -4,8 +4,9 @@ import numpy
 try:
     import pygloo
 except ImportError as ie:
-    raise ImportError("Can not import pygloo."
-                      "Please run 'pip install pygloo' to install pygloo.") from ie
+    raise ImportError(
+        "Can not import pygloo."
+        "Please run 'pip install pygloo' to install pygloo.") from ie
 
 import ray
 from ray.util.queue import _QueueActor
@@ -95,8 +96,7 @@ def get_gloo_reduce_op(reduce_op):
         (pygloo.ReduceOp): the mapped GLOO reduce op.
     """
     if reduce_op not in GLOO_REDUCE_OP_MAP:
-        raise RuntimeError(
-            f"Gloo does not support reduce op: '{reduce_op}'.")
+        raise RuntimeError(f"Gloo does not support reduce op: '{reduce_op}'.")
     return GLOO_REDUCE_OP_MAP[reduce_op]
 
 
@@ -216,8 +216,9 @@ def copy_tensor(dst_tensor, src_tensor):
         copied = False
     if not copied:
         raise ValueError(
-            f"Unsupported tensor type. Got: {type(dst_tensor)} and {type(src_tensor)}. "
-            "Supported CPU tensor types are: torch.Tensor, numpy.ndarray.")
+            f"Unsupported tensor type. Got: {type(dst_tensor)} and "
+            f"{type(src_tensor)}. Supported CPU tensor types are: "
+            f"torch.Tensor, numpy.ndarray.")
 
 
 # Note(Hao): this requires Ray >= 1.2.0,
@@ -226,13 +227,14 @@ class GlooQueue(_QueueActor):
 
     def index(self, group_name):
         try:
-            return self.queue._queue.index(group_name)
+            return self.queue._queue.index(group_name)  # pylint: disable=protected-access
         except ValueError:
             return -1
 
 
 @ray.remote(num_cpus=0)
 class SignalActor:
+    """An actor that can be used for sending signals."""
 
     def __init__(self, world_size):
         self.ready_events = [asyncio.Event() for _ in range(world_size)]

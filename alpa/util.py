@@ -2,11 +2,12 @@
 """Common utilities."""
 import functools
 import itertools as it
+import logging
 import os
 import subprocess
+import re
 import time
 from collections import OrderedDict
-from datetime import datetime
 from functools import partial, partialmethod
 import threading
 from typing import Sequence, Any, Union
@@ -20,8 +21,9 @@ from jax._src.dlpack import from_dlpack, to_dlpack
 from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.api_util import shaped_abstractify
 from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
-                      ShapedArray, Var)
+                      ShapedArray, Var, AbstractValue)
 from jax.experimental.maps import FrozenDict
+from jax import linear_util as lu
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla, pxla
 from jax.interpreters.xla import _DeviceArray
@@ -35,10 +37,11 @@ import cupy as cp
 
 from alpa.global_env import global_config, is_worker
 
-
 ########################################
 ##### Alpa API Utilities
 ########################################
+
+logger = logging.getLogger(__name__)
 
 
 def freeze_dict(pytree: PyTreeDef):
@@ -316,7 +319,8 @@ def get_compile_options(num_replicas: int, num_partitions: int,
         device_assignment=device_assignment,
         use_spmd_partitioning=use_spmd_partitioning,
     )
-    compile_options.parameter_is_tupled_arguments = parameter_is_tupled_arguments
+    compile_options.parameter_is_tupled_arguments = (
+        parameter_is_tupled_arguments)
     compile_options.executable_build_options.seed = build_random_seed
     return compile_options
 
@@ -336,11 +340,14 @@ def jaxpr_to_hlo_module(name: str, closed_jaxpr: ClosedJaxpr,
     # Convert jaxpr to XLA HLO
     tuple_args = False
     axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())
-    name_stack = xla.new_name_stack(xla.wrap_name(name, 'parallelize'))
+    name_stack = xla.new_name_stack(xla.wrap_name(name, "parallelize"))
     c = xc.XlaBuilder(name)
-    xla_consts = xla._xla_consts(c, consts)
-    xla_args, donated_invars = xla._xla_callable_args(
-        c, in_avals, tuple_args, donated_invars=donated_invars)
+    xla_consts = xla._xla_consts(c, consts)  # pylint: disable=protected-access
+    xla_args, donated_invars = xla._xla_callable_args(  # pylint: disable=protected-access
+        c,
+        in_avals,
+        tuple_args,
+        donated_invars=donated_invars)
     ctx = xla.TranslationContext(c, backend_name, axis_env, name_stack)
     out_nodes = xla.jaxpr_subcomp(ctx, closed_jaxpr.jaxpr, xla_consts,
                                   *xla_args)
@@ -364,7 +371,8 @@ def jaxpr_to_hlo_module(name: str, closed_jaxpr: ClosedJaxpr,
     return c.build(out_tuple).as_hlo_module()
 
 
-def setup_computation_alias(xla_computation: Union[xc.XlaComputation, xe.HloModule],
+def setup_computation_alias(xla_computation: Union[xc.XlaComputation,
+                                                   xe.HloModule],
                             donated_invars: Sequence[bool]):
     """Set input/output alias in xla computation.
 
@@ -443,7 +451,8 @@ def compile_dummy_zero_constant(backend, num_devices: int):
 def compile_allocate_zero_buffers(backend, num_devices: int,
                                   shapes: Sequence[Sequence[int]],
                                   dtypes: Sequence[jnp.dtype]):
-    """Compile an XLA executable that returns zero buffers with given shape and dtypes."""
+    """Compile an XLA executable that returns zero buffers with given shape and
+    dtypes."""
     c = xc.XlaBuilder("allocate_zero_buffers")
     sharding = xc.OpSharding()
     sharding.type = sharding.type.REPLICATED
@@ -470,8 +479,8 @@ def compile_memset_zero_buffers(backend, num_devices: int,
                                 shapes: Sequence[Sequence[int]],
                                 dtypes: Sequence[jnp.dtype]):
     """
-    Compile an XLA executable that memset zero buffers with given shape and dtypes.
-    Try to avoid memcpy
+    Compile an XLA executable that memset zero buffers with given shape and
+    dtypes. Try to avoid memcpy
     """
     c = xc.XlaBuilder("allocate_zero_buffers")
     args = []
@@ -490,7 +499,7 @@ def compile_memset_zero_buffers(backend, num_devices: int,
     c.set_sharding(sharding)
     output_shape = xc.Shape.scalar_shape(np.dtype(np.float32))
     output_tuple = xc.ops.CustomCall(c,
-                                     b'__builtin$MemZero',
+                                     b"__builtin$MemZero",
                                      operands=(input_params,),
                                      shape=output_shape)
     c = c.build(output_tuple)
@@ -509,7 +518,7 @@ def compile_concatenate(backend, mesh_shape, sharding_spec, batch_size,
                         batch_dim, aval):
     num_devices = np.prod(mesh_shape)
     sharding = pxla.sharding_spec_sharding_proto(sharding_spec)
-    build_random_seed = global_config.build_random_seed
+    build_random_seed = global_config.compile_random_seed
     compile_options = get_compile_options(
         num_replicas=1,
         num_partitions=num_devices,
@@ -583,7 +592,8 @@ class XlaPassContext:
         self.value_dict = value_dict
 
     def __enter__(self):
-        assert XlaPassContext.current is None, "Do not support recurrent context"
+        assert XlaPassContext.current is None, (
+            "Do not support recurrent context")
         XlaPassContext.current = self
         xe.set_pass_context(self.value_dict)
 
@@ -611,9 +621,14 @@ def clone_jaxpr(closed_jaxpr: ClosedJaxpr,
     return ClosedJaxpr(jaxpr, consts)
 
 
-def trace_jaxpr_with_micro_batch(fun, batch_invars, num_micro_batches,
-                                 raw_avals):
+def trace_jaxpr_with_micro_batch(fun: lu.WrappedFun,
+                                 batch_invars: Sequence[bool],
+                                 num_micro_batches: int,
+                                 raw_avals: Sequence[AbstractValue],
+                                 batch_dim: int = 0):
     """Trace the jaxpr of the computation of a micro batch."""
+    assert batch_dim == 0, "Only support batch_dim == 0"
+
     avals = []
     batch_size = None
     for aval, is_batch_var in zip(raw_avals, batch_invars):
@@ -632,22 +647,24 @@ def trace_jaxpr_with_micro_batch(fun, batch_invars, num_micro_batches,
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    return closed_jaxpr, avals, batch_size
+    return closed_jaxpr, batch_size
 
 
-def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
-                    sliced_eqns) -> Sequence[ClosedJaxpr]:
+def slices_to_jaxpr(
+        closed_jaxpr: ClosedJaxpr,
+        sliced_eqns: Sequence[Sequence[JaxprEqn]]) -> Sequence[ClosedJaxpr]:
     """Wrap sliced equations to a list of ClosedJaxpr."""
     n_eqns = len(sliced_eqns)
     global_invars = OrderedSet(closed_jaxpr.jaxpr.invars)
-    global_consts = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
     global_outvars = OrderedSet(
         var for var in closed_jaxpr.jaxpr.outvars if isinstance(var, Var))
-    result = []
+    global_consts = dict(zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts))
+
     layer_invars = [OrderedSet() for _ in range(n_eqns)]
     layer_outvars = [OrderedSet() for _ in range(n_eqns)]
     layer_consts = [{} for _ in range(n_eqns)]
-    var_layer_dict = {}
+
+    var_layer_dict = {}  # Dict[var -> layer_idx]
     for i, eqns in enumerate(sliced_eqns):
         for eqn in eqns:
             for var in eqn.invars:
@@ -667,6 +684,8 @@ def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
                     var_layer_dict[var] = i
                 if var in global_outvars:
                     layer_outvars[i].add(var)
+
+    result = []
     for i, eqns in enumerate(sliced_eqns):
         new_jaxpr = Jaxpr(list(layer_consts[i].keys()), list(layer_invars[i]),
                           list(layer_outvars[i]), eqns)
@@ -674,6 +693,14 @@ def slices_to_jaxpr(closed_jaxpr: ClosedJaxpr,
                                        list(layer_consts[i].values()))
         result.append(new_closed_jaxpr)
     return result
+
+
+def get_var_mapping(mapping, var):
+    """map the var to a new value if var is Var and in the mapping."""
+    if isinstance(var, Var) and var in mapping:
+        return mapping[var]
+    else:
+        return var
 
 
 def log_jaxpr(jaxpr: ClosedJaxpr, filename: str):
@@ -777,13 +804,32 @@ def benchmark_func(run_func,
         if sync_func:
             sync_func()
         tic = time.time()
-        for __ in range(number):
+        for _ in range(number):
             run_func()
         if sync_func:
             sync_func()
         costs.append(time.time() - tic)
 
     return np.array(costs) / number
+
+
+def run_with_timeout(func, args=(), kwargs=None, timeout=None):
+    """Run a function with timeout."""
+    ret_value = []
+
+    def _target_func():
+        ret_value.append(func(*args, **(kwargs or {})))
+
+    t = threading.Thread(target=_target_func)
+    t.start()
+    t.join(timeout=timeout)
+    if t.is_alive():
+        raise TimeoutError
+
+    if not ret_value:
+        raise RuntimeError
+
+    return ret_value[0]
 
 
 ########################################
@@ -820,7 +866,8 @@ def is_continuous_subset(tensor_slice, tensor_shape, row_major=True):
 def infer_offset_and_n_elements(tensor_slice):
     """Calculate the offset and #elements before making NCCL calls.
 
-    This function assumes the slice is a continuous subset of the original tensor.
+    This function assumes the slice is a continuous subset of the original
+    tensor.
     """
     slice_shape = tuple(ind.stop - ind.start for ind in tensor_slice)
     offset = tuple()
@@ -848,10 +895,12 @@ def jax_tensor_to_xla_buffer(jax_buf):
 
 
 def xla_buffer_to_cupy(xla_buf, take_ownership=False):
-    """Convert an xla buffer directly to cupy, w/o transitioning from jax buffer."""
+    """Convert an xla buffer directly to cupy, w/o transitioning from jax
+    buffer."""
     return cp.fromDlpack(
-        xc._xla.buffer_to_dlpack_managed_tensor(xla_buf,
-                                                take_ownership=take_ownership))
+        xc._xla.buffer_to_dlpack_managed_tensor(  # pylint: disable=protected-access
+            xla_buf,
+            take_ownership=take_ownership))
 
 
 def cupy_to_xla_buffer(tensor):
@@ -863,8 +912,8 @@ def cupy_to_xla_buffer(tensor):
         gpu_backend = xb.get_backend("gpu")
     except RuntimeError:
         gpu_backend = None
-    buf = xc._xla.dlpack_managed_tensor_to_buffer(tensor.toDlpack(),
-                                                  cpu_backend, gpu_backend)
+    buf = xc._xla.dlpack_managed_tensor_to_buffer(  # pylint: disable=protected-access
+        tensor.toDlpack(), cpu_backend, gpu_backend)
     return buf
 
 
@@ -888,7 +937,8 @@ if is_worker:
     FLAGS.experimental_cpp_jit = False
 
 
-# Note(Hao): this function will be jit-ed into as many versions as the possible length of start_indices
+# Note(Hao): this function will be jit-ed into as many versions as the possible
+# length of start_indices
 @partial(jax.jit, donate_argnums=0, static_argnums=2)
 def jax_tensor_set(src_buf, update, start_indices):
     """
@@ -897,7 +947,8 @@ def jax_tensor_set(src_buf, update, start_indices):
     Args:
         src_buf: JAX device array.
         update: JAX device array.
-        start_indices (tuple[int]): tuple of integers indicating the starting indices.
+        start_indices (tuple[int]): tuple of integers indicating the starting
+        indices.
     """
     # src_buf = src_buf.at[indices].set(update)
     src_buf = jax.lax.dynamic_update_slice(src_buf, update, start_indices)
@@ -922,25 +973,6 @@ def run_cmd(cmd: str):
     return ret
 
 
-def run_with_timeout(func, args=(), kwargs=None, timeout=None):
-    """Run a function with timeout."""
-    ret_value = []
-
-    def _target_func():
-        ret_value.append(func(*args, **(kwargs or {})))
-
-    t = threading.Thread(target=_target_func)
-    t.start()
-    t.join(timeout=timeout)
-    if t.is_alive():
-        raise TimeoutError
-
-    if not ret_value:
-        raise RuntimeError
-
-    return ret_value[0]
-
-
 def list_gpu_info():
     """List all gpu information by calling nvidia-sim."""
     ret = subprocess.getoutput("nvidia-smi -L")
@@ -959,27 +991,23 @@ def disable_tqdm_globally():
 
 
 def get_num_hosts_and_num_devices(args):
-    """Get the number of hosts and the number of devices per host for benchmark scripts."""
+    """Get the number of hosts and the number of devices per host for benchmark
+    scripts."""
     if args.num_hosts is not None or args.num_devices_per_host is not None:
-        assert args.num_hosts is not None and args.num_devices_per_host is not None
-        num_hosts, num_devices_per_host = args.num_hosts, args.num_devices_per_host
+        assert (args.num_hosts is not None and
+                args.num_devices_per_host is not None)
+        num_hosts, num_devices_per_host = (args.num_hosts,
+                                           args.num_devices_per_host)
     else:
         if hasattr(args, "local") and args.local:
             num_hosts = 1
             num_devices_per_host = list_gpu_info().count("UUID")
         else:
-            ray.init(address="auto", namespace=get_ray_namespace_str())
+            ray.init(address="auto")
             num_hosts = len(ray.nodes())
             num_devices_per_host = int(
                 ray.cluster_resources()["GPU"]) // num_hosts
     return num_hosts, num_devices_per_host
-
-
-def get_ray_namespace_str(prefix=global_config.default_ray_namespace_prefix):
-    """Get a unique ray namespace str to avoid some annoyed warnings."""
-    date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    namespace_str = f"{prefix}-{date_str}"
-    return namespace_str
 
 
 def write_tsv(heads: Sequence[str],
@@ -1064,9 +1092,27 @@ def compute_param_number(pytree: PyTreeDef):
     return ret
 
 
-def get_var_mapping(mapping, var):
-    """map the var to a new value if var is Var and in the mapping."""
-    if isinstance(var, Var) and var in mapping:
-        return mapping[var]
-    else:
-        return var
+_DISABLE_NUMBA = False
+
+
+def maybe_numba_jit(func):
+    """Decorator to mark a function as numba jitted if numba is available."""
+    try:
+        from numba import jit  # pylint: disable=import-outside-toplevel
+        jitted_func = jit(nopython=True)(func)
+
+        def wrapper(*args, **kwargs):
+            if _DISABLE_NUMBA:
+                return func(*args, **kwargs)
+            return jitted_func(*args, **kwargs)
+
+        return wrapper
+    except ImportError:
+        logger.warning("Install numba to jit and accelerate the function.")
+        return func
+
+
+def is_ray_node_resource(resource_key):
+    """Check if the current resource is the host ip."""
+    ishost_regex = re.compile(r"^node:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
+    return ishost_regex.match(resource_key)

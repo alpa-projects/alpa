@@ -4,14 +4,13 @@ from functools import partial, wraps
 from typing import Callable, Union, Sequence
 
 import numpy as np
-from jax import tree_flatten
+from jax import tree_flatten, lax
 from jax._src.api import _check_callable
 from jax._src.api import make_jaxpr
 from jax._src.tree_util import tree_unflatten
 from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun,
-                      new_jaxpr_eqn, gensym)
+                      new_jaxpr_eqn, gensym, raise_to_shaped, get_aval)
 from jax.interpreters.partial_eval import remat_call_p
-# import numba
 
 from alpa.pipeline_parallel.layer_stats import (global_invar_size,
                                                 is_nontrivial, eqn_flops,
@@ -19,7 +18,7 @@ from alpa.pipeline_parallel.layer_stats import (global_invar_size,
 from alpa.pipeline_parallel.primitive_def import (pipeline_p,
                                                   mark_pipeline_jaxpreqn)
 from alpa.util import (clone_jaxpr, slices_to_jaxpr, OrderedSet,
-                       get_var_mapping)
+                       get_var_mapping, maybe_numba_jit)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -35,7 +34,8 @@ def slice_eqns_by_layer_boundary(closed_jaxpr: ClosedJaxpr):
     current_computation_eqns = []
 
     for eqn in closed_jaxpr.jaxpr.eqns:
-        if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'boundary':
+        if (eqn.primitive is pipeline_p and
+                eqn.params["mark_type"] == "boundary"):
             sliced_eqns.append(current_computation_eqns)
             current_computation_eqns = []
         else:
@@ -50,10 +50,13 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
     layer_pipeline_invars = [OrderedSet() for _ in range(layer_num)]
     layer_pipeline_outvars = [OrderedSet() for _ in range(layer_num)]
     var_layer_dict = {}
+    var_mapping = {}
 
+    # build mapping dicts for global invars
     for var in closed_jaxpr.jaxpr.invars:
         var_layer_dict[var] = -1
 
+    # build mapping dicts for all eqns
     for i, eqns in enumerate(sliced_eqns):
         for eqn in eqns:
             for var in eqn.invars:
@@ -68,15 +71,29 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
                 if not isinstance(var, DropVar):
                     var_layer_dict[var] = i
 
-    for var in closed_jaxpr.jaxpr.outvars:
-        if (not isinstance(var, Literal) and
-                var not in closed_jaxpr.jaxpr.constvars and
-                var_layer_dict[var] != -1):
+    # build mapping dict for global outvars
+    gensym_func = gensym([closed_jaxpr.jaxpr])
+    literal_outvar_eqns = []
+    literal_outvar_marker_invars = []
+    literal_outvar_marker_outvars = []
+    for idx, var in enumerate(closed_jaxpr.jaxpr.outvars):
+        if isinstance(var, Literal):
+            # add a dummy equation to transform a Literal into a normal Var
+            zero_literal = Literal(0, raise_to_shaped(get_aval(0)))
+            new_var = gensym_func(var.aval)
+            new_eqn = new_jaxpr_eqn([var, zero_literal], [new_var], lax.add_p,
+                                    {})
+            literal_outvar_eqns.append(new_eqn)
+            literal_outvar_marker_invars.append(new_var)
+            literal_outvar_marker_outvars.append(gensym_func(var.aval))
+            var_mapping[idx] = literal_outvar_marker_outvars[-1]
+        elif var in closed_jaxpr.jaxpr.constvars or var_layer_dict[var] == -1:
+            raise NotImplementedError(
+                "Does not support this use case of output var.")
+        else:
             layer_pipeline_outvars[var_layer_dict[var]].add(var)
 
-    gensym_func = gensym([closed_jaxpr.jaxpr])
-    var_mapping = {}
-
+    # build new equations
     new_eqns = []
     for i, eqns in enumerate(sliced_eqns):
         # pipeline start eqn
@@ -91,9 +108,10 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
             computation_var_mapping[var] = new_var
         new_eqns.append(
             mark_pipeline_jaxpreqn(pipeline_start_invars,
-                                   pipeline_start_outvars, str(i), 'start'))
+                                   pipeline_start_outvars, f"layer_{i}",
+                                   "start"))
         # all other eqns
-        for eqn in eqns:
+        for eqn in (eqns + literal_outvar_eqns if i == 0 else eqns):
             new_invars = [
                 get_var_mapping(computation_var_mapping, var)
                 for var in eqn.invars
@@ -101,9 +119,12 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
             new_eqns.append(
                 new_jaxpr_eqn(new_invars, eqn.outvars, eqn.primitive,
                               eqn.params, eqn.source_info))
+
         # pipeline end eqn
-        pipeline_end_invars = []
-        pipeline_end_outvars = []
+        pipeline_end_invars = list(
+            literal_outvar_marker_invars) if i == 0 else []
+        pipeline_end_outvars = list(
+            literal_outvar_marker_outvars) if i == 0 else []
         for var in layer_pipeline_outvars[i]:
             new_var = gensym_func(var.aval)
             pipeline_end_invars.append(
@@ -112,10 +133,15 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
             var_mapping[var] = new_var
         new_eqns.append(
             mark_pipeline_jaxpreqn(pipeline_end_invars, pipeline_end_outvars,
-                                   str(i), 'end'))
-    new_outvars = [
-        get_var_mapping(var_mapping, var) for var in closed_jaxpr.jaxpr.outvars
-    ]
+                                   f"layer_{i}", "end"))
+
+    new_outvars = []
+    for idx, var in enumerate(closed_jaxpr.jaxpr.outvars):
+        if isinstance(var, Literal):
+            new_outvars.append(var_mapping[idx])
+        else:
+            new_outvars.append(get_var_mapping(var_mapping, var))
+
     new_closed_jaxpr = clone_jaxpr(closed_jaxpr,
                                    outvars=new_outvars,
                                    eqns=new_eqns)
@@ -138,7 +164,8 @@ def remat_sliced_eqns(origin_jaxpr, sliced_eqns):
                      name=str(i),
                      call_jaxpr=new_jaxpr,
                      prevent_cse=True,
-                     policy=None))])
+                     policy=None))
+        ])
     return ret_eqns
 
 
@@ -180,12 +207,14 @@ def get_layer_construction_costs(jaxpr, cost_criteria="flops"):
         compute_costs = np.array([
             eqn_flops(eqn) if nt else 0
             for nt, eqn in zip(nontrivial, jaxpr.eqns)
-        ], dtype=np.float64)
+        ],
+                                 dtype=np.float64)
     elif cost_criteria == "count":
         compute_costs = np.array([
             heavy_count(eqn) if nt else 0
             for nt, eqn in zip(nontrivial, jaxpr.eqns)
-        ], dtype=np.float64)
+        ],
+                                 dtype=np.float64)
     elif cost_criteria == "input_memory":
         cost_fn = partial(global_invar_size, set(jaxpr.jaxpr.invars))
         compute_costs = np.array([cost_fn(eqn) for eqn in jaxpr.eqns],
@@ -216,7 +245,7 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
             "Too few non-trivial ops (dot, conv), which may influence"
             " auto-sharding performance")
 
-    @numba.jit(nopython=True)
+    @maybe_numba_jit
     def init():
         blocked = np.full((length + 1, length + 1), np.inf, dtype=np.float32)
         for left in range(1, length + 1):
@@ -237,7 +266,7 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
                 blocked[left, r] = 0
         return blocked
 
-    @numba.jit(nopython=True)
+    @maybe_numba_jit
     def dp(input_sizes, blocked):
         max_cost = np.full((length + 1, layer_num + 1),
                            np.inf,
@@ -291,20 +320,22 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
                     if r == -1 else "unknown error")
     solution = list(reversed(reversed_sliced_eqns))
 
-    #print("dp solution")
-    #for i, eqns in enumerate(solution):
+    # print("dp solution")
+    # for i, eqns in enumerate(solution):
     #    invars = OrderedSet()
     #    for eqn in eqns:
     #        invars.update([var for var in eqn.invars if isinstance(var, Var)])
     #    invars.intersection_update(jaxpr.jaxpr.invars)
-    #    print(f"mesh: {i},  set_shapes: {[x.aval.shape for x in invars if len(x.aval.shape) > 1]}")
-
+    #    print(f"mesh: {i},  set_shapes: "
+    #          f"{[x.aval.shape for x in invars if len(x.aval.shape) > 1]}")
+    #
     #    invars = []
     #    for eqn in eqns:
     #        tmp_set = set([var for var in eqn.invars if isinstance(var, Var)])
     #        tmp_set.intersection_update(jaxpr.jaxpr.invars)
     #        invars.extend(list(tmp_set))
-    #    print(f"mesh: {i}, list_shapes: {[x.aval.shape for x in invars if len(x.aval.shape) > 1]}")
+    #    print(f"mesh: {i}, list_shapes: "
+    #          f"{[x.aval.shape for x in invars if len(x.aval.shape) > 1]}")
 
     solution_info = {
         "total_cost": value,
@@ -380,7 +411,8 @@ def layer_level_jaxpr_transformation(fn: Callable,
         if layer_construction:
             jaxpr = add_pipeline_marks_for_sliced_eqns(jaxpr, sliced_eqns)
         else:
-            jaxpr = clone_jaxpr(jaxpr, eqns=[x for eqns in sliced_eqns for x in eqns])
+            jaxpr = clone_jaxpr(jaxpr,
+                                eqns=[x for eqns in sliced_eqns for x in eqns])
 
         flatten_args, _ = tree_flatten(args)
         ans = jaxpr_as_fun(jaxpr)(*flatten_args)  # pylint: disable=not-callable
@@ -390,9 +422,7 @@ def layer_level_jaxpr_transformation(fn: Callable,
     return wrapped
 
 
-def manual_remat(fun: Callable = None,
-                 *,
-                 static_argnums: Sequence[int] = ()):
+def manual_remat(fun: Callable = None, *, static_argnums: Sequence[int] = ()):
     """Rematerialize an input function with manually selected layer boundaries.
 
     Rematerialize each layer of an input function with manually selected layer

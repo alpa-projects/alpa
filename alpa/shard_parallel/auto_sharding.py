@@ -44,13 +44,47 @@ logger.setLevel(logging.INFO)
 INFINITY_COST = 1e13
 
 
-class LogicalDeviceMesh:
-    """
-    A logical view of a physical mesh. The logical view is used in the auto-sharding pass.
+@dataclasses.dataclass
+class AutoShardingOption:
+    """Options of the auto-sharding solver."""
+    # Whether enable auto-sharding. If it is False, then the solver
+    # does tho run ILP but only uses the ShardingPropagation pass.
+    enable_auto_sharding: bool = True
+    # Whether to allow all-gather during re-sharding.
+    allow_all_gather: bool = True
+    # Whether to allow all-to-all during re-sharding.
+    allow_all_to_all: bool = True
+    # Whether to allow replicated parameters.
+    allow_replicated_parameters: bool = True
+    # Whether to forcibly generate data-parallel.
+    force_data_parallel: bool = False
+    # Forcibly map the batch dimension to a mesh dimension.
+    force_batch_dim_to_mesh_dim: Optional[int] = None
+    # Whether to forcibly generate a strategy similar to ZeRO optimizer stage 3.
+    force_zero_stage_3: bool = False
+    # The threshold of all-gather combiner if force_zero_stage_3 is true.
+    force_zero_stage_3_all_gather_threshold: int = 1 << 25
+    # Prefer reduce-scatter over all-reduce.
+    prefer_reduce_scatter: bool = False
+    # Allow mixed 1d mesh and 2d mesh shape.
+    allow_mixed_mesh_shape: bool = False
+    # Allow replicated dot computation.
+    allow_recompute_heavy_op: bool = False
+    # If it is not empty, forcibly use a simple heuristic instead of the ILP
+    # solver.
+    force_simple_heuristic: str = ""
+    # The threshold of all-reduce combiner in bytes.
+    all_reduce_threshold: int = 1 << 60
 
-    A physical mesh can have multiple logical views. (e.g., a 2x8 physical mesh can be viewed
-    as a 1x16 or a 4x4 logical mesh). Each mesh dimension has its own latency and bandwidth.
-    We use alpha-beta model to model the communication cost.
+
+class LogicalDeviceMesh:
+    """A logical view of a physical mesh. The logical view is used in the
+    auto-sharding pass.
+
+    A physical mesh can have multiple logical views. (e.g., a 2x8 physical mesh
+    can be viewed as a 1x16 or a 4x4 logical mesh). Each mesh dimension has its
+    own latency and bandwidth. We use alpha-beta model to model the
+    communication cost.
     """
 
     def __init__(self, physical_mesh, id_mesh, mesh_alpha=None, mesh_beta=None):
@@ -73,6 +107,15 @@ class LogicalDeviceMesh:
     @property
     def num_devices(self):
         return np.prod(self.id_mesh.shape)
+
+    def flatten(self):
+        """
+        Flatten the logical mesh into an effective 1d logical mesh,
+        """
+        return LogicalDeviceMesh(
+            self.physical_mesh, self.id_mesh.reshape(-1, 1),
+            [max(self.mesh_alpha), max(self.mesh_alpha)],
+            [min(self.mesh_beta), min(self.mesh_beta)])
 
     def all_gather_cost(self, num_bytes, mesh_dim):
         num_devices = self.id_mesh.shape[mesh_dim]
@@ -125,40 +168,8 @@ class LogicalDeviceMesh:
                                      other.mesh_alpha, other.mesh_beta))
 
 
-@dataclasses.dataclass
-class AutoShardingOption:
-    """Options of the auto-sharding solver."""
-    # Whether to allow all-gather during re-sharding.
-    allow_all_gather: bool = True
-    # Whether to allow all-to-all during re-sharding.
-    allow_all_to_all: bool = True
-    # Whether to allow replicated parameters.
-    allow_replicated_parameters: bool = True
-    # Whether to forcibly generate data-parallel.
-    force_data_parallel: bool = False
-    # Forcibly map the batch dimension to a mesh dimension.
-    force_batch_dim_to_mesh_dim: Optional[int] = None
-    # Whether to forcibly generate a strategy similar to ZeRO optimizer stage 3.
-    force_zero_stage_3: bool = False
-    # The threshold of all-gather combiner if force_zero_stage_3 is true.
-    force_zero_stage_3_all_gather_threshold: int = 1 << 25
-    # Prefer reduce-scatter over all-reduce.
-    prefer_reduce_scatter: bool = False
-    # Allow mixed 1d mesh and 2d mesh shape.
-    allow_mixed_mesh_shape: bool = False
-    # Allow replicated dot computation.
-    allow_recompute_heavy_op: bool = False
-    # If it is not empty, forcibly use a simple heuristic instead of the ILP solver.
-    force_simple_heuristic: str = ""
-    # The threshold of all-reduce combiner in bytes.
-    all_reduce_threshold: int = 1 << 60
-
-
 def run_auto_sharding_pass(
         hlo_module: xe.HloModule,
-        avals: Sequence[ShapedArray],
-        out_avals: Sequence[ShapedArray],
-        donated_invars: Sequence[bool],
         logical_mesh: LogicalDeviceMesh,
         return_mode: str,
         num_micro_batches: int,
@@ -166,37 +177,39 @@ def run_auto_sharding_pass(
         rewrite_for_grad_acc: bool = False,
         rewrite_grad_acc_indices: Optional[Sequence[int]] = None,
         memory_budget_per_device: Optional[float] = None):
-    """Run the auto-sharding pass to annotate sharding specs for an XLA Computation.
+    """Run the auto-sharding pass to annotate sharding specs for an XLA
+    Computation.
 
     Args:
       hlo_module: The hlo module got by tracing the jax function,
         whose status should be UNOPTIMIZED.
-      avals: The abstract values of input arguments.
-      out_avals: The abstract values of outputs.
-      donated_invars: Whether the arguments are donated.
       logical_mesh: The logical device mesh.
       return_mode: The mode of return value.
         The choices are {"single", "stages", "stage_and_hook_protos"}.
-        If it is "single", return a single HLO module, whose status is SPMD_PARTITIONED.
+        If it is "single", return a single HLO module, whose status is
+          SPMD_PARTITIONED.
         If it is "stages", return HLO modules of multiple pipeline stages,
           whose statuses are SHARDING_ANNOTATED.
-        If it is "stages_and_hook", return HLO modules of multiple pipeline stages
-          and the hooked hlo sharding. The statuses of the returned protos are SHARDING_ANNOTATED.
+        If it is "stages_and_hook", return HLO modules of multiple pipeline
+          stages and the hooked hlo sharding. The statuses of the returned
+          protos are SHARDING_ANNOTATED.
       num_micro_batches: The number of micro batches
         if gradient accumulation is used. If this is set, the cost of all-reduce
         for gradient synchronization is divided by this number.
       as_option: The options of the auto-sharding solver.
       rewrite_for_grad_acc: Whether to do rewriting for gradient accumulation.
-      rewrite_grad_acc_indices: The indices of tensors in output that are gradients.
+      rewrite_grad_acc_indices: The indices of tensors in output that are
+        gradients.
       memory_budget_per_device: The memory budget per device in bytes.
     """
+    # pylint: disable=unused-argument
     # Set compile options
     if memory_budget_per_device is None:
         memory_budget_per_device = -1
 
     multiple_stages = return_mode in ["stages", "stages_and_hook"]
     num_devices = logical_mesh.num_devices
-    build_random_seed = global_config.build_random_seed
+    build_random_seed = global_config.compile_random_seed
     compile_options = get_compile_options(
         num_replicas=1,
         num_partitions=num_devices,
@@ -220,21 +233,13 @@ def run_auto_sharding_pass(
         all_gather_threshold = 1 << 60
 
     # Set configs for force_data_parallel
-    mesh_shape = logical_mesh.shape
     if force_data_parallel:
         # Forcibly generate data-parallel strategy
         allow_all_gather = False
         allow_all_to_all = False
 
-        if mesh_shape[0] == 1:
-            force_batch_dim_to_mesh_dim = 1
-        elif mesh_shape[1] == 1:
-            force_batch_dim_to_mesh_dim = 0
-        else:
-            raise ValueError(
-                f"Cannot force data parallel for the mesh shape {mesh_shape}. "
-                "Please make sure the mesh shape only has a single non-one dimension."
-            )
+        logical_mesh = logical_mesh.flatten()
+        force_batch_dim_to_mesh_dim = 0
     else:
         # Use default settings
         allow_all_gather = as_option.allow_all_gather
@@ -243,7 +248,8 @@ def run_auto_sharding_pass(
         if as_option.force_batch_dim_to_mesh_dim is None:
             # Automatically set force_batch_dim_to_mesh_dim
             if logical_mesh.shape[0] > 1 and logical_mesh.shape[1] > 1:
-                # In 2d mesh, force the batch tensor dim to match the first mesh dim
+                # In 2d mesh, force the batch tensor dim to match the first
+                # mesh dim
                 force_batch_dim_to_mesh_dim = 0
             else:
                 force_batch_dim_to_mesh_dim = -1
@@ -251,57 +257,87 @@ def run_auto_sharding_pass(
             force_batch_dim_to_mesh_dim = as_option.force_batch_dim_to_mesh_dim
 
     # Set configs for reduce-scatter
-    reduce_scatter_grad_acc_friendly = (num_micro_batches is not None and num_micro_batches > 1)
+    reduce_scatter_grad_acc_friendly = (num_micro_batches is not None and
+                                        num_micro_batches > 1)
 
     # Set configs for gradient accumulation rewrite pass
     if rewrite_for_grad_acc and rewrite_grad_acc_indices is None:
         rewrite_grad_acc_indices = tuple(
-            range(
-                len(hlo_module.program_shape().result_shape().tuple_shapes(
-                ))))
+            range(len(
+                hlo_module.program_shape().result_shape().tuple_shapes())))
 
     # Temporarily disable this.
     grad_acc_num_micro_batches = None
 
     with XlaPassContext({
             # Auto-sharding solver options
-            "auto_sharding::memory_budget_per_device": memory_budget_per_device,
-            "auto_sharding::force_all_gather_cost": not allow_all_gather,
-            "auto_sharding::all_gather_cost": INFINITY_COST,
-            "auto_sharding::force_all_to_all_cost": not allow_all_to_all,
-            "auto_sharding::all_to_all_cost": INFINITY_COST,
-            "auto_sharding::allow_replicated_parameters": as_option.allow_replicated_parameters,
-            "auto_sharding::prefer_reduce_scatter": prefer_reduce_scatter,
-            "auto_sharding::reduce_scatter_grad_acc_friendly": reduce_scatter_grad_acc_friendly,
-            "auto_sharding::reduce_scatter_aggressive_partition": reduce_scatter_aggressive_partition,
-            "auto_sharding::batch_matmul_always_split_batch": True,
-            "auto_sharding::allow_recompute_heavy_op": as_option.allow_recompute_heavy_op,
-            "auto_sharding::allow_mixed_mesh_shape": as_option.allow_mixed_mesh_shape,
-            "auto_sharding::grad_acc_num_micro_batches": grad_acc_num_micro_batches or 1,
-            "auto_sharding::force_batch_dim_to_mesh_dim": force_batch_dim_to_mesh_dim,
-            "auto_sharding::force_simple_heuristic": as_option.force_simple_heuristic,
+            "auto_sharding::enable":
+                as_option.enable_auto_sharding,
+            "auto_sharding::memory_budget_per_device":
+                memory_budget_per_device,
+            "auto_sharding::force_all_gather_cost":
+                not allow_all_gather,
+            "auto_sharding::all_gather_cost":
+                INFINITY_COST,
+            "auto_sharding::force_all_to_all_cost":
+                not allow_all_to_all,
+            "auto_sharding::all_to_all_cost":
+                INFINITY_COST,
+            "auto_sharding::allow_replicated_parameters":
+                as_option.allow_replicated_parameters,
+            "auto_sharding::prefer_reduce_scatter":
+                prefer_reduce_scatter,
+            "auto_sharding::reduce_scatter_grad_acc_friendly":
+                reduce_scatter_grad_acc_friendly,
+            "auto_sharding::reduce_scatter_aggressive_partition":
+                reduce_scatter_aggressive_partition,
+            "auto_sharding::batch_matmul_always_split_batch":
+                True,
+            "auto_sharding::allow_recompute_heavy_op":
+                as_option.allow_recompute_heavy_op,
+            "auto_sharding::allow_mixed_mesh_shape":
+                as_option.allow_mixed_mesh_shape,
+            "auto_sharding::grad_acc_num_micro_batches":
+                grad_acc_num_micro_batches or 1,
+            "auto_sharding::force_batch_dim_to_mesh_dim":
+                force_batch_dim_to_mesh_dim,
+            "auto_sharding::force_simple_heuristic":
+                as_option.force_simple_heuristic,
 
             # Device mesh
-            "auto_sharding::device_mesh_ids": logical_mesh.flatten_ids,
-            "auto_sharding::device_mesh_shape": tuple(logical_mesh.shape),
-            "auto_sharding::device_mesh_alpha": tuple(float(x) for x in logical_mesh.mesh_alpha),
-            "auto_sharding::device_mesh_beta": tuple(float(x) for x in logical_mesh.mesh_beta),
-            "auto_sharding::device_mesh_prof_result": getattr(logical_mesh.physical_mesh, "prof_result", None),
+            "auto_sharding::device_mesh_ids":
+                logical_mesh.flatten_ids,
+            "auto_sharding::device_mesh_shape":
+                tuple(logical_mesh.shape),
+            "auto_sharding::device_mesh_alpha":
+                tuple(float(x) for x in logical_mesh.mesh_alpha),
+            "auto_sharding::device_mesh_beta":
+                tuple(float(x) for x in logical_mesh.mesh_beta),
+            "auto_sharding::device_mesh_prof_result":
+                getattr(logical_mesh.physical_mesh, "prof_result", None),
 
             # Gradient accumulation rewrite
-            "auto_sharding::rewrite_for_grad_acc": rewrite_for_grad_acc,
-            "auto_sharding::rewrite_indices": rewrite_grad_acc_indices,
+            "auto_sharding::rewrite_for_grad_acc":
+                rewrite_for_grad_acc,
+            "auto_sharding::rewrite_indices":
+                rewrite_grad_acc_indices,
 
             # Communication combiner options
-            "combiner::all_gather_threshold": all_gather_threshold,
-            "combiner::all_reduce_threshold": as_option.all_reduce_threshold,
-            "combiner::use_continuous_buffer": True,
+            "combiner::all_gather_threshold":
+                all_gather_threshold,
+            "combiner::all_reduce_threshold":
+                as_option.all_reduce_threshold,
+            "combiner::use_continuous_buffer":
+                True,
 
             # Debug options
-            "auto_sharding::simplify_graph": True,
-            "auto_sharding::print_strategy": os.environ.get(
-                "ALPA_DEBUG_PRINT_AS_STRATEGY", "False").lower() in ["true", "1"],
-            "auto_sharding::force_strategy": False,
+            "auto_sharding::simplify_graph":
+                True,
+            "auto_sharding::print_strategy":
+                os.environ.get("ALPA_DEBUG_PRINT_AS_STRATEGY", "False").lower()
+                in ["true", "1"],
+            "auto_sharding::force_strategy":
+                False,
             "auto_sharding::force_strategy_inst_indices": [],
             "auto_sharding::force_strategy_stra_names": [],
     }):
@@ -336,10 +372,12 @@ def run_spmd_partitioner_pass(
     """Run SPMD partitioner pass on a sharding annotated HLO Module.
 
     Args:
-      hlo_module: The input HLO module, whose status should be SHARDING_ANNOTATED.
+      hlo_module: The input HLO module, whose status should be
+        SHARDING_ANNOTATED.
       num_devices: The total number of devices.
       rewrite_for_grad_acc: Whether to do rewriting for gradient accumulation.
-      rewrite_grad_acc_indices: The indices of tensors in output that are gradients.
+      rewrite_grad_acc_indices: The indices of tensors in output that are
+        gradients.
     """
     compile_options = get_compile_options(
         num_replicas=1,
@@ -347,13 +385,12 @@ def run_spmd_partitioner_pass(
         device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
         parameter_is_tupled_arguments=False,
-        build_random_seed=global_config.build_random_seed)
+        build_random_seed=global_config.compile_random_seed)
 
     if rewrite_for_grad_acc and rewrite_grad_acc_indices is None:
         rewrite_grad_acc_indices = tuple(
-            range(
-                len(hlo_module.program_shape().result_shape().tuple_shapes(
-                ))))
+            range(len(
+                hlo_module.program_shape().result_shape().tuple_shapes())))
 
     with XlaPassContext({
             # Gradient accumulation rewrite
@@ -366,7 +403,8 @@ def run_spmd_partitioner_pass(
 
 
 def run_backend_compilation(backend: xe.Client,
-                            hlo_module: Union[xe.HloModule, xe.XlaComputation, bytes],
+                            hlo_module: Union[xe.HloModule, xe.XlaComputation,
+                                              bytes],
                             strategy_config: StrategyConfig,
                             num_devices: int,
                             bypass_device_assignment_check: bool = False):
@@ -388,7 +426,8 @@ def run_backend_compilation(backend: xe.Client,
         build_random_seed=strategy_config.build_random_seed)
 
     if isinstance(hlo_module, xe.HloModule):
-        xla_computation = xe.XlaComputation(hlo_module.as_serialized_hlo_module_proto())
+        xla_computation = xe.XlaComputation(
+            hlo_module.as_serialized_hlo_module_proto())
     elif isinstance(hlo_module, bytes):  # protobuf
         xla_computation = xe.XlaComputation(hlo_module)
     else:
@@ -397,12 +436,16 @@ def run_backend_compilation(backend: xe.Client,
 
     with XlaPassContext({
             # Build options
-            "build_option::bypass_device_assignment_check": bypass_device_assignment_check,
+            "build_option::bypass_device_assignment_check":
+                bypass_device_assignment_check,
 
             # Communication combiner options
-            "combiner::all_gather_threshold": strategy_config.all_gather_threshold,
-            "combiner::all_reduce_threshold": strategy_config.all_reduce_threshold,
-            "combiner::use_continuous_buffer": True,
+            "combiner::all_gather_threshold":
+                strategy_config.all_gather_threshold,
+            "combiner::all_reduce_threshold":
+                strategy_config.all_reduce_threshold,
+            "combiner::use_continuous_buffer":
+                True,
     }):
         compiled = backend.compile(xla_computation, compile_options)
 
@@ -437,7 +480,8 @@ def get_input_output_sharding_specs(
         output_sharding_specs = hlo_sharding_to_sharding_spec(
             output_shardings, out_avals, logical_mesh_shape)
     else:
-        # The spmd partition related code will be bypassed if num_partitions == 1.
+        # The spmd partition related code will be bypassed if
+        # num_partitions == 1.
         # Assume all sharding specs are replicated.
         input_sharding_specs = [
             make_replicated_spec(aval, logical_mesh_shape) for aval in avals
@@ -574,22 +618,21 @@ last_objective = None
 
 
 # pylint: disable=import-outside-toplevel
-# noqa
-def _call_solver_serialized_args(
-        N,  # noqa
-        M,
-        s_len_np,
-        s_follow_np,
-        E_np,
-        A_np,
-        L_np,
-        c_np,
-        d_np,
-        m_np,
-        r_np,
-        v_np,
-        s_init_np=None):
+def _call_solver_serialized_args(N,
+                                 M,
+                                 s_len_np,
+                                 s_follow_np,
+                                 E_np,
+                                 A_np,
+                                 L_np,
+                                 c_np,
+                                 d_np,
+                                 m_np,
+                                 r_np,
+                                 v_np,
+                                 s_init_np=None):
     """Call the solver with serialized arguments."""
+    # pylint: disable=invalid-name
     global last_s_val, last_objective
 
     import pulp
@@ -788,8 +831,7 @@ def _call_solver_serialized_args(
     msg = verbose
     time_limit = 600
     assert "COIN_CMD" in pulp.listSolvers(onlyAvailable=True), (
-        "Please install ILP solvers by 'sudo apt install coinor-cbc'"
-    )
+        "Please install ILP solvers by 'sudo apt install coinor-cbc'")
 
     with warnings.catch_warnings():  # disable CBC warnings
         warnings.simplefilter("ignore")
@@ -845,8 +887,10 @@ auto_sharded_hlo_stages: Sequence[xe.HloModule] = []
 hooked_sharding_protos = None
 
 
-def set_auto_sharded_hlo_stages(stages: Tuple[Sequence[str], Sequence[xe.HloModule]]):
-    """Set the sliced auto-sharded stages. This is called in XLA SliceAutoShardedStages pass."""
+def set_auto_sharded_hlo_stages(stages: Tuple[Sequence[str],
+                                              Sequence[xe.HloModule]]):
+    """Set the sliced auto-sharded stages. This is called in XLA
+    SliceAutoShardedStages pass."""
     hlo_module_names, hlo_modules = stages
     global auto_sharded_hlo_stage_names, auto_sharded_hlo_stages
     auto_sharded_hlo_stage_names = hlo_module_names
@@ -858,7 +902,8 @@ def set_hooked_sharding_protos(protos: Sequence[bytes]):
     hooked_sharding_protos = protos
 
 
-def get_auto_sharded_hlo_stages() -> Tuple[Sequence[str], Sequence[xe.HloModule]]:
+def get_auto_sharded_hlo_stages(
+) -> Tuple[Sequence[str], Sequence[xe.HloModule]]:
     """Get the sliced hlo stages from the SliceAutoShardedStages pass."""
     return auto_sharded_hlo_stage_names, auto_sharded_hlo_stages
 

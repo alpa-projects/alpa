@@ -1,28 +1,25 @@
 """The dirver part and worker part of a pipeshard executable."""
 import logging
 import time
-from typing import Optional, Sequence, Callable
+from typing import Optional, Sequence
 
-from jax.tree_util import tree_flatten, tree_unflatten
+from jax.tree_util import tree_map, tree_flatten, tree_unflatten, PyTreeDef
 import numpy as np
 import ray.exceptions
 
 from alpa.device_mesh import MeshHostWorker
 from alpa.global_env import global_config
 from alpa.device_mesh import PhysicalDeviceMeshGroup
-from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
-                                  ConcatMeshWorkerExecutable,
-                                  MemzeroWorkerExecutable,
-                                  PartialGradAccMeshWorkerExecutable,
-                                  next_mesh_executable_uuid, get_uuid_np_array,
-                                  next_remote_buffer_uuid, RemoteBufferRef)
+from alpa.mesh_executable import (
+    AllocZeroBufferWorkerExecutable, ConcatMeshWorkerExecutable,
+    MemzeroWorkerExecutable, PartialGradAccMeshWorkerExecutable,
+    next_mesh_executable_uuid, get_uuid_np_array, next_remote_buffer_uuid,
+    RemoteBufferRef, PlacementSpec)
 from alpa.pipeline_parallel.runtime_emitter import (
     AllocateZeroWorkerExecutableConfig, ConcatWorkerExecutableConfig,
     ExecutableConfig, MemZeroWorkerExecutableConfig,
     PartialGradWorkerExecutableConfig, PipelineInstType, PipelineInstruction,
     PipeshardConfig)
-from alpa.pipeline_parallel.schedules import PipelineSchedule
-from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.timer import timers
 from alpa.util import OrderedSet
 
@@ -42,72 +39,52 @@ class PipeshardDriverExecutable:
     """The driver part of the executable for pipeshard parallel."""
 
     def __init__(self,
-                 *,
-                 stages: Sequence[XlaShardedPipelineComputation],
                  mesh_group: PhysicalDeviceMeshGroup,
                  pipeshard_config: PipeshardConfig,
-                 schedule: PipelineSchedule,
-                 is_batch: Sequence[bool],
                  num_batch: int,
-                 flop_count: int,
-                 static_argnums: Optional[Sequence[int]] = None,
-                 out_tree_thunk: Optional[Callable] = None):
+                 out_tree: Optional[PyTreeDef] = None,
+                 static_argnums: Optional[Sequence[int]] = None):
         ##### Input arguments #####
-        self.stages = stages
         self.mesh_group = mesh_group
-        self.schedule = schedule
-        self.is_batch = is_batch
-        self.num_batch = num_batch
-        self.flop_count = flop_count
         self.num_mesh = len(mesh_group)
+        self.num_batch = num_batch
         self.static_argnums = static_argnums
-        self.out_tree_thunk = out_tree_thunk
+        self.out_tree = out_tree
 
-        ##### For debugging #####
+        ##### For debugging and serialization #####
+        self.stages = pipeshard_config.xla_stages
+        self.schedule = pipeshard_config.schedule
+        self.flop_count = pipeshard_config.flop_count
+        self.load_info = pipeshard_config.load_info
         # List[stage_idx -> str]
         self.hlo_texts_after_spmd_partitioner = []
-
-        # Compile pipeline instructions and configs of mesh executables
-        self._instantiate_nccl_groups(pipeshard_config.device_str_groups)
-
-        ##### Internal states #####
-
+        self.hlo_texts_before_spmd_partitioner = (
+            pipeshard_config.hlo_texts_before_spmd_partitioner)
         # List[stage_idx -> executable_uuid]
         self.executable_uuids = pipeshard_config.executable_uuids
-        ##### For handling inputs of the executable ####
-        # Whether the var should be donated
-        # List[mesh_idx -> List[bool]]
-        self.donate_invars = pipeshard_config.donate_invars
-        # List[mesh_idx -> List[arg_idx]]
-        self.mesh_arg_indices = pipeshard_config.mesh_arg_indices
-        # Cached sharding indices for input arguments
-        # List[mesh_idx -> List[sharding_indices]].
-        self.input_shard_indices = pipeshard_config.input_shard_indices
-        # Whether the argument should be deleted after shard
-        # List[mesh_idx -> List[bool]]
-        self.delete_after_shard = pipeshard_config.delete_after_shard
-        # Whether the argument is a batch argument
-        # List[mesh_idx -> List[bool]]
-        self.batch_invars = pipeshard_config.batch_invars
 
-        ##### For handling outputs of the executable ####
-        # Dict[worker -> List[uuid]]
+        ##### For handling inputs of the executable #####
+        # go to the definition of PipeshardInputConfig for more details.
+        input_config = pipeshard_config.input_config
+        self.donate_invars = input_config.donate_invars
+        self.mesh_arg_indices = input_config.mesh_arg_indices
+        self.input_shard_indices = input_config.input_shard_indices
+        self.delete_after_shard = input_config.delete_after_shard
+        self.batch_invars = input_config.batch_invars
+
+        ##### For handling outputs of the executable #####
         self.output_local_uuid_list = pipeshard_config.output_local_uuid_list
+        self.outs_handler = pipeshard_config.outs_handler
 
-        # For handling input/outputs
-        self.outs_handler: Callable = pipeshard_config.outs_handler
-
-        # For weight serialization
-        self.load_info = pipeshard_config.load_info
-
+        ##### For cross-mesh resharding #####
+        self._instantiate_nccl_groups(pipeshard_config.device_str_groups)
         self.resharding_tasks = pipeshard_config.resharding_tasks
-
         if global_config.eagerly_create_communicators:
             for task in self.resharding_tasks:
                 task.create_resharding_communicators()
 
+        self.exec_uuid = next_mesh_executable_uuid()
         # Create a PipeshardMeshWorkerExecuable for each MeshHostWorker
-        self.worker_executable_uuid_mapping = {}  # Dict[
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
             mesh_grad_uuids = pipeshard_config.grad_uuids[mesh_idx]
             for worker_idx, worker in enumerate(physical_mesh.workers):
@@ -115,39 +92,32 @@ class PipeshardDriverExecutable:
                 if len(mesh_grad_uuids) > 0:
                     acc_grad_local_uuids = mesh_grad_uuids[worker_idx]
                 args = (pipeshard_config.instruction_lists[worker],
-                        pipeshard_config.input_local_uuid_lists[worker],
+                        input_config.input_local_uuid_lists[worker],
                         self.output_local_uuid_list[worker],
                         pipeshard_config.executable_configs[worker],
                         acc_grad_local_uuids,
                         pipeshard_config.reduced_var_uuid_lists[worker],
                         self.donate_invars[mesh_idx])
-                uuid = next_mesh_executable_uuid()
-                worker.put_executable.remote(uuid, PipeshardMeshWorkerExecuable,
+                worker.put_executable.remote(self.exec_uuid,
+                                             PipeshardMeshWorkerExecuable,
                                              *args)
-                self.worker_executable_uuid_mapping[worker] = uuid
 
     ##### Compilation Related Functions #####
-
     def _instantiate_nccl_groups(self, device_str_groups):
         """
         Instantiate NCCL groups between two physical meshes.
 
         Args:
-            device_str_groups (List[List[set]]): a num_mesh x num_mesh matrix. Only entries at
-                device_str_groups[i][j] (i < j) are filled, entries with i > j are None, because
-                (spec[i][j], spec[j][i]) will share collective groups.
+            device_str_groups (List[List[set]]): a num_mesh x num_mesh matrix.
+                Only entries at device_str_groups[i][j] (i < j) are filled,
+                entries with i > j are None, because (spec[i][j], spec[j][i])
+                will share collective groups.
         """
-
-        # construct groups
         start_time = time.time()
         for i in range(self.num_mesh):
-            for j in range(self.num_mesh):
-                if i >= j:
-                    assert not device_str_groups[i][j]
-                    continue
-                if not device_str_groups[i][j]:
-                    continue
-                self.mesh_group.instantiate_nccl_group(i, j)
+            for j in range(i, self.num_mesh):
+                if device_str_groups[i][j]:
+                    self.mesh_group.instantiate_nccl_group(i, j)
         end_time = time.time()
         logger.debug(
             f"Initialize collective group takes {end_time - start_time:.2f}")
@@ -170,17 +140,13 @@ class PipeshardDriverExecutable:
 
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
             # Shard inputs
-            mesh_args = [
-                args[idx] for idx in self.mesh_arg_indices[mesh_idx]
-            ]
+            mesh_args = [args[idx] for idx in self.mesh_arg_indices[mesh_idx]]
             tmp_bufs = physical_mesh.shard_args_to_bufs(
                 self.input_shard_indices[mesh_idx],
-                self.delete_after_shard[mesh_idx],
-                self.batch_invars[mesh_idx],
-                self.num_batch,
-                mesh_args)
+                self.delete_after_shard[mesh_idx], self.batch_invars[mesh_idx],
+                self.num_batch, mesh_args)
 
-            # Flatten the batch args in tmp_bufs  
+            # Flatten the batch args in tmp_bufs
             flatten_bufs = []
             for i, is_batch_invar in enumerate(self.batch_invars[mesh_idx]):
                 if is_batch_invar:
@@ -192,9 +158,8 @@ class PipeshardDriverExecutable:
             # Convert bufs to uuids
             num_hosts = physical_mesh.num_hosts
             num_devices_per_host = physical_mesh.num_devices_per_host
-            input_uuids = get_uuid_np_array(
-                input_bufs[mesh_idx]).reshape(
-                    -1, num_hosts, num_devices_per_host).transpose([1, 0, 2])
+            input_uuids = get_uuid_np_array(input_bufs[mesh_idx]).reshape(
+                (-1, num_hosts, num_devices_per_host)).transpose([1, 0, 2])
             output_uuids[mesh_idx] = next_remote_buffer_uuid(
                 num_hosts * num_outs[mesh_idx] * num_devices_per_host).reshape(
                     num_hosts, num_outs[mesh_idx], num_devices_per_host)
@@ -202,8 +167,9 @@ class PipeshardDriverExecutable:
             # Execute
             for i, worker in enumerate(physical_mesh.workers):
                 worker.run_executable.remote(
-                    self.worker_executable_uuid_mapping[worker],
-                    input_uuids[i], output_uuids[mesh_idx][i],
+                    self.exec_uuid,
+                    input_uuids[i],
+                    output_uuids[mesh_idx][i],
                     sync_for_timer=global_config.pipeline_sync_for_timer)
 
         # Handle donation
@@ -234,21 +200,32 @@ class PipeshardDriverExecutable:
 
         return self.outs_handler(self.mesh_group, output_bufs)
 
+    def get_input_placement_specs(self):
+        """Return the preferred placement specs for input arguments."""
+
+        def load_info_to_placement_spec(load_info):
+            return PlacementSpec([x.mesh_id for x in load_info.meshes],
+                                 load_info.specs)
+
+        return tree_map(load_info_to_placement_spec, self.load_info)
+
     def __call__(self, *args):
         """Fast call without signature matching."""
         if self.static_argnums:
             dyn_args = [
-                args[i] for i in range(len(args))
+                args[i]
+                for i in range(len(args))
                 if i not in self.static_argnums
             ]
         else:
             dyn_args = args
         args_flat, _ = tree_flatten(dyn_args)
         out = self.launch_on_driver(*args_flat)
-        return tree_unflatten(self.out_tree_thunk(), out)
+        return tree_unflatten(self.out_tree, out)
 
     ##### Load/Store Related Functions #####
     def get_load_info(self):
+        """Get the load info for model checkpoints."""
         return self.load_info
 
     ##### Profiling and Debugging Related Functions #####
@@ -301,13 +278,10 @@ class PipeshardDriverExecutable:
             self.hlo_texts_after_spmd_partitioner = ray.get(hlo_texts)
             return self.hlo_texts_after_spmd_partitioner
         else:
-            ret = []
-            for stage in self.stages:
-                ret.append(stage.get_hlo_text())
-            return ret
+            return self.hlo_texts_before_spmd_partitioner
 
     def get_total_allocation_size(self):
-        """Get the total allocated memory size of each mesh."""
+        """Get the total allocated memory size on each mesh."""
         # TODO: compute the theoretical total allocation size
         raise NotImplementedError()
 
@@ -320,7 +294,7 @@ class PipeshardDriverExecutable:
                 worker: MeshHostWorker
                 all_worker_profiled.append(
                     worker.profile_executable_with_dummy_inputs.remote(
-                        self.worker_executable_uuid_mapping[worker]))
+                        self.exec_uuid))
             if len(all_worker_profiled) == 1:
                 all_worker_profiled = all_worker_profiled[0]
             all_profiled_handles.append(all_worker_profiled)
@@ -348,7 +322,15 @@ class PipeshardDriverExecutable:
         """Sync device activities on all workers."""
         self.mesh_group.sync_workers()
 
+    def sync_move_workers(self):
+        """Sync moveworkers on all meshes."""
+        self.mesh_group.sync_move_workers()
+
     def _check_alive(self):
+        """
+        Check whether all workers are alive.
+        Shutdown the runtime if any worker dies.
+        """
         try:
             rets = [
                 worker.check_alive.remote()
@@ -360,30 +342,28 @@ class PipeshardDriverExecutable:
             self.mesh_group.exception_shutdown()
 
     def __del__(self):
-        for worker, uuid in self.worker_executable_uuid_mapping.items():
-            if worker is None or not ray or not ray.worker or not ray.is_initialized():
-                continue
-            else:
-                worker.delete_executable.remote(uuid)
+        for mesh in self.mesh_group:
+            mesh.delete_remote_executable(self.exec_uuid)
 
 
 class PipeshardMeshWorkerExecuable:
-    """An executable that executes static pipeline runtime instructions on a worker."""
+    """
+    An executable that executes static pipeline runtime instructions on a
+    worker.
+    """
 
     def __init__(self, worker: MeshHostWorker, uuid: int,
                  instructions: Sequence[PipelineInstruction],
                  input_local_uuids: Sequence[int],
                  output_local_uuids: Sequence[int],
                  executable_configs: Sequence[ExecutableConfig],
-                 acc_local_uuids: np.ndarray,
-                 acc_out_uuids: np.ndarray,
+                 acc_local_uuids: np.ndarray, acc_out_uuids: np.ndarray,
                  donate_invars: Sequence[bool]):
         # Instruction Lists
-        self.my_uuid = uuid
+        self.exec_uuid = uuid
         self.instructions = instructions
         self.input_local_uuids = input_local_uuids
         self.output_local_uuids = output_local_uuids
-        self.donate_invars = donate_invars
 
         # Buffer management
         self.worker = worker
@@ -391,13 +371,14 @@ class PipeshardMeshWorkerExecuable:
         self.acc_grad_buffers = {}
         self.acc_in_uuids = acc_local_uuids
         self.acc_out_uuids = acc_out_uuids
+        self.donate_invars = donate_invars
 
         # Executable management
         self._related_exec_uuids = []
         self.partial_grad_exec_uuids = OrderedSet()
         self.use_memzero = False
 
-        # Create tasks
+        # Compile executables
         for task_config in executable_configs:
             self._related_exec_uuids.append(task_config.exec_uuid)
             if isinstance(task_config, PartialGradWorkerExecutableConfig):
@@ -461,8 +442,10 @@ class PipeshardMeshWorkerExecuable:
         # Execute
         timers("overall").start(sync_func=sync_func)
         for instruction in self.instructions:
-            # print(f"memory_allocated: {self.worker.get_memory_allocated()/1024**3:.3f} GB  "
-            #       f"max_memory_allocated: {self.worker.get_max_memory_allocated()/1024**3:.3f} GB "
+            # print(f"memory_allocated: "
+            #       f"{self.worker.get_memory_allocated()/1024**3:.3f} GB  "
+            #       f"max_memory_allocated: "
+            #       f"{self.worker.get_max_memory_allocated()/1024**3:.3f} GB "
             #       f"next instruction: {instruction}")
             if instruction.opcode == PipelineInstType.RUN:
                 timers("compute").start()
@@ -532,8 +515,9 @@ class PipeshardMeshWorkerExecuable:
         self.worker.reset_memory_stats()
         ret = {
             exec_id:
-            (np.mean(self.worker.profile_executable_with_dummy_inputs(exec_id,
-                                                                      skip_grad_sync=False)),
+            (np.mean(
+                self.worker.profile_executable_with_dummy_inputs(
+                    exec_id, skip_grad_sync=False)),
              self.worker.get_exec_total_allocation_size(exec_id) / 1024**3)
             for exec_id in self.partial_grad_exec_uuids
         }

@@ -17,20 +17,25 @@ usage() {
   exit 1
 }
 
-if [[ $# -lt 4 ]]
+if [[ $# -lt 3 ]]
 then
   usage
 fi
 
 PY_VERSION="$1"
 echo "Python version $PY_VERSION"
-TF_BRANCH="$4"
 
-# switch tensorflow-alpa branch
+# switch tensorflow-alpa branch if necessary
 git clone --recursive https://github.com/alpa-projects/alpa.git
-cd /build/alpa/third_party/tensorflow-alpa
-git fetch origin +${TF_BRANCH}
-git checkout -qf FETCH_HEAD
+
+if [[ $# -eq 4 ]]
+then
+  TF_BRANCH="$4"
+  echo "Switch to tensorflow-alpa branch $TF_BRANCH"
+  cd /build/alpa/third_party/tensorflow-alpa
+  git fetch origin +${TF_BRANCH}
+  git checkout -qf FETCH_HEAD
+fi
 
 mkdir /build/tmp
 mkdir /build/root

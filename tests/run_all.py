@@ -2,9 +2,17 @@
 Run each file in a separate process to avoid GPU memory conflicts.
 
 Usages:
+# Run all files
 python3 run_all.py
-python3 run_all.py --filter pipeline
-python3 run_all.py --filter auto_sharding
+
+# Run files whose names contain "pipeline"
+python3 run_all.py --run-pattern pipeline
+
+# Run files whose names contain "shard_parallel"
+python3 run_all.py --run-pattern shard_parallel
+
+# Run files whose names do not contain "torch"
+python3 run_all.py --skip-pattern torch
 """
 
 import argparse
@@ -16,28 +24,30 @@ import time
 from typing import Sequence
 import unittest
 
-from alpa.util import run_with_timeout
-
-
 slow_testcases = set([
-    "test_pipeline_stage_construction.py",
+    "pipeline_parallel/test_stage_construction.py",
+    "torch_frontend/test_zhen.py",
 ])
 
 
 def run_unittest_files(files, args):
     """Run unit test files one by one in separates processes."""
-    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = str(args.xla_client_mem_fraction)
+    os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = str(
+        args.xla_client_mem_fraction)
+    # Must import alpa after setting the global env
+    from alpa.util import run_with_timeout
 
     for filename in files:
-        if not filename.startswith("test"):
+        if args.run_pattern is not None and args.run_pattern not in filename:
             continue
-        if args.filter is not None and args.filter not in filename:
+        if args.skip_pattern is not None and args.skip_pattern in filename:
             continue
         if not args.enable_slow_tests and filename in slow_testcases:
             continue
 
         def func():
             ret = unittest.main(module=None, argv=["", "-vb"] + [filename])
+
         p = multiprocessing.Process(target=func)
 
         def run_one_file():
@@ -61,10 +71,15 @@ def run_unittest_files(files, args):
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument(
-        "--filter",
+        "--run-pattern",
         type=str,
         default=None,
-        help="Run test cases whose names contain the filter string")
+        help="Run files whose names contain the provided string")
+    arg_parser.add_argument(
+        "--skip-pattern",
+        type=str,
+        default=None,
+        help="Do not run files whose names contain the provided string")
     arg_parser.add_argument(
         "--enable-slow-tests",
         action="store_true",
@@ -72,21 +87,20 @@ if __name__ == "__main__":
     arg_parser.add_argument(
         "--xla-client-mem-fraction",
         type=float,
-        default=0.2,
+        default=0.25,
         help="The fraction of GPU memory used to run unit tests")
     arg_parser.add_argument(
         "--time-limit-per-file",
         type=int,
         default=1000,
         help="The time limit for running one file in seconds.")
-    arg_parser.add_argument(
-        "--order",
-        type=str,
-        default="sorted",
-        choices=["sorted", "random", "reverse_sorted"])
+    arg_parser.add_argument("--order",
+                            type=str,
+                            default="sorted",
+                            choices=["sorted", "random", "reverse_sorted"])
     args = arg_parser.parse_args()
 
-    files = glob.glob("*.py")
+    files = glob.glob("**/test_*.py", recursive=True)
     if args.order == "sorted":
         files.sort()
     elif args.order == "random":

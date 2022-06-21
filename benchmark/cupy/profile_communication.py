@@ -199,11 +199,11 @@ class GpuHost:
             self.profile_allreduce(1 << i, cp.float32, [list(range(self.world_size))])
             self.profile_allreduce(1 << i, cp.float32, [list(range(self.world_size//2))])
 
-            # self.profile_allreduce(1 << i, cp.float32, [[0, 3]])
-            # self.profile_allreduce(1 << i, cp.float32, [[0, 4], [1, 5], [2, 6], [3, 7]])
-            # self.profile_allreduce(1 << i, cp.float32, [[0, 2, 4, 6], [1, 3, 5, 7]])
-            # self.profile_allreduce(1 << i, cp.float32, [[0, 1, 2, 3], [4, 5, 6, 7]])
-            # self.profile_allreduce(1 << i, cp.float32, [[0, 1, 2, 3, 4, 5, 6, 7]])
+            #self.profile_allreduce(1 << i, cp.float32, [[0, 3]])
+            #self.profile_allreduce(1 << i, cp.float32, [[0, 4], [1, 5], [2, 6], [3, 7]])
+            #self.profile_allreduce(1 << i, cp.float32, [[0, 2, 4, 6], [1, 3, 5, 7]])
+            #self.profile_allreduce(1 << i, cp.float32, [[0, 1, 2, 3], [4, 5, 6, 7]])
+            #self.profile_allreduce(1 << i, cp.float32, [[0, 1, 2, 3, 4, 5, 6, 7]])
 
         # single Send-recv
         for i in range(29, 30):
@@ -253,17 +253,7 @@ if __name__ == "__main__":
             }
 
         if args.debug:
-
             env_vars["NCCL_DEBUG"] = "INFO"
-            # env_vars["NCCL_IB_GID_INDEX"] = "0"
-            # env_vars["NCCL_IB_HCA"] = "mlx5_1:1"
-            # env_vars["NCCL_SOCKET_IFNAME"] = "ib"
-            # env_vars["NCCL_PLUGIN_P2P"] = "ucx"
-            # env_vars["NCCL_UCX_TLS"] = "ib"
-            # env_vars["NCCL_COLLNET_ENABLE"] = "1"
-            # env_vars["NCCL_ALGO"] = "CollNet"
-            env_vars["NCCL_DEBUG_SUBSYS"] = "GRAPH, TUNING, INIT"
-            env_vars["NCCL_TOPO_DUMP_FILE"] = "system.xml"
 
         workers.append(GpuHost.options(runtime_env={"env_vars": env_vars})\
                               .remote(i, num_gpus, nccl_uuid_list))

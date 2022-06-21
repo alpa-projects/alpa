@@ -15,8 +15,8 @@ from alpa.pipeline_parallel.computation import JaxPipelineComputation
 from alpa.pipeline_parallel.primitive_def import (pipeline_p,
                                                   mark_pipeline_jaxpreqn)
 from alpa.pipeline_parallel.schedules import gen_dependency_with_stages
-from alpa.util import (clone_jaxpr, slices_to_jaxpr, OrderedSet,
-                       get_var_mapping, new_jaxpr_eqn)
+from alpa.util import (clone_jaxpr, clone_jaxpr_eqn, slices_to_jaxpr,
+                       OrderedSet, get_var_mapping, new_jaxpr_eqn)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -107,12 +107,9 @@ def _rewrite_cross_layer_grad(compute_eqns, microbatch_bound, apply_eqns,
         new_microbatch_bound_outvars.append(
             microbatch_bound.outvars[idx] if idx < len(microbatch_bound.invars)
             else microbatch_bound_in_to_outs[var])
-    new_microbatch_bound = new_jaxpr_eqn(new_microbatch_bound_invars,
-                                         new_microbatch_bound_outvars,
-                                         microbatch_bound.primitive,
-                                         microbatch_bound.params,
-                                         microbatch_bound.effects,
-                                         microbatch_bound.source_info)
+    new_microbatch_bound = clone_jaxpr_eqn(microbatch_bound,
+                                           new_microbatch_bound_invars,
+                                           new_microbatch_bound_outvars)
     # rewrite cross layer grad eqns and insert them to the top of apply eqns.
     new_apply_eqns = []
     rewrite_invars = set(new_microbatch_bound_invars)
@@ -128,9 +125,7 @@ def _rewrite_cross_layer_grad(compute_eqns, microbatch_bound, apply_eqns,
             if not isinstance(var, DropVar) and var in rewrite_invars else var
             for var in eqn.outvars
         ]
-        new_apply_eqns.append(
-            new_jaxpr_eqn(invars, outvars, eqn.primitive, eqn.params,
-                          eqn.effects, eqn.source_info))
+        new_apply_eqns.append(clone_jaxpr_eqn(eqn, invars, outvars))
     new_apply_eqns += apply_eqns
     new_global_outvars = list(closed_jaxpr.jaxpr.outvars)
     for idx in range(len(new_global_outvars)):
@@ -361,12 +356,8 @@ def compute_grad_to_accumulate_grad(
                                    new_glob_outvars, new_eqns)
 
     microbatch_bound_invars = [update_outs[x] for x in microbatch_bound.invars]
-    microbatch_bound = new_jaxpr_eqn(microbatch_bound_invars,
-                                     microbatch_bound.outvars,
-                                     microbatch_bound.primitive,
-                                     microbatch_bound.params,
-                                     microbatch_bound.effects,
-                                     microbatch_bound.source_info)
+    microbatch_bound = clone_jaxpr_eqn(microbatch_bound,
+                                       microbatch_bound_invars)
     return new_closed_jaxpr, microbatch_bound, reduced_in_to_out
 
 
@@ -453,9 +444,7 @@ def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
     for eqn in closed_jaxpr.eqns:
         new_invars = [map_var(var) for var in eqn.invars]
         new_outvars = [map_var(var) for var in eqn.outvars]
-        new_eqns.append(
-            new_jaxpr_eqn(new_invars, new_outvars, eqn.primitive, eqn.params,
-                          eqn.effects, eqn.source_info))
+        new_eqns.append(clone_jaxpr_eqn(eqn, new_invars, new_outvars))
     new_jaxpr = clone_jaxpr(closed_jaxpr, new_glob_invars, new_glob_outvars,
                             new_eqns)
     return new_jaxpr

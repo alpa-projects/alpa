@@ -27,10 +27,11 @@ from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                hlo_sharding_to_sharding_spec,
                                                AutoShardingOption)
 from alpa.global_env import global_config
-from alpa.util import (OrderedSet, clone_jaxpr, get_compile_options,
-                       jaxpr_to_hlo_module, setup_computation_alias,
-                       compile_dummy_zero_constant, get_var_mapping,
-                       undefined_sharding_spec_proto, new_jaxpr_eqn)
+from alpa.util import (OrderedSet, clone_jaxpr, clone_jaxpr_eqn,
+                       get_compile_options, jaxpr_to_hlo_module,
+                       setup_computation_alias, compile_dummy_zero_constant,
+                       get_var_mapping, undefined_sharding_spec_proto,
+                       new_jaxpr_eqn)
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
@@ -683,8 +684,7 @@ def _offload_remat_add_eqns(stage: JaxPipelineComputation, offloaded_eqns,
             (var in var_mapping and var_mapping[var] in var_mapping) else var
             for var in eqn.outvars
         ]
-        mapped_eqn = new_jaxpr_eqn(eqn.invars, mapped_outvars, eqn.primitive,
-                                   eqn.params, eqn.effects, eqn.source_info)
+        mapped_eqn = clone_jaxpr_eqn(eqn, outvars=mapped_outvars)
         new_eqns.insert(1, mapped_eqn)
     new_stage = JaxPipelineComputation(stage.name, new_invars, stage.outvars,
                                        new_eqns)
@@ -948,9 +948,8 @@ def rewrite_hook(eqns, gensym_fn):
             eqns[idx] = new_hook
             for i in range(idx + 1, len(eqns)):
                 e = eqns[i]
-                eqns[i] = new_jaxpr_eqn(
-                    [get_var_mapping(rewrite_dict, v) for v in e.invars],
-                    e.outvars, e.primitive, e.params, e.effects)
+                eqns[i] = clone_jaxpr_eqn(
+                    e, [get_var_mapping(rewrite_dict, v) for v in e.invars])
             return new_hook
     return None
 

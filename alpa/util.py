@@ -25,8 +25,7 @@ from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.api_util import shaped_abstractify
 from jax import core
 from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
-                      Primitive, ShapedArray, Var, AbstractValue, gensym,
-                      new_jaxpr_eqn)
+                      Primitive, ShapedArray, Var, AbstractValue, gensym)
 from jax.experimental.maps import FrozenDict
 from jax import linear_util as lu
 from jax.interpreters import partial_eval as pe
@@ -696,18 +695,33 @@ def clone_jaxpr(closed_jaxpr: ClosedJaxpr,
     return ClosedJaxpr(jaxpr, consts)
 
 
+def new_jaxpr_eqn(invars,
+                  outvars,
+                  primitive,
+                  params,
+                  effects=None,
+                  source_info=None):
+    """Create a new jaxpr equation."""
+    effects = effects or core.no_effects
+    return core.new_jaxpr_eqn(invars, outvars, primitive, params, effects,
+                              source_info)
+
+
 def clone_jaxpr_eqn(eqn: JaxprEqn,
                     invars: Sequence[Atom] = None,
                     outvars: Sequence[Var] = None,
                     primitive: Primitive = None,
                     params: Dict[str, Any] = None,
+                    effects: Any = None,
                     source_info: SourceInfo = None):
     invars = invars or eqn.invars
     outvars = outvars or eqn.outvars
     primitive = primitive or eqn.primitive
     params = params or eqn.params
     source_info = source_info or eqn.source_info
-    return new_jaxpr_eqn(invars, outvars, primitive, params, source_info)
+    effects = effects or eqn.effects
+    return new_jaxpr_eqn(invars, outvars, primitive, params, effects,
+                         source_info)
 
 
 def process_remat(closed_jaxpr: ClosedJaxpr):
@@ -926,18 +940,6 @@ def log_jaxpr(jaxpr: ClosedJaxpr, filename: str):
     path = "/tmp/" + filename
     with open(path, "w", encoding="utf-8") as f:
         f.write(str(jaxpr))
-
-
-def new_jaxpr_eqn(invars,
-                  outvars,
-                  primitive,
-                  params,
-                  effects=None,
-                  source_info=None):
-    """Create a new jaxpr equation."""
-    effects = effects or core.no_effects
-    return core.new_jaxpr_eqn(invars, outvars, primitive, params, effects,
-                              source_info)
 
 
 ########################################

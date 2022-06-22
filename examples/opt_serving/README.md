@@ -2,7 +2,6 @@
 As a serving system, Alpa provides the following unique advantages:
 - **Support commodity hardware**: With Alpa, you can serve OPT-175B using your in-house GPU cluster, without needing the latest generations of A100 80GB GPUs nor fancy InfiniBand connections -- no hardware constraints!
 - **Flexible parallelism strategies**: Alpa will automatically figure out the appropriate model-parallelism strategies based on your cluster setup.
-- **Serve with arbitrary numbers of GPUs, from 0 - 100s**: No matter how many GPUs you have, you can serve OPT as long as your total memory is sufficient.
 
 In this example, we use Alpa to serve the open-source OPT model, supporting all sizes ranging from 125M to 175B. 
 
@@ -41,12 +40,12 @@ then use our script [convert_to_numpy_weight.py](scripts/convert_to_numpy_weight
 
 For a small model, we can run single-GPU generation using either PyTorch backend or JAX backend:
 
-Run generation using the 125M OPT model with PyTorch/HuggingFace backend
+Run generation using the 125M OPT model with PyTorch/HuggingFace backend:
 ```shell
 cd benchmark
-python3 benchmark_text_gen.py --model facebook/opt-125m --path [PATH_TO_WEIGHT]
+python3 benchmark_text_gen.py --model facebook/opt-125m
 ```
-Run generation using the OPT-125M model with JAX backend in debug model to output the generated text
+Run generation using the OPT-125M model with JAX backend in debug model to output the generated text:
 ```shell
 python3 benchmark_text_gen.py --model jax/opt-125m --path [PATH_TO_WEIGHT] --debug
 ```
@@ -58,7 +57,7 @@ ray start --head
 python3 benchmark_text_gen.py --model alpa/opt-2.7b --path [PATH_TO_WEIGHT] --debug
 ```
 
-Run distributed generation using the 175B model with Alpa. 
+Run distributed generation using the 175B model with Alpa as below. 
 Note you will need >350Gb total GPU memory in the entire cluster to successfully run the inference.
 ```shell
 # Remember to start ray on the entire cluster before running the generation
@@ -82,3 +81,6 @@ Then open `https://[IP-ADDRESS]:10001` in your browser to try out the model!
 - [examples/opt_serving/service](service): Model serving web server.
 - [examples/opt_serving/generator.py](generator.py): Backend for web server.
 - [examples/opt_serving/interactive_hosted.py](interactive_hosted.py): Web server entry point.
+
+## License
+The Use of the OPT pretrained weights are subject to the [Model Licenc](https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/MODEL_LICENSE.md) by Metaseq.

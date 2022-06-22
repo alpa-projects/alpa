@@ -1261,7 +1261,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
             if is_batch_var:
                 if (isinstance(arg, DistributedArray) and
-                        arg.skip_shard_args_check == True):
+                        arg.skip_shard_args_check is True):
                     assert num_micro_batches == 1
                     ret_bufs.append([arg.remote_buffers])
                 else:

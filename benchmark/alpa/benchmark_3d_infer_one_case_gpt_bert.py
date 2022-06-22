@@ -1,6 +1,7 @@
 """Benchmark one case of inter-op + intra-op parallelism."""
 import jax
 import jax.numpy as jnp
+from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
 import numpy as np
 import optax
 import time
@@ -19,59 +20,24 @@ from alpa.util import print_used_time, to_str_round, GB
 from benchmark.util import compute_gpt_parameter_count, compute_inference_gpt_tflops
 
 
-def create_infer_state(rngkey, model, batch, dtype):
-    params = model.init_dummy(rngkey, batch["input_ids"],
-                              batch["attention_mask"], batch["token_type_ids"],
-                              batch["position_ids"])
-
-    def weight_decay_mask(pytree):
-        # do not use weight decay on layer norm and bias.
-        return jax.tree_map(lambda x: x.ndim > 1, pytree)
-
-    tx = optax.chain(
-        #optax.clip_by_global_norm(1.0),  # TODO(lmzheng): fix reduce-scatter for this
-        optax.adamw(learning_rate=1e-2, mask=weight_decay_mask))
-    mixed_precision = (dtype == jnp.float16)
-    state = TrainState.create(apply_fn=model.apply,
-                              params=params,
-                              tx=tx,
-                              mixed_precision=mixed_precision,
-                              dynamic_scale=None)
-    return state
-
-
-def create_infer_state_aval(rngkey, model, batch, dtype):
+def create_infer_params_aval(rngkey, model, batch):
     params = jax.eval_shape(model.init, rngkey, batch["input_ids"],
                             batch["attention_mask"], batch["token_type_ids"],
                             batch["position_ids"])
-
-    def weight_decay_mask(pytree):
-        # do not use weight decay on layer norm and bias.
-        return jax.tree_map(lambda x: x.ndim > 1, pytree)
-
-    tx = optax.chain(
-        #optax.clip_by_global_norm(1.0),  # TODO(lmzheng): fix reduce-scatter for this
-        optax.adamw(learning_rate=1e-2, mask=weight_decay_mask))
-    mixed_precision = (dtype == jnp.float16)
-    state = TrainState.create_aval(apply_fn=model.apply,
-                                   params=params,
-                                   tx=tx,
-                                   mixed_precision=mixed_precision,
-                                   dynamic_scale=None)
-    return state
+    return params
 
 
-def get_infer_step(parallel_method):
+def get_infer_step(parallel_method, model):
 
-    def infer_step(state, batch, rng_key):
+    def infer_step(params, batch, rng_key):
         rngs = {"dropout": rng_key}
-        logits = state.apply_fn(state.params,
-                                batch["input_ids"],
-                                batch["attention_mask"],
-                                batch["token_type_ids"],
-                                batch["position_ids"],
-                                deterministic=True,
-                                rngs=rngs)[0]
+        logits = model.apply(params,
+                             batch["input_ids"],
+                             batch["attention_mask"],
+                             batch["token_type_ids"],
+                             batch["position_ids"],
+                             deterministic=True,
+                             rngs=rngs)[0]
         label_mask = jnp.where(batch["labels"] > 0, 1.0, 0.0)
         labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
         loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
@@ -87,7 +53,7 @@ def benchmark_gpt_bert_internal(model_type,
                                 niter,
                                 num_hosts,
                                 num_devices_per_host,
-                                aval_train_state=True):
+                                aval_infer_state=True):
     print_used_time(None)
 
     # Model configs
@@ -160,16 +126,23 @@ def benchmark_gpt_bert_internal(model_type,
         raise ValueError(f"Invalid model {model_type}")
 
     rngkey = jax.random.PRNGKey(0)
-    if aval_train_state:
-        state = create_infer_state_aval(rngkey, model, batch, dtype)
+    if aval_infer_state:
+        params = create_infer_params_aval(rngkey, model, batch)
     else:
-        state = create_infer_state(rngkey, model, batch, dtype)
+        raise RuntimeError(f"only support aval infer_state")
     print_used_time("Create train state")
 
     # Compile executable
-    infer_step = get_infer_step(method)
-    executable = infer_step.get_executable(state, batch, rngkey)
+    infer_step = get_infer_step(method, model)
+    executable = infer_step.get_executable(params, batch, rngkey)
     print_used_time("Compile (driver)")
+
+    # Preshard params
+    params_info, _, _ = executable.get_load_info()
+    flat_params, in_tree = tree_flatten(params)
+    flat_info = tree_leaves(params_info)
+    params = tree_unflatten(in_tree, executable.mesh_group.shard_args_to_arrays(flat_info, flat_params))
+    print_used_time("Preshard (driver)")
 
     if parallel_mode == "search":
         compilation_times = {
@@ -195,32 +168,18 @@ def benchmark_gpt_bert_internal(model_type,
     print_used_time("Compile (worker)")
 
     # Warmup for e2e latency
-    _ = infer_step(state, batch, rngkey)
+    _ = infer_step(params, batch, rngkey)
     executable.sync()
 
     # Benchmark latency
     tic = time.time()
     for i in range(niter):
         print(f"Iteration {i} ...")
-        _ = infer_step(state, batch, rngkey)
+        _ = infer_step(params, batch, rngkey)
         executable.sync()
     e2e_latency = (time.time() - tic) / niter
 
-    timer_types = [
-        "overall",
-        "compute",
-        "resharding_send",
-        "resharding_recv",
-        "resharding_broadcast",
-        "free",
-    ]
-
-    latencies = []
-    for timer_type in timer_types:
-        latencies.append(
-            np.mean(
-                executable.get_execution_time_costs(warmup=1,
-                                                    timer_name=timer_type)))
+    overall_latency = np.mean(executable.get_execution_time_costs(warmup=1))
 
     max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
 
@@ -230,9 +189,9 @@ def benchmark_gpt_bert_internal(model_type,
     tflops = compute_inference_gpt_tflops(batch_size, seq_len, num_layers,
                                           hidden_size, vocab_size,
                                           virtual_mesh.num_devices,
-                                          latencies[0])
+                                          overall_latency)
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size,
                                                   vocab_size)
 
-    return (parameter_count, max_mem_allocated, latencies, e2e_latency, tflops,
+    return (parameter_count, max_mem_allocated, overall_latency, e2e_latency, tflops,
             compilation_times) + get_last_dp_result()

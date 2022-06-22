@@ -52,7 +52,6 @@ if __name__ == "__main__":
 
     model_type = args.suite.split(".")[0]
     date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    output_name = f"{model_type}_alpa_{args.exp_name}_{date_str}.tsv"
     result_name = f"{args.result_name}.tsv"
 
     # Run all cases
@@ -88,12 +87,11 @@ if __name__ == "__main__":
             num_devices_per_host,
             use_separate_process=args.use_separate_process,
             disable_tqdm=args.disable_tqdm)
-        (parameter_count, max_mem_allocated, latencies, e2e_latency, tflops,
+        (parameter_count, max_mem_allocated, overall_latency, e2e_latency, tflops,
          compilation_times, compute_cost_file_name, forward_stage_layer_ids,
          submesh_shapes, logical_mesh_shapes,
          autosharding_option_dicts) = result
 
-        overall_latency, compute_latency, reshard_send_latency, reshard_recv_latency, reshard_broadcast, free_latency = latencies
         heads = [
             "Type",
             "Model Size",
@@ -108,11 +106,6 @@ if __name__ == "__main__":
             "E2E Latency",
             "Ray Overhead",
             "Overall Latency",
-            "Compute Latency",
-            "Reshard Send Latency",
-            "Reshard Recv Latency",
-            "Reshard Broadcast Latency",
-            "Free Latency",
             "TFLOPs",
             "Peak Mem",
         ]
@@ -129,15 +122,9 @@ if __name__ == "__main__":
             f"{e2e_latency:.3f}s",
             f"{(e2e_latency - overall_latency):.3f}s",
             f"{overall_latency:.3f}s",
-            f"{compute_latency:.3f}",
-            f"{reshard_send_latency:.5f}",
-            f"{reshard_recv_latency:.5f}",
-            f"{reshard_broadcast:.5f}",
-            f"{free_latency:.5f}",
             f"{tflops:.2f}",
             f"{max_mem_allocated/GB:.3f}G",
         ]
-        write_tsv(heads, values, output_name)
         write_tsv(heads, values, result_name)
 
         time.sleep(0.1)  # for ctrl+c to work

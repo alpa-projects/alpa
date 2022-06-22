@@ -252,21 +252,21 @@ class TorchViTTest(unittest.TestCase):
         #     "mlp_d": 4096,
         # }
 
-        # ViT-H model
-        arch_params = {
-            "n_layers": 32,
-            "n_heads": 16,
-            "hidden_d": 1280,
-            "mlp_d": 5120,
-        }
-
-        # # ViT-10B model
+        # # ViT-H model
         # arch_params = {
         #     "n_layers": 32,
-        #     "n_heads": 32,
-        #     "hidden_d": 5120,
-        #     "mlp_d": 20480,
+        #     "n_heads": 16,
+        #     "hidden_d": 1280,
+        #     "mlp_d": 5120,
         # }
+
+        # ViT-10B model
+        arch_params = {
+            "n_layers": 32,
+            "n_heads": 32,
+            "hidden_d": 5120,
+            "mlp_d": 20480,
+        }
 
         # # ViT-25B model
         # arch_params = {

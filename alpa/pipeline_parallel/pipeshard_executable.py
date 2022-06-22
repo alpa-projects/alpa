@@ -288,7 +288,7 @@ class PipeshardDriverExecutable:
         """
         os.makedirs(folder, exist_ok=True)
         name = self.stages[0].spmd_partitioned_hlo_module.name()
-        name = name[:name.index("pipeline_parallel") - 1]
+        name = name[:name.index("pipeshard_parallel") - 1]
         prefix = os.path.join(folder, name)
 
         fully_optimized_hlo_texts = self.get_hlo_text(HloStatus.FULLY_OPTIMIZED)

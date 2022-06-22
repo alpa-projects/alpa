@@ -737,14 +737,7 @@ def get_pipeshard_executable(config,
                         (batch_size, decoding_length_per_step), jnp.int32),
             })
 
-    # Dump IR for debugging
-    os.system("mkdir -p tmp")
-    stage_hlo_texts = executable.get_hlo_text()
-    for i in range(len(stage_hlo_texts)):
-        with open(f"tmp/stage_{i}.hlo", "w") as fout:
-            fout.write(stage_hlo_texts[i])
-    with open(f"tmp/resharding_tasks.txt", "w") as fout:
-        fout.write(executable.print_resharding_tasks())
+    executable.dump_debug_info("tmp")
 
     return executable, params
 

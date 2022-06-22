@@ -724,6 +724,33 @@ def clone_jaxpr_eqn(eqn: JaxprEqn,
                          source_info)
 
 
+get_seed_p = Primitive("alpa_get_seed")
+set_seed_p = Primitive("alpa_set_seed")
+_seed_shape = xe.Shape.array_shape(np.int32, (1,))
+_seed_aval = ShapedArray((1,), np.int32)
+
+
+def _get_seed_translation(c, *args, **kwargs):
+    return xc.ops.CustomCall(c,
+                             b"alpa$get-seed",
+                             operands=(),
+                             shape=_seed_shape,
+                             has_side_effect=True)
+
+
+def _set_seed_translation(c, *args, **kwargs):
+    assert len(args) == 1, "Only support seed as an input"
+    return xc.ops.CustomCall(c,
+                             b"alpa$set-seed",
+                             operands=(args[0]),
+                             shape=_seed_shape,
+                             has_side_effect=True)
+
+
+xla.translations[get_seed_p] = _get_seed_translation
+xla.translations[set_seed_p] = _set_seed_translation
+
+
 def process_remat(closed_jaxpr: ClosedJaxpr):
     """Offload remat call from forward to backward.
 
@@ -777,14 +804,21 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
                 new_outvars.append(outv)
         return clone_jaxpr_eqn(eqn, new_invars, new_outvars)
 
+    def new_get_seed_eqn():
+        return new_jaxpr_eqn([], [gensym_fn(_seed_aval)], get_seed_p, {})
+
+    def new_set_seed_eqn(get_seed_eqn):
+        seed_var = get_seed_eqn.outvars[0]
+        return new_jaxpr_eqn([seed_var], [gensym_fn(_seed_aval)], set_seed_p, {})
+
     # Find offloaded eqns
-    offloaded_eqns = []
+    offloaded_eqns = set()
     gensym_fn = gensym([closed_jaxpr.jaxpr])
 
     for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
         if (eqn.primitive == pe.remat_call_p and only_input_consts(eqn) and
                 only_create_consts(eqn.params["call_jaxpr"])):
-            offloaded_eqns.append(eqn_idx)
+            offloaded_eqns.add(eqn_idx)
     # Find where each eqn is offloaded
     # A faster way is to rewrite remat to set each call's name unique, but users
     # may use 'from jax import remat' instead of 'jax.remat()' which disables
@@ -804,7 +838,8 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
             for inv in eqn.invars:
                 if is_meaningful(inv) and inv in offloaded_vars_from:
                     fwd_eqn_idx = offloaded_vars_from[inv]
-                    offload_to.setdefault(eqn_idx, []).append(fwd_eqn_idx)
+                    assert eqn_idx not in offload_to, "A backward matches multiple forward."
+                    offload_to[eqn_idx] = fwd_eqn_idx
         elif eqn.primitive == pipeline_p:
             for inv, outv in zip(eqn.invars, eqn.outvars):
                 if is_meaningful(inv) and inv in offloaded_vars_from:
@@ -813,19 +848,28 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
     # Insert the fwd remat call and rewrite corresponding bwd remat call
     new_eqns = []
     # FIXME(yonghao): we cannot discard outputs post pipeline marker
-    discarded = set(offloaded_vars_from.keys()).difference(closed_jaxpr.jaxpr.outvars)
+    discarded = set(offloaded_vars_from.keys()).difference(
+        closed_jaxpr.jaxpr.outvars)
+    seed_eqn = {}
     for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
         # Rewrite pipeline_markers
         if eqn.primitive is pipeline_p:
             new_eqns.append(_offload_remat_process_pipeline(eqn, discarded))
-            continue
-        if eqn_idx not in offload_to:
+            new_eqns.append(_offload_remat_process_pipeline(eqn, discarded))
+        elif eqn_idx in offloaded_eqns:
+            get_seed_eqn = new_get_seed_eqn()
+            seed_eqn[eqn_idx] = get_seed_eqn
             new_eqns.append(eqn)
-            continue
-        inserted_eqns = offload_to[eqn_idx]
-        var_mapping = {}
-        # insert forward remat call
-        for inserted_idx in inserted_eqns:
+        elif eqn_idx not in offload_to:
+            new_eqns.append(eqn)
+        else:
+            inserted_idx = offload_to[eqn_idx]
+            var_mapping = {}
+            # get backup seed and set prev seed
+            backup_seed = new_get_seed_eqn()
+            new_eqns.append(backup_seed)
+            new_eqns.append(new_set_seed_eqn(seed_eqn[inserted_idx]))
+            # insert forward remat call
             inserted = closed_jaxpr.eqns[inserted_idx]
             new_outvars = []
             for v in inserted.outvars:
@@ -840,9 +884,11 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
                         var_mapping[v] = new_v
             cloned_fwd = clone_jaxpr_eqn(inserted, outvars=new_outvars)
             new_eqns.append(cloned_fwd)
-        # rewrite invars for bwd remat call
-        new_invars = [get_var_mapping(var_mapping, v) for v in eqn.invars]
-        new_eqns.append(clone_jaxpr_eqn(eqn, invars=new_invars))
+            # restore seed
+            new_eqns.append(new_set_seed_eqn(backup_seed))
+            # rewrite invars for bwd remat call
+            new_invars = [get_var_mapping(var_mapping, v) for v in eqn.invars]
+            new_eqns.append(clone_jaxpr_eqn(eqn, invars=new_invars))
     return clone_jaxpr(closed_jaxpr, eqns=new_eqns)
 
 

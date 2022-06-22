@@ -724,31 +724,31 @@ def clone_jaxpr_eqn(eqn: JaxprEqn,
                          source_info)
 
 
-get_seed_p = Primitive("alpa_get_seed")
-set_seed_p = Primitive("alpa_set_seed")
-_seed_shape = xe.Shape.array_shape(np.int32, (1,))
-_seed_aval = ShapedArray((1,), np.int32)
+get_state_p = Primitive("alpa_get_state")
+set_state_p = Primitive("alpa_set_state")
+_state_shape = xe.Shape.array_shape(np.dtype(np.int32), (1,))
+_state_aval = ShapedArray((1,), np.int32)
 
 
 def _get_seed_translation(c, *args, **kwargs):
     return xc.ops.CustomCall(c,
-                             b"alpa$get-seed",
+                             b"alpa$get-state",
                              operands=(),
-                             shape=_seed_shape,
+                             shape=_state_shape,
                              has_side_effect=True)
 
 
 def _set_seed_translation(c, *args, **kwargs):
     assert len(args) == 1, "Only support seed as an input"
     return xc.ops.CustomCall(c,
-                             b"alpa$set-seed",
-                             operands=(args[0]),
-                             shape=_seed_shape,
+                             b"alpa$set-state",
+                             operands=(args[0],),
+                             shape=_state_shape,
                              has_side_effect=True)
 
 
-xla.translations[get_seed_p] = _get_seed_translation
-xla.translations[set_seed_p] = _set_seed_translation
+xla.translations[get_state_p] = _get_seed_translation
+xla.translations[set_state_p] = _set_seed_translation
 
 
 def process_remat(closed_jaxpr: ClosedJaxpr):
@@ -805,11 +805,33 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
         return clone_jaxpr_eqn(eqn, new_invars, new_outvars)
 
     def new_get_seed_eqn():
-        return new_jaxpr_eqn([], [gensym_fn(_seed_aval)], get_seed_p, {})
+        return new_jaxpr_eqn([], [gensym_fn(_state_aval)], get_state_p, {})
 
     def new_set_seed_eqn(get_seed_eqn):
         seed_var = get_seed_eqn.outvars[0]
-        return new_jaxpr_eqn([seed_var], [gensym_fn(_seed_aval)], set_seed_p, {})
+        return new_jaxpr_eqn([seed_var], [gensym_fn(_state_aval)], set_state_p, {})
+
+    def new_set_seed_eqn(get_seed_eqn):
+        seed_var = get_seed_eqn.outvars[0]
+        return new_jaxpr_eqn([seed_var], [gensym_fn(_state_aval)], set_state_p,
+                             {})
+
+    def difference_cross_marker(eqns, base, dif):
+        base = set(base)
+        dif = set(dif)
+        pipeline_mapping = {}
+        for eqn in eqns:
+            if eqn.primitive is pipeline_p:
+                for inv, outv in zip(eqn.invars, eqn.outvars):
+                    if is_meaningful(inv) and is_meaningful(outv):
+                        pipeline_mapping[outv] = inv
+        for var in dif:
+            base.discard(var)
+            while var in pipeline_mapping:
+                var = pipeline_mapping[var]
+                base.discard(var)
+        return base
+
 
     # Find offloaded eqns
     offloaded_eqns = set()
@@ -847,18 +869,18 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
                     var_pipeline_mapping[inv] = outv
     # Insert the fwd remat call and rewrite corresponding bwd remat call
     new_eqns = []
-    # FIXME(yonghao): we cannot discard outputs post pipeline marker
-    discarded = set(offloaded_vars_from.keys()).difference(
-        closed_jaxpr.jaxpr.outvars)
+    discarded = difference_cross_marker(closed_jaxpr.eqns,
+                                        offloaded_vars_from.keys(),
+                                        closed_jaxpr.jaxpr.outvars)
     seed_eqn = {}
     for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
         # Rewrite pipeline_markers
         if eqn.primitive is pipeline_p:
             new_eqns.append(_offload_remat_process_pipeline(eqn, discarded))
-            new_eqns.append(_offload_remat_process_pipeline(eqn, discarded))
         elif eqn_idx in offloaded_eqns:
             get_seed_eqn = new_get_seed_eqn()
             seed_eqn[eqn_idx] = get_seed_eqn
+            new_eqns.append(get_seed_eqn)
             new_eqns.append(eqn)
         elif eqn_idx not in offload_to:
             new_eqns.append(eqn)

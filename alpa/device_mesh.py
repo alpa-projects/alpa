@@ -1343,7 +1343,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def delete_remote_executable(self, exec_uuid: int):
         """Delete remote worker executables of a driver executable."""
-        if self.workers is None or not ray.is_initialized():
+        if ray is None or self.workers is None or not ray.is_initialized():
             return
 
         for w in self.workers:

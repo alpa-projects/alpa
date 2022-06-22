@@ -19,7 +19,6 @@ from examples.opt_serving.service.workers import WorkItem
 from examples.opt_serving.service.constants import MAX_SEQ_LEN, MAX_BATCH_TOKENS, DEFAULT_PORT, TIMEOUT_MS
 
 app = Flask(__name__)
-port = DEFAULT_PORT
 BATCH_QUEUE = PriorityQueueRingShard()
 
 logger = build_logger()
@@ -112,7 +111,7 @@ def batching_loop(timeout=TIMEOUT_MS, max_tokens=MAX_BATCH_TOKENS):
                 continue
 
 
-def worker_main(model_name, cluster):
+def worker_main(model_name, path, port):
     # disable multithreading in tokenizers and torch, as different Flask threads
     # may then fight for resources.
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -123,7 +122,7 @@ def worker_main(model_name, cluster):
     torch.manual_seed(random.randint(1, 20000))
     torch.cuda.manual_seed(random.randint(1, 20000))
 
-    generator = GeneratorInterface(model_name, cluster)
+    generator = GeneratorInterface(model_name, path)
 
     thread = threading.Thread(target=batching_loop, daemon=True)
     thread.start()
@@ -218,8 +217,8 @@ def index():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="alpa/opt-125m")
-    parser.add_argument("--cluster", type=str, default="aws", help="aws|mbzuai")
+    parser.add_argument("--path", type=str, default="/home/ubuntu/opt_weights/")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     args = parser.parse_args()
 
-    worker_main(args.model, args.cluster)
+    worker_main(args.model, args.path, args.port)

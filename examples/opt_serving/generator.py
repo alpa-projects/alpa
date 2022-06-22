@@ -98,12 +98,12 @@ class GeneratorInterface:
 
     def __init__(self,
                  model_name="alpa/opt-125m",
-                 cluster="aws",
+                 path="/home/ubuntu/opt_weights/",
                  tokenizer_name=None,
                  add_bos_token=False):
 
         self.model_name = model_name
-        self.cluster = cluster
+        self.path = path
         self.tokenizer_name = "facebook/opt-30b" if not tokenizer_name else tokenizer_name
         self.add_bos_token = add_bos_token
 
@@ -118,7 +118,7 @@ class GeneratorInterface:
     def load_model(self):
         """Load model and return the model wrapper."""
         tic = time.time()
-        self.model_wrapper = get_model(self.model_name, "cuda", self.cluster,
+        self.model_wrapper = get_model(self.model_name, "cuda", self.path,
                                        True)
         load_time = time.time() - tic
 

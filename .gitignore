@@ -32,6 +32,9 @@ examples/opt_serving/dataset/*.so
 examples/opt_serving/dataset/*.c
 examples/opt_serving/dataset/*.cpp
 examples/opt_serving/build/
+examples/opt_serving/weblogs
+examples/opt_serving/benchmark/tmp/
+examples/opt_serving/tmp/
 
 # Analysis temp files
 *.nvprof

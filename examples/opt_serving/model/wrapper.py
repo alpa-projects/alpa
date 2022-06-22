@@ -302,4 +302,5 @@ def set_skip_shard_args_check(attention_cache):
     else:
         for y in attention_cache:
             for x in y:
-                x.skip_shard_args_check = True
+                if isinstance(x, alpa.device_mesh.DistributedArray):
+                    x.skip_shard_args_check = True

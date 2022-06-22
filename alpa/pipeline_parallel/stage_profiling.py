@@ -288,8 +288,8 @@ class ProfileWorker:
                 [xe.HloSharding(x) for x in input_shardings])
             hlo_module.set_spmd_output_sharding(xe.HloSharding(output_sharding))
         executable = PartialGradAccMeshDriverExecutable(
-            self.mesh, hlo_module, compiled_output.stage_plan, avals,
-            out_avals, donated_invars, output_acc_grad_indices)
+            self.mesh, hlo_module, compiled_output.stage_plan, avals, out_avals,
+            donated_invars, output_acc_grad_indices)
 
         # Run profiling
         self.mesh.reset_memory_stats()

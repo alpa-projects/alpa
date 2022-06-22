@@ -695,7 +695,7 @@ def apply_grad_add_marker(jaxprs: Sequence[ClosedJaxpr],
                 jaxpr.jaxpr.invars))
         new_outvars = list(
             map(lambda x: get_var_mapping(outvar_map, x), jaxpr.jaxpr.outvars))
-        name = f'{i}_{APPLY_GRAD_MARKER_SUFFIX}'
+        name = f'stage_{i}_{APPLY_GRAD_MARKER_SUFFIX}'
         start_marker = mark_pipeline_jaxpreqn(new_invars,
                                               replaced.invars,
                                               name=name,

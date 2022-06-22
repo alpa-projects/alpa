@@ -276,9 +276,7 @@ class PipelineInstEmitter:
         self.num_batch = num_batch
         self.in_tree = in_tree
         self.flop_count = flop_count
-        self.sharding_annotated_hlo_texts = [
-            x.get_hlo_text() for x in stages
-        ]
+        self.sharding_annotated_hlo_texts = [x.get_hlo_text() for x in stages]
 
         ##### Internal states #####
         self.uuid_counter = 0  # counter for local buffer uuid

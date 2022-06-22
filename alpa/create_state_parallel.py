@@ -101,8 +101,8 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
                 executable.stage_plan.logical_mesh_shape), "single", 1,
             AutoShardingOption(enable_auto_sharding=False))
 
-        return NormalMeshDriverExecutable(physical_mesh, hlo_module,
-                                          stage_plan, avals, out_avals,
+        return NormalMeshDriverExecutable(physical_mesh, hlo_module, stage_plan,
+                                          avals, out_avals,
                                           [False] * len(avals))
     else:
         # Construct a new pipelined jaxpr

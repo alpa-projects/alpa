@@ -1,4 +1,7 @@
-"""The data strcutures to save all configurations/strategies of a parallel execution plan."""
+"""
+The data strcutures to save all configurations/strategies of
+a parallel execution plan.
+"""
 from dataclasses import dataclass
 from typing import Sequence, Tuple
 

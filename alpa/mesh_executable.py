@@ -9,7 +9,6 @@ workers. The driver part sends control commands to launch the worker parts on
 workers.
 """
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 import logging
 from typing import Sequence, Optional
 import os
@@ -85,7 +84,9 @@ class MeshDriverExecutable(ABC):
         raise NotImplementedError()
 
     def dump_debug_info(self, folder: str):
-        """Dump intermediate representations and other informations for debugging."""
+        """
+        Dump intermediate representations and other informations for debugging.
+        """
         raise NotImplementedError()
 
     def sync(self):
@@ -298,9 +299,9 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                     bypass_device_assignment_check=True)
             else:
                 self.compiled = run_backend_compilation(
-                    backend, hlo_module, stage_plan,
-                    physical_mesh.num_devices)
-            self.fully_optimized_hlo_text = self.compiled.hlo_modules()[0].to_string()
+                    backend, hlo_module, stage_plan, physical_mesh.num_devices)
+            self.fully_optimized_hlo_text = self.compiled.hlo_modules(
+            )[0].to_string()
 
     def launch_on_driver(self, *args, **kwargs):
         """Launch the executable on the driver."""
@@ -445,7 +446,9 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             raise ValueError(f"Invalid status: {status}")
 
     def dump_debug_info(self, folder: str):
-        """Dump intermediate representations and other informations for debugging."""
+        """
+        Dump intermediate representations and other informations for debugging.
+        """
         os.makedirs(folder, exist_ok=True)
         prefix = os.path.join(folder, self.hlo_module.name())
         with open(f"{prefix}.hlo", "w") as f:
@@ -668,8 +671,8 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                     apply_grad.as_serialized_hlo_module_proto(),
                     accumulate_grad_invar_indices, apply_grad_invar_indices,
                     accumulate_grad_batch_arg_indices, grad_shard_shapes,
-                    grad_shard_dtypes, stage_plan, donated_invars,
-                    batch_invars, num_grads, num_micro_batches)
+                    grad_shard_dtypes, stage_plan, donated_invars, batch_invars,
+                    num_grads, num_micro_batches)
             # The following members will be fetched from the workers later
             self.fully_optimized_hlo_text = None
             self.grad_sync_channel_ids = None
@@ -678,8 +681,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             backend = xb.get_backend("gpu")
 
             self.accumulate_grad = run_backend_compilation(
-                backend, accumulate_grad, stage_plan,
-                physical_mesh.num_devices)
+                backend, accumulate_grad, stage_plan, physical_mesh.num_devices)
             self.apply_grad = run_backend_compilation(backend, apply_grad,
                                                       stage_plan,
                                                       physical_mesh.num_devices)
@@ -690,8 +692,8 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                 accumulate_grad_batch_arg_indices)
 
             self.fully_optimized_hlo_text = (
-                    self.accumulate_grad.hlo_modules()[0].to_string() +
-                    self.apply_grad.hlo_modules()[0].to_string())
+                self.accumulate_grad.hlo_modules()[0].to_string() +
+                self.apply_grad.hlo_modules()[0].to_string())
             self.grad_sync_channel_ids = get_grad_sync_channel_ids(
                 self.accumulate_grad.hlo_modules()[0])
             self.skip_allreduce_env_name = (
@@ -850,16 +852,19 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                 self.physical_mesh.workers[0].get_exec_hlo_text.remote(
                     self.exec_uuid))
             self.grad_sync_channel_ids = ray.get(
-                self.physical_mesh.workers[0].get_exec_grad_sync_channel_ids.remote(
-                    self.exec_uuid))
+                self.physical_mesh.workers[0].get_exec_grad_sync_channel_ids.
+                remote(self.exec_uuid))
             return self.fully_optimized_hlo_text
         else:
             raise ValueError(f"Invalid status: {status}")
 
     def dump_debug_info(self, folder: str):
-        """Dump intermediate representations and other informations for debugging."""
+        """
+        Dump intermediate representations and other informations for debugging.
+        """
         os.makedirs(folder, exist_ok=True)
-        name = self.accumulate_grad_module.name().replace("-accumulate_grad", "")
+        name = self.accumulate_grad_module.name().replace(
+            "-accumulate_grad", "")
         prefix = os.path.join(folder, name)
         with open(f"{prefix}.hlo", "w") as f:
             f.write(self.get_hlo_text())
@@ -876,8 +881,7 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
                  apply_grad_invar_indices: Sequence[int],
                  accumulate_grad_batch_arg_indices: Sequence[int],
                  grad_shard_shapes: Sequence[Sequence[int]],
-                 grad_shard_dtypes: Sequence[jnp.dtype],
-                 stage_plan: StagePlan,
+                 grad_shard_dtypes: Sequence[jnp.dtype], stage_plan: StagePlan,
                  donated_invars: Sequence[bool], batch_invars: Sequence[bool],
                  num_grads: int, num_micro_batches: int):
         num_devices = np.prod(stage_plan.logical_mesh_shape)
@@ -885,11 +889,10 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
 
         self.accumulate_grad = run_backend_compilation(worker.backend,
                                                        accumulate_grad_proto,
-                                                       stage_plan,
-                                                       num_devices)
+                                                       stage_plan, num_devices)
         self.apply_grad = run_backend_compilation(worker.backend,
-                                                  apply_grad_proto,
-                                                  stage_plan, num_devices)
+                                                  apply_grad_proto, stage_plan,
+                                                  num_devices)
         self.allocate_zero_buffers = compile_allocate_zero_buffers(
             worker.backend, num_devices, grad_shard_shapes, grad_shard_dtypes)
         self.accumulate_grad_invar_indices = accumulate_grad_invar_indices

@@ -892,9 +892,9 @@ def generate_sharded_xla_computations(
 
     #  pylint: disable=unbalanced-tuple-unpacking
     (computation_names, computation_modules,
-     stage_plan) = run_auto_sharding_pass(hlo_module, logical_mesh,
-                                          "stages", num_micro_batches,
-                                           autosharding_option)
+     stage_plan) = run_auto_sharding_pass(hlo_module, logical_mesh, "stages",
+                                          num_micro_batches,
+                                          autosharding_option)
 
     computations = generate_computations_from_modules(
         jax_computations, computation_names, computation_modules,

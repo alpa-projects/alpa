@@ -6,7 +6,7 @@ Support DistributedArray and ReplicatedDistributedArray serialization in Alpa.
 import logging
 import os
 import pickle
-from typing import Union, Any, Sequence
+from typing import Union, Sequence
 
 from flax.serialization import to_state_dict, from_state_dict
 import jax

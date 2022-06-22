@@ -17,6 +17,7 @@ from examples.opt_serving.model.opt_utils import compute_gpt_tflops_inference_wi
 
 logger = build_logger()
 
+
 def apply_to_sample(f, sample):
     if hasattr(sample, "__len__") and len(sample) == 0:
         return {}
@@ -49,7 +50,6 @@ def move_to_cuda(sample, device=None):
     return apply_to_sample(_move_to_cuda, sample)
 
 
-
 serve_batch_counter = 0
 
 
@@ -64,9 +64,10 @@ def next_serve_batch_uuid(number=1):
     return ret
 
 
-def filter_indices_by_size(
-    indices, dataset, max_positions=None, ignore_invalid_inputs=False
-):
+def filter_indices_by_size(indices,
+                           dataset,
+                           max_positions=None,
+                           ignore_invalid_inputs=False):
     """Filter examples that are too large.
 
     Args:
@@ -83,22 +84,18 @@ def filter_indices_by_size(
     if len(ignored) > 0:
         if not ignore_invalid_inputs:
             raise Exception(
-                (
-                    "Size of sample #{} is invalid (={}) since max_positions={}, "
-                    "skip this example with --skip-invalid-size-inputs-valid-test"
-                ).format(ignored[0], dataset.size(ignored[0]), max_positions)
-            )
-        logger.warning(
-            (
-                "{:,} samples have invalid sizes and will be skipped, "
-                "max_positions={}, first few sample ids={}"
-            ).format(len(ignored), max_positions, ignored[:10])
-        )
+                ("Size of sample #{} is invalid (={}) since max_positions={}, "
+                 "skip this example with --skip-invalid-size-inputs-valid-test"
+                ).format(ignored[0], dataset.size(ignored[0]), max_positions))
+        logger.warning(("{:,} samples have invalid sizes and will be skipped, "
+                        "max_positions={}, first few sample ids={}").format(
+                            len(ignored), max_positions, ignored[:10]))
     return indices
 
 
 class GeneratorInterface:
     """Alpa generator interface."""
+
     def __init__(self,
                  model_name="alpa/opt-125m",
                  cluster="aws",
@@ -118,13 +115,10 @@ class GeneratorInterface:
 
         self.load_model()
 
-
     def load_model(self):
         """Load model and return the model wrapper."""
         tic = time.time()
-        self.model_wrapper = get_model(self.model_name,
-                                       "cuda",
-                                       self.cluster,
+        self.model_wrapper = get_model(self.model_name, "cuda", self.cluster,
                                        True)
         load_time = time.time() - tic
 
@@ -138,19 +132,19 @@ class GeneratorInterface:
         logger.info(f"Loading model time: {load_time:.2f}")
 
     def legacy_generate(
-            self,
-            inputs: List[List[int]],
-            min_tokens: List[int] = None,
-            max_tokens: List[int] = None,
-            temperature: float = 1.0,
-            top_p: float = -1.0,
-            logprobs: int = 0,
-            n: int = 1,
-            best_of: Optional[int] = None,
-            echo: bool = False,
-            stop: Optional[List[int]] = None,
-            seed: Optional[int] = None,
-            use_cuda: bool = True,
+        self,
+        inputs: List[List[int]],
+        min_tokens: List[int] = None,
+        max_tokens: List[int] = None,
+        temperature: float = 1.0,
+        top_p: float = -1.0,
+        logprobs: int = 0,
+        n: int = 1,
+        best_of: Optional[int] = None,
+        echo: bool = False,
+        stop: Optional[List[int]] = None,
+        seed: Optional[int] = None,
+        use_cuda: bool = True,
     ):
         """
         Generate from sequences.
@@ -212,9 +206,8 @@ class GeneratorInterface:
                 max_tokens = [max_seq_len] * batchsize
             if min_tokens is None:
                 min_tokens = [0] * batchsize
-            total_max_tokens = min(
-                max_seq_len, max(max_tokens) + src_lengths.max().item()
-            )
+            total_max_tokens = min(max_seq_len,
+                                   max(max_tokens) + src_lengths.max().item())
             total_min_tokens = max(min_tokens) + src_lengths.max().item()
             min_len = total_min_tokens
             max_len = total_max_tokens
@@ -234,7 +227,8 @@ class GeneratorInterface:
             generator = Generator(self.model_wrapper, **generator_args)
 
             # okay actually generate
-            logger.info(f"Executing generation on input tensor size {src_tokens.shape}")
+            logger.info(
+                f"Executing generation on input tensor size {src_tokens.shape}")
             if use_cuda:
                 batch = move_to_cuda(batch)
 
@@ -244,7 +238,7 @@ class GeneratorInterface:
             total_generation_time += translate_time
 
             # possibly cut off any bsz padding we did
-            translations = translations[: len(inputs)]
+            translations = translations[:len(inputs)]
             # actually turn everything into strings
             for i in range(len(translations)):
                 decoding = translations[i]
@@ -259,27 +253,25 @@ class GeneratorInterface:
                         distributions = None
 
                     tokens, scores, distributions = GeneratorInterface._filter_special(
-                        tokens, scores, distributions
-                    )
+                        tokens, scores, distributions)
                     prompt_len = src_lengths[i]
                     if echo:
                         # don't cut off prompt
-                        tokens = tokens[: prompt_len + max_tokens[i] - 1]
-                        scores = scores[: prompt_len + max_tokens[i] - 1]
+                        tokens = tokens[:prompt_len + max_tokens[i] - 1]
+                        scores = scores[:prompt_len + max_tokens[i] - 1]
                         if logprobs > 0:
-                            distributions = distributions[
-                                            : prompt_len + max_tokens[i] - 1
-                                            ]
+                            distributions = distributions[:prompt_len +
+                                                          max_tokens[i] - 1]
                     else:
                         # cut off prompt
-                        tokens = tokens[prompt_len - 1:][: max_tokens[i]]
-                        scores = scores[prompt_len - 1:][: max_tokens[i]]
+                        tokens = tokens[prompt_len - 1:][:max_tokens[i]]
+                        scores = scores[prompt_len - 1:][:max_tokens[i]]
                         if logprobs > 0:
-                            distributions = distributions[prompt_len - 1:][
-                                            : max_tokens[i]
-                                            ]
+                            distributions = distributions[prompt_len -
+                                                          1:][:max_tokens[i]]
                     # turn it into a string
-                    text = self.tokenizer.decode(tokens, skip_special_tokens=True)
+                    text = self.tokenizer.decode(tokens,
+                                                 skip_special_tokens=True)
                     result = {
                         "text": text,
                         "tokens": [self.tokenizer.decode([t]) for t in tokens],
@@ -295,9 +287,9 @@ class GeneratorInterface:
                         # top-k tokens at that timestep.
                         out_logprobs = []
                         all_top_toks, all_top_scores = distributions.topk(
-                            k=logprobs, dim=-1
-                        )
-                        for top_scores, top_toks in zip(all_top_toks, all_top_scores):
+                            k=logprobs, dim=-1)
+                        for top_scores, top_toks in zip(all_top_toks,
+                                                        all_top_scores):
                             lp = {
                                 self.bpe.bpe.decode([t.item()]): s.item()
                                 for t, s in zip(top_toks, top_scores)
@@ -312,25 +304,23 @@ class GeneratorInterface:
 
         logger.info(
             "Total time: {:.3f} seconds; generation time: {:.3f}".format(
-                time.time() - start_time, total_generation_time
-            )
-        )
+                time.time() - start_time, total_generation_time))
         return retval
 
     def generate(
-            self,
-            inputs: List[List[int]],
-            min_tokens: List[int] = None,
-            max_tokens: List[int] = None,
-            temperature: float = 1.0,
-            top_p: float = -1.0,
-            logprobs: int = 0,
-            n: int = 1,
-            best_of: Optional[int] = None,
-            echo: bool = False,
-            stop: Optional[List[int]] = None,
-            seed: Optional[int] = None,
-            use_cuda: bool = True,
+        self,
+        inputs: List[List[int]],
+        min_tokens: List[int] = None,
+        max_tokens: List[int] = None,
+        temperature: float = 1.0,
+        top_p: float = -1.0,
+        logprobs: int = 0,
+        n: int = 1,
+        best_of: Optional[int] = None,
+        echo: bool = False,
+        stop: Optional[List[int]] = None,
+        seed: Optional[int] = None,
+        use_cuda: bool = True,
     ):
         """
         Generate from sequences.
@@ -358,7 +348,8 @@ class GeneratorInterface:
 
         if logprobs > 0:
             # TODO(Hao): support this
-            raise NotImplementedError("logprob>0 is not supported at this moment.")
+            raise NotImplementedError(
+                "logprob>0 is not supported at this moment.")
 
         start_time = time.time()
         total_inference_time = 0
@@ -402,9 +393,8 @@ class GeneratorInterface:
                 max_tokens = [max_seq_len] * batchsize
             if min_tokens is None:
                 min_tokens = [0] * batchsize
-            total_max_tokens = min(
-                max_seq_len, max(max_tokens) + src_lengths.max().item()
-            )
+            total_max_tokens = min(max_seq_len,
+                                   max(max_tokens) + src_lengths.max().item())
             total_min_tokens = max(min_tokens) + src_lengths.max().item()
             min_len = total_min_tokens
             max_len = total_max_tokens
@@ -427,18 +417,18 @@ class GeneratorInterface:
             inference_start_time = time.time()
             translations = generator.generate(batch["src_tokens"])
             inference_time = time.time() - inference_start_time
-            flops, speed, token_32_latency = self.estimate_performance(translations, inference_time)
+            flops, speed, token_32_latency = self.estimate_performance(
+                translations, inference_time)
             logger.info(
                 "- Serve batch {} / compute batch {} | #batch_size: {}, max_len: {} shape: {}, args: {}, "
-                "batch latency (s): {:.2f}, flops: {:.4f}, speed: {:.4f}, 32-token latency: {:.2f}".format(
-                    batch_request_uuid, batch_idx, batchsize, max(src_lengths), src_lengths, generator_args,
-                    inference_time, flops, speed, token_32_latency
-                )
-            )
+                "batch latency (s): {:.2f}, flops: {:.4f}, speed: {:.4f}, 32-token latency: {:.2f}"
+                .format(batch_request_uuid, batch_idx, batchsize,
+                        max(src_lengths), src_lengths, generator_args,
+                        inference_time, flops, speed, token_32_latency))
             total_inference_time += inference_time
 
             # possibly cut off any bsz padding we did
-            translations = translations[: len(inputs)]
+            translations = translations[:len(inputs)]
             # actually turn everything into strings
             for i in range(len(translations)):
                 decoding = translations[i]
@@ -454,14 +444,15 @@ class GeneratorInterface:
                     prompt_len = src_lengths[i]
                     if echo:
                         # don't cut off prompt
-                        tokens = tokens[: prompt_len + max_tokens[i] - 1]
+                        tokens = tokens[:prompt_len + max_tokens[i] - 1]
                         # scores = scores[: prompt_len + max_tokens[i] - 1]
                     else:
                         # cut off prompt
-                        tokens = tokens[prompt_len - 1:][: max_tokens[i]]
+                        tokens = tokens[prompt_len - 1:][:max_tokens[i]]
                         # scores = scores[prompt_len - 1:][: max_tokens[i]]
                     # turn it into a string
-                    text = self.tokenizer.decode(tokens, skip_special_tokens=True)
+                    text = self.tokenizer.decode(tokens,
+                                                 skip_special_tokens=True)
                     result = {
                         "text": text,
                         # "tokens": [self.tokenizer.decode([t]) for t in tokens],
@@ -472,9 +463,10 @@ class GeneratorInterface:
                     }
                     beams.append(result)
                 retval.append(beams)
-        logger.info("Serve batch {} completed!  | #samples: {},  #batches: {}, e2e latency (s): {:.2f}, inference (s): {:.2f}".format(
-            batch_request_uuid, len(lengths), len(batches), time.time() - start_time, total_inference_time
-        ))
+        logger.info(
+            "Serve batch {} completed!  | #samples: {},  #batches: {}, e2e latency (s): {:.2f}, inference (s): {:.2f}"
+            .format(batch_request_uuid, len(lengths), len(batches),
+                    time.time() - start_time, total_inference_time))
         return retval
 
     def estimate_performance(self, translations, latency):
@@ -490,9 +482,9 @@ class GeneratorInterface:
         H = transformer_config.H
         L = transformer_config.L
         vocab_size = transformer_config.vocab_size
-        flops = compute_gpt_tflops_inference_with_padding(batch_size, gen_len, seq_len,
-                                                          L, H, vocab_size, self.num_gpus,
-                                                          latency)
+        flops = compute_gpt_tflops_inference_with_padding(
+            batch_size, gen_len, seq_len, L, H, vocab_size, self.num_gpus,
+            latency)
         speed = batch_size * gen_len / latency
         token_32_latency = 32.0 / (speed / len(translations))
         return flops, speed, token_32_latency
@@ -541,13 +533,12 @@ class GeneratorInterface:
         """Build a batched dataset for inference"""
 
         # TODO(Hao): understand TokenBlockDataset and simplify it
-        dataset = TokenBlockDataset(
-            src_tokens,
-            src_lengths,
-            block_size=None,
-            pad=self.tokenizer.pad_token_id,
-            eos=self.tokenizer.eos_token_id,
-            break_mode="eos")
+        dataset = TokenBlockDataset(src_tokens,
+                                    src_lengths,
+                                    block_size=None,
+                                    pad=self.tokenizer.pad_token_id,
+                                    eos=self.tokenizer.eos_token_id,
+                                    break_mode="eos")
 
         # Strip end tokens if there are any
         dataset = StripTokenDataset(dataset, self.tokenizer.eos_token_id)
@@ -555,7 +546,9 @@ class GeneratorInterface:
         token_to_prepend = self.tokenizer.bos_token_id if self.add_bos_token else self.tokenizer.eos_token_id
         dataset = PrependTokenDataset(dataset, token=token_to_prepend)
         # Pad when there are various length in a batch
-        dataset = PadDataset(dataset, pad_idx=self.tokenizer.pad_token_id, left_pad=False)
+        dataset = PadDataset(dataset,
+                             pad_idx=self.tokenizer.pad_token_id,
+                             left_pad=False)
         numel_dataset = NumelDataset(dataset, reduce=False)
         dataset = NestedDictionaryDataset(
             {
@@ -626,7 +619,8 @@ class GeneratorInterface:
                 given dataset split
         """
         if not disable_iterator_cache and dataset in self.dataset_to_epoch_iter:
-            logger.debug("reusing EpochBatchIterator for epoch {}".format(epoch))
+            logger.debug(
+                "reusing EpochBatchIterator for epoch {}".format(epoch))
             return self.dataset_to_epoch_iter[dataset]
 
         assert isinstance(dataset, BaseDataset)
@@ -640,9 +634,8 @@ class GeneratorInterface:
 
         # filter examples that are too large
         if max_positions is not None:
-            indices = filter_indices_by_size(
-                indices, dataset, max_positions, ignore_invalid_inputs
-            )
+            indices = filter_indices_by_size(indices, dataset, max_positions,
+                                             ignore_invalid_inputs)
 
         if batch_by_size:
             # create mini-batches with given size constraints
@@ -657,7 +650,7 @@ class GeneratorInterface:
                 max_sentences is not None
             ), "If batch_by_size=False, max_sentences must be passed. Got None"
             starts = indices[::max_sentences]
-            batch_sampler = [indices[s : s + max_sentences] for s in starts]
+            batch_sampler = [indices[s:s + max_sentences] for s in starts]
         # return a reusable, sharded iterator
         epoch_iter = iterators.EpochBatchIterator(
             dataset=dataset,
@@ -676,6 +669,7 @@ class GeneratorInterface:
 
 
 class Generator:
+
     def __init__(self,
                  model_wrapper,
                  beam_size: int = 1,
@@ -722,6 +716,11 @@ class Generator:
         retvals = [[{} for _ in range(self.beam_size)] for _ in generated_ids]
         for g in range(generated_ids.shape[0]):
             for beam in range(self.beam_size):
-                retvals[g][beam] = {"tokens": generated_ids[g, 1:],
-                                    "positional_scores": torch.zeros_like(generated_ids[g, 1:], dtype=torch.float16)}
+                retvals[g][beam] = {
+                    "tokens":
+                        generated_ids[g, 1:],
+                    "positional_scores":
+                        torch.zeros_like(generated_ids[g, 1:],
+                                         dtype=torch.float16)
+                }
         return retvals

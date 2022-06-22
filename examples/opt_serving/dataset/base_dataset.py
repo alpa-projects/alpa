@@ -121,19 +121,13 @@ class BaseDataset(torch.utils.data.Dataset, EpochListening):
                     bsz = max_tokens // num_tokens
                 if max_sentences is not None:
                     bsz = min(bsz, max_sentences)
-                elif (
-                    bsz >= required_batch_size_multiple
-                    and bsz % required_batch_size_multiple != 0
-                ):
+                elif (bsz >= required_batch_size_multiple and
+                      bsz % required_batch_size_multiple != 0):
                     bsz -= bsz % required_batch_size_multiple
                 return bsz
 
-            fixed_shapes = np.array(
-                [
-                    [adjust_bsz(bsz, num_tokens), num_tokens]
-                    for (bsz, num_tokens) in fixed_shapes
-                ]
-            )
+            fixed_shapes = np.array([[adjust_bsz(bsz, num_tokens), num_tokens]
+                                     for (bsz, num_tokens) in fixed_shapes])
 
         try:
             num_tokens_vec = self.num_tokens_vec(indices).astype("int64")
@@ -170,21 +164,16 @@ class BaseDataset(torch.utils.data.Dataset, EpochListening):
             if hasattr(self, "sizes") and isinstance(self.sizes, np.ndarray):
                 ignored = indices[self.sizes[indices] > max_sizes].tolist()
                 indices = indices[self.sizes[indices] <= max_sizes]
-            elif (
-                hasattr(self, "sizes")
-                and isinstance(self.sizes, list)
-                and len(self.sizes) == 1
-            ):
+            elif (hasattr(self, "sizes") and isinstance(self.sizes, list) and
+                  len(self.sizes) == 1):
                 ignored = indices[self.sizes[0][indices] > max_sizes].tolist()
                 indices = indices[self.sizes[0][indices] <= max_sizes]
             else:
                 indices, ignored = data_utils._filter_by_size_dynamic(
-                    indices, self.size, max_sizes
-                )
+                    indices, self.size, max_sizes)
         else:
             indices, ignored = data_utils._filter_by_size_dynamic(
-                indices, self.size, max_sizes
-            )
+                indices, self.size, max_sizes)
         return indices, ignored
 
     def ordered_indices_per_dataset(self):

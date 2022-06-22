@@ -40,6 +40,7 @@ def _unflatten(dico):
 
 
 class NestedDictionaryDataset(BaseDataset):
+
     def __init__(self, defn, sizes=None):
         super().__init__()
         self.defn = _flatten(defn)
@@ -48,13 +49,14 @@ class NestedDictionaryDataset(BaseDataset):
         first = None
         for v in self.defn.values():
             if not isinstance(
-                v,
+                    v,
                 (
                     BaseDataset,
                     torch.utils.data.Dataset,
                 ),
             ):
-                raise ValueError("Expected Dataset but found: {}".format(v.__class__))
+                raise ValueError("Expected Dataset but found: {}".format(
+                    v.__class__))
             first = first or v
             if len(v) > 0:
                 assert len(v) == len(first), "dataset lengths must match"

@@ -2,6 +2,7 @@ from examples.opt_serving.dataset import BaseWrapperDataset
 
 
 class StripTokenDataset(BaseWrapperDataset):
+
     def __init__(self, dataset, id_to_strip):
         super().__init__(dataset)
         self.id_to_strip = id_to_strip

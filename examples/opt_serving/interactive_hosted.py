@@ -18,13 +18,13 @@ from examples.opt_serving.service.utils import encode_fn, build_logger
 from examples.opt_serving.service.workers import WorkItem
 from examples.opt_serving.service.constants import MAX_SEQ_LEN, MAX_BATCH_TOKENS, DEFAULT_PORT, TIMEOUT_MS
 
-
 app = Flask(__name__)
 port = DEFAULT_PORT
 BATCH_QUEUE = PriorityQueueRingShard()
 
 logger = build_logger()
 werkzeug_logger = logging.getLogger("werkzeug")
+
 
 def batching_loop(timeout=TIMEOUT_MS, max_tokens=MAX_BATCH_TOKENS):
     """
@@ -86,17 +86,16 @@ def batching_loop(timeout=TIMEOUT_MS, max_tokens=MAX_BATCH_TOKENS):
                     request_object["inputs"].append(ro["input"])
                     request_object["min_tokens"].append(ro.get("min_tokens", 0))
                     request_object["max_tokens"].append(
-                        ro.get("max_tokens", MAX_SEQ_LEN)
-                    )
+                        ro.get("max_tokens", MAX_SEQ_LEN))
                     # assumption: everyone has the same remaining args
                     for key in [
-                        "temperature",
-                        "top_p",
-                        "n",
-                        "best_of",
-                        "echo",
-                        "logprobs",
-                        "stop",
+                            "temperature",
+                            "top_p",
+                            "n",
+                            "best_of",
+                            "echo",
+                            "logprobs",
+                            "stop",
                     ]:
                         if key in ro:
                             request_object[key] = ro[key]
@@ -111,6 +110,7 @@ def batching_loop(timeout=TIMEOUT_MS, max_tokens=MAX_BATCH_TOKENS):
             else:
                 # back to the loop
                 continue
+
 
 def worker_main(model_name, cluster):
     # disable multithreading in tokenizers and torch, as different Flask threads
@@ -175,7 +175,8 @@ def completions(engine=None):
             stop = [encode_fn(generator, s)[0] for s in stop]
         generation_args["stop"] = stop
     if "temperature" in generation_args:
-        generation_args["temperature"] = round(float(generation_args["temperature"]), 1)
+        generation_args["temperature"] = round(
+            float(generation_args["temperature"]), 1)
     else:
         generation_args["temperature"] = 1.0
     if "top_p" in generation_args:
@@ -192,7 +193,8 @@ def completions(engine=None):
     for i, prompt in enumerate(prompts):
         request_object = {"input": prompt, **generation_args}
         max_len = generation_args.get("max_tokens", 0)
-        BATCH_QUEUE.put(WorkItem(len(prompt) + max_len, i, ret_queue, request_object))
+        BATCH_QUEUE.put(
+            WorkItem(len(prompt) + max_len, i, ret_queue, request_object))
     unordered_results = []
     for _ in prompts:
         unordered_results.append(ret_queue.get())

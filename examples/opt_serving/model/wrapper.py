@@ -9,9 +9,9 @@ import torch
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
 from transformers import OPTForCausalLM, GPT2LMHeadModel
 
-from examples.opt_serving.model.opt_model import (get_opt_config, get_pipeshard_executable,
-                                                  load_params_dis_array, init_cache_dis_array,
-                                                  load_params_np, init_cache_np, get_jax_executable)
+from examples.opt_serving.model.opt_model import (
+    get_opt_config, get_pipeshard_executable, load_params_dis_array,
+    init_cache_dis_array, load_params_np, init_cache_np, get_jax_executable)
 from examples.opt_serving.model.opt_utils import TransformerModelConfig
 
 
@@ -65,6 +65,7 @@ class WrappedInferenceFunc(GenerationMixin):
 
     This class also decomposes the first call of prompt during generation to one token by one token.
     """
+
     def __init__(self, inference_func, config, executable, transformer_config):
         self.inference_func = inference_func
         self.config = config
@@ -87,12 +88,12 @@ class WrappedInferenceFunc(GenerationMixin):
 
     def __call__(self,
                  input_ids,
-                 past_key_values = None,
-                 output_attentions = None,
-                 output_hidden_states = None,
-                 return_dict = None):
+                 past_key_values=None,
+                 output_attentions=None,
+                 output_hidden_states=None,
+                 return_dict=None):
         for i in range(input_ids.shape[1]):
-            ret = self.inference_func(input_ids[:,i:i+1],
+            ret = self.inference_func(input_ids[:, i:i + 1],
                                       past_key_values,
                                       output_hidden_states=output_hidden_states,
                                       output_attentions=output_attentions)
@@ -104,7 +105,9 @@ def get_hf_gpt_model(model_name, device):
     raw_model = GPT2LMHeadModel.from_pretrained(model_name)
     raw_model = raw_model.to(device)
 
-    def inference_func(input_ids, past_key_values, output_attentions=False,
+    def inference_func(input_ids,
+                       past_key_values,
+                       output_attentions=False,
                        output_hidden_states=False):
         out = raw_model(input_ids=input_ids,
                         past_key_values=past_key_values,
@@ -113,28 +116,33 @@ def get_hf_gpt_model(model_name, device):
         return InferenceFuncOutput(out.logits, out.past_key_values)
 
     inference_func_config = raw_model.config
-    transformer_config = TransformerModelConfig(H=raw_model.config.n_embd,
-                                                L=raw_model.config.n_layer,
-                                                n_head=raw_model.config.n_head,
-                                                seq_len=raw_model.config.n_positions,
-                                                vocab_size=raw_model.config.vocab_size)
+    transformer_config = TransformerModelConfig(
+        H=raw_model.config.n_embd,
+        L=raw_model.config.n_layer,
+        n_head=raw_model.config.n_head,
+        seq_len=raw_model.config.n_positions,
+        vocab_size=raw_model.config.vocab_size)
     executable = None
-    return WrappedInferenceFunc(inference_func, inference_func_config, executable, transformer_config)
+    return WrappedInferenceFunc(inference_func, inference_func_config,
+                                executable, transformer_config)
 
 
 def get_hf_opt_model(model_name, device):
     raw_model = OPTForCausalLM.from_pretrained(
-        model_name, torch_dtype=torch.float16 if "cuda" in device else torch.float32)
+        model_name,
+        torch_dtype=torch.float16 if "cuda" in device else torch.float32)
     raw_model = raw_model.to(device)
 
-    def inference_func(input_ids, past_key_values,
+    def inference_func(input_ids,
+                       past_key_values,
                        output_attentions=False,
                        output_hidden_states=False):
         if past_key_values is None:
             attention_mask = None
         else:
             past_length = past_key_values[0][0].shape[2]
-            attention_mask = torch.ones((input_ids.shape[0], past_length + 1)).to(device)
+            attention_mask = torch.ones(
+                (input_ids.shape[0], past_length + 1)).to(device)
         out = raw_model(input_ids=input_ids,
                         attention_mask=attention_mask,
                         past_key_values=past_key_values,
@@ -145,13 +153,15 @@ def get_hf_opt_model(model_name, device):
     inference_func_config = InferenceFuncConfig()
     for key in inference_func_config.__dataclass_fields__.keys():
         setattr(inference_func_config, key, getattr(raw_model.config, key))
-    transformer_config = TransformerModelConfig(H=raw_model.config.hidden_size,
-                                                L=raw_model.config.num_hidden_layers,
-                                                n_head=raw_model.config.num_attention_heads,
-                                                seq_len=raw_model.config.max_position_embeddings,
-                                                vocab_size=raw_model.config.vocab_size)
+    transformer_config = TransformerModelConfig(
+        H=raw_model.config.hidden_size,
+        L=raw_model.config.num_hidden_layers,
+        n_head=raw_model.config.num_attention_heads,
+        seq_len=raw_model.config.max_position_embeddings,
+        vocab_size=raw_model.config.vocab_size)
     executable = None
-    return WrappedInferenceFunc(inference_func, inference_func_config, executable, transformer_config)
+    return WrappedInferenceFunc(inference_func, inference_func_config,
+                                executable, transformer_config)
 
 
 def get_model(model_name,
@@ -170,12 +180,15 @@ def get_model(model_name,
     Args:
         model_name: "gpt", "facebook/opt-", or "alpa/opt-".
     """
-    if not model_name.startswith("alpa")  and not autoregressive:
-        raise NotImplementedError(f"Cannot support {model_name} in forward-only mode.")
+    if not model_name.startswith("alpa") and not autoregressive:
+        raise NotImplementedError(
+            f"Cannot support {model_name} in forward-only mode.")
     if autoregressive and decoding_length_per_step > 1:
-        raise RuntimeError(f"Autoregressive requires decoder_length_per_step == 1")
+        raise RuntimeError(
+            f"Autoregressive requires decoder_length_per_step == 1")
     if autoregressive and num_micro_batches > 1:
-        raise NotImplementedError(f"Cannot support num_micro_batches > 1 in autoregressive mode.")
+        raise NotImplementedError(
+            f"Cannot support num_micro_batches > 1 in autoregressive mode.")
 
     if "gpt" in model_name:
         return get_hf_gpt_model(model_name, device)
@@ -189,12 +202,16 @@ def get_model(model_name,
     path = os.path.join(path, f"{name}_np")
 
     if "jax/opt" in model_name:
-        config = get_opt_config(name, num_pp_stages=None, mark_boundary=False, dtype=dtype)
-        transformer_config = TransformerModelConfig(H=config.decoder_embed_dim,
-                                                    L=config.decoder_layers,
-                                                    n_head=config.decoder_attention_heads,
-                                                    seq_len=config.max_target_positions,
-                                                    vocab_size=config.vocab_size)
+        config = get_opt_config(name,
+                                num_pp_stages=None,
+                                mark_boundary=False,
+                                dtype=dtype)
+        transformer_config = TransformerModelConfig(
+            H=config.decoder_embed_dim,
+            L=config.decoder_layers,
+            n_head=config.decoder_attention_heads,
+            seq_len=config.max_target_positions,
+            vocab_size=config.vocab_size)
 
         executable, params_aval = get_jax_executable(
             config,
@@ -210,11 +227,12 @@ def get_model(model_name,
         alpa.init()
         num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
         config = get_opt_config(name, num_pp_stages=num_pp_stages, dtype=dtype)
-        transformer_config = TransformerModelConfig(H=config.decoder_embed_dim,
-                                                    L=config.decoder_layers,
-                                                    n_head=config.decoder_attention_heads,
-                                                    seq_len=config.max_target_positions,
-                                                    vocab_size=config.vocab_size)
+        transformer_config = TransformerModelConfig(
+            H=config.decoder_embed_dim,
+            L=config.decoder_layers,
+            n_head=config.decoder_attention_heads,
+            seq_len=config.max_target_positions,
+            vocab_size=config.vocab_size)
 
         executable, params_aval = get_pipeshard_executable(
             config,
@@ -226,9 +244,13 @@ def get_model(model_name,
             autoregressive=autoregressive)
 
         # Load params
-        params = load_params_dis_array(path, executable, params_aval, config, dummy)
+        params = load_params_dis_array(path, executable, params_aval, config,
+                                       dummy)
         if autoregressive:
-            init_cache = init_cache_dis_array(executable, config, 1, dummy=dummy)
+            init_cache = init_cache_dis_array(executable,
+                                              config,
+                                              1,
+                                              dummy=dummy)
             set_skip_shard_args_check(init_cache)
         executable.sync()
 
@@ -238,7 +260,9 @@ def get_model(model_name,
 
     step_ct = 0
 
-    def inference_func(input_ids, past_key_values, output_attentions=False,
+    def inference_func(input_ids,
+                       past_key_values,
+                       output_attentions=False,
                        output_hidden_states=False):
         nonlocal step_ct
 
@@ -247,27 +271,28 @@ def get_model(model_name,
             step_ct = 0
 
         input_ids_step = input_ids.cpu().numpy()
-        position_ids_step = np.full_like(input_ids_step, step_ct + config.pad + 1)
+        position_ids_step = np.full_like(input_ids_step,
+                                         step_ct + config.pad + 1)
 
         # tic = time.time()
-        output = executable(params, {
-            "input_ids": input_ids_step,
-            "position_ids": position_ids_step,
-            "cache": past_key_values,
-        })
+        output = executable(
+            params, {
+                "input_ids": input_ids_step,
+                "position_ids": position_ids_step,
+                "cache": past_key_values,
+            })
         set_skip_shard_args_check(output.attention_cache)
         # executable.sync()
 
         logits_step = torch.from_numpy(np.array(output.logits)).to(device)
 
         step_ct += 1
-        return InferenceFuncOutput(logits_step,
-                                   output.attention_cache,
-                                   output.hidden_states,
-                                   output.attentions)
+        return InferenceFuncOutput(logits_step, output.attention_cache,
+                                   output.hidden_states, output.attentions)
 
     inference_func_config = InferenceFuncConfig()
-    return WrappedInferenceFunc(inference_func, inference_func_config, executable, transformer_config)
+    return WrappedInferenceFunc(inference_func, inference_func_config,
+                                executable, transformer_config)
 
 
 def set_skip_shard_args_check(attention_cache):

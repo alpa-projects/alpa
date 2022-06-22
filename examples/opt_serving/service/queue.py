@@ -49,9 +49,7 @@ class PriorityQueueRingShardKeyable:
     has a method to invoke for getting a queue_key
     """
 
-    def queue_key(
-        self,
-    ) -> str:
+    def queue_key(self,) -> str:
         pass
 
 
@@ -99,6 +97,8 @@ class PriorityQueueRingShard:
         :param key: the key to be sharded.
         """
         if self.deskewing:
-            deskew_offset = random.randint(0, self.deskew_factor * self.num_shards)
+            deskew_offset = random.randint(0,
+                                           self.deskew_factor * self.num_shards)
             key = f"{deskew_offset}:{key}"
-        return int(hashlib.sha1(key.encode("utf-8")).hexdigest(), 16) % self.num_shards
+        return int(hashlib.sha1(key.encode("utf-8")).hexdigest(),
+                   16) % self.num_shards

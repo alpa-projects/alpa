@@ -26,22 +26,20 @@ class WorkItem:
         return (self.cost, self.uid) == (other.cost, other.uid)
 
     def queue_key(self):
-        return PriorityQueueRingShard.key_from_dictionary(
-            {
-                "temperature": self.data["temperature"],
-                "top_p": self.data["top_p"],
-                "n": self.data["n"],
-            }
-        )
+        return PriorityQueueRingShard.key_from_dictionary({
+            "temperature": self.data["temperature"],
+            "top_p": self.data["top_p"],
+            "n": self.data["n"],
+        })
 
     @staticmethod
     def generate_worker(encoded_prompt, batch_queue, **generation_args):
         request_object = {"input": encoded_prompt, **generation_args}
         ret_queue = queue.Queue()
         enc_len = len(encoded_prompt)
-        cost = enc_len + int(
-            math.ceil((enc_len / 10) ** 2)
-        )  # account for the cost of both linear and attention layers
+        cost = enc_len + int(math.ceil(
+            (enc_len / 10)**
+            2))  # account for the cost of both linear and attention layers
         batch_queue.put(WorkItem(cost, 0, ret_queue, request_object))
         _, result = ret_queue.get()
         return result

@@ -19,7 +19,8 @@ def collate_tokens(
     if pad_to_multiple != 1 and size % pad_to_multiple != 0:
         size = int(((size - 0.1) // pad_to_multiple + 1) * pad_to_multiple)
 
-    batch_size = len(values) if pad_to_bsz is None else max(len(values), pad_to_bsz)
+    batch_size = len(values) if pad_to_bsz is None else max(
+        len(values), pad_to_bsz)
     res = values[0].new(batch_size, size).fill_(pad_idx)
 
     def copy_tensor(src, dst):
@@ -35,7 +36,7 @@ def collate_tokens(
             dst.copy_(src)
 
     for i, v in enumerate(values):
-        copy_tensor(v, res[i][size - len(v) :] if left_pad else res[i][: len(v)])
+        copy_tensor(v, res[i][size - len(v):] if left_pad else res[i][:len(v)])
     return res
 
 
@@ -71,6 +72,7 @@ def collect_filtered(function, iterable, filtered):
             yield el
         else:
             filtered.append(el)
+
 
 def batch_by_size(
     indices,
@@ -110,13 +112,11 @@ def batch_by_size(
     except ImportError:
         raise ImportError(
             "Please build Cython components with: `pip install --editable .` "
-            "or `python setup.py build_ext --inplace`"
-        )
+            "or `python setup.py build_ext --inplace`")
     except ValueError:
         raise ValueError(
             "Please build (or rebuild) Cython components with: `pip install "
-            " --editable .` or `python setup.py build_ext --inplace`."
-        )
+            " --editable .` or `python setup.py build_ext --inplace`.")
 
     # added int() to avoid TypeError: an integer is required
     max_tokens = int(max_tokens) if max_tokens is not None else -1
@@ -126,7 +126,8 @@ def batch_by_size(
     if not isinstance(indices, np.ndarray):
         indices = np.fromiter(indices, dtype=np.int64, count=-1)
 
-    if num_tokens_vec is not None and not isinstance(num_tokens_vec, np.ndarray):
+    if num_tokens_vec is not None and not isinstance(num_tokens_vec,
+                                                     np.ndarray):
         num_tokens_vec = np.fromiter(num_tokens_vec, dtype=np.int64, count=-1)
 
     if fixed_shapes is None:
@@ -148,16 +149,20 @@ def batch_by_size(
             )
     else:
         fixed_shapes = np.array(fixed_shapes, dtype=np.int64)
-        sort_order = np.lexsort(
-            [
-                fixed_shapes[:, 1].argsort(),  # length
-                fixed_shapes[:, 0].argsort(),  # bsz
-            ]
-        )
+        sort_order = np.lexsort([
+            fixed_shapes[:, 1].argsort(),  # length
+            fixed_shapes[:, 0].argsort(),  # bsz
+        ])
         fixed_shapes_sorted = fixed_shapes[sort_order]
-        return batch_fixed_shapes_fast(indices, num_tokens_fn, fixed_shapes_sorted)
+        return batch_fixed_shapes_fast(indices, num_tokens_fn,
+                                       fixed_shapes_sorted)
 
-def _filter_by_size_dynamic(indices, size_fn, max_positions, raise_exception=False):
+
+def _filter_by_size_dynamic(indices,
+                            size_fn,
+                            max_positions,
+                            raise_exception=False):
+
     def compare_leq(a, b):
         return a <= b if not isinstance(a, tuple) else max(a) <= b
 
@@ -169,20 +174,15 @@ def _filter_by_size_dynamic(indices, size_fn, max_positions, raise_exception=Fal
             assert isinstance(idx_size, dict)
             intersect_keys = set(max_positions.keys()) & set(idx_size.keys())
             return all(
-                all(
-                    a is None or b is None or a <= b
-                    for a, b in zip(idx_size[key], max_positions[key])
-                )
-                for key in intersect_keys
-            )
+                all(a is None or b is None or a <= b
+                    for a, b in zip(idx_size[key], max_positions[key]))
+                for key in intersect_keys)
         else:
             # For MultiCorpusSampledDataset, will generalize it later
             if not isinstance(size_fn(idx), Iterable):
                 return all(size_fn(idx) <= b for b in max_positions)
-            return all(
-                a is None or b is None or a <= b
-                for a, b in zip(size_fn(idx), max_positions)
-            )
+            return all(a is None or b is None or a <= b
+                       for a, b in zip(size_fn(idx), max_positions))
 
     ignored = []
     itr = collect_filtered(check_size, indices, ignored)

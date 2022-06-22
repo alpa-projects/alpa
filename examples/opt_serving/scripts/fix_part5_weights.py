@@ -13,26 +13,25 @@ assert shape0 % 8 == 0, "wrong!"
 s = shape0 // 8
 
 problem_positions = [
-(1537, 5172),
-(1537, 5173),
-(1537, 5174),
-(1537, 5175),
-(1537, 5176),
-(1537, 5177),
-(1537, 5178),
-(1537, 5179),
-(1537, 5180),
-(1537, 5181),
-(1537, 5182),
-(1537, 5183),
-(1537, 5184),
-(1537, 5185),
-(1537, 5186),
-(1537, 5187),
-(1537, 5188),
-(1537, 5189),
+    (1537, 5172),
+    (1537, 5173),
+    (1537, 5174),
+    (1537, 5175),
+    (1537, 5176),
+    (1537, 5177),
+    (1537, 5178),
+    (1537, 5179),
+    (1537, 5180),
+    (1537, 5181),
+    (1537, 5182),
+    (1537, 5183),
+    (1537, 5184),
+    (1537, 5185),
+    (1537, 5186),
+    (1537, 5187),
+    (1537, 5188),
+    (1537, 5189),
 ]
-
 
 correct_shard_path = "/home/ubuntu/parax-efs/pycharm/opt/raw_weights/175B/checkpoint_last-model_part-5-shard51.pt"
 correct_shard = torch_load_cpu(correct_shard_path)
@@ -42,13 +41,13 @@ start_idx = 1241838
 for i, p in enumerate(problem_positions):
     dim0, dim1 = p
     correct_val = correct_flat_params[start_idx + i]
-    print(f"position: {p}, wrong value: {full_weight[5*s+dim0, dim1]}, correct value: {correct_val}")
-    full_weight[5*s+dim0, dim1] = correct_val
+    print(
+        f"position: {p}, wrong value: {full_weight[5*s+dim0, dim1]}, correct value: {correct_val}"
+    )
+    full_weight[5 * s + dim0, dim1] = correct_val
 
 with open(os.path.join(save_path, weight_name), "wb") as f:
     np.save(f, full_weight)
-
-
 
 # part5_metadata_path = "/home/ubuntu/parax-efs/pycharm/alpa/examples/opt/verify_part5/metadata_part-5"
 # metadata = torch_load_cpu(part5_metadata_path)

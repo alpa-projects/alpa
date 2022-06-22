@@ -4,6 +4,7 @@ from examples.opt_serving.dataset.base_dataset import BaseDataset
 
 
 class BaseWrapperDataset(BaseDataset):
+
     def __init__(self, dataset):
         super().__init__()
         self.dataset = dataset

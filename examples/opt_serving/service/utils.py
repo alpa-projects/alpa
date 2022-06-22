@@ -32,6 +32,7 @@ def encode_fn(generator, x):
 
 handler = None
 
+
 def build_logger():
     formatter = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
     logging.basicConfig(
@@ -44,13 +45,15 @@ def build_logger():
     logging.getLogger("absl").setLevel("WARNING")
     logger = logging.getLogger("alpa.opt_serving")
     global handler
-    os.makedirs(LOGDIR,exist_ok=True)
-    logfile_path = os.path.join(LOGDIR, f"alpa.opt_serving.log.{datetime.datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}")
+    os.makedirs(LOGDIR, exist_ok=True)
+    logfile_path = os.path.join(
+        LOGDIR,
+        f"alpa.opt_serving.log.{datetime.datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}"
+    )
     if handler == None:
-        handler = logging.handlers.RotatingFileHandler(
-            logfile_path,
-            maxBytes=1024 * 1024,
-            backupCount=100000)
+        handler = logging.handlers.RotatingFileHandler(logfile_path,
+                                                       maxBytes=1024 * 1024,
+                                                       backupCount=100000)
         handler.setFormatter(logging.Formatter(formatter))
     logger.addHandler(handler)
 

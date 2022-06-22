@@ -23,7 +23,6 @@ import numpy as np
 import ray
 from tqdm import tqdm
 
-
 ACT2FN = {
     "gelu": partial(nn.gelu, approximate=False),
     "relu": nn.relu,
@@ -103,11 +102,10 @@ class OPTEmbeddings(nn.Module):
             dtype=self.dtype,
         ) if self.config.decoder_input_dim != self.config.decoder_embed_dim else None
 
-    def __call__(self,
-                 input_ids,
-                 position_ids):
+    def __call__(self, input_ids, position_ids):
         # Embed
-        inputs_embeds = self.embed_scale * self.word_embeddings(input_ids.astype("i4"))
+        inputs_embeds = self.embed_scale * self.word_embeddings(
+            input_ids.astype("i4"))
         if self.project_in_dim is not None:
             inputs_embeds = self.project_in_dim(inputs_embeds)
         position_embeds = self.position_embeddings(position_ids.astype("i4"))
@@ -146,29 +144,33 @@ class OPTSelfAttention(nn.Module):
                                                            3,
                                                            axis=3)
 
-        query_states = query_states.reshape(hidden_states.shape[:2] +
-                                            (self.config.decoder_attention_heads,
-                                             head_dim))
-        value_states = value_states.reshape(hidden_states.shape[:2] +
-                                            (self.config.decoder_attention_heads,
-                                             head_dim))
+        query_states = query_states.reshape(hidden_states.shape[:2] + (
+            self.config.decoder_attention_heads, head_dim))
+        value_states = value_states.reshape(hidden_states.shape[:2] + (
+            self.config.decoder_attention_heads, head_dim))
         key_states = key_states.reshape(hidden_states.shape[:2] +
                                         (self.config.decoder_attention_heads,
                                          head_dim))
 
         if attention_cache is None:
-            attention_bias = jnp.expand_dims(jnp.triu(jnp.full(
-                (query_states.shape[1], key_states.shape[1]), -1e10), 1), (0, 1))
+            attention_bias = jnp.expand_dims(
+                jnp.triu(
+                    jnp.full((query_states.shape[1], key_states.shape[1]),
+                             -1e10), 1), (0, 1))
         else:
             # attention_bias = jnp.expand_dims(jnp.triu(jnp.full(
             #     (query_states.shape[1], key_states.shape[1]), -1e10), 1), (0, 1))
             cache_key, cache_value, cache_index = attention_cache
             cache_index_ = cache_index[0]
-            key_states = lax.dynamic_update_slice(cache_key, key_states, (0, cache_index_, 0, 0))
-            value_states = lax.dynamic_update_slice(cache_value, value_states, (0, cache_index_, 0, 0))
+            key_states = lax.dynamic_update_slice(cache_key, key_states,
+                                                  (0, cache_index_, 0, 0))
+            value_states = lax.dynamic_update_slice(cache_value, value_states,
+                                                    (0, cache_index_, 0, 0))
             num_updated_cache_vectors = query_states.shape[1]
             max_length = key_states.shape[1]
-            attention_bias = (jnp.arange(max_length) >= cache_index_ + num_updated_cache_vectors).astype(self.dtype) * -1e10
+            attention_bias = (jnp.arange(max_length) >=
+                              cache_index_ + num_updated_cache_vectors).astype(
+                                  self.dtype) * -1e10
             attention_bias = attention_bias[None, None, None, :]
             attention_cache = key_states, value_states, cache_index + num_updated_cache_vectors
         attn_weights = nn.attention.dot_product_attention_weights(
@@ -184,7 +186,8 @@ class OPTSelfAttention(nn.Module):
         attn_output = attn_output.reshape(attn_output.shape[:2] + (-1,))
 
         outputs = (attn_output, attention_cache,
-                   attn_weights) if output_attentions else (attn_output, attention_cache)
+                   attn_weights) if output_attentions else (attn_output,
+                                                            attention_cache)
         return outputs
 
 
@@ -288,9 +291,7 @@ class OPTTransformerLayerCollection(nn.Module):
 
     def setup(self):
         self.layers = [
-            OPTTransformerLayer(self.config,
-                                name=str(i),
-                                dtype=self.dtype)
+            OPTTransformerLayer(self.config, name=str(i), dtype=self.dtype)
             for i in range(self.config.decoder_layers)
         ]
 
@@ -327,7 +328,7 @@ class OPTTransformerLayerCollection(nn.Module):
                                   attention_cache=layer_attention_cache)
             hidden_states = layer_outputs[0]
             if attention_cache is not None:
-                new_attention_cache += (layer_outputs[1], )
+                new_attention_cache += (layer_outputs[1],)
             if output_attentions:
                 all_attentions += (layer_outputs[2],)
 
@@ -352,7 +353,8 @@ class OPTTransformerModule(nn.Module):
     def setup(self):
         assert self.config.decoder_normalize_before
         self.embeddings = OPTEmbeddings(self.config, dtype=self.dtype)
-        self.encoder = OPTTransformerLayerCollection(self.config, dtype=self.dtype)
+        self.encoder = OPTTransformerLayerCollection(self.config,
+                                                     dtype=self.dtype)
         if self.config.version > 2:
             self.layer_norm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
                                            dtype=self.dtype)
@@ -366,8 +368,7 @@ class OPTTransformerModule(nn.Module):
         return_dict: bool = True,
         attention_cache=None,
     ):
-        hidden_states = self.embeddings(input_ids,
-                                        position_ids)
+        hidden_states = self.embeddings(input_ids, position_ids)
         outputs = self.encoder(
             hidden_states,
             output_attentions=output_attentions,
@@ -523,7 +524,8 @@ def init_model_aval(config):
     input_ids = jax.core.ShapedArray((1, 128), jnp.int32)
     position_ids = jax.core.ShapedArray((1, 128), jnp.int32)
     params = jax.eval_shape(model.init, rngkey, input_ids, position_ids)
-    params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, config.dtype), params)
+    params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, config.dtype),
+                          params)
     return model, params
 
 
@@ -535,10 +537,10 @@ def init_cache_aval(config, batch_size):
         layer_cache = (
             jax.core.ShapedArray((batch_size, config.max_target_positions,
                                   config.decoder_attention_heads, head_dim),
-                                  config.dtype),
+                                 config.dtype),
             jax.core.ShapedArray((batch_size, config.max_target_positions,
                                   config.decoder_attention_heads, head_dim),
-                                  config.dtype),
+                                 config.dtype),
             jax.core.ShapedArray((batch_size,), jnp.int32),
         )
         all_cache.append(layer_cache)
@@ -553,11 +555,11 @@ def init_cache_np(config, batch_size):
     for i in range(config.decoder_layers):
         layer_cache = (
             np.zeros((batch_size, config.max_target_positions,
-                       config.decoder_attention_heads, head_dim),
-                       dtype=np_dtype),
+                      config.decoder_attention_heads, head_dim),
+                     dtype=np_dtype),
             np.zeros((batch_size, config.max_target_positions,
-                       config.decoder_attention_heads, head_dim),
-                       dtype=np_dtype),
+                      config.decoder_attention_heads, head_dim),
+                     dtype=np_dtype),
             np.zeros((batch_size,), np.int32),
         )
         all_cache.append(layer_cache)
@@ -571,9 +573,7 @@ def build_position_ids(input_ids, padding_idx):
 
 
 def inference_step_no_cache(params, batch, apply_func):
-    logits = apply_func(params,
-                        batch["input_ids"],
-                        batch["position_ids"])[0]
+    logits = apply_func(params, batch["input_ids"], batch["position_ids"])[0]
     return logits
 
 
@@ -618,15 +618,18 @@ def load_params_np(params, path, config, dummy=False):
         wk = load_array(load_prefix + "self_attn.k_proj.weight")
         wv = load_array(load_prefix + "self_attn.v_proj.weight")
         dim = wq.shape[-1]
-        w_qvk = np.concatenate([wq, wv, wk], axis=0).reshape((3, -1, dim)).transpose([2, 1, 0]).reshape((dim, -1))
+        w_qvk = np.concatenate([wq, wv, wk], axis=0).reshape(
+            (3, -1, dim)).transpose([2, 1, 0]).reshape((dim, -1))
         load_param(param_prefix + "attention.self.qvk_combined.kernel", w_qvk)
         bq = load_array(load_prefix + "self_attn.q_proj.bias")
         bk = load_array(load_prefix + "self_attn.k_proj.bias")
         bv = load_array(load_prefix + "self_attn.v_proj.bias")
-        b_qvk = np.concatenate([bq, bv, bk], axis=0).reshape((3, dim)).transpose([1, 0]).reshape((-1,))
+        b_qvk = np.concatenate([bq, bv, bk], axis=0).reshape(
+            (3, dim)).transpose([1, 0]).reshape((-1,))
         load_param(param_prefix + "attention.self.qvk_combined.bias", b_qvk)
-        load_param(param_prefix + "attention.dense.kernel",
-                   np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))
+        load_param(
+            param_prefix + "attention.dense.kernel",
+            np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))
         load_param(param_prefix + "attention.dense.bias",
                    load_array(load_prefix + "self_attn.out_proj.bias"))
         load_param(param_prefix + "attention.layer_norm.scale",
@@ -688,41 +691,51 @@ def get_pipeshard_executable(config,
                                     pipeline_schedule="inference")
 
     if autoregressive:
+
         @alpa.parallelize(batch_argnums=(1,), method=method)
         @alpa.manual_layer_construction
         def inference_step_with_cache(params, batch):
-            output = model.apply(params,
-                                 batch["input_ids"],
-                                 batch["position_ids"],
-                                 attention_cache=batch["cache"],
-                                 output_attentions=support_output_attentions,
-                                 output_hidden_states=support_output_hidden_states)
+            output = model.apply(
+                params,
+                batch["input_ids"],
+                batch["position_ids"],
+                attention_cache=batch["cache"],
+                output_attentions=support_output_attentions,
+                output_hidden_states=support_output_hidden_states)
             return output
 
         alpa.global_config.always_donate_micro_batch_vars = False
-        executable = inference_step_with_cache.get_executable(params, {
-            "input_ids": jax.core.ShapedArray((1, 1), jnp.int32),
-            "position_ids": jax.core.ShapedArray((1, 1), jnp.int32),
-            "cache": init_cache_aval(config, 1),
-        })
+        executable = inference_step_with_cache.get_executable(
+            params, {
+                "input_ids": jax.core.ShapedArray((1, 1), jnp.int32),
+                "position_ids": jax.core.ShapedArray((1, 1), jnp.int32),
+                "cache": init_cache_aval(config, 1),
+            })
     else:
+
         @alpa.parallelize(batch_argnums=(1,), method=method)
         @alpa.manual_layer_construction
         def inference_step(params, batch):
-            output = model.apply(params,
-                                 batch["input_ids"],
-                                 batch["position_ids"],
-                                 output_attentions=support_output_attentions,
-                                 output_hidden_states=support_output_hidden_states)
+            output = model.apply(
+                params,
+                batch["input_ids"],
+                batch["position_ids"],
+                output_attentions=support_output_attentions,
+                output_hidden_states=support_output_hidden_states)
             return output
 
         assert batch_size % num_micro_batches == 0, "cannot divide batch_size by num_micro_batches"
         micro_batch_size = batch_size // num_micro_batches
 
-        executable = inference_step.get_executable(params, {
-            "input_ids": jax.core.ShapedArray((batch_size, decoding_length_per_step), jnp.int32),
-            "position_ids": jax.core.ShapedArray((batch_size, decoding_length_per_step), jnp.int32),
-        })
+        executable = inference_step.get_executable(
+            params, {
+                "input_ids":
+                    jax.core.ShapedArray(
+                        (batch_size, decoding_length_per_step), jnp.int32),
+                "position_ids":
+                    jax.core.ShapedArray(
+                        (batch_size, decoding_length_per_step), jnp.int32),
+            })
 
     # Dump IR for debugging
     os.system("mkdir -p tmp")
@@ -736,8 +749,9 @@ def get_pipeshard_executable(config,
     return executable, params
 
 
-def load_opt_params_worker_func(self, path, prefix_to_idx, config,
-                                shapes, uuids, indices, mesh_ids):
+def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
+                                uuids, indices, mesh_ids):
+
     def load_array(key):
         return np.load(os.path.join(path, key))
 
@@ -780,15 +794,18 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config,
         wk = load_array(load_prefix + "self_attn.k_proj.weight")
         wv = load_array(load_prefix + "self_attn.v_proj.weight")
         dim = wq.shape[-1]
-        w_qvk = np.concatenate([wq, wv, wk], axis=0).reshape((3, -1, dim)).transpose([2, 1, 0]).reshape((dim, -1))
+        w_qvk = np.concatenate([wq, wv, wk], axis=0).reshape(
+            (3, -1, dim)).transpose([2, 1, 0]).reshape((dim, -1))
         load_param(param_prefix + "attention.self.qvk_combined.kernel", w_qvk)
         bq = load_array(load_prefix + "self_attn.q_proj.bias")
         bk = load_array(load_prefix + "self_attn.k_proj.bias")
         bv = load_array(load_prefix + "self_attn.v_proj.bias")
-        b_qvk = np.concatenate([bq, bv, bk], axis=0).reshape((3, dim)).transpose([1, 0]).reshape((-1,))
+        b_qvk = np.concatenate([bq, bv, bk], axis=0).reshape(
+            (3, dim)).transpose([1, 0]).reshape((-1,))
         load_param(param_prefix + "attention.self.qvk_combined.bias", b_qvk)
-        load_param(param_prefix + "attention.dense.kernel",
-                   np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))
+        load_param(
+            param_prefix + "attention.dense.kernel",
+            np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))
         load_param(param_prefix + "attention.dense.bias",
                    load_array(load_prefix + "self_attn.out_proj.bias"))
         load_param(param_prefix + "attention.layer_norm.scale",
@@ -810,7 +827,8 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config,
                    load_array(load_prefix + "final_layer_norm.bias"))
 
 
-setattr(MeshHostWorker, "load_opt_params_worker_func", load_opt_params_worker_func)
+setattr(MeshHostWorker, "load_opt_params_worker_func",
+        load_opt_params_worker_func)
 
 
 def load_params_dis_array(path, executable, params_aval, config, dummy=False):
@@ -827,6 +845,7 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
 
     prefix_to_flat_idx = {}
     ct = itertools.count()
+
     def dfs(dict_tree, result_dict, cur_prefix):
         if isinstance(dict_tree, (dict, flax.core.FrozenDict)):
             for key in dict_tree.keys():
@@ -834,6 +853,7 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
                     cur_prefix + ("." if cur_prefix else "") + key)
         else:
             result_dict[cur_prefix] = next(ct)
+
     dfs(params_aval, prefix_to_flat_idx, "")
 
     flat_infos, in_tree = tree_flatten(params_info)
@@ -867,7 +887,8 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
             flat_uuids.append(tuple(tmp_uuids))
             flat_indices.append(tuple(tmp_indices))
             flat_mesh_ids.append(tuple(tmp_mesh_ids))
-            flat_arrays.append(ReplicatedDistributedArray(tmp_meshes, tmp_arrays))
+            flat_arrays.append(
+                ReplicatedDistributedArray(tmp_meshes, tmp_arrays))
         else:
             mesh, spec = info.get_info()
             indices = pxla.spec_to_indices(aval.shape, spec)
@@ -876,13 +897,15 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
             flat_uuids.append([buf_uuids])
             flat_indices.append([indices])
             flat_mesh_ids.append([mesh.mesh_id])
-            flat_arrays.append(DistributedArray(mesh, aval, spec, buf_refs, indices))
+            flat_arrays.append(
+                DistributedArray(mesh, aval, spec, buf_refs, indices))
 
     for m in executable.mesh_group.meshes:
         for w in m.workers:
-            w.load_opt_params_worker_func.remote(
-                path, prefix_to_flat_idx, config,
-                flat_shapes, flat_uuids, flat_indices, flat_mesh_ids)
+            w.load_opt_params_worker_func.remote(path, prefix_to_flat_idx,
+                                                 config, flat_shapes,
+                                                 flat_uuids, flat_indices,
+                                                 flat_mesh_ids)
 
     return flat_arrays
 

@@ -1,6 +1,7 @@
 import sys
 from setuptools import Extension, find_packages, setup
 
+
 class NumpyExtension(Extension):
     """Source: https://stackoverflow.com/a/54128391"""
 
@@ -18,11 +19,11 @@ class NumpyExtension(Extension):
     def include_dirs(self, dirs):
         self.__include_dirs = dirs
 
+
 if sys.platform == "darwin":
     extra_compile_args = ["-stdlib=libc++", "-O3"]
 else:
     extra_compile_args = ["-std=c++11", "-O3"]
-
 
 extensions = [
     NumpyExtension(
@@ -39,7 +40,6 @@ extensions = [
     )
 ]
 
-
 cmdclass = {}
 
 try:
@@ -51,8 +51,4 @@ try:
 except ImportError:
     pass
 
-
-setup(
-    ext_modules=extensions,
-    cmdclass=cmdclass
-)
+setup(ext_modules=extensions, cmdclass=cmdclass)

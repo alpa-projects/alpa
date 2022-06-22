@@ -5,6 +5,7 @@ from examples.opt_serving.dataset import BaseWrapperDataset
 
 
 class NumelDataset(BaseWrapperDataset):
+
     def __init__(self, dataset, reduce=False):
         super().__init__(dataset)
         self.reduce = reduce

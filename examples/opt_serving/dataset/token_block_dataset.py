@@ -8,8 +8,7 @@ from examples.opt_serving.dataset import BaseDataset
 
 
 def best_fitting_int_dtype(
-    max_int_to_represent,
-) -> Union[np.uint16, np.uint32, np.int64]:
+    max_int_to_represent,) -> Union[np.uint16, np.uint32, np.int64]:
 
     if max_int_to_represent is None:
         return np.uint32  # Safe guess
@@ -71,8 +70,7 @@ class TokenBlockDataset(BaseDataset):
 
         assert len(dataset) == len(sizes)
         _sizes, block_to_dataset_index, slice_indices = self._build_slice_indices(
-            sizes, break_mode, document_sep_len, block_size
-        )
+            sizes, break_mode, document_sep_len, block_size)
         if use_plasma_view:
             # plasma_id = (block_size, document_sep_len, str(break_mode), len(dataset))
             # self._slice_indices = plasma_utils.PlasmaView(
@@ -100,9 +98,8 @@ class TokenBlockDataset(BaseDataset):
             self._block_to_dataset_index = block_to_dataset_index
 
     @staticmethod
-    def _build_slice_indices(
-        sizes, break_mode, document_sep_len, block_size
-    ) -> Tuple[np.ndarray]:
+    def _build_slice_indices(sizes, break_mode, document_sep_len,
+                             block_size) -> Tuple[np.ndarray]:
         """Use token_block_utils_fast to build arrays for indexing into self.dataset"""
         try:
             # from metaseq.data.token_block_utils_fast import (
@@ -116,8 +113,7 @@ class TokenBlockDataset(BaseDataset):
         except ImportError:
             raise ImportError(
                 "Please build Cython components with: `pip install --editable .` "
-                "or `python setup.py build_ext --inplace`"
-            )
+                "or `python setup.py build_ext --inplace`")
 
         if isinstance(sizes, list):
             sizes = np.array(sizes, dtype=np.int64)
@@ -132,9 +128,8 @@ class TokenBlockDataset(BaseDataset):
         if break_mode == "eos" and block_size is None:
             block_size = 0
 
-        slice_indices = _get_slice_indices_fast(
-            sizes, str(break_mode), block_size, document_sep_len
-        )
+        slice_indices = _get_slice_indices_fast(sizes, str(break_mode),
+                                                block_size, document_sep_len)
         _sizes = slice_indices[:, 1] - slice_indices[:, 0]
 
         # build index mapping block indices to the underlying dataset indices
@@ -143,9 +138,8 @@ class TokenBlockDataset(BaseDataset):
             block_to_dataset_index = np.stack(
                 [
                     np.arange(len(sizes)),  # starting index in dataset
-                    np.zeros(
-                        len(sizes), dtype=np.compat.long
-                    ),  # starting offset within starting index
+                    np.zeros(len(sizes), dtype=np.compat.long
+                            ),  # starting offset within starting index
                     np.arange(len(sizes)),  # ending index in dataset
                 ],
                 1,
@@ -160,7 +154,8 @@ class TokenBlockDataset(BaseDataset):
         slice_indices_dtype = best_fitting_int_dtype(num_tokens)
         slice_indices = slice_indices.astype(slice_indices_dtype)
         _sizes = _sizes.astype(size_dtype)
-        block_to_dataset_index = block_to_dataset_index.astype(slice_indices_dtype)
+        block_to_dataset_index = block_to_dataset_index.astype(
+            slice_indices_dtype)
         return _sizes, block_to_dataset_index, slice_indices
 
     @property
@@ -183,11 +178,11 @@ class TokenBlockDataset(BaseDataset):
         return self.dataset.attr(attr, start_ds_idx)
 
     def __getitem__(self, index):
-        start_ds_idx, start_offset, end_ds_idx = self.block_to_dataset_index[index]
+        start_ds_idx, start_offset, end_ds_idx = self.block_to_dataset_index[
+            index]
 
         buffer = torch.cat(
-            [self.dataset[idx] for idx in range(start_ds_idx, end_ds_idx + 1)]
-        )
+            [self.dataset[idx] for idx in range(start_ds_idx, end_ds_idx + 1)])
         slice_s, slice_e = self.slice_indices[index]
         length = slice_e - slice_s
         s, e = start_offset, start_offset + length
@@ -198,16 +193,16 @@ class TokenBlockDataset(BaseDataset):
             # *source* is shifted right by 1 (maybe left-padded with eos)
             # *past_target* is shifted right by 2 (left-padded as needed)
             if s == 0:
-                source = torch.cat([item.new([self.eos]), buffer[0 : e - 1]])
+                source = torch.cat([item.new([self.eos]), buffer[0:e - 1]])
                 past_target = torch.cat(
-                    [item.new([self.pad, self.eos]), buffer[0 : e - 2]]
-                )
+                    [item.new([self.pad, self.eos]), buffer[0:e - 2]])
             else:
-                source = buffer[s - 1 : e - 1]
+                source = buffer[s - 1:e - 1]
                 if s == 1:
-                    past_target = torch.cat([item.new([self.eos]), buffer[0 : e - 2]])
+                    past_target = torch.cat(
+                        [item.new([self.eos]), buffer[0:e - 2]])
                 else:
-                    past_target = buffer[s - 2 : e - 2]
+                    past_target = buffer[s - 2:e - 2]
 
             return source, item, past_target
 
@@ -221,11 +216,8 @@ class TokenBlockDataset(BaseDataset):
         return getattr(self.dataset, "supports_prefetch", False)
 
     def prefetch(self, indices):
-        self.dataset.prefetch(
-            {
-                ds_idx
-                for index in indices
-                for start_ds_idx, _, end_ds_idx in [self.block_to_dataset_index[index]]
-                for ds_idx in range(start_ds_idx, end_ds_idx + 1)
-            }
-        )
+        self.dataset.prefetch({
+            ds_idx for index in indices for start_ds_idx, _, end_ds_idx in
+            [self.block_to_dataset_index[index]]
+            for ds_idx in range(start_ds_idx, end_ds_idx + 1)
+        })

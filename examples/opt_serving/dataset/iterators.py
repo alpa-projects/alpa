@@ -12,7 +12,6 @@ import numpy as np
 
 from . import data_utils
 
-
 logger = logging.getLogger(__name__)
 
 # Object used by _background_consumer to signal the source is exhausted
@@ -96,6 +95,7 @@ class CountingIterator(object):
         else:
             self.iterable = itertools.islice(self.iterable, propagated_take)
 
+
 class ShardedIterator(CountingIterator):
     """A sharded wrapper around an iterable, padded to length.
 
@@ -127,6 +127,7 @@ class ShardedIterator(CountingIterator):
             start=int(math.ceil(getattr(iterable, "n", 0) / float(num_shards))),
             total=sharded_len,
         )
+
 
 # class EpochBatchIterating(object):
 #     def __len__(self) -> int:
@@ -234,9 +235,8 @@ class EpochBatchIterator:
         self.dataset = dataset
         self.collate_fn = collate_fn
         self.batch_sampler = batch_sampler
-        self._frozen_batches = (
-            tuple(batch_sampler) if not callable(batch_sampler) else None
-        )
+        self._frozen_batches = (tuple(batch_sampler)
+                                if not callable(batch_sampler) else None)
         self.seed = seed
         self.num_shards = num_shards
         self.shard_id = shard_id
@@ -257,7 +257,8 @@ class EpochBatchIterator:
     @property
     def frozen_batches(self):
         if self._frozen_batches is None:
-            self._frozen_batches = tuple(self.batch_sampler(self.dataset, self.epoch))
+            self._frozen_batches = tuple(
+                self.batch_sampler(self.dataset, self.epoch))
         return self._frozen_batches
 
     @property
@@ -267,11 +268,11 @@ class EpochBatchIterator:
                 "The dataset is empty. This could indicate "
                 "that all elements in the dataset have been skipped. "
                 "Try increasing the max number of allowed tokens or using "
-                "a larger dataset."
-            )
+                "a larger dataset.")
 
         if getattr(self.dataset, "supports_fetch_outside_dataloader", True):
-            return self.collate_fn([self.dataset[i] for i in self.frozen_batches[0]])
+            return self.collate_fn(
+                [self.dataset[i] for i in self.frozen_batches[0]])
         else:
             return "DUMMY"
 
@@ -292,9 +293,10 @@ class EpochBatchIterator:
         else:
             return self.epoch
 
-    def next_epoch_itr(
-        self, shuffle=True, fix_batches_to_gpus=False, set_dataset_epoch=True
-    ):
+    def next_epoch_itr(self,
+                       shuffle=True,
+                       fix_batches_to_gpus=False,
+                       set_dataset_epoch=True):
         """Return a new iterator over the dataset.
 
         Args:
@@ -379,9 +381,12 @@ class EpochBatchIterator:
         else:
             self._next_epoch_itr = None
 
-    def _get_iterator_for_epoch(
-        self, epoch, shuffle, fix_batches_to_gpus=False, offset=0
-    ):
+    def _get_iterator_for_epoch(self,
+                                epoch,
+                                shuffle,
+                                fix_batches_to_gpus=False,
+                                offset=0):
+
         def shuffle_batches(batches, seed):
             with data_utils.numpy_seed(seed):
                 np.random.shuffle(batches)
@@ -394,26 +399,33 @@ class EpochBatchIterator:
                 batches = shuffle_batches(list(batches), self.seed + epoch)
 
             batches = list(
-                ShardedIterator(batches, self.num_shards, self.shard_id, fill_value=[])
-            )
+                ShardedIterator(batches,
+                                self.num_shards,
+                                self.shard_id,
+                                fill_value=[]))
             self.dataset.prefetch([i for s in batches for i in s])
 
             if shuffle and fix_batches_to_gpus:
-                batches = shuffle_batches(batches, self.seed + epoch + self.shard_id)
+                batches = shuffle_batches(batches,
+                                          self.seed + epoch + self.shard_id)
         else:
             if shuffle:
-                batches = shuffle_batches(list(self.frozen_batches), self.seed + epoch)
+                batches = shuffle_batches(list(self.frozen_batches),
+                                          self.seed + epoch)
             else:
                 batches = self.frozen_batches
             batches = list(
-                ShardedIterator(batches, self.num_shards, self.shard_id, fill_value=[])
-            )
+                ShardedIterator(batches,
+                                self.num_shards,
+                                self.shard_id,
+                                fill_value=[]))
 
         if offset > 0 and offset >= len(batches):
             return None
 
         if self.num_workers > 0:
-            os.environ["PYTHONWARNINGS"] = "ignore:semaphore_tracker:UserWarning"
+            os.environ[
+                "PYTHONWARNINGS"] = "ignore:semaphore_tracker:UserWarning"
 
         # Create data loader
         itr = torch.utils.data.DataLoader(
@@ -436,11 +448,14 @@ class EpochBatchIterator:
             # of whether it is a full batch or not.
             total_num_itrs = len(batches) - 1
             itr.take(total_num_itrs)
-            logger.info(f"skip final residual batch, total_num_itrs = {total_num_itrs}")
+            logger.info(
+                f"skip final residual batch, total_num_itrs = {total_num_itrs}")
 
         return itr
 
+
 class BackgroundConsumer(Thread):
+
     def __init__(self, queue, source, max_len):
         Thread.__init__(self)
 
@@ -464,7 +479,9 @@ class BackgroundConsumer(Thread):
         except Exception as e:
             self._queue.put(e)
 
+
 class BufferedIterator(object):
+
     def __init__(self, size, iterable):
         self._queue = queue.Queue(size)
         self._iterable = iterable
@@ -505,15 +522,12 @@ class BufferedIterator(object):
         # Notify the user if there is a data loading bottleneck
         if self._queue.qsize() < min(2, max(1, self._queue.maxsize // 2)):
             if time.time() - self.start_time > 5 * 60:
-                if (
-                    self.warning_time is None
-                    or time.time() - self.warning_time > 15 * 60
-                ):
+                if (self.warning_time is None or
+                        time.time() - self.warning_time > 15 * 60):
                     logger.debug(
                         "Data loading buffer is empty or nearly empty. This may "
                         "indicate a data loading bottleneck, and increasing the "
-                        "number of workers (--num-workers) may help."
-                    )
+                        "number of workers (--num-workers) may help.")
                     self.warning_time = time.time()
 
         # Get next example

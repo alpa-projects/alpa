@@ -167,14 +167,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts, num_devices_per_hos
     else:
         compilation_times = None
 
-    # Dump hlo ir for debugging
-    stage_hlo_texts = executable.get_hlo_text()
-    for i in range(len(stage_hlo_texts)):
-        with open(f"tmp/stage_{i}.hlo", "w") as fout:
-            fout.write(stage_hlo_texts[i])
-    with open(f"tmp/resharding_tasks.txt", "w") as fout:
-        fout.write(executable.print_resharding_tasks())
-
+    executable.dump_debug_info("tmp")
     executable.sync()
     print_used_time("Compile (worker)")
 

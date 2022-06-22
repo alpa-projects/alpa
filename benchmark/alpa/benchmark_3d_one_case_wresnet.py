@@ -235,17 +235,7 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
         compilation_times = None
 
     # Dump hlo ir for debugging
-    if isinstance(method, PipeshardParallel):
-        stage_hlo_texts = executable.get_hlo_text()
-        for i in range(len(stage_hlo_texts)):
-            with open(f"tmp/stage_{i}.hlo", "w") as fout:
-                fout.write(stage_hlo_texts[i])
-        with open(f"tmp/resharding_tasks.txt", "w") as fout:
-            fout.write(executable.print_resharding_tasks())
-    else:
-        hlo_text = executable.get_hlo_text()
-        with open("tmp/last_2d_wresnet.hlo", "w") as fout:
-            fout.write(hlo_text)
+    executable.dump_debug_info("tmp")
     executable.sync()
     print_used_time("Compile (workers)")
 

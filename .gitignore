@@ -42,9 +42,8 @@ examples/opt_serving/tmp/
 *.tsv
 *.hlo
 
-# Profiling result cache
-*.prof.pkl
-tests/*.json
+# Tests temp files
+tests/tmp
 
 # Dataset
 benchmark/deepspeed/data

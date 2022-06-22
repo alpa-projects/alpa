@@ -156,9 +156,8 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case, niter
     # Check sharding strategy
     alloc_mem = executable.get_total_allocation_size()
     ilp_objective = executable.auto_sharding_objective or 0.0
+    executable.dump_debug_info("tmp")
     hlo_text = executable.get_hlo_text()
-    with open("tmp/last_2d_gpt.hlo", "w") as fout:
-        fout.write(hlo_text)
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
         count_communication_primitives(hlo_text)
 

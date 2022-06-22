@@ -347,8 +347,10 @@ class PipeshardDriverExecutable:
 
 
 class PipeshardMeshWorkerExecuable:
-    """An executable that executes static pipeline runtime instructions on a
-    worker."""
+    """
+    An executable that executes static pipeline runtime instructions on a
+    worker.
+    """
 
     def __init__(self, worker: MeshHostWorker, uuid: int,
                  instructions: Sequence[PipelineInstruction],

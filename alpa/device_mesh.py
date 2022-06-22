@@ -1260,17 +1260,22 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             slow_path = False
 
             if is_batch_var:
-                slow_path = True
-                if not isinstance(arg, ShapedArray):
-                    arg = np.asarray(arg)
-                bufs = _shard_array(arg, self, indices, num_micro_batches)
-                bufs = np.array(bufs).reshape(
-                    (self.num_hosts, self.num_devices_per_host,
-                     num_micro_batches))
-                bufs = bufs.transpose([2, 0, 1]).reshape(
-                    (num_micro_batches,
-                     self.num_hosts * self.num_devices_per_host))
-                ret_bufs.append(bufs)
+                if (isinstance(arg, DistributedArray) and
+                        arg.skip_shard_args_check is True):
+                    assert num_micro_batches == 1
+                    ret_bufs.append([arg.remote_buffers])
+                else:
+                    slow_path = True
+                    if not isinstance(arg, ShapedArray):
+                        arg = np.asarray(arg)
+                    bufs = _shard_array(arg, self, indices, num_micro_batches)
+                    bufs = np.array(bufs).reshape(
+                        (self.num_hosts, self.num_devices_per_host,
+                         num_micro_batches))
+                    bufs = bufs.transpose([2, 0, 1]).reshape(
+                        (num_micro_batches,
+                         self.num_hosts * self.num_devices_per_host))
+                    ret_bufs.append(bufs)
             else:
                 if (isinstance(arg, DistributedArray) and
                         arg.device_mesh == self and arg.indices == indices):
@@ -1338,7 +1343,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def delete_remote_executable(self, exec_uuid: int):
         """Delete remote worker executables of a driver executable."""
-        if self.workers is None or not ray.is_initialized():
+        if ray is None or self.workers is None or not ray.is_initialized():
             return
 
         for w in self.workers:
@@ -1438,6 +1443,7 @@ class DistributedArray:
         self._npy_value = None
         self._one_replica_buffer_indices = None
         self._fetched_np_buffers = None
+        self.skip_shard_args_check = False
 
     def block_until_ready(self):
         """Block until all remote buffers of this array are ready."""
@@ -1890,9 +1896,10 @@ class PhysicalDeviceMeshGroup:
         rets = []
 
         for info, arg in zip(load_infos, args):
+            aval = info.aval
             if info.is_replicated():
                 meshes, arrays = [], []
-                for aval, mesh, spec in info.get_info():
+                for mesh, spec in info.get_info():
                     meshes.append(mesh)
                     indices = pxla.spec_to_indices(aval.shape, spec)
                     arrays.append(
@@ -1900,7 +1907,7 @@ class PhysicalDeviceMeshGroup:
                                                   (arg,))[0])
                 rets.append(ReplicatedDistributedArray(meshes, arrays))
             else:
-                aval, mesh, spec = info.get_info()
+                mesh, spec = info.get_info()
                 indices = pxla.spec_to_indices(aval.shape, spec)
                 rets.append(
                     mesh.shard_args_to_arrays((aval,), (indices,), (spec,),

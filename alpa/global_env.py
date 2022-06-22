@@ -23,12 +23,8 @@ class GlobalConfig:
         self.shard_parallel_sync_for_timer = False
 
         ########## Options of pipeline_parallel ##########
-        # Whether to debug with local runtime. The local runtime checks
-        # correctness of stage construction and other graph level operations.
-        self.debug_with_local_runtime = False
         # Whether to debug with pipeshard runtime. If turned on, no physical
         # resource is required until launching PipeshardExecutable.
-        # TODO(yonghao): deprecate it later.
         self.debug_with_pipeshard_runtime = False
         # Whether to use the whole cluster for stage profiling. If not, only
         # use the given mesh.
@@ -40,6 +36,7 @@ class GlobalConfig:
         self.profile_maximum_retry = 2
         # Whether to forcely set stage construction's submesh choices
         self.overwrite_submesh_choices = None
+        self.always_donate_micro_batch_vars = True
 
         ########## Options of pipeline runtime ##########
         self.pipeline_check_alive = True
@@ -50,7 +47,6 @@ class GlobalConfig:
         # each stage. Disabling it helps debug.
         self.pipeline_distributed_compile = True
         self.pipeline_use_signal_send_recv = False
-        self.precompile_resharding_tasks = True
         self.use_scatter_gather = True
         self.eagerly_create_communicators = True
         self.use_memzero_for_gradient_accumulation = False

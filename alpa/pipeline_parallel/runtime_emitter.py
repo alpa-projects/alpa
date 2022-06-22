@@ -712,7 +712,9 @@ class PipelineInstEmitter:
 
             mesh_arg_lists[mesh_idx] = mesh_arg_list
             delete_after_run = [
-                var in donated_invar_set or var in global_batch_invar_set
+                var in donated_invar_set or
+                (var in global_batch_invar_set and
+                 global_config.always_donate_micro_batch_vars)
                 for var, _ in mesh_arg_list
             ]
             donate_invars.append(delete_after_run)

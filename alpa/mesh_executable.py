@@ -450,7 +450,9 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         Dump intermediate representations and other informations for debugging.
         """
         os.makedirs(folder, exist_ok=True)
-        prefix = os.path.join(folder, self.hlo_module.name())
+        name = self.hlo_module.anme()
+        name = name[:name.index("shard_parallel") - 1]
+        prefix = os.path.join(folder, name)
         with open(f"{prefix}.hlo", "w") as f:
             f.write(self.get_hlo_text())
 
@@ -863,8 +865,8 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         Dump intermediate representations and other informations for debugging.
         """
         os.makedirs(folder, exist_ok=True)
-        name = self.accumulate_grad_module.name().replace(
-            "-accumulate_grad", "")
+        name = self.accumulate_grad_module.name()
+        name = name[:name.index("shard_parallel") - 1]
         prefix = os.path.join(folder, name)
         with open(f"{prefix}.hlo", "w") as f:
             f.write(self.get_hlo_text())

@@ -172,7 +172,7 @@ class AutoShardingConvTest(unittest.TestCase):
         state = train_step(state, {"x": x, "y": y})
 
         # Get optimized HLO IR
-        executable = train_step.get_executable(state, {"x": x, "y": y})
+        executable = train_step.get_last_executable()
         return (state, executable.get_hlo_text(),
                 executable.auto_sharding_objective)
 

@@ -287,17 +287,16 @@ class PipeshardDriverExecutable:
         Dump intermediate representations and other informations for debugging.
         """
         os.makedirs(folder, exist_ok=True)
-        prefix = os.path.join(folder, "")
+        name = self.stages[0].spmd_partitioned_hlo_module.name()
+        name = name[:name.index("pipeline_parallel") - 1]
+        prefix = os.path.join(folder, name)
 
         fully_optimized_hlo_texts = self.get_hlo_text(HloStatus.FULLY_OPTIMIZED)
         for stage_idx in range(len(self.stages)):
-            name = self.stages[stage_idx].spmd_partitioned_hlo_module.name()
-            with open(f"{prefix}{name}.hlo", "w") as f:
+            with open(f"{prefix}_stage_{stage_idx}.hlo", "w") as f:
                 f.write(fully_optimized_hlo_texts[stage_idx])
 
-        name = self.stages[0].spmd_partitioned_hlo_module.name()
-        name = name[:name.index("mesh") - 1]
-        with open(f"{prefix}{name}_resharding_tasks.txt", "w") as f:
+        with open(f"{prefix}_resharding_tasks.txt", "w") as f:
             for task in self.resharding_tasks:
                 f.write(str(task) + "\n\n")
 

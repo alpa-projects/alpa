@@ -72,7 +72,7 @@ class PipelineMLPTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    #suite.addTest(PipelineMLPTest("test_2_layer_mlp_local_pipeline_parallel"))
+    suite.addTest(PipelineMLPTest("test_2_layer_mlp_local_pipeline_parallel"))
     suite.addTest(PipelineMLPTest("test_2_layer_mlp_pipeshard_parallel"))
     return suite
 

@@ -35,13 +35,13 @@ class MemoryLeakTest(unittest.TestCase):
             return new_state
 
         state, batch = create_train_state_and_batch(128, 128)
-        executable = train_step.get_executable(state, batch)
 
         for i in range(2):
             state = train_step(state, batch)
         del state
 
         # Assert all buffers are freed
+        executable = train_step.get_last_executable()
         for w in executable.physical_mesh.workers:
             assert len(ray.get(w.get_live_buffer_uuids.remote())) == 0
 
@@ -63,13 +63,13 @@ class MemoryLeakTest(unittest.TestCase):
             return new_state
 
         state, batch = create_train_state_and_batch(128, 128)
-        executable = train_step.get_executable(state, batch)
 
         for i in range(2):
             state = train_step(state, batch)
         del state
 
         # Assert all buffers are freed
+        executable = train_step.get_last_executable()
         for mesh in executable.mesh_group:
             for w in mesh.workers:
                 assert len(ray.get(w.get_live_buffer_uuids.remote())) == 0

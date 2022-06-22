@@ -170,7 +170,10 @@ class LogicalDeviceMesh:
 
 
 class HloStatus(Enum):
-    """The status of an Hlo"""
+    """
+    The status of an HloModule.
+    See also the docstring at the beginning of this file.
+    """
     UNOPTIMIZED = auto()
     SHARDING_ANNOTATED = auto()
     SPMD_PARTITIONED = auto()

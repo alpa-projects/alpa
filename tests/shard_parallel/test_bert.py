@@ -75,14 +75,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             }, deterministic, model.apply)
 
         # Get optimized HLO IR
-        executable = train_step.get_executable(
-            optimizer, {
-                "hidden_states": hidden_states,
-                "attention_mask": attention_mask,
-                "label": label,
-                "rng": rngkey
-            }, deterministic, model.apply)
-
+        executable = train_step.get_last_executable()
         return (optimizer, executable.get_hlo_text(),
                 executable.auto_sharding_objective)
 
@@ -145,16 +138,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             })
 
         # Get optimized HLO IR
-        executable = train_step.get_executable(
-            optimizer, {
-                "input_ids": input_ids,
-                "attention_mask": attention_mask,
-                "token_type_ids": token_type_ids,
-                "position_ids": position_ids,
-                "labels": labels,
-                "rng": rngkey
-            })
-
+        executable = train_step.get_last_executable()
         return (optimizer, executable.get_hlo_text(),
                 executable.auto_sharding_objective)
 
@@ -369,14 +353,13 @@ class AutoShardingAttentionTest(unittest.TestCase):
         optimizer = optim.Adam(1e-2).create(params)
 
         # JIT Compile
-        optimize = func(optimizer, x, y)
+        optimizer = func(optimizer, x, y)
 
         # Check communication cost
-        executable = func.get_executable(optimizer, x, y)
+        executable = func.get_last_executable()
         hlo_ir = executable.get_hlo_text()
         objective = executable.auto_sharding_objective
 
-        params = jax.tree_util.tree_leaves(optimizer.target)
         expected = (
             logical_mesh.all_reduce_cost(
                 vocab_size * hidden_size * 4 / mesh_shape[1], 0) +

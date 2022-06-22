@@ -27,9 +27,10 @@ from . import create_state_parallel
 from . import device_mesh
 from . import data_loader
 from . import global_env
-from . import measure_record
 from . import mesh_profiling
 from . import monkey_patch
+from . import parallel_method
+from . import parallel_plan
 from . import pipeline_parallel
 from . import shard_parallel
 from . import timer

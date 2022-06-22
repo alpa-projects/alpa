@@ -136,7 +136,7 @@ ConcatWorkerExecutableConfig = namedtuple("ConcatWorkerExecutableConfig",
                                           ["exec_uuid", "hlo_proto"])
 PartialGradWorkerExecutableConfig = namedtuple(
     "PartialGradWorkerExecutableConfig",
-    ["exec_uuid", "hlo_proto", "strategy_config", "grad_sync_channel_ids"])
+    ["exec_uuid", "hlo_proto", "stage_plan", "grad_sync_channel_ids"])
 
 ExecutableConfig = Union[AllocateZeroWorkerExecutableConfig,
                          MemZeroWorkerExecutableConfig,
@@ -248,7 +248,7 @@ class PipeshardConfig:
     outs_handler: Callable
     # Others
     load_info: LoadInfo
-    hlo_texts_before_spmd_partitioner: Sequence[str]
+    sharding_annotated_hlo_texts: Sequence[str]
     flop_count: int
 
 
@@ -276,9 +276,7 @@ class PipelineInstEmitter:
         self.num_batch = num_batch
         self.in_tree = in_tree
         self.flop_count = flop_count
-        self.hlo_texts_before_spmd_partitioner = [
-            x.get_hlo_text() for x in stages
-        ]
+        self.sharding_annotated_hlo_texts = [x.get_hlo_text() for x in stages]
 
         ##### Internal states #####
         self.uuid_counter = 0  # counter for local buffer uuid
@@ -458,7 +456,7 @@ class PipelineInstEmitter:
             outs_handler,
             # Others
             load_info,
-            self.hlo_texts_before_spmd_partitioner,
+            self.sharding_annotated_hlo_texts,
             self.flop_count)
 
     def _compile_get_vars_from_mesh(self, invars, dst_specs, mesh_idx,
@@ -588,7 +586,7 @@ class PipelineInstEmitter:
             hlo_module = stage.get_spmd_partitioned()
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             exec_config = PartialGradWorkerExecutableConfig(
-                exec_uuid, hlo_proto, stage.strategy_config,
+                exec_uuid, hlo_proto, stage.stage_plan,
                 stage.output_acc_grad_indices)
             for worker in self.mesh_group[mesh_idx].workers:
                 executable_config_lists[worker].append(exec_config)

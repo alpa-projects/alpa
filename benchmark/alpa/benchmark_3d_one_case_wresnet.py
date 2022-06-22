@@ -9,8 +9,8 @@ import optax
 
 import alpa
 from alpa import (parallelize, get_global_cluster,
-                  set_global_virtual_physical_mesh,
-                  ShardParallel, PipeshardParallel, ManualPipeshardParallel,
+                  set_global_virtual_physical_mesh, ShardParallel,
+                  PipeshardParallel, ManualPipeshardParallel,
                   AutoShardingOption, automatic_layer_construction)
 from alpa.model.wide_resnet import get_wide_resnet, TrainState
 from alpa.pipeline_parallel.layer_construction import automatic_remat
@@ -174,8 +174,8 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
             stage_mode="auto",
             num_micro_batches=num_micro_batches,
             default_auto_sharding_option=AutoShardingOption(
-               prefer_reduce_scatter=prefer_reduce_scatter,
-               allow_mixed_mesh_shape=allow_mixed_mesh_shape,
+                prefer_reduce_scatter=prefer_reduce_scatter,
+                allow_mixed_mesh_shape=allow_mixed_mesh_shape,
             ),
             **auto_stage_option)
     elif parallel_mode == "load_solution":
@@ -184,14 +184,14 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
             *manual_stage_option,
             num_micro_batches=num_micro_batches,
             default_auto_sharding_option=AutoShardingOption(
-               prefer_reduce_scatter=prefer_reduce_scatter,
-               allow_mixed_mesh_shape=allow_mixed_mesh_shape,
+                prefer_reduce_scatter=prefer_reduce_scatter,
+                allow_mixed_mesh_shape=allow_mixed_mesh_shape,
             ))
     else:
         raise ValueError(f"Invalid model: {parallel_mode}")
 
     if num_layers == 50:
-        num_auto_layers = 16   # number of residual blocks
+        num_auto_layers = 16  # number of residual blocks
     elif num_layers == 101:
         num_auto_layers = 33
 
@@ -204,21 +204,22 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
     # Prepare input batch
     num_classes = 1024
     batch = {
-        "images": jnp.ones((batch_size, image_size, image_size, 3),
-                           dtype=dtype),
-        "labels": jnp.ones((batch_size), dtype=jnp.int32),
+        "images":
+            jnp.ones((batch_size, image_size, image_size, 3), dtype=dtype),
+        "labels":
+            jnp.ones((batch_size), dtype=jnp.int32),
     }
     print_used_time("Prepare input")
 
     # Init train state
-    model = get_wide_resnet(num_layers, width_factor, num_channels,
-                            num_classes, dtype)
+    model = get_wide_resnet(num_layers, width_factor, num_channels, num_classes,
+                            dtype)
 
     learning_rate_fn = create_learning_rate_fn()
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, batch["images"], learning_rate_fn)
-    train_step = get_train_step(learning_rate_fn, use_grad_acc,
-                                use_remat, num_auto_layers, method)
+    train_step = get_train_step(learning_rate_fn, use_grad_acc, use_remat,
+                                num_auto_layers, method)
     print_used_time("Create train state")
     parameter_count = compute_param_number(state.params)
 
@@ -227,25 +228,19 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
     print_used_time("Compile (driver)")
 
     if parallel_mode == "search":
-        compilation_times = {k : timers(k).elapsed() for k in
-                             ["stage-construction", "stage-construction-dp",
-                              "stage-construction-compilation", "stage-construction-profiling"]}
-        print(f"compilation time breakdown: {to_str_round(compilation_times, 2)}")
+        compilation_times = {
+            k: timers(k).elapsed() for k in [
+                "stage-construction", "stage-construction-dp",
+                "stage-construction-compilation", "stage-construction-profiling"
+            ]
+        }
+        print(
+            f"compilation time breakdown: {to_str_round(compilation_times, 2)}")
     else:
         compilation_times = None
 
     # Dump hlo ir for debugging
-    if isinstance(method, PipeshardParallel):
-        stage_hlo_texts = executable.get_hlo_text()
-        for i in range(len(stage_hlo_texts)):
-            with open(f"tmp/stage_{i}.hlo", "w") as fout:
-                fout.write(stage_hlo_texts[i])
-        with open(f"tmp/resharding_tasks.txt", "w") as fout:
-            fout.write(executable.print_resharding_tasks())
-    else:
-        hlo_text = executable.get_hlo_text()
-        with open("tmp/last_2d_wresnet.hlo", "w") as fout:
-            fout.write(hlo_text)
+    executable.dump_debug_info("tmp")
     executable.sync()
     print_used_time("Compile (workers)")
 
@@ -275,5 +270,5 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
     num_gpus = virtual_mesh.num_devices
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
 
-    return (parameter_count, max_mem_allocated, latencies,
-            tflops, tflops, compilation_times) + get_last_dp_result()
+    return (parameter_count, max_mem_allocated, latencies, tflops, tflops,
+            compilation_times) + get_last_dp_result()

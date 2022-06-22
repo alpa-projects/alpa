@@ -61,10 +61,7 @@ class PipelineMLPTest(unittest.TestCase):
         # Check debug utilities
         if isinstance(method, PipeshardParallel):
             executable = p_train_step.get_last_executable()
-            executable.get_load_info()
-            executable.print_resharding_tasks()
-            executable.get_hlo_text(True)
-            executable.get_hlo_text(False)
+            executable.dump_debug_info("tmp")
 
     def test_2_layer_mlp_local_pipeline_parallel(self):
         self.train_2_layer_mlp(LocalPipelineParallel())

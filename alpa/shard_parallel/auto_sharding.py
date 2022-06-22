@@ -19,6 +19,7 @@ SPMD_PARTITIONED
 FULLY_OPTIMIZED
 """
 import dataclasses
+from enum import Enum, auto
 import logging
 import multiprocessing
 import os
@@ -33,7 +34,7 @@ from jax.core import ShapedArray
 from jax.interpreters import pxla
 
 from alpa.global_env import global_config
-from alpa.measure_record import (StrategyConfig)
+from alpa.parallel_plan import StagePlan
 from alpa.timer import timers
 from alpa.util import check_arithmetic_sequence, get_compile_options, XlaPassContext
 
@@ -166,6 +167,17 @@ class LogicalDeviceMesh:
         return ((self.flatten_ids, self.id_mesh.shape, self.mesh_alpha,
                  self.mesh_beta) == (other.flatten_ids, other.id_mesh.shape,
                                      other.mesh_alpha, other.mesh_beta))
+
+
+class HloStatus(Enum):
+    """
+    The status of an HloModule.
+    See also the docstring at the beginning of this file.
+    """
+    UNOPTIMIZED = auto()
+    SHARDING_ANNOTATED = auto()
+    SPMD_PARTITIONED = auto()
+    FULLY_OPTIMIZED = auto()
 
 
 def run_auto_sharding_pass(
@@ -349,17 +361,16 @@ def run_auto_sharding_pass(
         hlo_stage_names, hlo_stages = get_auto_sharded_hlo_stages()
         hooked_proto = get_hooked_sharding_protos()
 
-    strategy_config = StrategyConfig(build_random_seed, logical_mesh.shape,
-                                     all_gather_threshold,
-                                     as_option.all_reduce_threshold, last_s_val,
-                                     last_objective)
+    stage_plan = StagePlan(build_random_seed, logical_mesh.shape,
+                           all_gather_threshold, as_option.all_reduce_threshold,
+                           last_s_val, last_objective)
 
     if return_mode == "single":
-        return hlo_module, strategy_config
+        return hlo_module, stage_plan
     elif return_mode == "stages":
-        return hlo_stage_names, hlo_stages, strategy_config
+        return hlo_stage_names, hlo_stages, stage_plan
     elif return_mode == "stages_and_hook":
-        return hlo_stage_names, hlo_stages, hooked_proto, strategy_config
+        return hlo_stage_names, hlo_stages, hooked_proto, stage_plan
     else:
         raise ValueError("Invalid return mode:" + return_mode)
 
@@ -405,7 +416,7 @@ def run_spmd_partitioner_pass(
 def run_backend_compilation(backend: xe.Client,
                             hlo_module: Union[xe.HloModule, xe.XlaComputation,
                                               bytes],
-                            strategy_config: StrategyConfig,
+                            stage_plan: StagePlan,
                             num_devices: int,
                             bypass_device_assignment_check: bool = False):
     """Compile a spmd partitioned Hlo Module to an XLA executable.
@@ -413,7 +424,7 @@ def run_backend_compilation(backend: xe.Client,
     Args:
       backend: The XLA backend client.
       hlo_module: The input HLO Module, whose status should be SPMD_PARTITIONED.
-      strategy_config: The auto-sharding strategy solution.
+      stage_plan: The auto-sharding strategy solution.
       num_devices: The total number of devices.
       bypass_device_assignment_check: Whether to compile without exact devices.
     """
@@ -423,7 +434,7 @@ def run_backend_compilation(backend: xe.Client,
         device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=False,
         parameter_is_tupled_arguments=False,
-        build_random_seed=strategy_config.build_random_seed)
+        build_random_seed=stage_plan.build_random_seed)
 
     if isinstance(hlo_module, xe.HloModule):
         xla_computation = xe.XlaComputation(
@@ -441,9 +452,9 @@ def run_backend_compilation(backend: xe.Client,
 
             # Communication combiner options
             "combiner::all_gather_threshold":
-                strategy_config.all_gather_threshold,
+                stage_plan.all_gather_threshold,
             "combiner::all_reduce_threshold":
-                strategy_config.all_reduce_threshold,
+                stage_plan.all_reduce_threshold,
             "combiner::use_continuous_buffer":
                 True,
     }):

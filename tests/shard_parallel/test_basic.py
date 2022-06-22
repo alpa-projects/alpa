@@ -219,6 +219,8 @@ class AutoShardingBasicTest(unittest.TestCase):
 
         assert isinstance(c, pxla.ShardedDeviceArray)
 
+        executable.dump_debug_info("tmp")
+
 
 def suite():
     suite = unittest.TestSuite()

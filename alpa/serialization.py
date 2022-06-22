@@ -6,20 +6,18 @@ Support DistributedArray and ReplicatedDistributedArray serialization in Alpa.
 import logging
 import os
 import pickle
-from typing import Union, Any, Sequence
+from typing import Union, Sequence
 
 from flax.serialization import to_state_dict, from_state_dict
 import jax
 from jax.interpreters.pxla import ShardingSpec
 from jax.core import ShapedArray
-from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
+from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten, PyTreeDef
 import msgpack
 import numpy as np
 
 from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
                               PhysicalDeviceMesh)
-
-PyTree = Any
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -76,7 +74,7 @@ def load_sharded_array(ckpt_dir, metadatas):
 
 
 def save_checkpoint(ckpt_dir: Union[str, os.PathLike],
-                    target: PyTree,
+                    target: PyTreeDef,
                     step: int,
                     local_cache_dir: Union[str, os.PathLike, None] = None):
     """
@@ -167,7 +165,7 @@ class LoadInfo:
 
 
 def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
-                       load_info: PyTree):
+                       load_info: PyTreeDef):
     """
         Restore the specified checkpoint from `ckpt_dir` and reshard it
         according to the `load_info`.

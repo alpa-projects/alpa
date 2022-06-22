@@ -9,7 +9,6 @@ workers. The driver part sends control commands to launch the worker parts on
 workers.
 """
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 import logging
 from typing import Sequence, Optional
 import os
@@ -25,9 +24,9 @@ import ray
 from alpa.device_mesh import (LocalPhysicalDeviceMesh,
                               DistributedPhysicalDeviceMesh)
 from alpa.global_env import global_config
-from alpa.measure_record import StrategyConfig
+from alpa.parallel_plan import PlacementSpec, StagePlan
 from alpa.shard_parallel.auto_sharding import (get_input_output_sharding_specs,
-                                               make_replicated_spec,
+                                               make_replicated_spec, HloStatus,
                                                run_backend_compilation)
 from alpa.timer import timers
 from alpa.util import (compile_allocate_zero_buffers,
@@ -41,13 +40,6 @@ logger.setLevel(logging.INFO)
 # The global executable and buffer counter.
 mesh_executable_counter = 0
 remote_buffer_counter = 0
-
-
-@dataclass
-class PlacementSpec:
-    """Specify how a tensor is stored distributedly."""
-    mesh_ids: Sequence[int]
-    sharding_specs: Sequence[pxla.ShardingSpec]
 
 
 class MeshDriverExecutable(ABC):
@@ -83,12 +75,18 @@ class MeshDriverExecutable(ABC):
         """Get the execution time costs with internal timers."""
         raise NotImplementedError()
 
-    def get_hlo_text(self):
+    def get_hlo_text(self, status: HloStatus):
         """Return the HLO IR in the text format."""
         raise NotImplementedError()
 
     def get_total_allocation_size(self):
         """Get the total memory allocation size in bytes."""
+        raise NotImplementedError()
+
+    def dump_debug_info(self, folder: str):
+        """
+        Dump intermediate representations and other informations for debugging.
+        """
         raise NotImplementedError()
 
     def sync(self):
@@ -235,7 +233,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
     def __init__(self,
                  physical_mesh: "PhysicalDeviceMesh",
                  hlo_module: xe.HloModule,
-                 strategy_config: StrategyConfig,
+                 stage_plan: StagePlan,
                  avals: Sequence[ShapedArray],
                  out_avals: Sequence[ShapedArray],
                  donated_invars: Sequence[bool],
@@ -252,14 +250,14 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         self.in_tree = in_tree
         self.out_tree = out_tree
         self.flop_count = flop_count
-        self.strategy_config = strategy_config
-        self.auto_sharding_objective = strategy_config.auto_sharding_objective
+        self.stage_plan = stage_plan
+        self.auto_sharding_objective = stage_plan.auto_sharding_objective
 
         # Read sharding specs
         self.input_sharding_specs, self.output_sharding_specs = (
             get_input_output_sharding_specs(hlo_module, avals, out_avals,
                                             physical_mesh.num_devices,
-                                            strategy_config.logical_mesh_shape))
+                                            stage_plan.logical_mesh_shape))
 
         # Cache results for input and output sharding
         self.input_indices = [
@@ -270,22 +268,22 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             out_avals, self.output_sharding_specs)
 
         # Send the executable to workers
-        self.hlo_text = None
+        self.fully_optimized_hlo_text = None
         self.exec_uuid = next_mesh_executable_uuid()
-        self._set_executable(physical_mesh, hlo_module, strategy_config)
+        self._set_executable(physical_mesh, hlo_module, stage_plan)
 
         # Set up timers
         self.timer_name = get_execution_timer_name(self.exec_uuid)
         self.sync_func = get_sync_func_driver(physical_mesh)
 
-    def _set_executable(self, physical_mesh, hlo_module, strategy_config):
+    def _set_executable(self, physical_mesh, hlo_module, stage_plan):
         """Put the executable on workers."""
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             for w in physical_mesh.workers:
                 w.put_executable.remote(self.exec_uuid,
                                         NormalMeshWorkerExecutable, hlo_proto,
-                                        strategy_config)
+                                        stage_plan)
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
 
@@ -296,14 +294,14 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                 self.compiled = run_backend_compilation(
                     backend,
                     hlo_module,
-                    strategy_config,
+                    stage_plan,
                     physical_mesh.num_devices,
                     bypass_device_assignment_check=True)
             else:
                 self.compiled = run_backend_compilation(
-                    backend, hlo_module, strategy_config,
-                    physical_mesh.num_devices)
-            self.hlo_text = self.compiled.hlo_modules()[0].to_string()
+                    backend, hlo_module, stage_plan, physical_mesh.num_devices)
+            self.fully_optimized_hlo_text = self.compiled.hlo_modules(
+            )[0].to_string()
 
     def launch_on_driver(self, *args, **kwargs):
         """Launch the executable on the driver."""
@@ -434,15 +432,29 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             assert isinstance(self.physical_mesh, LocalPhysicalDeviceMesh)
             return self.compiled.total_allocation_size()
 
-    def get_hlo_text(self):
+    def get_hlo_text(self, status: HloStatus = HloStatus.FULLY_OPTIMIZED):
         """Return the HLO IR in the text format."""
-        if self.hlo_text is not None:
-            return self.hlo_text
-        assert isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh)
-        self.hlo_text = ray.get(
-            self.physical_mesh.workers[0].get_exec_hlo_text.remote(
-                self.exec_uuid))
-        return self.hlo_text
+        if status == HloStatus.FULLY_OPTIMIZED:
+            if self.fully_optimized_hlo_text is not None:
+                return self.fully_optimized_hlo_text
+            assert isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh)
+            self.fully_optimized_hlo_text = ray.get(
+                self.physical_mesh.workers[0].get_exec_hlo_text.remote(
+                    self.exec_uuid))
+            return self.fully_optimized_hlo_text
+        else:
+            raise ValueError(f"Invalid status: {status}")
+
+    def dump_debug_info(self, folder: str):
+        """
+        Dump intermediate representations and other informations for debugging.
+        """
+        os.makedirs(folder, exist_ok=True)
+        name = self.hlo_module.name()
+        name = name[:name.index("shard_parallel") - 1]
+        prefix = os.path.join(folder, name)
+        with open(f"{prefix}.hlo", "w") as f:
+            f.write(self.get_hlo_text())
 
 
 def get_buffers(buffer_dict, uuids):
@@ -470,12 +482,12 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
     """The worker part of a normal mesh executable."""
 
     def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
-                 strategy_config: StrategyConfig):
-        num_devices = np.prod(strategy_config.logical_mesh_shape)
+                 stage_plan: StagePlan):
+        num_devices = np.prod(stage_plan.logical_mesh_shape)
         assert num_devices == len(worker.backend.devices())
 
         self.compiled = run_backend_compilation(worker.backend, hlo_proto,
-                                                strategy_config, num_devices)
+                                                stage_plan, num_devices)
         self.worker = worker
 
         # Set up timers
@@ -546,7 +558,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                  physical_mesh: "PhysicalDeviceMesh",
                  accumulate_grad: xe.HloModule,
                  apply_grad: xe.HloModule,
-                 strategy_config: StrategyConfig,
+                 stage_plan: StagePlan,
                  avals: Sequence[ShapedArray],
                  out_avals: Sequence[ShapedArray],
                  grad_avals: Sequence[ShapedArray],
@@ -559,6 +571,8 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                  out_tree: Optional[PyTreeDef] = None,
                  flop_count: Optional[int] = None):
         self.physical_mesh = physical_mesh
+        self.accumulate_grad_module = accumulate_grad
+        self.apply_grad_module = apply_grad
         self.avals = avals
         self.out_avals = out_avals
         self.grad_avals = grad_avals
@@ -570,11 +584,11 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         self.in_tree = in_tree
         self.out_tree = out_tree
         self.flop_count = flop_count
-        self.strategy_config = strategy_config
-        self.auto_sharding_objective = strategy_config.auto_sharding_objective
+        self.stage_plan = stage_plan
+        self.auto_sharding_objective = stage_plan.auto_sharding_objective
 
         # Read sharding specs
-        logical_mesh_shape = strategy_config.logical_mesh_shape
+        logical_mesh_shape = stage_plan.logical_mesh_shape
         accumulate_grad_in_avals = [
             avals[i] for i in accumulate_grad_invar_indices
         ] + grad_avals
@@ -659,19 +673,19 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                     apply_grad.as_serialized_hlo_module_proto(),
                     accumulate_grad_invar_indices, apply_grad_invar_indices,
                     accumulate_grad_batch_arg_indices, grad_shard_shapes,
-                    grad_shard_dtypes, strategy_config, donated_invars,
-                    batch_invars, num_grads, num_micro_batches)
-            self.hlo_text = None  # will be fetched from the workers later
+                    grad_shard_dtypes, stage_plan, donated_invars, batch_invars,
+                    num_grads, num_micro_batches)
+            # The following members will be fetched from the workers later
+            self.fully_optimized_hlo_text = None
             self.grad_sync_channel_ids = None
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             backend = xb.get_backend("gpu")
 
             self.accumulate_grad = run_backend_compilation(
-                backend, accumulate_grad, strategy_config,
-                physical_mesh.num_devices)
+                backend, accumulate_grad, stage_plan, physical_mesh.num_devices)
             self.apply_grad = run_backend_compilation(backend, apply_grad,
-                                                      strategy_config,
+                                                      stage_plan,
                                                       physical_mesh.num_devices)
             self.allocate_zero_buffers = compile_allocate_zero_buffers(
                 backend, physical_mesh.num_devices, grad_shard_shapes,
@@ -679,8 +693,9 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             self.accumulate_grad_batch_arg_indices = (
                 accumulate_grad_batch_arg_indices)
 
-            self.hlo_text = (self.accumulate_grad.hlo_modules()[0].to_string() +
-                             self.apply_grad.hlo_modules()[0].to_string())
+            self.fully_optimized_hlo_text = (
+                self.accumulate_grad.hlo_modules()[0].to_string() +
+                self.apply_grad.hlo_modules()[0].to_string())
             self.grad_sync_channel_ids = get_grad_sync_channel_ids(
                 self.accumulate_grad.hlo_modules()[0])
             self.skip_allreduce_env_name = (
@@ -829,18 +844,34 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             return max(self.accumulate_grad.total_allocation_size(),
                        self.apply_grad.total_allocation_size())
 
-    def get_hlo_text(self):
+    def get_hlo_text(self, status: HloStatus = HloStatus.FULLY_OPTIMIZED):
         """Return the HLO IR in the text format."""
-        if self.hlo_text is not None:
-            return self.hlo_text
-        assert isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh)
-        self.hlo_text = ray.get(
-            self.physical_mesh.workers[0].get_exec_hlo_text.remote(
-                self.exec_uuid))
-        self.grad_sync_channel_ids = ray.get(
-            self.physical_mesh.workers[0].get_exec_grad_sync_channel_ids.remote(
-                self.exec_uuid))
-        return self.hlo_text
+        if status == HloStatus.FULLY_OPTIMIZED:
+            if self.fully_optimized_hlo_text is not None:
+                return self.fully_optimized_hlo_text
+            assert isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh)
+            self.fully_optimized_hlo_text = ray.get(
+                self.physical_mesh.workers[0].get_exec_hlo_text.remote(
+                    self.exec_uuid))
+            self.grad_sync_channel_ids = ray.get(
+                self.physical_mesh.workers[0].get_exec_grad_sync_channel_ids.
+                remote(self.exec_uuid))
+            return self.fully_optimized_hlo_text
+        else:
+            raise ValueError(f"Invalid status: {status}")
+
+    def dump_debug_info(self, folder: str):
+        """
+        Dump intermediate representations and other informations for debugging.
+        """
+        os.makedirs(folder, exist_ok=True)
+        name = self.accumulate_grad_module.name()
+        name = name[:name.index("shard_parallel") - 1]
+        prefix = os.path.join(folder, name)
+        with open(f"{prefix}.hlo", "w") as f:
+            f.write(self.get_hlo_text())
+        with open(f"{prefix}.grad_sync_channel_ids.txt", "w") as f:
+            f.write(str(self.grad_sync_channel_ids) + "\n")
 
 
 class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
@@ -852,20 +883,18 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
                  apply_grad_invar_indices: Sequence[int],
                  accumulate_grad_batch_arg_indices: Sequence[int],
                  grad_shard_shapes: Sequence[Sequence[int]],
-                 grad_shard_dtypes: Sequence[jnp.dtype],
-                 strategy_config: StrategyConfig,
+                 grad_shard_dtypes: Sequence[jnp.dtype], stage_plan: StagePlan,
                  donated_invars: Sequence[bool], batch_invars: Sequence[bool],
                  num_grads: int, num_micro_batches: int):
-        num_devices = np.prod(strategy_config.logical_mesh_shape)
+        num_devices = np.prod(stage_plan.logical_mesh_shape)
         assert num_devices == len(worker.backend.devices())
 
         self.accumulate_grad = run_backend_compilation(worker.backend,
                                                        accumulate_grad_proto,
-                                                       strategy_config,
-                                                       num_devices)
+                                                       stage_plan, num_devices)
         self.apply_grad = run_backend_compilation(worker.backend,
-                                                  apply_grad_proto,
-                                                  strategy_config, num_devices)
+                                                  apply_grad_proto, stage_plan,
+                                                  num_devices)
         self.allocate_zero_buffers = compile_allocate_zero_buffers(
             worker.backend, num_devices, grad_shard_shapes, grad_shard_dtypes)
         self.accumulate_grad_invar_indices = accumulate_grad_invar_indices
@@ -969,23 +998,23 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
     """
 
     def __init__(self, physical_mesh: "PhysicalDeviceMesh",
-                 hlo_module: xe.HloModule, strategy_config: StrategyConfig,
+                 hlo_module: xe.HloModule, stage_plan: StagePlan,
                  avals: Sequence[ShapedArray], out_avals: Sequence[ShapedArray],
                  donated_invars: Sequence[bool],
                  out_acc_grad_indices: Sequence[int]):
         self.out_acc_grad_indices = out_acc_grad_indices
 
-        super().__init__(physical_mesh, hlo_module, strategy_config, avals,
+        super().__init__(physical_mesh, hlo_module, stage_plan, avals,
                          out_avals, donated_invars)
 
-    def _set_executable(self, physical_mesh, hlo_module, strategy_config):
+    def _set_executable(self, physical_mesh, hlo_module, stage_plan):
         """Put the executable on workers."""
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             for w in physical_mesh.workers:
                 w.put_executable.remote(self.exec_uuid,
                                         PartialGradAccMeshWorkerExecutable,
-                                        hlo_proto, strategy_config,
+                                        hlo_proto, stage_plan,
                                         self.out_acc_grad_indices)
             self.hlo_text = None  # will be fetched from the workers later
             self.grad_sync_channel_ids = None
@@ -994,7 +1023,7 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             backend = xb.get_backend("gpu")
             self.compiled = run_backend_compilation(backend, hlo_module,
-                                                    strategy_config,
+                                                    stage_plan,
                                                     physical_mesh.num_devices)
             self.hlo_text = self.compiled.hlo_modules()[0].to_string()
             self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
@@ -1023,8 +1052,8 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
     """
 
     def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
-                 strategy_config: StrategyConfig, output_acc_grad_indices: str):
-        super().__init__(worker, uuid, hlo_proto, strategy_config)
+                 stage_plan: StagePlan, output_acc_grad_indices: str):
+        super().__init__(worker, uuid, hlo_proto, stage_plan)
         self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
             self.compiled.hlo_modules()[0], output_acc_grad_indices)
         self.skip_allreduce_env_name = (self.compiled.hlo_modules()[0].name() +

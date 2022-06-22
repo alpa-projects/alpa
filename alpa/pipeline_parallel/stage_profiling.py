@@ -46,7 +46,7 @@ INFINITY_N_STAGES = 4096
 GB = 1024**3
 
 CompileOutput = namedtuple("CompileOutput", [
-    "model_proto", "strategy_config", "input_sharding_protos",
+    "model_proto", "stage_plan", "input_sharding_protos",
     "output_sharding_proto", "intermediate_proto",
     "apply_grad_input_sharding_protos"
 ])
@@ -142,7 +142,7 @@ class CompileWorker:
 
         Returns:
             proto: The proto of compiled executable
-            strategy_config: The sharding strategy from auto sharding
+            stage_plan: The sharding strategy from auto sharding
         """
         self.cnt += 1
 
@@ -158,7 +158,7 @@ class CompileWorker:
             hlo_module = xe.HloModule.from_serialized_hlo_module_proto(
                 config.model_proto)
             # pylint: disable=unbalanced-tuple-unpacking
-            module_names, modules, hooked_proto, strategy_config = (
+            module_names, modules, hooked_proto, stage_plan = (
                 run_auto_sharding_pass(hlo_module, **other_kwargs))
         except RuntimeError as e:
             logger.warning(f"Compilation error (auto-sharding pass) "
@@ -203,7 +203,7 @@ class CompileWorker:
             return stage_id, None
 
         optimized_proto = hlo_module.as_serialized_hlo_module_proto()
-        return stage_id, CompileOutput(optimized_proto, strategy_config,
+        return stage_id, CompileOutput(optimized_proto, stage_plan,
                                        input_sharding_protos,
                                        output_sharding_proto, hooked_proto,
                                        apply_grad_input_sharding_protos)
@@ -214,10 +214,10 @@ class CompileWorker:
         hlo_module = xe.HloModule.from_serialized_hlo_module_proto(proto)
         assert other_kwargs["return_mode"] == "stages"
         # pylint: disable=unbalanced-tuple-unpacking
-        hlo_stage_names, hlo_stages, strategy_config = run_auto_sharding_pass(
+        hlo_stage_names, hlo_stages, stage_plan = run_auto_sharding_pass(
             hlo_module, **other_kwargs)
         hlo_stages = [x.as_serialized_hlo_module_proto() for x in hlo_stages]
-        return stage_id, (hlo_stage_names, hlo_stages, strategy_config)
+        return stage_id, (hlo_stage_names, hlo_stages, stage_plan)
 
 
 class CompileWorkerPool(BaseWorkerPoolWrapper):
@@ -288,8 +288,8 @@ class ProfileWorker:
                 [xe.HloSharding(x) for x in input_shardings])
             hlo_module.set_spmd_output_sharding(xe.HloSharding(output_sharding))
         executable = PartialGradAccMeshDriverExecutable(
-            self.mesh, hlo_module, compiled_output.strategy_config, avals,
-            out_avals, donated_invars, output_acc_grad_indices)
+            self.mesh, hlo_module, compiled_output.stage_plan, avals, out_avals,
+            donated_invars, output_acc_grad_indices)
 
         # Run profiling
         self.mesh.reset_memory_stats()
@@ -368,7 +368,7 @@ class HloCostModelProfileWorker:
             compiled = run_backend_compilation(
                 self.backend,
                 compiled_output.model_proto,
-                compiled_output.strategy_config,
+                compiled_output.stage_plan,
                 self.num_devices,
                 bypass_device_assignment_check=True)
         except RuntimeError as e:
@@ -490,7 +490,7 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
         if compiled_output is None:
             continue
 
-        config = compiled_output.strategy_config
+        config = compiled_output.stage_plan
         hooked_proto = compiled_output.intermediate_proto
         apply_in_shardings = compiled_output.apply_grad_input_sharding_protos
         (start, end, config_idx), stage_config, _, intermediate_vars = stage

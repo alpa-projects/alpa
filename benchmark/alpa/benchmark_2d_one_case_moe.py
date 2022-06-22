@@ -15,23 +15,22 @@ from benchmark_2d_one_case_gpt_bert import get_train_step
 
 
 def create_train_state(rngkey, model, dtype, batch):
-    params = model.init_dummy(rngkey, batch["input_ids"], batch["attention_mask"],
-                              batch["token_type_ids"], batch["position_ids"])
+    params = model.init_dummy(rngkey, batch["input_ids"],
+                              batch["attention_mask"], batch["token_type_ids"],
+                              batch["position_ids"])
 
     def weight_decay_mask(pytree):
         # do not use weight decay on layer norm and bias.
         return jax.tree_map(lambda x: x.ndim > 1, pytree)
 
-    tx = optax_adafactor(
-        learning_rate=1e-2, weight_decay_mask=weight_decay_mask
-    )
+    tx = optax_adafactor(learning_rate=1e-2,
+                         weight_decay_mask=weight_decay_mask)
 
-    state = TrainState.create(
-        apply_fn=model.apply,
-        params=params,
-        tx=tx,
-        mixed_precision = (dtype == jnp.float16),
-        dynamic_scale=None)
+    state = TrainState.create(apply_fn=model.apply,
+                              params=params,
+                              tx=tx,
+                              mixed_precision=(dtype == jnp.float16),
+                              dynamic_scale=None)
     return state
 
 
@@ -39,8 +38,9 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     print_used_time(None)
 
     # Model configs
-    (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_experts,
-     expert_group_size, num_micro_batches, parallel_mode, parallel_args) = benchmark_case
+    (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
+     num_experts, expert_group_size, num_micro_batches, parallel_mode,
+     parallel_args) = benchmark_case
     (prefer_reduce_scatter, use_remat, (dp, op, pp),
      force_batch_dim_mapping) = parallel_args
     dtype = jnp.float16
@@ -60,7 +60,7 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
         grad_func = jax.grad
 
     as_option = AutoShardingOption()
-    if force_batch_dim_mapping: # Always map batch dim to mesh dim 0
+    if force_batch_dim_mapping:  # Always map batch dim to mesh dim 0
         as_option.force_batch_dim_to_mesh_dim = 0
     as_option.prefer_reduce_scatter = prefer_reduce_scatter
     as_option.allow_mixed_mesh_shape = True
@@ -86,17 +86,16 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     print_used_time("Prepare input")
 
     # Init train state
-    model = FlaxMoEForLMModule(MoEConfig(
-        num_hidden_layers=num_layers,
-        hidden_size=hidden_size,
-        intermediate_size=hidden_size * 8,
-        num_attention_heads=num_heads,
-        max_position_embeddings=seq_len,
-        vocab_size=vocab_size,
-        expert_group_size=expert_group_size,
-        expert_number=num_experts,
-        gradient_checkpointing=use_remat
-    ), dtype=dtype)
+    model = FlaxMoEForLMModule(MoEConfig(num_hidden_layers=num_layers,
+                                         hidden_size=hidden_size,
+                                         intermediate_size=hidden_size * 8,
+                                         num_attention_heads=num_heads,
+                                         max_position_embeddings=seq_len,
+                                         vocab_size=vocab_size,
+                                         expert_group_size=expert_group_size,
+                                         expert_number=num_experts,
+                                         gradient_checkpointing=use_remat),
+                               dtype=dtype)
 
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, dtype, batch)
@@ -114,9 +113,8 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     # Check sharding strategy
     alloc_mem = executable.get_total_allocation_size()
     ilp_objective = executable.auto_sharding_objective or 0.0
+    executable.dump_debug_info("tmp")
     hlo_text = executable.get_hlo_text()
-    with open("tmp/last_2d_moe.hlo", "w") as fout:
-        fout.write(hlo_text)
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
         count_communication_primitives(hlo_text)
 
@@ -141,7 +139,10 @@ def benchmark_moe_internal(physical_mesh, benchmark_case, niter):
     # Compute statistics
     num_gpus = physical_mesh.num_devices
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
-    parameter_count = compute_moe_parameter_count(num_layers, hidden_size, vocab_size, num_experts,
+    parameter_count = compute_moe_parameter_count(num_layers,
+                                                  hidden_size,
+                                                  vocab_size,
+                                                  num_experts,
                                                   mlp_factor=8)
     peak_mem = max(physical_mesh.get_max_memory_allocated(), alloc_mem)
 

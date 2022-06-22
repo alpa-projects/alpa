@@ -79,13 +79,7 @@ class AutoShardingMoETest(unittest.TestCase):
             }, deterministic, model.apply)
 
         # Get optimized HLO IR
-        executable = train_step.get_executable(
-            optimizer, {
-                "hidden_states": hidden_states,
-                "attention_mask": attention_mask,
-                "labels": labels,
-                "rng": rngkey
-            }, deterministic, model.apply)
+        executable = train_step.get_last_executable()
         return (optimizer, executable.get_hlo_text(),
                 executable.auto_sharding_objective)
 
@@ -166,14 +160,7 @@ class AutoShardingMoETest(unittest.TestCase):
             }, deterministic, rngkey)
 
         # Get optimized HLO IR
-        executable = train_step.get_executable(
-            state, {
-                "input_ids": input_ids,
-                "attention_mask": attention_mask,
-                "token_type_ids": token_type_ids,
-                "position_ids": position_ids,
-                "labels": labels,
-            }, deterministic, rngkey)
+        executable = train_step.get_last_executable()
         return (state, executable.get_hlo_text(),
                 executable.auto_sharding_objective)
 

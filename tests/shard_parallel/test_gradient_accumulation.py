@@ -91,13 +91,13 @@ class GradAccumulationTest(unittest.TestCase):
                                        devices=logical_mesh,
                                        num_micro_batches=num_micro_batches,
                                        auto_sharding_option=self.as_option))
-        executable = p_train_step.get_executable(optimizer, batch, model.apply)
         optimizer_actual = p_train_step(optimizer, batch, model.apply)
 
         # Check results
         assert_allclose(optimizer_expected.target, optimizer_actual.target)
 
         # Check sharding strategy
+        executable = p_train_step.get_last_executable()
         hlo_text = executable.get_hlo_text()
         if self.as_option.prefer_reduce_scatter:
             _, accumulate_grad, apply_grad = hlo_text.split("HloModule")
@@ -123,6 +123,8 @@ class GradAccumulationTest(unittest.TestCase):
             n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
                 count_communication_primitives(apply_grad))
             assert n_total == 0
+
+        executable.dump_debug_info("tmp")
 
         if cluster == "ray":
             shutdown()

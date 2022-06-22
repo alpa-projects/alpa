@@ -16,8 +16,8 @@ from jax.interpreters import pxla
 from jax.interpreters.partial_eval import remat_call_p
 import numpy as np
 
-from alpa.measure_record import StrategyConfig
 from alpa.mesh_executable import PartialGradAccMeshDriverExecutable
+from alpa.parallel_plan import StagePlan
 from alpa.pipeline_parallel.primitive_def import (mark_hook_jaxpreqn,
                                                   pipeline_p,
                                                   mark_pipeline_jaxpreqn)
@@ -201,7 +201,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
 
     sharding_annotated_module: xe.HloModule = None
     donated_invars: Sequence[bool] = None
-    strategy_config: StrategyConfig = None
+    stage_plan: StagePlan = None
     input_sharding_specs: Sequence[pxla.ShardingSpec] = None
     output_sharding_specs: Sequence[pxla.ShardingSpec] = None
     output_acc_grad_indices: Sequence[int] = None
@@ -213,8 +213,8 @@ class XlaShardedPipelineComputation(PipelineComputation):
         """Create a dummy computation."""
         backend_name = "gpu"
         backend = xb.get_backend(backend_name)
-        strategy_config = StrategyConfig(global_config.compile_random_seed,
-                                         logical_mesh_shape, 1, 1, None, 0)
+        stage_plan = StagePlan(global_config.compile_random_seed,
+                               logical_mesh_shape, 1, 1, None, 0)
         compiled = compile_dummy_zero_constant(backend,
                                                np.prod(logical_mesh_shape))
         sharding_annotated_module = compiled.hlo_modules()[0]
@@ -222,7 +222,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
         return cls(
             name=name,
             sharding_annotated_module=sharding_annotated_module,
-            strategy_config=strategy_config,
+            stage_plan=stage_plan,
             donated_invars=[],
             invars=[],
             outvars=[outvar],
@@ -236,7 +236,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
             *,
             jax_pipeline_computation: JaxPipelineComputation,
             sharding_annotated_module: xe.HloModule,
-            strategy_config: StrategyConfig,
+            stage_plan: StagePlan,
             donated_invars: Sequence[bool] = None,
             acc_grad_outvars: Sequence[Var] = (),
             donatables: OrderedSet[Var] = None):
@@ -255,7 +255,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
 
         return cls(name=jax_pipeline_computation.name,
                    sharding_annotated_module=sharding_annotated_module,
-                   strategy_config=strategy_config,
+                   stage_plan=stage_plan,
                    donated_invars=donated_invars,
                    invars=jax_pipeline_computation.invars,
                    outvars=jax_pipeline_computation.outvars,
@@ -271,7 +271,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
         hlo_module.infer_spmd_shardings()
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
-        logical_mesh_shape = self.strategy_config.logical_mesh_shape
+        logical_mesh_shape = self.stage_plan.logical_mesh_shape
         input_shardings = hlo_module.spmd_parameters_shardings()
         input_sharding_specs = [
             hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh_shape)
@@ -315,8 +315,8 @@ class XlaShardedPipelineComputation(PipelineComputation):
         if self.spmd_partitioned_hlo_module is not None:
             return self.spmd_partitioned_hlo_module
 
-        strategy_config = self.strategy_config
-        logical_mesh_shape = strategy_config.logical_mesh_shape
+        stage_plan = self.stage_plan
+        logical_mesh_shape = stage_plan.logical_mesh_shape
         hlo_module = self.sharding_annotated_module
         setup_computation_alias(hlo_module, self.donated_invars)
 
@@ -333,7 +333,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
         input_sharding_specs, output_sharding_specs = (
             get_input_output_sharding_specs(spmd_partitioned_hlo_module, avals,
                                             out_avals, num_devices,
-                                            strategy_config.logical_mesh_shape))
+                                            stage_plan.logical_mesh_shape))
         self.input_sharding_specs = input_sharding_specs
         self.output_sharding_specs = output_sharding_specs
         # The run_spmd_partitioner_pass modifies hlo module in-place,
@@ -352,7 +352,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
         mesh_executable = PartialGradAccMeshDriverExecutable(
-            mesh, hlo_module, self.strategy_config, avals, out_avals,
+            mesh, hlo_module, self.stage_plan, avals, out_avals,
             self.donated_invars, self.output_acc_grad_indices)
         return mesh_executable.get_driver_callable()
 
@@ -805,14 +805,14 @@ def rearrange_vars(vars,
 def generate_computations_from_modules(jax_computations, computation_names,
                                        computation_modules, donate_invars,
                                        donatable_lists, acc_grad_outvars,
-                                       strategy_config):
+                                       stage_plan):
     """Generate pipeline computation from HLO modules."""
     module_dict = dict(zip(computation_names, computation_modules))
     computations = [
         XlaShardedPipelineComputation.from_auto_sharded_computation(
             sharding_annotated_module=module_dict[computation.name],
             jax_pipeline_computation=computation,
-            strategy_config=strategy_config,
+            stage_plan=stage_plan,
             donated_invars=donate_invars,
             acc_grad_outvars=acc_grad_outvars,
             donatables=donatables)
@@ -892,14 +892,14 @@ def generate_sharded_xla_computations(
 
     #  pylint: disable=unbalanced-tuple-unpacking
     (computation_names, computation_modules,
-     strategy_config) = run_auto_sharding_pass(hlo_module, logical_mesh,
-                                               "stages", num_micro_batches,
-                                               autosharding_option)
+     stage_plan) = run_auto_sharding_pass(hlo_module, logical_mesh, "stages",
+                                          num_micro_batches,
+                                          autosharding_option)
 
     computations = generate_computations_from_modules(
         jax_computations, computation_names, computation_modules,
         computation_donate_invars, donatable_lists, acc_grad_outvars,
-        strategy_config)
+        stage_plan)
     return computations, flops
 
 

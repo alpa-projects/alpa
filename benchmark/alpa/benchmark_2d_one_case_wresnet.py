@@ -10,7 +10,7 @@ import alpa
 from alpa import parallelize, global_config, ShardParallel
 from alpa.model.wide_resnet import get_wide_resnet, TrainState
 from alpa.util import (map_to_shape, count_communication_primitives,
-                        print_used_time, compute_param_number, GB)
+                       print_used_time, compute_param_number, GB)
 
 
 def compute_metrics(logits, labels):
@@ -35,13 +35,14 @@ def create_learning_rate_fn():
     steps_per_epoch = 10000
     num_epochs = 100.0
 
-    warmup_fn = optax.linear_schedule(
-        init_value=0., end_value=base_learning_rate,
-        transition_steps=warmup_epochs * steps_per_epoch)
+    warmup_fn = optax.linear_schedule(init_value=0.,
+                                      end_value=base_learning_rate,
+                                      transition_steps=warmup_epochs *
+                                      steps_per_epoch)
     cosine_epochs = max(num_epochs - warmup_epochs, 1)
-    cosine_fn = optax.cosine_decay_schedule(
-        init_value=base_learning_rate,
-        decay_steps=cosine_epochs * steps_per_epoch)
+    cosine_fn = optax.cosine_decay_schedule(init_value=base_learning_rate,
+                                            decay_steps=cosine_epochs *
+                                            steps_per_epoch)
     schedule_fn = optax.join_schedules(
         schedules=[warmup_fn, cosine_fn],
         boundaries=[warmup_epochs * steps_per_epoch])
@@ -60,12 +61,11 @@ def create_train_state(rngkey, model, input_images, learning_rate_fn):
         momentum=0.9,
         nesterov=True,
     )
-    state = TrainState.create(
-        apply_fn=model.apply,
-        params=params,
-        tx=tx,
-        batch_stats=batch_stats,
-        dynamic_scale=None)
+    state = TrainState.create(apply_fn=model.apply,
+                              params=params,
+                              tx=tx,
+                              batch_stats=batch_stats,
+                              dynamic_scale=None)
     return state
 
 
@@ -73,22 +73,25 @@ def get_train_step(learning_rate_fn, use_grad_acc, method):
 
     @parallelize(method=method)
     def train_step(state, batch):
+
         def loss_fn(params):
             logits, new_model_state = state.apply_fn(
-                {"params": params, "batch_stats": state.batch_stats},
+                {
+                    "params": params,
+                    "batch_stats": state.batch_stats
+                },
                 batch["images"],
                 mutable=["batch_stats"])
             loss = cross_entropy_loss(logits, batch["labels"])
             weight_penalty_params = jax.tree_leaves(params)
             weight_decay = 0.0001
-            weight_l2 = sum([jnp.sum(x ** 2)
-                             for x in weight_penalty_params
-                             if x.ndim > 1])
+            weight_l2 = sum(
+                [jnp.sum(x**2) for x in weight_penalty_params if x.ndim > 1])
             weight_penalty = weight_decay * 0.5 * weight_l2
             metrics = {
-              "loss": loss,
-              "accuracy": jnp.mean(jnp.argmax(logits, -1) == batch["labels"]),
-              "lr": learning_rate_fn(step)
+                "loss": loss,
+                "accuracy": jnp.mean(jnp.argmax(logits, -1) == batch["labels"]),
+                "lr": learning_rate_fn(step)
             }
             return loss + weight_penalty, (new_model_state, metrics)
 
@@ -116,14 +119,11 @@ def get_train_step(learning_rate_fn, use_grad_acc, method):
             # if is_fin == False the gradients contain Inf/NaNs and optimizer
             # state and params should be restored (= skip this step).
             new_state = new_state.replace(
-                opt_state=jax.tree_multimap(
-                    partial(jnp.where, is_fin),
-                    new_state.opt_state,
-                    state.opt_state),
-                params=jax.tree_multimap(
-                    partial(jnp.where, is_fin),
-                    new_state.params,
-                    state.params))
+                opt_state=jax.tree_multimap(partial(jnp.where, is_fin),
+                                            new_state.opt_state,
+                                            state.opt_state),
+                params=jax.tree_multimap(partial(jnp.where, is_fin),
+                                         new_state.params, state.params))
             metrics["scale"] = dynamic_scale.scale
 
         return new_state, metrics
@@ -156,7 +156,7 @@ def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
         num_micro_batches = None
 
     as_option = AutoShardingOption()
-    if force_batch_dim_mapping: # Always map batch dim to mesh dim 0
+    if force_batch_dim_mapping:  # Always map batch dim to mesh dim 0
         as_option.force_batch_dim_to_mesh_dim = 0
     as_option.prefer_reduce_scatter = prefer_reduce_scatter
     as_option.allow_mixed_mesh_shape = True
@@ -178,16 +178,17 @@ def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
     # Prepare input batch
     num_classes = 1024
     batch = {
-        "images": jnp.ones((batch_size, image_size, image_size, 3), dtype=dtype),
-        "labels": jnp.ones((batch_size), dtype=jnp.int32),
+        "images":
+            jnp.ones((batch_size, image_size, image_size, 3), dtype=dtype),
+        "labels":
+            jnp.ones((batch_size), dtype=jnp.int32),
     }
     print_used_time("Prepare input")
 
     # Init train state
     if model_type == "wresnet":
-        model = get_wide_resnet(num_layers, width_factor,
-                                num_channels, num_classes,
-                                dtype)
+        model = get_wide_resnet(num_layers, width_factor, num_channels,
+                                num_classes, dtype)
     else:
         raise ValueError(f"Invalid model {model_type}")
 
@@ -208,9 +209,8 @@ def benchmark_wresnet_internal(physical_mesh, benchmark_case, niter):
     # Check sharding strategy
     alloc_mem = executable.get_total_allocation_size()
     ilp_objective = executable.auto_sharding_objective or 0.0
+    executable.dump_debug_info("tmp")
     hlo_text = executable.get_hlo_text()
-    with open("tmp/last_2d_wresnet.hlo", "w") as fout:
-        fout.write(hlo_text)
     n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all =\
         count_communication_primitives(hlo_text)
 

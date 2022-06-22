@@ -27,7 +27,7 @@ build_jaxlib/bazel-*
 build_jaxlib/.jax_configure.bazelrc
 build_jaxlib/dist
 
-# Serving-related
+# Examples build and tmp files
 examples/opt_serving/dataset/*.so
 examples/opt_serving/dataset/*.c
 examples/opt_serving/dataset/*.cpp

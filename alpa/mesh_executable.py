@@ -450,7 +450,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         Dump intermediate representations and other informations for debugging.
         """
         os.makedirs(folder, exist_ok=True)
-        name = self.hlo_module.anme()
+        name = self.hlo_module.name()
         name = name[:name.index("shard_parallel") - 1]
         prefix = os.path.join(folder, name)
         with open(f"{prefix}.hlo", "w") as f:

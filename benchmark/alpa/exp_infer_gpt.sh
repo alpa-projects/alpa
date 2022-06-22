@@ -9,7 +9,7 @@ run_experiment () {
   echo "--- Running experiment with $NUM_HOSTS hosts and $NUM_DEVICES_PER_HOST devices per host ---"
   python3 -u benchmark_3d_infer.py --suite gpt.infer_perf_test \
     --exp_name infer_${NUM_HOSTS}x${NUM_GPUS}_gpus \
-    --result_name "result_gpt_26B_fine_grained" \
+    --result_name "result_gpt_26B_preshard" \
     --num-hosts ${NUM_HOSTS} \
     --num-devices-per-host ${NUM_DEVICES_PER_HOST} \
     --disable-tqdm \
@@ -17,10 +17,10 @@ run_experiment () {
   sleep 0.1 # for ctrl+c to work
 }
 
-run_experiment 1 1
-run_experiment 1 2
+#run_experiment 1 1
+#run_experiment 1 2
 run_experiment 1 4
-run_experiment 1 8
+#run_experiment 1 8
 # run_experiment 2 1
 # run_experiment 2 2
 # run_experiment 2 4

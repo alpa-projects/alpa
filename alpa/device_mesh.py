@@ -1718,8 +1718,8 @@ class PhysicalDeviceMeshGroup:
                     meshes.append(mesh)
                     indices = pxla.spec_to_indices(info.aval.shape, spec)
                     arrays.append(
-                        mesh.shard_args_to_arrays((info.aval,), (indices,), (spec,),
-                                                  (arg,))[0])
+                        mesh.shard_args_to_arrays((info.aval,), (indices,),
+                                                  (spec,), (arg,))[0])
                 rets.append(ReplicatedDistributedArray(meshes, arrays))
 
         return rets

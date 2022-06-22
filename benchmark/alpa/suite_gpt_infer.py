@@ -29,8 +29,10 @@ model_sizes = [
     "125M", "350M", "760M", "1.3B", "2.6B", "6.7B", "15B", "39B", "76B"
 ]
 model_size = model_sizes[4]
-num_micro_batch_config = [1, 4, 16, 64]
-batch_size_config = [1, 4, 16, 64]
+#num_micro_batch_config = [1, 4, 16, 64, 256]
+#batch_size_config = [1, 4, 16, 64]
+num_micro_batch_config = [1]
+batch_size_config = [1]
 
 
 def get_config(pp_list,
@@ -76,10 +78,12 @@ def get_config(pp_list,
 
 
 if __name__ == "__main__":
-    get_config([1, 2, 4, 8], [1], [1], False, True)
-    get_config([1], [1, 2, 4, 8], [1], True, True)
-    get_config([1], [1], [1, 2, 4, 8], True, True)
+    #get_config([1, 2, 4, 8], [1], [1], False, True)
+    #get_config([1], [1, 2, 4, 8], [1], True, True)
+    #get_config([1], [1], [1, 2, 4, 8], True, True)
+    get_config([1], [1], [4], True, True)
 else:
-    get_config([1, 2, 4, 8], [1], [1], False)
-    get_config([1], [1, 2, 4, 8], [1], True)
-    get_config([1], [1], [1, 2, 4, 8], True)
+    #get_config([1, 2, 4, 8], [1], [1], False)
+    #get_config([1], [1, 2, 4, 8], [1], True)
+    #get_config([1], [1], [1, 2, 4, 8], True)
+    get_config([1], [1], [4], True, False)

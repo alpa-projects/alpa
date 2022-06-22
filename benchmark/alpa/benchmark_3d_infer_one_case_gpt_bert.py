@@ -141,7 +141,9 @@ def benchmark_gpt_bert_internal(model_type,
     params_info, _, _ = executable.get_load_info()
     flat_params, in_tree = tree_flatten(params)
     flat_info = tree_leaves(params_info)
-    params = tree_unflatten(in_tree, executable.mesh_group.shard_args_to_arrays(flat_info, flat_params))
+    params = tree_unflatten(
+        in_tree,
+        executable.mesh_group.shard_args_to_arrays(flat_info, flat_params))
     print_used_time("Preshard (driver)")
 
     if parallel_mode == "search":
@@ -193,5 +195,5 @@ def benchmark_gpt_bert_internal(model_type,
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size,
                                                   vocab_size)
 
-    return (parameter_count, max_mem_allocated, overall_latency, e2e_latency, tflops,
-            compilation_times) + get_last_dp_result()
+    return (parameter_count, max_mem_allocated, overall_latency, e2e_latency,
+            tflops, compilation_times) + get_last_dp_result()

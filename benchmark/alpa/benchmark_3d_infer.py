@@ -87,9 +87,9 @@ if __name__ == "__main__":
             num_devices_per_host,
             use_separate_process=args.use_separate_process,
             disable_tqdm=args.disable_tqdm)
-        (parameter_count, max_mem_allocated, overall_latency, e2e_latency, tflops,
-         compilation_times, compute_cost_file_name, forward_stage_layer_ids,
-         submesh_shapes, logical_mesh_shapes,
+        (parameter_count, max_mem_allocated, overall_latency, e2e_latency,
+         tflops, compilation_times, compute_cost_file_name,
+         forward_stage_layer_ids, submesh_shapes, logical_mesh_shapes,
          autosharding_option_dicts) = result
 
         heads = [

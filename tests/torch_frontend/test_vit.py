@@ -309,7 +309,7 @@ class TorchViTTest(unittest.TestCase):
         auto_layer_con_func = alpa.automatic_layer_construction(layer_num=num_auto_layers)
 
         train_torch_module(pt_module_gen, weight_init_func, dataloader,
-                           loss_func, optim_gen, parallel_method, auto_layer_con_func)
+                           loss_func, optim_gen, parallel_method, auto_layer_con_func=auto_layer_con_func)
 
 
 def suite():

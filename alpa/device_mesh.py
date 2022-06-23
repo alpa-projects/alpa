@@ -49,6 +49,7 @@ import ray
 from alpa import mesh_profiling
 import alpa.collective as col
 from alpa.collective.collective_group import nccl_util
+from alpa.collective.const import ENV
 from alpa.global_env import global_config
 from alpa.monkey_patch import set_override_backend
 from alpa.shard_parallel.auto_sharding import LogicalDeviceMesh
@@ -160,6 +161,7 @@ class MeshHostWorker:
             self.recv_tile_func = self.xla_nccl_recv_tile
             self.allgather_func = self.xla_nccl_allgather
             self.broadcast_func = self.xla_nccl_broadcast
+            self.nccl_use_multistream = True if ENV.NCCL_USE_MULTISTREAM.val else False
             self.nccl_local_allgather_init_comms = xe.nccl_init_communicator
         else:
             self.send_tile_func = self.cupy_nccl_send_tile
@@ -642,8 +644,13 @@ class MeshHostWorker:
         for allgather_spec in allgather_specs:
             device_ids = sorted(allgather_spec.device_ids)
             if repr(device_ids) not in self.allgather_communicators:
-                self.allgather_communicators[repr(device_ids)] = \
-                    self.nccl_local_allgather_init_comms(list(device_ids))
+                if global_config.nccl_mode == "from_xla_extension":
+                    self.allgather_communicators[repr(device_ids)] = \
+                        self.nccl_local_allgather_init_comms(list(device_ids), 
+                            self.nccl_use_multistream)
+                else:
+                    self.allgather_communicators[repr(device_ids)] = \
+                        self.nccl_local_allgather_init_comms(list(device_ids))
         self.allgather_tasks[uuid] = all_gather_task
 
     def run_allgather_task(self, uuid, buffer_uuids):
@@ -659,8 +666,13 @@ class MeshHostWorker:
                            tensor_slices: Sequence[slice], output_slice):
 
         if repr(sorted(device_ids)) not in self.allgather_communicators:
-            communicators = \
-                self.nccl_local_allgather_init_comms(list(sorted(device_ids)))
+            if global_config.nccl_mode == "from_xla_extension":
+                communicators = \
+                    self.nccl_local_allgather_init_comms(list(device_ids), 
+                        self.nccl_use_multistream)
+            else:
+                communicators = \
+                    self.nccl_local_allgather_init_comms(list(device_ids))
             self.allgather_communicators[repr(sorted(device_ids))] = \
                 communicators
 

@@ -7,7 +7,7 @@ from jax._src.lib import xla_extension as xe
 from alpa.collective.collective_group import xla_nccl_util
 from alpa.collective.collective_group.nccl_collective_group import Rendezvous
 from alpa.collective.collective_group.base_collective_group import BaseGroup
-from alpa.collective.const import get_store_name
+from alpa.collective.const import get_store_name, ENV
 from alpa.collective.types import (Backend, BroadcastOptions, AllReduceOptions,
                                    BarrierOptions, ReduceOptions,
                                    AllGatherOptions, ReduceScatterOptions,
@@ -138,8 +138,10 @@ class XLANCCLGroup(BaseGroup):
                         "destroyed.")
                     rendezvous.destroy_store()
 
+        nccl_use_multistream = True if ENV.NCCL_USE_MULTISTREAM.val else False
         comms = xe.nccl_create_communicators(world_size, devices_global_rank,
-                                             devices_ids, nccl_uid)
+                                             devices_ids, nccl_uid,
+                                             nccl_use_multistream)
         self._dev_comm_map[comm_key] = comms
         return comms
 

@@ -291,9 +291,7 @@ class MeshHostWorker:
         for uuid in uuids:
             assert uuid in self.buffers
 
-        shard_names = [
-            f"shard_{self.host_id}.{i}" for i in range(len(uuids))
-        ]
+        shard_names = [f"shard_{self.host_id}.{i}" for i in range(len(uuids))]
 
         metadata = {
             "global_shape": global_shape,
@@ -1893,7 +1891,8 @@ class PhysicalDeviceMeshGroup:
         cg = self.collective_groups[src_mesh_id][dst_mesh_id]
         self._instantiate_nccl_group(cg)
 
-    def shard_args_to_arrays(self, load_infos: PlacementSpec, args: Sequence[Any]):
+    def shard_args_to_arrays(self, load_infos: PlacementSpec,
+                             args: Sequence[Any]):
         rets = []
 
         for info, arg in zip(load_infos, args):

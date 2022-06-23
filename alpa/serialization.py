@@ -6,19 +6,16 @@ Support DistributedArray and ReplicatedDistributedArray serialization in Alpa.
 import logging
 import os
 import pickle
-from typing import Union, Sequence
+from typing import Union
 
 from flax.serialization import to_state_dict, from_state_dict
 import jax
-from jax.interpreters.pxla import ShardingSpec
-from jax.core import ShapedArray
 from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten, PyTreeDef
 import msgpack
 import numpy as np
 
 from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
-                              PhysicalDeviceMesh, get_global_virtual_physical_mesh)
-from alpa.parallel_plan import PlacementSpec
+                              get_global_virtual_physical_mesh)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -147,11 +144,13 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
             do not have a shared filesystem, each host needs a copy of
             the checkpoint on its local disk at the same path.
             step: step number to load.
-            placement_specs: shardingSpec and deviceMesh placement info for loading.
+            placement_specs: shardingSpec and deviceMesh placement info
+            for loading.
     """
     metapath = os.path.join(ckpt_dir, f"checkpoint_{step}")
     with open(metapath, "rb") as metafile:
-        metadata = from_state_dict(placement_specs, msgpack.unpackb(metafile.read()))
+        metadata = from_state_dict(placement_specs,
+                                   msgpack.unpackb(metafile.read()))
 
     state_paths, state_tree = tree_flatten(metadata)
     flat_info = tree_leaves(placement_specs)
@@ -164,8 +163,8 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
             logger.warning("Variable is not used, skip loading it")
             flat_load_state.append(None)
         if len(info.mesh_ids) == 1:
-            dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path),
-                                             info.aval,
+            dist_arr = DistributedArray.load(os.path.join(ckpt_dir,
+                                                          path), info.aval,
                                              mesh_group[info.mesh_ids[0]],
                                              info.sharding_specs[0])
             flat_load_state.append(dist_arr)
@@ -173,9 +172,9 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
             meshes, arrays = [], []
             for mesh_id, spec in zip(info.mesh_ids, info.sharding_specs):
                 meshes.append(mesh_group[mesh_id])
-                dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path),
-                                                 info.aval, mesh_group[mesh_id],
-                                                 spec)
+                dist_arr = DistributedArray.load(os.path.join(ckpt_dir,
+                                                              path), info.aval,
+                                                 mesh_group[mesh_id], spec)
                 arrays.append(dist_arr)
             flat_load_state.append(ReplicatedDistributedArray(meshes, arrays))
 

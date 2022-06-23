@@ -1013,7 +1013,8 @@ class PipelineInstEmitter:
 
         return outs_handler
 
-    def _compile_input_placement_spec(self, mesh_arg_indices, input_shard_specs):
+    def _compile_input_placement_spec(self, mesh_arg_indices,
+                                      input_shard_specs):
         assert self.in_tree is not None
 
         # build spec_arr: List[flatten global index -> PlacementSpec]
@@ -1028,7 +1029,8 @@ class PipelineInstEmitter:
                 else:
                     old_val = spec_arr[global_idx]
                     spec_arr[global_idx] = PlacementSpec(
-                        old_val.aval, old_val.mesh_ids + (physical_mesh.mesh_id,),
+                        old_val.aval,
+                        old_val.mesh_ids + (physical_mesh.mesh_id,),
                         old_val.sharding_specs + (shard_spec,))
 
         return tree_unflatten(self.in_tree, spec_arr)

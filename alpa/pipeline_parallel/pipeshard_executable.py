@@ -4,18 +4,19 @@ import os
 import time
 from typing import Optional, Sequence
 
-from jax.tree_util import tree_map, tree_flatten, tree_unflatten, PyTreeDef
+from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 import numpy as np
 import ray.exceptions
 
 from alpa.device_mesh import MeshHostWorker
 from alpa.global_env import global_config
 from alpa.device_mesh import PhysicalDeviceMeshGroup
-from alpa.mesh_executable import (
-    AllocZeroBufferWorkerExecutable, ConcatMeshWorkerExecutable,
-    MemzeroWorkerExecutable, PartialGradAccMeshWorkerExecutable,
-    next_mesh_executable_uuid, get_uuid_np_array, next_remote_buffer_uuid,
-    RemoteBufferRef, PlacementSpec)
+from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
+                                  ConcatMeshWorkerExecutable,
+                                  MemzeroWorkerExecutable,
+                                  PartialGradAccMeshWorkerExecutable,
+                                  next_mesh_executable_uuid, get_uuid_np_array,
+                                  next_remote_buffer_uuid, RemoteBufferRef)
 from alpa.pipeline_parallel.runtime_emitter import (
     AllocateZeroWorkerExecutableConfig, ConcatWorkerExecutableConfig,
     ExecutableConfig, MemZeroWorkerExecutableConfig,

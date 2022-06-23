@@ -167,7 +167,7 @@ def get_hf_opt_model(model_name, device):
 def get_model(model_name,
               device,
               path,
-              autoregressive,
+              autoregressive=True,
               dtype=jnp.float16,
               dummy=False,
               batch_size=1,

@@ -1,7 +1,7 @@
 # Examples: Serving OPT-175B using Alpa
 As a serving system, Alpa provides the following unique advantages:
 - **Support commodity hardware**: With Alpa, you can serve OPT-175B using your in-house GPU cluster, without needing the latest generations of A100 80GB GPUs nor fancy InfiniBand connections -- no hardware constraints!
-- **Flexible parallelism strategies**: Alpa will automatically figure out the appropriate model-parallelism strategies based on your cluster setup.
+- **Flexible parallelism strategies**: Alpa will automatically figure out the appropriate model-parallel strategies based on your cluster setup.
 
 In this example, we use Alpa to serve the open-source OPT model, supporting all sizes ranging from 125M to 175B. 
 
@@ -9,7 +9,34 @@ Specifically, Alpa provides:
 - A backend to perform model-parallel distributed inference for the large OPT models;
 - A web frontend to collect and batch inference requests from users.
 
-**Note**: the trained OPT model weights can be obtained from [Metaseq](https://github.com/facebookresearch/metaseq), subject to their license.
+**Note**: the OPT model weights can be obtained from [Metaseq](https://github.com/facebookresearch/metaseq), subject to their license.
+
+## Example
+Use huggingface/transformers interface and Alpa backend for distributed inference.
+
+```pyhton
+from transformers import AutoTokenizer
+from examples.opt_serving.model.wrapper import get_model
+
+# Load the tokenizer. We have to use the 30B version because
+# other versions have some issues. The 30B version works for all OPT models.
+tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", use_fast=False)
+tokenizer.add_bos_token = False
+
+# Load the model
+model = get_model(model_name="alpa/opt-2.7b",
+                  device="cuda",
+                  path="/home/ubuntu/opt_weights/")
+
+# Generate
+prompt = "Paris is the capital city of "
+
+input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to("cuda")
+output = model.generate(input_ids=input_ids, max_length=256, do_sample=True)
+generated_string = tokenizer.batch_decode(output, skip_special_tokens=True)
+
+print(generated_string)
+```
 
 ## Requirements
 1. Install Alpa following the [installation guide](https://alpa-projects.github.io/install.html).
@@ -45,6 +72,7 @@ Run generation using the 125M OPT model with PyTorch/HuggingFace backend:
 cd benchmark
 python3 benchmark_text_gen.py --model facebook/opt-125m
 ```
+
 Run generation using the OPT-125M model with JAX backend in debug model to output the generated text:
 ```shell
 python3 benchmark_text_gen.py --model jax/opt-125m --path [PATH_TO_WEIGHT] --debug
@@ -83,4 +111,4 @@ Then open `https://[IP-ADDRESS]:10001` in your browser to try out the model!
 - [examples/opt_serving/interactive_hosted.py](interactive_hosted.py): Web server entry point.
 
 ## License
-The Use of the OPT pretrained weights are subject to the [Model Licenc](https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/MODEL_LICENSE.md) by Metaseq.
+The use of the OPT pretrained weights are subject to the [Model License](https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/MODEL_LICENSE.md) by Metaseq.

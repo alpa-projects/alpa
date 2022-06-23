@@ -4,18 +4,19 @@ import os
 import time
 from typing import Optional, Sequence
 
-from jax.tree_util import tree_map, tree_flatten, tree_unflatten, PyTreeDef
+from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 import numpy as np
 import ray.exceptions
 
 from alpa.device_mesh import MeshHostWorker
 from alpa.global_env import global_config
 from alpa.device_mesh import PhysicalDeviceMeshGroup
-from alpa.mesh_executable import (
-    AllocZeroBufferWorkerExecutable, ConcatMeshWorkerExecutable,
-    MemzeroWorkerExecutable, PartialGradAccMeshWorkerExecutable,
-    next_mesh_executable_uuid, get_uuid_np_array, next_remote_buffer_uuid,
-    RemoteBufferRef, PlacementSpec)
+from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
+                                  ConcatMeshWorkerExecutable,
+                                  MemzeroWorkerExecutable,
+                                  PartialGradAccMeshWorkerExecutable,
+                                  next_mesh_executable_uuid, get_uuid_np_array,
+                                  next_remote_buffer_uuid, RemoteBufferRef)
 from alpa.pipeline_parallel.runtime_emitter import (
     AllocateZeroWorkerExecutableConfig, ConcatWorkerExecutableConfig,
     ExecutableConfig, MemZeroWorkerExecutableConfig,
@@ -57,7 +58,7 @@ class PipeshardDriverExecutable:
         self.stages = pipeshard_config.xla_stages
         self.schedule = pipeshard_config.schedule
         self.flop_count = pipeshard_config.flop_count
-        self.load_info = pipeshard_config.load_info
+        self.input_placement_specs = pipeshard_config.input_placement_specs
         # List[stage_idx -> str]
         self.fully_optimized_hlo_texts = []
         self.sharding_annotated_hlo_texts = (
@@ -204,12 +205,7 @@ class PipeshardDriverExecutable:
 
     def get_input_placement_specs(self):
         """Return the preferred placement specs for input arguments."""
-
-        def load_info_to_placement_spec(load_info):
-            return PlacementSpec([x.mesh_id for x in load_info.meshes],
-                                 load_info.specs)
-
-        return tree_map(load_info_to_placement_spec, self.load_info)
+        return self.input_placement_specs
 
     def __call__(self, *args):
         """Fast call without signature matching."""
@@ -224,11 +220,6 @@ class PipeshardDriverExecutable:
         args_flat, _ = tree_flatten(dyn_args)
         out = self.launch_on_driver(*args_flat)
         return tree_unflatten(self.out_tree, out)
-
-    ##### Load/Store Related Functions #####
-    def get_load_info(self):
-        """Get the load info for model checkpoints."""
-        return self.load_info
 
     ##### Profiling and Debugging Related Functions #####
     def get_execution_time_costs(self,

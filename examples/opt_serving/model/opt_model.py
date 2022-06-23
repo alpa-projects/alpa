@@ -738,7 +738,6 @@ def get_pipeshard_executable(config,
             })
 
     executable.dump_debug_info("tmp")
-
     return executable, params
 
 
@@ -827,14 +826,14 @@ setattr(MeshHostWorker, "load_opt_params_worker_func",
 def load_params_dis_array(path, executable, params_aval, config, dummy=False):
     if dummy:
         alpa.global_config.use_dummy_value_for_benchmarking = True
-        params_info, _ = executable.get_load_info()
+        params_info, _ = executable.get_input_placement_specs()
         flat_args, in_tree = tree_flatten(params_aval)
         flat_info = tree_leaves(params_info)
         ret = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
         alpa.global_config.use_dummy_value_for_benchmarking = False
         return ret
 
-    params_info, _ = executable.get_load_info()
+    params_info, _ = executable.get_input_placement_specs()
 
     prefix_to_flat_idx = {}
     ct = itertools.count()
@@ -857,16 +856,29 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
     flat_mesh_ids = []
     flat_arrays = []
 
+    mesh_group = executable.mesh_group
+
     for info in flat_infos:
         aval = info.aval
-        if info.is_replicated():
+        if len(info.mesh_ids) == 1:
+            mesh, spec = mesh_group[info.mesh_ids[0]], info.sharding_specs[0]
+            indices = pxla.spec_to_indices(aval.shape, spec)
+            buf_refs, buf_uuids = create_remote_buffer_refs(mesh, 1)
+            flat_shapes.append([aval.shape])
+            flat_uuids.append([buf_uuids])
+            flat_indices.append([indices])
+            flat_mesh_ids.append([mesh.mesh_id])
+            flat_arrays.append(
+                DistributedArray(mesh, aval, spec, buf_refs, indices))
+        else:
             tmp_shapes = []
             tmp_uuids = []
             tmp_indices = []
             tmp_mesh_ids = []
             tmp_arrays = []
             tmp_meshes = []
-            for mesh, spec in info.get_info():
+            for mesh_id, spec in zip(info.mesh_ids, info.sharding_specs):
+                mesh = mesh_group[mesh_id]
                 indices = pxla.spec_to_indices(aval.shape, spec)
                 buf_refs, buf_uuids = create_remote_buffer_refs(mesh, 1)
                 array = DistributedArray(mesh, aval, spec, buf_refs, indices)
@@ -882,16 +894,6 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
             flat_mesh_ids.append(tuple(tmp_mesh_ids))
             flat_arrays.append(
                 ReplicatedDistributedArray(tmp_meshes, tmp_arrays))
-        else:
-            mesh, spec = info.get_info()
-            indices = pxla.spec_to_indices(aval.shape, spec)
-            buf_refs, buf_uuids = create_remote_buffer_refs(mesh, 1)
-            flat_shapes.append([aval.shape])
-            flat_uuids.append([buf_uuids])
-            flat_indices.append([indices])
-            flat_mesh_ids.append([mesh.mesh_id])
-            flat_arrays.append(
-                DistributedArray(mesh, aval, spec, buf_refs, indices))
 
     for m in executable.mesh_group.meshes:
         for w in m.workers:
@@ -906,7 +908,7 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
 def init_cache_dis_array(executable, config, batch_size, dummy=False):
     alpa.global_config.use_dummy_value_for_benchmarking = dummy
     cache = init_cache_np(config, batch_size)
-    _, batch_info = executable.get_load_info()
+    _, batch_info = executable.get_input_placement_specs()
     cache_info = batch_info["cache"]
     flat_args, in_tree = tree_flatten(cache)
     flat_info = tree_leaves(cache_info)

@@ -9,7 +9,8 @@ from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 
 from alpa.device_mesh import ReplicatedDistributedArray, PhysicalDeviceMeshGroup
 from alpa.mesh_executable import (NormalMeshDriverExecutable,
-                                  GradAccMeshDriverExecutable, PlacementSpec)
+                                  GradAccMeshDriverExecutable)
+from alpa.parallel_plan import PlacementSpec
 from alpa.pipeline_parallel.compile_executable import compile_pipeshard_executable_internal
 from alpa.pipeline_parallel.layer_construction import add_pipeline_marks_for_sliced_eqns
 from alpa.pipeline_parallel.pipeshard_executable import PipeshardDriverExecutable

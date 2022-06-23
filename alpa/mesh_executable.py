@@ -369,8 +369,9 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
     def get_input_placement_specs(self):
         """Return the preferred placement specs for input arguments."""
         placement_specs = [
-            PlacementSpec((self.physical_mesh.mesh_id,), (sharding_spec,))
-            for sharding_spec in self.input_sharding_specs
+            PlacementSpec(aval, (self.physical_mesh.mesh_id,),
+                          (sharding_spec,)) for aval, sharding_spec in zip(
+                              self.avals, self.input_sharding_specs)
         ]
         return tree_unflatten(self.in_tree, placement_specs)
 
@@ -822,8 +823,9 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
     def get_input_placement_specs(self):
         """Return the preferred placement specs for input arguments."""
         placement_specs = [
-            PlacementSpec((self.physical_mesh.mesh_id,), (sharding_spec,))
-            for sharding_spec in self.global_arg_sharding_specs
+            PlacementSpec(aval, (self.physical_mesh.mesh_id,),
+                          (sharding_spec,)) for aval, sharding_spec in zip(
+                              self.avals, self.global_arg_sharding_specs)
         ]
         return tree_unflatten(self.in_tree, placement_specs)
 

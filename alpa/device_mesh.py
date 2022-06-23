@@ -52,6 +52,7 @@ from alpa.collective.collective_group import nccl_util
 from alpa.global_env import global_config
 from alpa.monkey_patch import set_override_backend
 from alpa.shard_parallel.auto_sharding import LogicalDeviceMesh
+from alpa.parallel_plan import PlacementSpec
 from alpa.timer import timers
 from alpa.util import (benchmark_func, list_gpu_info, jax_tensor_to_cupy,
                        cupy_to_jax_tensor, jax_tensor_set,
@@ -290,9 +291,7 @@ class MeshHostWorker:
         for uuid in uuids:
             assert uuid in self.buffers
 
-        shard_names = [
-            str(self.host_id) + "." + str(i) for i in range(len(uuids))
-        ]
+        shard_names = [f"shard_{self.host_id}.{i}" for i in range(len(uuids))]
 
         metadata = {
             "global_shape": global_shape,
@@ -313,7 +312,7 @@ class MeshHostWorker:
             with open(os.path.join(save_dir, shard_name), "wb") as datafile:
                 np.save(datafile, self.buffers[uuid])
 
-        with open(os.path.join(save_dir, f".metadata{self.host_id}"),
+        with open(os.path.join(save_dir, f"metadata_{self.host_id}"),
                   "wb") as metafile:
             pickle.dump(metadata, metafile)
 
@@ -325,7 +324,7 @@ class MeshHostWorker:
                      shard_indices: Sequence[Index], device_ids: Sequence[int]):
         assert len(uuids) > 0
         metadatas = list(
-            filter(lambda fname: fname.startswith(".metadata"),
+            filter(lambda fname: fname.startswith("metadata"),
                    os.listdir(ckpt_dir)))
         # pylint: disable=import-outside-toplevel
         from alpa.serialization import load_sharded_array
@@ -1892,26 +1891,29 @@ class PhysicalDeviceMeshGroup:
         cg = self.collective_groups[src_mesh_id][dst_mesh_id]
         self._instantiate_nccl_group(cg)
 
-    def shard_args_to_arrays(self, load_infos: "LoadInfo", args: Sequence[Any]):
+    def shard_args_to_arrays(self, load_infos: PlacementSpec,
+                             args: Sequence[Any]):
         rets = []
 
         for info, arg in zip(load_infos, args):
             aval = info.aval
-            if info.is_replicated():
+            if len(info.mesh_ids) == 1:
+                mesh = self.meshes[info.mesh_ids[0]]
+                spec = info.sharding_specs[0]
+                indices = pxla.spec_to_indices(aval.shape, spec)
+                rets.append(
+                    mesh.shard_args_to_arrays((aval,), (indices,), (spec,),
+                                              (arg,))[0])
+            else:
                 meshes, arrays = [], []
-                for mesh, spec in info.get_info():
+                for mesh_id, spec in zip(info.mesh_ids, info.sharding_specs):
+                    mesh = self.meshes[mesh_id]
                     meshes.append(mesh)
                     indices = pxla.spec_to_indices(aval.shape, spec)
                     arrays.append(
                         mesh.shard_args_to_arrays((aval,), (indices,), (spec,),
                                                   (arg,))[0])
                 rets.append(ReplicatedDistributedArray(meshes, arrays))
-            else:
-                mesh, spec = info.get_info()
-                indices = pxla.spec_to_indices(aval.shape, spec)
-                rets.append(
-                    mesh.shard_args_to_arrays((aval,), (indices,), (spec,),
-                                              (arg,))[0])
 
         return rets
 

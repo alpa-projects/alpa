@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Sequence, Tuple
 
 import numpy as np
+from jax.core import ShapedArray
 from jax.interpreters import pxla
 from jax.tree_util import PyTreeDef
 
@@ -13,6 +14,7 @@ from jax.tree_util import PyTreeDef
 @dataclass
 class PlacementSpec:
     """Specify how a tensor is stored distributedly."""
+    aval: ShapedArray
     mesh_ids: Sequence[int]
     sharding_specs: Sequence[pxla.ShardingSpec]
 

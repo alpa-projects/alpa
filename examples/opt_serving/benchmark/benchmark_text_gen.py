@@ -164,6 +164,7 @@ if __name__ == "__main__":
                           dummy=args.dummy)
         load_time = time.time() - tic
 
+        # warm up
         input_ids = tokenizer("Paris is the capital city of",
                               return_tensors="pt").input_ids.to(args.device)
         output = model.generate(input_ids=input_ids,
@@ -176,9 +177,10 @@ if __name__ == "__main__":
         L = model.transformer_config.L
         seq_len = model.transformer_config.seq_len
         vocab_size = model.transformer_config.vocab_size
-
         num_gpus = alpa.get_global_cluster(
         ).num_devices if "alpa" in args.model else 1
+
+        # benchmark
         for i in range(n_iters):
             prompt = test_prompts[i]
             torch.manual_seed(8)
@@ -238,3 +240,4 @@ if __name__ == "__main__":
         f"{latency_32_tokens:.2f}"
     ]
     write_tsv(heads, values, "results.tsv")
+

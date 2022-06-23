@@ -6,18 +6,16 @@ Support DistributedArray and ReplicatedDistributedArray serialization in Alpa.
 import logging
 import os
 import pickle
-from typing import Union, Sequence
+from typing import Union
 
 from flax.serialization import to_state_dict, from_state_dict
 import jax
-from jax.interpreters.pxla import ShardingSpec
-from jax.core import ShapedArray
 from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten, PyTreeDef
 import msgpack
 import numpy as np
 
 from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
-                              PhysicalDeviceMesh)
+                              get_global_virtual_physical_mesh)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -39,7 +37,7 @@ def _dfs_pytree(tree, prefix):
 
 def _save_unsharded_array(ckpt_dir, arr):
     os.makedirs(ckpt_dir, exist_ok=True)
-    shard_name = "0.0"
+    shard_name = "shard_0.0"
     metadata = {
         "global_shape": arr.shape,
         "dtype": arr.dtype,
@@ -48,7 +46,7 @@ def _save_unsharded_array(ckpt_dir, arr):
     }
     with open(os.path.join(ckpt_dir, shard_name), "wb") as datafile:
         np.save(datafile, arr)
-    with open(os.path.join(ckpt_dir, ".metadata0"), "wb") as metafile:
+    with open(os.path.join(ckpt_dir, "metadata_0"), "wb") as metafile:
         pickle.dump(metadata, metafile)
 
 
@@ -135,70 +133,49 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike],
         metafile.write(msgpack.packb(metadata))
 
 
-class LoadInfo:
-    """
-    A wrapper for the loading information.
-    """
-
-    def __init__(self, aval: ShapedArray, meshes: Sequence[PhysicalDeviceMesh],
-                 specs: Sequence[ShardingSpec]):
-        assert len(meshes) == len(specs)
-        self.aval = aval
-        self.meshes = meshes
-        self.specs = specs
-
-    def add_replica(self, mesh, spec):
-        self.meshes.append(mesh)
-        self.specs.append(spec)
-
-    def get_info(self):
-        if self.is_replicated():
-            return zip(self.meshes, self.specs)
-        else:
-            return self.meshes[0], self.specs[0]
-
-    def is_replicated(self):
-        return len(self.meshes) > 1
-
-    def __str__(self):
-        return f"{self.aval}, {self.meshes[0].mesh_id}, {self.specs[0]}"
-
-
 def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
-                       load_info: PyTreeDef):
+                       placement_specs: PyTreeDef):
     """
         Restore the specified checkpoint from `ckpt_dir` and reshard it
-        according to the `load_info`.
+        according to the `placement_specs`.
 
         Args:
             ckpt_dir: directory of checkpoints to restore from. If you
             do not have a shared filesystem, each host needs a copy of
             the checkpoint on its local disk at the same path.
             step: step number to load.
-            load_info: shardingSpec and deviceMesh placement info for loading.
+            placement_specs: shardingSpec and deviceMesh placement info
+            for loading.
     """
     metapath = os.path.join(ckpt_dir, f"checkpoint_{step}")
     with open(metapath, "rb") as metafile:
-        metadata = from_state_dict(load_info, msgpack.unpackb(metafile.read()))
+        metadata = from_state_dict(placement_specs,
+                                   msgpack.unpackb(metafile.read()))
 
     state_paths, state_tree = tree_flatten(metadata)
-    flat_info = tree_leaves(load_info)
+    flat_info = tree_leaves(placement_specs)
     flat_load_state = []
+    mesh_group = get_global_virtual_physical_mesh().launched_physical_mesh_group
+    assert mesh_group is not None
+
     for path, info in zip(state_paths, flat_info):
         if info is None:
             logger.warning("Variable is not used, skip loading it")
             flat_load_state.append(None)
-        if info.is_replicated():
+        if len(info.mesh_ids) == 1:
+            dist_arr = DistributedArray.load(os.path.join(ckpt_dir,
+                                                          path), info.aval,
+                                             mesh_group[info.mesh_ids[0]],
+                                             info.sharding_specs[0])
+            flat_load_state.append(dist_arr)
+        else:
             meshes, arrays = [], []
-            for mesh, spec in info.get_info():
-                meshes.append(mesh)
-                dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path),
-                                                 info.aval, mesh, spec)
+            for mesh_id, spec in zip(info.mesh_ids, info.sharding_specs):
+                meshes.append(mesh_group[mesh_id])
+                dist_arr = DistributedArray.load(os.path.join(ckpt_dir,
+                                                              path), info.aval,
+                                                 mesh_group[mesh_id], spec)
                 arrays.append(dist_arr)
             flat_load_state.append(ReplicatedDistributedArray(meshes, arrays))
-        else:
-            mesh, spec = info.get_info()
-            dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path),
-                                             info.aval, mesh, spec)
-            flat_load_state.append(dist_arr)
+
     return tree_unflatten(state_tree, flat_load_state)

@@ -257,8 +257,9 @@ class XLANCCLGroup(BaseGroup):
                         "destroyed.")
                     rendezvous.destroy_store()
 
+        nccl_use_multistream = True if ENV.NCCL_USE_MULTISTREAM.val else False
         comms = xe.nccl_create_communicators(2, [my_p2p_rank], [my_gpu_idx],
-                                             nccl_uid)
+                                             nccl_uid, nccl_use_multistream)
         self._dev_comm_map[comm_key] = comms
         return comms
 

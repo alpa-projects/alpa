@@ -738,7 +738,6 @@ def get_pipeshard_executable(config,
             })
 
     executable.dump_debug_info("tmp")
-
     return executable, params
 
 

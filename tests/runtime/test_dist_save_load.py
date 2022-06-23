@@ -154,8 +154,8 @@ class DistSaveLoadTest(unittest.TestCase):
             executable = parallel_train_step.get_executable(jax_state, batch)
 
             # Restore checkpoint
-            state_ss, _ = executable.get_load_info()
-            load_state = restore_checkpoint(ckpt_dir, 1, state_ss)
+            state_ps, _ = executable.get_input_placement_specs()
+            load_state = restore_checkpoint(ckpt_dir, 1, state_ps)
 
             # Run after load
             serial_state = serial_train_step(jax_state, batch)[0]
@@ -201,8 +201,8 @@ class DistSaveLoadTest(unittest.TestCase):
             save_checkpoint(ckpt_dir, parallel_state, 1)
 
             # Restore checkpoint
-            state_ss, _ = executable.get_load_info()
-            load_state = restore_checkpoint(ckpt_dir, 1, state_ss)
+            state_ps, _ = executable.get_input_placement_specs()
+            load_state = restore_checkpoint(ckpt_dir, 1, state_ps)
 
             # Run after load
             serial_state = serial_train_step(serial_state, batch)[0]
@@ -269,8 +269,8 @@ class DistSaveLoadTest(unittest.TestCase):
                 executable.sync_move_workers()
 
                 # Restore checkpoint
-                state_ss, _ = executable.get_load_info()
-                load_state = restore_checkpoint(ckpt_dir, 1, state_ss)
+                state_ps, _ = executable.get_input_placement_specs()
+                load_state = restore_checkpoint(ckpt_dir, 1, state_ps)
 
                 # Run after load
                 serial_state = serial_train_step(serial_state, batch)[0]

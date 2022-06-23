@@ -57,7 +57,7 @@ class PipeshardDriverExecutable:
         self.stages = pipeshard_config.xla_stages
         self.schedule = pipeshard_config.schedule
         self.flop_count = pipeshard_config.flop_count
-        self.load_info = pipeshard_config.load_info
+        self.input_placement_specs = pipeshard_config.input_placement_specs
         # List[stage_idx -> str]
         self.fully_optimized_hlo_texts = []
         self.sharding_annotated_hlo_texts = (
@@ -204,12 +204,7 @@ class PipeshardDriverExecutable:
 
     def get_input_placement_specs(self):
         """Return the preferred placement specs for input arguments."""
-
-        def load_info_to_placement_spec(load_info):
-            return PlacementSpec([x.mesh_id for x in load_info.meshes],
-                                 load_info.specs)
-
-        return tree_map(load_info_to_placement_spec, self.load_info)
+        return self.input_placement_specs
 
     def __call__(self, *args):
         """Fast call without signature matching."""
@@ -224,11 +219,6 @@ class PipeshardDriverExecutable:
         args_flat, _ = tree_flatten(dyn_args)
         out = self.launch_on_driver(*args_flat)
         return tree_unflatten(self.out_tree, out)
-
-    ##### Load/Store Related Functions #####
-    def get_load_info(self):
-        """Get the load info for model checkpoints."""
-        return self.load_info
 
     ##### Profiling and Debugging Related Functions #####
     def get_execution_time_costs(self,

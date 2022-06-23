@@ -730,21 +730,40 @@ _state_shape = xe.Shape.array_shape(np.dtype(np.int32), (1,))
 _state_aval = ShapedArray((1,), np.int32)
 
 
+# Add control dependency for rng get/set seed
+def _rng_dependency_opaque(deps):
+    ret = ""
+    for before_op_name in deps:
+        ret += before_op_name + ";"
+    return bytes(ret, encoding="utf8")
+
+
 def _get_seed_translation(c, *args, **kwargs):
-    return xc.ops.CustomCall(c,
+    op_metadata = xc.OpMetadata(op_name=kwargs["op_name"])
+    c.set_op_metadata(op_metadata)
+
+    call = xc.ops.CustomCall(c,
                              b"alpa$get-state",
                              operands=(),
                              shape=_state_shape,
-                             has_side_effect=True)
+                             has_side_effect=True,
+                             opaque=_rng_dependency_opaque(kwargs["deps"]))
+    c.clear_op_metadata()
+    return call
 
 
 def _set_seed_translation(c, *args, **kwargs):
     assert len(args) == 1, "Only support seed as an input"
-    return xc.ops.CustomCall(c,
+    op_metadata = xc.OpMetadata(op_name=kwargs["op_name"])
+    c.set_op_metadata(op_metadata)
+    call = xc.ops.CustomCall(c,
                              b"alpa$set-state",
                              operands=(args[0],),
                              shape=_state_shape,
-                             has_side_effect=True)
+                             has_side_effect=True,
+                             opaque=_rng_dependency_opaque(kwargs["deps"]))
+    c.clear_op_metadata()
+    return call
 
 
 xla.translations[get_state_p] = _get_seed_translation
@@ -804,17 +823,26 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
                 new_outvars.append(outv)
         return clone_jaxpr_eqn(eqn, new_invars, new_outvars)
 
-    def new_get_seed_eqn():
-        return new_jaxpr_eqn([], [gensym_fn(_state_aval)], get_state_p, {})
+    op_name_cnt = 0
 
-    def new_set_seed_eqn(get_seed_eqn):
-        seed_var = get_seed_eqn.outvars[0]
-        return new_jaxpr_eqn([seed_var], [gensym_fn(_state_aval)], set_state_p, {})
+    def next_op_name():
+        nonlocal op_name_cnt
+        op_name_cnt += 1
+        return bytes(f"alpa_rng_{op_name_cnt}", encoding="utf8")
 
-    def new_set_seed_eqn(get_seed_eqn):
+    def new_get_seed_eqn(deps):
+        return new_jaxpr_eqn([], [gensym_fn(_state_aval)], get_state_p, {
+            "deps": deps,
+            "op_name": next_op_name()
+        })
+
+    def new_set_seed_eqn(get_seed_eqn, deps, *dep_args):
         seed_var = get_seed_eqn.outvars[0]
-        return new_jaxpr_eqn([seed_var], [gensym_fn(_state_aval)], set_state_p,
-                             {})
+        return new_jaxpr_eqn([seed_var, *dep_args], [gensym_fn(_state_aval)],
+                             set_state_p, {
+                                 "deps": deps,
+                                 "op_name": next_op_name()
+                             })
 
     def difference_cross_marker(eqns, base, dif):
         base = set(base)
@@ -873,24 +901,22 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
                                         offloaded_vars_from.keys(),
                                         closed_jaxpr.jaxpr.outvars)
     seed_eqn = {}
+    cur_pipeline = None
     for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
         # Rewrite pipeline_markers
         if eqn.primitive is pipeline_p:
             new_eqns.append(_offload_remat_process_pipeline(eqn, discarded))
+            cur_pipeline = eqn
         elif eqn_idx in offloaded_eqns:
-            get_seed_eqn = new_get_seed_eqn()
+            deps = (eqn.params["name"],)
+            get_seed_eqn = new_get_seed_eqn(deps)
             seed_eqn[eqn_idx] = get_seed_eqn
-            new_eqns.append(get_seed_eqn)
-            new_eqns.append(eqn)
+            new_eqns.extend([get_seed_eqn, eqn])
         elif eqn_idx not in offload_to:
             new_eqns.append(eqn)
         else:
             inserted_idx = offload_to[eqn_idx]
             var_mapping = {}
-            # get backup seed and set prev seed
-            backup_seed = new_get_seed_eqn()
-            new_eqns.append(backup_seed)
-            new_eqns.append(new_set_seed_eqn(seed_eqn[inserted_idx]))
             # insert forward remat call
             inserted = closed_jaxpr.eqns[inserted_idx]
             new_outvars = []
@@ -905,12 +931,24 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
                         v = var_pipeline_mapping[v]
                         var_mapping[v] = new_v
             cloned_fwd = clone_jaxpr_eqn(inserted, outvars=new_outvars)
-            new_eqns.append(cloned_fwd)
+            cloned_fwd.params["name"] += "_cloned"
+            # get backup seed and set prev seed
+            backup_seed = new_get_seed_eqn(())
+            set_seed_deps = (cloned_fwd.params["name"],)
+            set_seed = new_set_seed_eqn(seed_eqn[inserted_idx], set_seed_deps,
+                                        backup_seed.outvars[0])
             # restore seed
-            new_eqns.append(new_set_seed_eqn(backup_seed))
+            restore_seed_deps = (cur_pipeline.params["name"],)
+            restore_dep_vars = [
+                v for v in cloned_fwd.outvars if is_meaningful(v)
+            ]
+            restore_seed = new_set_seed_eqn(backup_seed, restore_seed_deps,
+                                            *restore_dep_vars)
             # rewrite invars for bwd remat call
             new_invars = [get_var_mapping(var_mapping, v) for v in eqn.invars]
-            new_eqns.append(clone_jaxpr_eqn(eqn, invars=new_invars))
+            new_eqn = clone_jaxpr_eqn(eqn, invars=new_invars)
+            series = (backup_seed, set_seed, cloned_fwd, restore_seed, new_eqn)
+            new_eqns.extend(series)
     return clone_jaxpr(closed_jaxpr, eqns=new_eqns)
 
 

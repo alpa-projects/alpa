@@ -267,6 +267,11 @@ class TorchViTTest(unittest.TestCase):
             "hidden_d": 5120,
             "mlp_d": 20480,
         }
+        parallel_config = {
+            "num_micro_batches": 128,
+            "num_auto_layers": 16,
+            "auto_sharding_option": {'force_batch_dim_to_mesh_dim': 0},
+        }
 
         # # ViT-25B model
         # arch_params = {
@@ -275,6 +280,13 @@ class TorchViTTest(unittest.TestCase):
         #     "hidden_d": 7680,
         #     "mlp_d": 30720,
         # }
+
+        """
+        32: get_solution_case("15B", num_micro_batches=128,
+                      num_auto_layers=16, forward_stage_layer_ids=[[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15]],
+                      submesh_physical_shapes=[(1, 8)] * 4, submesh_logical_shapes=[(2, 4)] * 4,
+                      submesh_autosharding_option_dicts=[{'force_batch_dim_to_mesh_dim': 0}] * 4),
+        """
 
         params.update(arch_params)
         pt_module_gen = lambda: ViT(params=params)
@@ -286,13 +298,18 @@ class TorchViTTest(unittest.TestCase):
         loss_func = lambda *args, **kwargs: nn.functional.mse_loss(
             *args, **kwargs)
         optim_gen = torchoptim.adam(lr=1e-3)
-        num_micro_batches = 8
 
+        num_micro_batches = parallel_config["num_micro_batches"]
+        num_auto_layers = parallel_config["num_auto_layers"]
         parallel_method = alpa.PipeshardParallel(
-            stage_mode="auto", num_micro_batches=num_micro_batches)
+            stage_mode="auto",
+            num_micro_batches=num_micro_batches,
+            default_auto_sharding_option=parallel_config["auto_sharding_option"],
+        )
+        auto_layer_con_func = alpa.automatic_layer_construction(layer_num=num_auto_layers)
 
         train_torch_module(pt_module_gen, weight_init_func, dataloader,
-                           loss_func, optim_gen, parallel_method)
+                           loss_func, optim_gen, parallel_method, auto_layer_con_func=auto_layer_con_func)
 
 
 def suite():

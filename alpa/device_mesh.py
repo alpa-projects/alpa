@@ -162,7 +162,6 @@ class MeshHostWorker:
             self.recv_tile_func = self.xla_nccl_recv_tile
             self.allgather_func = self.xla_nccl_allgather
             self.broadcast_func = self.xla_nccl_broadcast
-            self.nccl_use_multistream = True if ENV.NCCL_USE_MULTISTREAM.val else False
             self.nccl_local_allgather_init_comms = xe.nccl_init_communicator
         else:
             self.send_tile_func = self.cupy_nccl_send_tile
@@ -429,8 +428,8 @@ class MeshHostWorker:
     #     interface
     # (2) XLA low-level PyLocalBuffer, which is not index-able
     # (3) cupy array, which is an intermediate format for ray collective
-    def cupy_nccl_send_tile(self, uuid: int, offset: Sequence[slice], dst_rank: int,
-                            dst_gpu_idx: int, group_name: str):
+    def cupy_nccl_send_tile(self, uuid: int, offset: Sequence[slice],
+                            dst_rank: int, dst_gpu_idx: int, group_name: str):
         """
         Send a slice of a source buffer to a target GPU.
 
@@ -648,7 +647,7 @@ class MeshHostWorker:
                 if global_config.nccl_mode == "from_xla_extension":
                     self.allgather_communicators[repr(device_ids)] = \
                         self.nccl_local_allgather_init_comms(list(device_ids), 
-                            self.nccl_use_multistream)
+                            ENV.NCCL_USE_MULTISTREAM.val)
                 else:
                     self.allgather_communicators[repr(device_ids)] = \
                         self.nccl_local_allgather_init_comms(list(device_ids))
@@ -670,7 +669,7 @@ class MeshHostWorker:
             if global_config.nccl_mode == "from_xla_extension":
                 communicators = \
                     self.nccl_local_allgather_init_comms(list(device_ids), 
-                        self.nccl_use_multistream)
+                        ENV.NCCL_USE_MULTISTREAM.val)
             else:
                 communicators = \
                     self.nccl_local_allgather_init_comms(list(device_ids))

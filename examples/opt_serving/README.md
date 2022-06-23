@@ -4,17 +4,20 @@ As a serving system, Alpa provides the following unique advantages:
 - **Flexible parallelism strategies**: Alpa will automatically figure out the appropriate model-parallel strategies based on your cluster setup.
 
 In this example, we use Alpa to serve the open-source OPT model, supporting all sizes ranging from 125M to 175B. 
-
 Specifically, Alpa provides:
 - A backend to perform model-parallel distributed inference for the large OPT models;
 - A web frontend to collect and batch inference requests from users.
 
-**Note**: the OPT model weights can be obtained from [Metaseq](https://github.com/facebookresearch/metaseq), subject to their license.
+**Note**: the pre-trained OPT model weights can be obtained from [Metaseq](https://github.com/facebookresearch/metaseq), subject to their license.
+**Note**: You will need at least 350GB memory to to serve the OPT-175B model. For example, you can use 4 x AWS p3.16xlarge instance,
+which provide 4 instance x 8 (GPU/instance) x 16 (GB/GPU) = 512 GB memory.
+You can also follow this guide to setup a serving system to serve smaller versions of OPT, such as OPT-66B, OPT-30B, etc. 
+Pick an appropriate size from [OPT weight release page](https://github.com/facebookresearch/metaseq/tree/main/projects/OPT) based on your available resources.
 
-## Example
-Use huggingface/transformers interface and Alpa backend for distributed inference.
+## Demo
+Use huggingface/transformers interface and Alpa backend for distributed inference on a Ray cluster.
 
-```pyhton
+```python
 from transformers import AutoTokenizer
 from examples.opt_serving.model.wrapper import get_model
 
@@ -63,17 +66,15 @@ then use our script [convert_to_numpy_weight.py](scripts/convert_to_numpy_weight
    - [OPT-2.7B weights](https://drive.google.com/file/d/1ayIaKRhxF9osZWgcFG-3vSkjcepSWdQd/view?usp=sharing) 
 
 
-## Run and benchmark generation in command line
+## Run and Benchmark Generation in the Command Line
 
-For a small model, we can run single-GPU generation using either PyTorch backend or JAX backend:
-
-Run generation using the 125M OPT model with PyTorch/HuggingFace backend:
+Run generation using the 125M model with PyTorch/HuggingFace backend:
 ```shell
 cd benchmark
 python3 benchmark_text_gen.py --model facebook/opt-125m
 ```
 
-Run generation using the OPT-125M model with JAX backend in debug model to output the generated text:
+Run generation using the 125M model with JAX backend in debug model to output the generated text:
 ```shell
 python3 benchmark_text_gen.py --model jax/opt-125m --path [PATH_TO_WEIGHT] --debug
 ```
@@ -85,14 +86,13 @@ ray start --head
 python3 benchmark_text_gen.py --model alpa/opt-2.7b --path [PATH_TO_WEIGHT] --debug
 ```
 
-Run distributed generation using the 175B model with Alpa as below. 
-Note you will need >350Gb total GPU memory in the entire cluster to successfully run the inference.
+Run distributed generation with the 175B model using Alpa. Note you will need >350GB total GPU memory in the entire cluster to successfully run the inference.
 ```shell
-# Remember to start ray on the entire cluster before running the generation
+# Remember to start Ray on the entire cluster before running the generation
 python3 benchmark_text_gen.py --model alpa/opt-175b --path [PATH_TO_WEIGHT] --debug
 ```
 
-## Start a web server to serve the OPT models
+# Launch a Web Server to Serve the OPT models
 
 Launch the web server:
 ```shell
@@ -104,7 +104,7 @@ Then open `https://[IP-ADDRESS]:10001` in your browser to try out the model!
 
 ## Code structure
 
-- [examples/opt_serving/benchmark](benchmark): Benchmark scripts for generation via command line.
+- [examples/opt_serving/benchmark](benchmark): Benchmark scripts for generation in the command line.
 - [examples/opt_serving/dataset](dataset): Data loaders for serving. 
 - [examples/opt_serving/service](service): Model serving web server.
 - [examples/opt_serving/generator.py](generator.py): Backend for web server.

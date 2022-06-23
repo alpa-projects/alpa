@@ -1,4 +1,4 @@
-"""Use huggingface/transformers' interface and Alpa backend for distributed inference."""
+"""Use huggingface/transformers interface and Alpa backend for distributed inference."""
 from transformers import AutoTokenizer
 from examples.opt_serving.model.wrapper import get_model
 

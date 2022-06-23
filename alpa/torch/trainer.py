@@ -21,7 +21,8 @@ TrainState = namedtuple("TrainState", ["params", "bufs", "optim_state"])
 
 def train_torch_module(pt_module_gen, weight_init_func, dataloader, loss_func,
                        optim_gen, parallel_method, auto_layer_con_func=None):
-    for mode in ["local", "dist"]:
+    # for mode in ["local", "dist"]:
+    for mode in ["dist"]:
         # "local": pure PT eager mode on a single GPU,
         #     allows print in middle of graph, no dist training
         # "dist": graph mode by lowering PT program to JAX,

@@ -305,7 +305,7 @@ class TorchViTTest(unittest.TestCase):
         parallel_method = alpa.PipeshardParallel(
             stage_mode="auto",
             num_micro_batches=num_micro_batches,
-            default_auto_sharding_option=parallel_config["auto_sharding_option"],
+            default_auto_sharding_option=alpa.AutoShardingOption(**parallel_config["auto_sharding_option"]),
         )
         auto_layer_con_func = alpa.automatic_layer_construction(layer_num=num_auto_layers)
 

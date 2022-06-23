@@ -1897,7 +1897,7 @@ class PhysicalDeviceMeshGroup:
 
         for info, arg in zip(load_infos, args):
             aval = info.aval
-            if len(info.mesh_ids) > 1:
+            if len(info.mesh_ids) == 1:
                 mesh = self.meshes[info.mesh_ids[0]]
                 spec = info.sharding_specs[0]
                 indices = pxla.spec_to_indices(aval.shape, spec)

@@ -216,6 +216,83 @@ def weight_init_func(pt_module, name_map, params, bufs):
     return params, bufs
 
 
+batch_size = 512
+num_channels = 3
+image_size = 224
+patch_size = 14
+num_classes = 1000
+
+params = {
+    "image_size": image_size,
+    "patch_size": patch_size,
+    "stem_type": "patchify",
+    "n_layers": -1,  # dummy value, to be overwritten later
+    "n_heads": -1,  # dummy value, to be overwritten later
+    "hidden_d": -1,  # dummy value, to be overwritten later
+    "mlp_d": -1,  # dummy value, to be overwritten later
+    "cls_type": "token",
+    "num_classes": num_classes,
+    "c_stem_kernels": [],
+    "c_stem_strides": [],
+    "c_stem_dims": [],
+}
+
+# # ViT-L model
+# arch_params = {
+#     "n_layers": 24,
+#     "n_heads": 16,
+#     "hidden_d": 1024,
+#     "mlp_d": 4096,
+# }
+
+# # ViT-H model
+# arch_params = {
+#     "n_layers": 32,
+#     "n_heads": 16,
+#     "hidden_d": 1280,
+#     "mlp_d": 5120,
+# }
+
+# ViT-10B model
+arch_params = {
+    "n_layers": 32,
+    "n_heads": 32,
+    "hidden_d": 5120,
+    "mlp_d": 20480,
+}
+parallel_config = {
+    "num_micro_batches": 128,
+    "num_auto_layers": 16,
+    "auto_sharding_option": {'force_batch_dim_to_mesh_dim': 0},
+}
+
+# # ViT-25B model
+# arch_params = {
+#     "n_layers": 36,
+#     "n_heads": 32,
+#     "hidden_d": 7680,
+#     "mlp_d": 30720,
+# }
+
+"""
+32: get_solution_case("15B", num_micro_batches=128,
+              num_auto_layers=16, forward_stage_layer_ids=[[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15]],
+              submesh_physical_shapes=[(1, 8)] * 4, submesh_logical_shapes=[(2, 4)] * 4,
+              submesh_autosharding_option_dicts=[{'force_batch_dim_to_mesh_dim': 0}] * 4),
+"""
+
+params.update(arch_params)
+pt_module_gen = lambda: ViT(params=params)
+
+dataloader = [
+    (torch.randn(batch_size, num_channels, image_size, image_size), torch.randn(batch_size, num_classes)),
+    (torch.randn(batch_size, num_channels, image_size, image_size), torch.randn(batch_size, num_classes)),
+]
+loss_func = lambda *args, **kwargs: nn.functional.mse_loss(
+    *args, **kwargs)
+optim_gen = torchoptim.adam(lr=1e-3)
+
+
 class TorchViTTest(unittest.TestCase):
 
     def setUp(self):
@@ -223,82 +300,6 @@ class TorchViTTest(unittest.TestCase):
         alpa.set_seed(123)
 
     def test_vit_pipeshard(self):
-        batch_size = 512
-        num_channels = 3
-        image_size = 224
-        patch_size = 14
-        num_classes = 1000
-
-        params = {
-            "image_size": image_size,
-            "patch_size": patch_size,
-            "stem_type": "patchify",
-            "n_layers": -1,  # dummy value, to be overwritten later
-            "n_heads": -1,  # dummy value, to be overwritten later
-            "hidden_d": -1,  # dummy value, to be overwritten later
-            "mlp_d": -1,  # dummy value, to be overwritten later
-            "cls_type": "token",
-            "num_classes": num_classes,
-            "c_stem_kernels": [],
-            "c_stem_strides": [],
-            "c_stem_dims": [],
-        }
-
-        # # ViT-L model
-        # arch_params = {
-        #     "n_layers": 24,
-        #     "n_heads": 16,
-        #     "hidden_d": 1024,
-        #     "mlp_d": 4096,
-        # }
-
-        # # ViT-H model
-        # arch_params = {
-        #     "n_layers": 32,
-        #     "n_heads": 16,
-        #     "hidden_d": 1280,
-        #     "mlp_d": 5120,
-        # }
-
-        # ViT-10B model
-        arch_params = {
-            "n_layers": 32,
-            "n_heads": 32,
-            "hidden_d": 5120,
-            "mlp_d": 20480,
-        }
-        parallel_config = {
-            "num_micro_batches": 128,
-            "num_auto_layers": 16,
-            "auto_sharding_option": {'force_batch_dim_to_mesh_dim': 0},
-        }
-
-        # # ViT-25B model
-        # arch_params = {
-        #     "n_layers": 36,
-        #     "n_heads": 32,
-        #     "hidden_d": 7680,
-        #     "mlp_d": 30720,
-        # }
-
-        """
-        32: get_solution_case("15B", num_micro_batches=128,
-                      num_auto_layers=16, forward_stage_layer_ids=[[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15]],
-                      submesh_physical_shapes=[(1, 8)] * 4, submesh_logical_shapes=[(2, 4)] * 4,
-                      submesh_autosharding_option_dicts=[{'force_batch_dim_to_mesh_dim': 0}] * 4),
-        """
-
-        params.update(arch_params)
-        pt_module_gen = lambda: ViT(params=params)
-
-        dataloader = [
-            (torch.randn(batch_size, num_channels, image_size, image_size), torch.randn(batch_size, num_classes)),
-            (torch.randn(batch_size, num_channels, image_size, image_size), torch.randn(batch_size, num_classes)),
-        ]
-        loss_func = lambda *args, **kwargs: nn.functional.mse_loss(
-            *args, **kwargs)
-        optim_gen = torchoptim.adam(lr=1e-3)
-
         num_micro_batches = parallel_config["num_micro_batches"]
         num_auto_layers = parallel_config["num_auto_layers"]
         parallel_method = alpa.PipeshardParallel(

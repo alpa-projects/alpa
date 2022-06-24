@@ -552,7 +552,7 @@ def init_cache_aval(config, batch_size):
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
     all_cache = []
-    for i in range(config.decoder_layers):
+    for _ in range(config.decoder_layers):
         layer_cache = (
             jax.core.ShapedArray((batch_size, config.max_target_positions,
                                   config.decoder_attention_heads, head_dim),
@@ -703,6 +703,9 @@ def get_pipeshard_executable(config,
                              support_output_attentions=False,
                              support_output_hidden_states=False,
                              autoregressive=True):
+    if not autoregressive:
+        assert not isinstance(decoding_length_per_step, list), \
+            "we only support multiple executables for autoregressive!"
 
     # Init model
     model, params = init_model_aval(config)
@@ -723,7 +726,6 @@ def get_pipeshard_executable(config,
 
     if autoregressive:
 
-        @alpa.parallelize(batch_argnums=(1,), method=method)
         def inference_step_with_cache(params, batch):
             output = model.apply(
                 params,
@@ -736,17 +738,88 @@ def get_pipeshard_executable(config,
             return output
 
         alpa.global_config.always_donate_micro_batch_vars = False
-        executable = inference_step_with_cache.get_executable(
-            params, {
-                "input_ids":
-                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
-                "position_ids":
-                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
-                "cache":
-                    init_cache_aval(config, batch_size),
-                "mask":
-                    init_mask_aval(config, batch_size),
-            })
+
+        #executable = inference_step_with_cache.get_executable(
+        #    params, {
+        #        "input_ids":
+        #            jax.core.ShapedArray((batch_size, 1), jnp.int32),
+        #        "position_ids":
+        #            jax.core.ShapedArray((batch_size, 1), jnp.int32),
+        #        "cache":
+        #            init_cache_aval(config, batch_size),
+        #        "mask":
+        #            init_mask_aval(config, batch_size),
+        #    })
+
+        cache = init_cache_aval(config, batch_size)
+        mask = init_mask_aval(config, batch_size)
+
+        if not isinstance(decoding_length_per_step, list):
+            decoding_length_per_step = [decoding_length_per_step]
+
+        if 1 not in decoding_length_per_step:
+            print("WARNING: missing step=1 in multiple decoding steps. Added")
+            decoding_length_per_step.append(1)
+
+        print("Compiling %d executable(s) for decoding length %s" %
+              (len(decoding_length_per_step), str(decoding_length_per_step)))
+        executables = {}
+
+        # Compile an executable with sequence length 1
+        executable = alpa.parallelize(
+            inference_step_with_cache, batch_argnums=(1,),
+            method=method).get_executable(
+                params, {
+                    "input_ids":
+                        jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                    "position_ids":
+                        jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                    "cache":
+                        cache,
+                    "mask":
+                        mask,
+                })
+        executable.dump_debug_info("tmp_executable_1")
+        executables[1] = executable
+
+        # Create another parallel method with assigned input sharding specs
+        method_with_input_sharding = alpa.PipeshardParallel(
+            num_micro_batches=num_micro_batches,
+            pipeline_schedule="inference",
+            layer_option="manual",
+            default_auto_sharding_option=alpa.AutoShardingOption(
+                # Force operator model parallel
+                force_batch_dim_to_mesh_dim=None if batch_size == 1 else 0,
+                # Disabling all-to-all and all-gather generates better intra-op strategies.
+                allow_all_to_all=False,
+                allow_all_gather=False,
+            ),
+            stage_input_shardings=executable.stage_input_shard_specs)
+
+        # Compile other executables
+        for decoding_length in decoding_length_per_step:
+            if decoding_length == 1:
+                # Step=1 has been compiled above
+                continue
+            executable = alpa.parallelize(
+                inference_step_with_cache,
+                batch_argnums=(1,),
+                method=method_with_input_sharding).get_executable(
+                    params, {
+                        "input_ids":
+                            jax.core.ShapedArray(
+                                (batch_size, decoding_length), jnp.int32),
+                        "position_ids":
+                            jax.core.ShapedArray(
+                                (batch_size, decoding_length), jnp.int32),
+                        "cache":
+                            cache,
+                        "mask":
+                            mask,
+                    })
+            executable.dump_debug_info("tmp_executable_%d" % decoding_length)
+            executables[decoding_length] = executable
+        return executables, params
     else:
 
         @alpa.parallelize(batch_argnums=(1,), method=method)
@@ -772,8 +845,8 @@ def get_pipeshard_executable(config,
                         (batch_size, decoding_length_per_step), jnp.int32),
             })
 
-    executable.dump_debug_info("tmp")
-    return executable, params
+        executable.dump_debug_info("tmp")
+    return {decoding_length_per_step: executable}, params
 
 
 def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
@@ -952,6 +1025,46 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
                                                  flat_mesh_ids)
 
     return flat_arrays
+
+
+def load_multi_executable_params_dis_array(path,
+                                           executables,
+                                           params_aval,
+                                           config,
+                                           dummy=False):
+    """Load parameters to workers that will be used by all executables. Accordingly,
+    we need to make sure the parameter sharding specs are identical for all executables.
+    """
+    shared_input_shard_specs = None
+    for executable in executables.values():
+        stage_input_shard_specs = executable.stage_input_shard_specs
+        if shared_input_shard_specs is not None:
+            assert shared_input_shard_specs == stage_input_shard_specs, \
+                "All executables must have the same input sharding specs."
+        else:
+            shared_input_shard_specs = stage_input_shard_specs
+    return load_params_dis_array(path,
+                                 list(executables.values())[0], params_aval,
+                                 config, dummy)
+
+
+def init_multi_executable_cache_dis_array(executables,
+                                          config,
+                                          batch_size,
+                                          dummy=False):
+    """Initialize cache to workers that will be used by all executables. Accordingly,
+    we need to make sure all executables are using the same cache.
+    """
+    cache_info = None
+    for executable in executables.values():
+        _, batch_info = executable.get_input_placement_specs()
+        if cache_info is not None:
+            assert cache_info == batch_info["cache"], \
+                "All executables must share the same cache"
+        else:
+            cache_info = batch_info["cache"]
+    return init_cache_dis_array(
+        list(executables.values())[0], config, batch_size, dummy)
 
 
 def init_cache_dis_array(executable, config, batch_size, dummy=False):

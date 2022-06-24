@@ -18,9 +18,10 @@ from transformers import OPTForCausalLM, GPT2LMHeadModel
 
 from opt_serving.model.opt_model import (get_opt_config,
                                          get_pipeshard_executable,
-                                         load_params_dis_array,
-                                         init_cache_dis_array, load_params_np,
-                                         init_cache_np, get_jax_executable)
+                                         load_multi_executable_params_dis_array,
+                                         init_multi_executable_cache_dis_array,
+                                         load_params_np, init_cache_np,
+                                         get_jax_executable)
 from opt_serving.model.opt_utils import (TransformerModelConfig,
                                          jax_index_select, is_power_of_two)
 
@@ -111,14 +112,10 @@ class WrappedInferenceFunc(GenerationMixin):
                  output_hidden_states=None,
                  attention_mask=None,
                  return_dict=None):
-        # Decompose the call to token by token
-        for i in range(input_ids.shape[1]):
-            ret = self.inference_func(input_ids[:, i:i + 1],
-                                      past_key_values,
-                                      attention_mask=attention_mask,
-                                      output_hidden_states=output_hidden_states,
-                                      output_attentions=output_attentions)
-            past_key_values = ret.past_key_values
+        ret = self.inference_func(input_ids,
+                                  past_key_values,
+                                  output_hidden_states=output_hidden_states,
+                                  output_attentions=output_attentions)
         return ret
 
     def _reorder_cache(self, past, beam_idx):
@@ -306,9 +303,6 @@ def get_model(model_name: str,
     if not model_name.startswith("alpa") and not autoregressive:
         raise NotImplementedError(
             f"Cannot support {model_name} in forward-only mode.")
-    if autoregressive and decoding_length_per_step > 1:
-        raise RuntimeError(
-            f"Autoregressive requires decoder_length_per_step == 1")
     if autoregressive and num_micro_batches > 1:
         raise NotImplementedError(
             f"Cannot support num_micro_batches > 1 in autoregressive mode.")
@@ -382,7 +376,7 @@ def get_model(model_name: str,
             seq_len=config.max_target_positions,
             vocab_size=config.vocab_size)
 
-        executable, params_aval = get_pipeshard_executable(
+        executables, params_aval = get_pipeshard_executable(
             config,
             batch_size=expand_size,
             num_micro_batches=num_micro_batches,
@@ -391,20 +385,25 @@ def get_model(model_name: str,
             support_output_hidden_states=support_output_hidden_states,
             autoregressive=autoregressive)
 
-        # load params
-        params = load_params_dis_array(path, executable, params_aval, config,
-                                       dummy)
+        # Load params
+        dist_params = load_multi_executable_params_dis_array(
+            path, executables, params_aval, config, dummy)
+
         if autoregressive:
-            init_cache = init_cache_dis_array(executable,
-                                              config,
-                                              expand_size,
-                                              dummy=dummy)
+            init_cache = init_multi_executable_cache_dis_array(executables,
+                                                               config,
+                                                               expand_size,
+                                                               dummy=dummy)
             set_skip_shard_args_check(init_cache)
-        executable.sync()
+
+        for executable in executables.values():
+            executable.sync()
 
         # return executable directly if not autoregressive
         if not autoregressive:
-            return executable, params, transformer_config
+            assert len(executables) == 1
+            return list(
+                executables.values())[0], dist_params, transformer_config
 
     step_ct = 0
     last_token = None
@@ -417,33 +416,50 @@ def get_model(model_name: str,
         nonlocal step_ct
         nonlocal last_token
 
-        input_ids_step = input_ids.cpu().numpy()
-        if past_key_values is None:
-            past_key_values = init_cache
-            step_ct = np.zeros_like(input_ids_step)
-            last_token = np.copy(input_ids_step)
+        def _run_one_execuable(_executable, _params, _input_ids, _past_key_values, ):
+            nonlocal step_ct
 
-        # print(f"before: {last_token}")
-        last_token = input_ids_step * (input_ids_step != config.pad) + last_token * (input_ids_step == config.pad)
-        # print(f"after: {last_token}")
+            if _past_key_values is None:
+                _past_key_values = init_cache
+                step_ct = np.zeros_like(input_ids_step)
+                last_token = np.copy(input_ids_step)
 
-        position_ids_step = step_ct  + config.pad + 1
+            input_ids_step = input_ids.cpu().numpy()
+            last_token = input_ids_step * (input_ids_step != config.pad) + last_token * (input_ids_step == config.pad)
+            position_ids_step = step_ct  + config.pad + 1
 
-        output = executable(
-            params, {
-                "input_ids": last_token,
-                "position_ids": position_ids_step,
-                "cache": past_key_values,
-                "mask": attention_mask,
-            })
-        set_skip_shard_args_check(output.attention_cache)
+            output = _executable(
+                _params, {
+                    "input_ids": input_ids_step,
+                    "position_ids": position_ids_step,
+                    "cache": _past_key_values,
+                    "mask": attention_mask,
+                })
+            set_skip_shard_args_check(output.attention_cache)
 
-        logits_step = torch.from_numpy(np.array(output.logits)).to(device)
+            logits_step = torch.from_numpy(np.array(output.logits)).to(device)
 
-        step_ct += (input_ids_step != config.pad)
+            step_ct += (input_ids_step != config.pad)
 
-        return InferenceFuncOutput(logits_step, output.attention_cache,
-                                   output.hidden_states, output.attentions)
+            return InferenceFuncOutput(logits_step, output.attention_cache,
+                                       output.hidden_states, output.attentions)
+
+        if input_ids.shape[1] > 1:
+            if (len(executables) == 1 or input_ids.shape[1] not in executables):
+                # Break prompt for single (with decodering length=1) executable, or no executable
+                # for the input length. TODO: Support input padding.
+                for i in range(input_ids.shape[1]):
+                    ret = _run_one_execuable(executables[1], dist_params,
+                                             input_ids[:, i:i + 1], past_key_values)
+                    past_key_values = ret.past_key_values
+                return ret
+
+            # Use the corresponding executable.
+            return _run_one_execuable(executables[input_ids.shape[1]], dist_params,
+                                      input_ids, past_key_values)
+
+        # Single prompt.
+        return _run_one_execuable(executables[1], dist_params, input_ids, past_key_values)
 
     inference_func_config = InferenceFuncConfig(num_beams=num_beams)
     return AlpaInferenceFunc(inference_func,

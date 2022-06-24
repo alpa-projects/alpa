@@ -216,7 +216,7 @@ def weight_init_func(pt_module, name_map, params, bufs):
     return params, bufs
 
 
-batch_size = 16  # 512
+batch_size = 64  # 512
 num_channels = 3
 image_size = 224
 patch_size = 14

@@ -19,8 +19,13 @@ related to dist dataloading.
 TrainState = namedtuple("TrainState", ["params", "bufs", "optim_state"])
 
 
-def train_torch_module(pt_module_gen, weight_init_func, dataloader, loss_func,
-                       optim_gen, parallel_method):
+def train_torch_module(pt_module_gen,
+                       weight_init_func,
+                       dataloader,
+                       loss_func,
+                       optim_gen,
+                       parallel_method,
+                       layer_num=2):
     for mode in ["local", "dist"]:
         # "local": pure PT eager mode on a single GPU,
         #     allows print in middle of graph, no dist training
@@ -58,7 +63,7 @@ def train_torch_module(pt_module_gen, weight_init_func, dataloader, loss_func,
             if atorch.mode() == "dist" and isinstance(parallel_method,
                                                       alpa.PipeshardParallel):
                 compute_loss = alpa.automatic_layer_construction(
-                    layer_num=2)(compute_loss)
+                    layer_num=layer_num)(compute_loss)
 
             # do model forward + backward pass
             (loss_value, bufs), params_grad = atorch.value_and_grad(

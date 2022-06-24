@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple, Union, Callable
 
 import torch
 import torch.nn as nn
-from torch import Tensor
+from torch import Tensor, embedding
 import alpa.torch.optim as torchoptim
 from alpa.torch.trainer import train_torch_module
 import alpa
@@ -195,7 +195,9 @@ def construct_w_b_pair(
     return w, b
 
 
-# this is a single ZHEN layer. It:#
+# The implementation of ZHEN layer is based on the paper: https://arxiv.org/pdf/2203.11014.pdf
+#
+# This is a single ZHEN layer. It:
 # - receives an input from the previous layer, or the embedding (first layer)
 # - receives the skip connection, which is the input to the previous layer (or nothing, in the case of first ZHEN layer)
 # - adds input and skip connection together, and treat it as the new input
@@ -233,11 +235,10 @@ class ZHENLayer(nn.Module):
                 self.match_w, self.match_b = construct_w_b_pair(
                     [previous_n_embs, previous_input_embs], 0.0)
 
-        if self.layer_index != 0:
-            self.layer_norm_w = nn.Parameter(torch.empty(
-                [emb_dim]).fill_(0.0))  # ConstantFill
-            self.layer_norm_b = nn.Parameter(torch.empty(
-                [emb_dim]).fill_(0.0))  # ConstantFill
+        self.layer_norm_w = nn.Parameter(torch.empty(
+            [emb_dim]).fill_(0.0))  # ConstantFill
+        self.layer_norm_b = nn.Parameter(torch.empty(
+            [emb_dim]).fill_(0.0))  # ConstantFill
         for token_mixer in self.token_mixer_list:
             if token_mixer == TokenMixer.DOT:
                 self.ffn_w, self.ffn_b = construct_w_b_pair(
@@ -299,15 +300,6 @@ class ZHENLayer(nn.Module):
                                                              self.match_w,
                                                              bias=self.match_b)
             input_feature = skip_connection + input
-            input_feature = input_feature.permute(0, 2, 1)  # (b, 369, 64)
-            input_feature = torch.nn.functional.layer_norm(
-                input_feature,
-                input_feature.size()[2:],
-                weight=self.layer_norm_w,
-                bias=self.layer_norm_b,
-                eps=9.999999747378752e-06,
-            )
-            input_feature = input_feature.permute(0, 2, 1)  # (b, 64, 369)
         else:
             # 0th layer, no skip
             input_feature = input
@@ -362,7 +354,13 @@ class ZHENLayer(nn.Module):
             else:
                 assert 0, f"unknown module: {token_mixer}"
 
-        output_embs = torch.cat(output, dim=1).view(B, self.emb_dim, -1)
+        output = torch.cat(output, dim=1).view(B, self.emb_dim, -1)
+        output_embs = torch.nn.functional.layer_norm(
+            output,
+            output.size()[2:],
+            weight=self.layer_norm_w,
+            bias=self.layer_norm_b,
+        )
         return output_embs, input_feature
 
 
@@ -459,10 +457,8 @@ class TorchZHENTest(unittest.TestCase):
         pt_module_gen = lambda: ZHENCollection(LAYERS, D, TOKENS, F,
                                                OUTPUT_PER_ENSEMBLE)
 
-        dataloader = [
-            (torch.empty(B, D, F), torch.empty(B, 3072 * len(TOKENS))),
-            (torch.empty(B, D, F), torch.empty(B, 3072 * len(TOKENS))),
-        ]
+        dataloader = [(torch.empty(
+            B, D, F), torch.empty(B, D * LAYERS * OUTPUT_PER_ENSEMBLE))] * 2
         loss_func = lambda *args, **kwargs: torch.nn.functional.mse_loss(
             *args, **kwargs)
         optim_gen = torchoptim.adam(lr=1e-3)

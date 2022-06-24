@@ -119,11 +119,11 @@ if __name__ == "__main__":
             num_gpus,
             parallel_args[2],
             *parallel_args[3][2][0],
-            f"{e2e_latency:.3f}s",
-            f"{(e2e_latency - overall_latency):.3f}s",
-            f"{overall_latency:.3f}s",
+            f"{e2e_latency:.3f}",
+            f"{(e2e_latency - overall_latency):.3f}",
+            f"{overall_latency:.3f}",
             f"{tflops:.2f}",
-            f"{max_mem_allocated/GB:.3f}G",
+            f"{max_mem_allocated/GB:.3f}",
         ]
         write_tsv(heads, values, result_name)
 

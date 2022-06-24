@@ -10,7 +10,7 @@ from alpa import (parallelize, global_config, get_global_cluster,
                   set_global_virtual_physical_mesh, PipeshardParallel,
                   ManualPipeshardParallel, AutoShardingOption,
                   manual_layer_construction)
-from alpa.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
+from alpa.model.bert_model import BertConfig, FlaxBertLayerCollection
 from alpa.model.model_util import TrainState
 from alpa.model.gpt_model import FlaxGPTForLMModule
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
@@ -20,16 +20,20 @@ from alpa.util import print_used_time, to_str_round, GB
 from benchmark.util import compute_gpt_parameter_count, compute_inference_gpt_tflops
 
 
-def create_infer_params_aval(rngkey, model, batch):
-    params = jax.eval_shape(model.init, rngkey, batch["input_ids"],
+def create_infer_params_aval(rngkey, model, batch, no_embedding):
+    if no_embedding:
+        params = jax.eval_shape(model.init, rngkey, batch["x"],
+                            batch["attention_mask"])
+    else:
+        params = jax.eval_shape(model.init, rngkey, batch["input_ids"],
                             batch["attention_mask"], batch["token_type_ids"],
                             batch["position_ids"])
     return params
 
 
-def get_infer_step(parallel_method, model):
+def get_infer_step(parallel_method, model, no_embedding):
 
-    def infer_step(params, batch, rng_key):
+    def infer_step_with_embedding(params, batch, rng_key):
         rngs = {"dropout": rng_key}
         logits = model.apply(params,
                              batch["input_ids"],
@@ -43,8 +47,20 @@ def get_infer_step(parallel_method, model):
         loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
         loss = (label_mask * loss).sum() / label_mask.sum()
         return loss
+    
+    def infer_step_without_embedding(params, batch, rng_key):
+        out = model.apply(params,
+                          batch["x"],
+                          batch["attention_mask"],
+                          output_attentions=True,
+                          output_hidden_states=True)
+        loss = jnp.mean((out.last_hidden_state - batch["y"])**2)
+        return loss
 
-    infer_step = manual_layer_construction(infer_step)
+    if no_embedding:
+        infer_step = manual_layer_construction(infer_step_without_embedding)
+    else:
+        infer_step = manual_layer_construction(infer_step_with_embedding)
     return parallelize(infer_step, method=parallel_method, donate_argnums=())
 
 
@@ -57,7 +73,7 @@ def benchmark_gpt_bert_internal(model_type,
     print_used_time(None)
 
     # Model configs
-    (_, batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
+    (_, no_embedding, batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
      num_micro_batches, parallel_mode, parallel_args) = benchmark_case
     dtype = jnp.float16
     tie_word_embeddings = False
@@ -84,56 +100,64 @@ def benchmark_gpt_bert_internal(model_type,
         raise ValueError(f"Invalid mode: {parallel_mode}")
 
     # Prepare input batch
-    batch = {
-        "input_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
-        "attention_mask": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
-        "token_type_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
-        "position_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
-        "labels": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
-    }
+    rngkey = jax.random.PRNGKey(0)
+    if no_embedding:
+        batch = {
+            "x": jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
+                              dtype=dtype),
+            "y": jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
+                              dtype=dtype),
+            "attention_mask": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
+        }
+    else:
+        batch = {
+            "input_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
+            "attention_mask": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
+            "token_type_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
+            "position_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
+            "labels": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
+        }
     print_used_time("Prepare input")
 
     # Init train state
-    if model_type == "bert":
-        model = FlaxBertForMaskedLMModule(BertConfig(
-            vocab_size=vocab_size,
-            hidden_size=hidden_size,
-            num_attention_heads=num_heads,
-            intermediate_size=hidden_size * 4,
-            num_hidden_layers=num_layers,
-            type_vocab_size=0,
-            tie_word_embeddings=tie_word_embeddings,
-            gradient_checkpointing=add_manual_remat,
-            add_manual_pipeline_markers=add_manual_layer_marker,
-            pipeline_mp_size=num_manual_pipeline_stages,
-        ),
-                                          dtype=dtype)
-    elif model_type == "gpt":
-        model = FlaxGPTForLMModule(BertConfig(
-            vocab_size=vocab_size,
-            hidden_size=hidden_size,
-            num_attention_heads=num_heads,
-            intermediate_size=hidden_size * 4,
-            num_hidden_layers=num_layers,
-            type_vocab_size=0,
-            tie_word_embeddings=tie_word_embeddings,
-            gradient_checkpointing=add_manual_remat,
-            add_manual_pipeline_markers=add_manual_layer_marker,
-            pipeline_mp_size=num_manual_pipeline_stages,
-        ),
-                                   dtype=dtype)
+    if model_type == "gpt":
+        if no_embedding:
+            model = FlaxBertLayerCollection(BertConfig(
+                    hidden_size=hidden_size,
+                    intermediate_size=hidden_size * 4,
+                    num_attention_heads=num_heads,
+                    num_hidden_layers=num_layers,
+                    gradient_checkpointing=add_manual_remat,
+                    add_manual_pipeline_markers=add_manual_layer_marker,
+                    pipeline_mp_size=num_manual_pipeline_stages
+                    ),
+                                dtype=dtype)
+
+        else:
+            model = FlaxGPTForLMModule(BertConfig(
+                vocab_size=vocab_size,
+                hidden_size=hidden_size,
+                num_attention_heads=num_heads,
+                intermediate_size=hidden_size * 4,
+                num_hidden_layers=num_layers,
+                type_vocab_size=0,
+                tie_word_embeddings=tie_word_embeddings,
+                gradient_checkpointing=add_manual_remat,
+                add_manual_pipeline_markers=add_manual_layer_marker,
+                pipeline_mp_size=num_manual_pipeline_stages,
+            ),
+                                    dtype=dtype)
     else:
         raise ValueError(f"Invalid model {model_type}")
 
-    rngkey = jax.random.PRNGKey(0)
     if aval_infer_state:
-        params = create_infer_params_aval(rngkey, model, batch)
+        params = create_infer_params_aval(rngkey, model, batch, no_embedding)
     else:
         raise RuntimeError(f"only support aval infer_state")
-    print_used_time("Create train state")
+    print_used_time("Create infer state")
 
     # Compile executable
-    infer_step = get_infer_step(method, model)
+    infer_step = get_infer_step(method, model, no_embedding)
     executable = infer_step.get_executable(params, batch, rngkey)
     print_used_time("Compile (driver)")
 

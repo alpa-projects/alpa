@@ -56,24 +56,12 @@ if __name__ == "__main__":
 
     # Run all cases
     for benchmark_case in suite:
-        if model_type in ["gpt", "bert"]:
-            (model_name, batch_size, seq_len, hidden_size, num_layers,
+        if model_type in ["gpt"]:
+            (model_name, no_embedding, batch_size, seq_len, hidden_size, num_layers,
              num_heads, vocab_size, num_micro_batches, parallel_mode,
              parallel_args) = benchmark_case
             model_config = (batch_size, seq_len, hidden_size, num_layers,
                             num_heads)
-        elif model_type == "moe":
-            (batch_size, seq_len, hidden_size, num_layers, num_heads,
-             vocab_size, num_experts, expert_group_size, num_micro_batches,
-             parallel_mode, parallel_args) = benchmark_case
-            model_config = (batch_size, seq_len, hidden_size, num_layers,
-                            num_heads, num_experts, expert_group_size)
-        elif model_type == "wresnet":
-            (batch_size, image_size, num_layers, num_channels, width_factor,
-             dtype, num_micro_batches, parallel_mode,
-             parallel_args) = benchmark_case
-            model_config = (batch_size, image_size, num_layers, num_channels,
-                            width_factor)
         else:
             raise ValueError(f"Invalid model: {model_type}")
 

@@ -714,10 +714,10 @@ def clone_jaxpr_eqn(eqn: JaxprEqn,
                     params: Dict[str, Any] = None,
                     effects: Any = None,
                     source_info: SourceInfo = None):
-    invars = invars or eqn.invars
-    outvars = outvars or eqn.outvars
+    invars = list(invars or eqn.invars)
+    outvars = list(outvars or eqn.outvars)
     primitive = primitive or eqn.primitive
-    params = params or eqn.params
+    params = dict(params or eqn.params)
     source_info = source_info or eqn.source_info
     effects = effects or eqn.effects
     return new_jaxpr_eqn(invars, outvars, primitive, params, effects,
@@ -753,12 +753,11 @@ def _get_seed_translation(c, *args, **kwargs):
 
 
 def _set_seed_translation(c, *args, **kwargs):
-    assert len(args) == 1, "Only support seed as an input"
     op_metadata = xc.OpMetadata(op_name=kwargs["op_name"])
     c.set_op_metadata(op_metadata)
     call = xc.ops.CustomCall(c,
                              b"alpa$set-state",
-                             operands=(args[0],),
+                             operands=args,
                              shape=_state_shape,
                              has_side_effect=True,
                              opaque=_rng_dependency_opaque(kwargs["deps"]))
@@ -838,6 +837,7 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
 
     def new_set_seed_eqn(get_seed_eqn, deps, *dep_args):
         seed_var = get_seed_eqn.outvars[0]
+        dep_args = [v for v in dep_args if is_meaningful(v)]
         return new_jaxpr_eqn([seed_var, *dep_args], [gensym_fn(_state_aval)],
                              set_state_p, {
                                  "deps": deps,
@@ -908,6 +908,7 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
             new_eqns.append(_offload_remat_process_pipeline(eqn, discarded))
             cur_pipeline = eqn
         elif eqn_idx in offloaded_eqns:
+            eqn.params["name"] += "_original"
             deps = (eqn.params["name"],)
             get_seed_eqn = new_get_seed_eqn(deps)
             seed_eqn[eqn_idx] = get_seed_eqn

@@ -1716,13 +1716,11 @@ class PhysicalDeviceMeshGroup:
                 for mesh_id, spec in zip(info.mesh_ids, info.sharding_specs):
                     mesh = self.meshes[mesh_id]
                     meshes.append(mesh)
-                    indices = pxla.spec_to_indices(info.aval.shape, spec)
+                    indices = pxla.spec_to_indices(aval.shape, spec)
                     arrays.append(
-                        mesh.shard_args_to_arrays((info.aval,), (indices,),
-                                                  (spec,), (arg,))[0])
+                        mesh.shard_args_to_arrays((aval,), (indices,), (spec,),
+                                                  (arg,))[0])
                 rets.append(ReplicatedDistributedArray(meshes, arrays))
-
-        return rets
 
     def set_runtime_random_seed(self, seed: int):
         for m in self.meshes:

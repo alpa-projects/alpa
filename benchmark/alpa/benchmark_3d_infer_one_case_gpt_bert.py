@@ -138,12 +138,12 @@ def benchmark_gpt_bert_internal(model_type,
     print_used_time("Compile (driver)")
 
     # Preshard params
-    params_info, _, _ = executable.get_load_info()
+    params_ps, _, _ = executable.get_input_placement_specs()
     flat_params, in_tree = tree_flatten(params)
-    flat_info = tree_leaves(params_info)
+    flat_ps = tree_leaves(params_ps)
     params = tree_unflatten(
         in_tree,
-        executable.mesh_group.shard_args_to_arrays(flat_info, flat_params))
+        executable.mesh_group.shard_args_to_arrays(flat_ps, flat_params))
     print_used_time("Preshard (driver)")
 
     if parallel_mode == "search":
@@ -163,8 +163,6 @@ def benchmark_gpt_bert_internal(model_type,
     for i in range(len(stage_hlo_texts)):
         with open(f"tmp/stage_{i}.hlo", "w") as fout:
             fout.write(stage_hlo_texts[i])
-    with open(f"tmp/resharding_tasks.txt", "w") as fout:
-        fout.write(executable.print_resharding_tasks())
 
     executable.sync()
     print_used_time("Compile (worker)")

@@ -51,16 +51,21 @@ if __name__ == "__main__":
     parser.add_argument("--dummy", action="store_true")
     parser.add_argument("--forward", action="store_true")
     parser.add_argument("--decoder-length", type=int, default=1)
+    parser.add_argument("--multi-executable", action="store_true")
     parser.add_argument("--nb", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--n-warmup", type=int, default=5)
+    parser.add_argument("--n-iter", type=int, default=10)
+    parser.add_argument("--max-length", type=int, default=256)
     parser.add_argument("--num-beams", type=int, default=1)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--dtype", type=str, default="fp16")
     args = parser.parse_args()
 
     # Some global params
-    warmup_iters = 5
-    n_iters = 10
+    warmup_iters = args.n_warmup
+    n_iters = args.n_iter
+    max_length = args.max_length
     global_config.pipeline_sync_for_timer = True
     global_config.shard_parallel_sync_for_timer = True
 
@@ -74,13 +79,15 @@ if __name__ == "__main__":
     decoder_length_per_step = args.decoder_length
     batch_size = args.batch_size
     num_beams = args.num_beams
+    multi_executable = args.multi_executable
     autoregressive = not args.forward
     dtype = jnp.float16 if args.dtype == "fp16" else jnp.float32
 
     if autoregressive:
         assert num_micro_batches == 1, "we only support num_micro_batches=1 for autoregressive!"
-        assert decoder_length_per_step == 1, "Decoding one token at a time!"
         assert batch_size == 1, "batch_size > 1 in autoregressive is not tested!"
+    else:
+        assert not multi_executable, "multi_executable in forward-only mode is not allowed!"
 
     decode_speeds = []
     tflopss = []
@@ -166,6 +173,23 @@ if __name__ == "__main__":
             tflopss.append(tflops)
             compute_tflopss.append(compute_tflops)
     else:
+
+        decoder_length_list = [1]
+        if multi_executable:
+            n_prompts = len(test_prompts)
+            prompts = test_prompts[:n_iters
+                                   if n_iters < n_prompts else n_prompts]
+
+            # Get token length of each prompt. TODO: Support input padding.
+            decoder_length_list += [
+                tokenizer(prompt, return_tensors="pt").input_ids.shape[1]
+                for prompt in prompts
+            ]
+
+            # Deduplicate
+            decoder_length_list = list(set(decoder_length_list))
+            decoder_length_per_step = str(decoder_length_list)
+
         # generation mode
         tic = time.time()
         model = get_model(args.model,
@@ -173,19 +197,10 @@ if __name__ == "__main__":
                           args.path,
                           autoregressive,
                           dtype=dtype,
+                          decoding_length_per_step=decoder_length_list,
                           dummy=args.dummy,
                           num_beams=num_beams)
         load_time = time.time() - tic
-
-        # warm up
-        input_ids = tokenizer("Paris is the capital city of",
-                              return_tensors="pt").input_ids.to(args.device)
-        output = model.generate(input_ids=input_ids,
-                                max_length=256,
-                                do_sample=False,
-                                return_dict_in_generate=True,
-                                output_hidden_states=False,
-                                num_beams=num_beams)
 
         H = model.transformer_config.H
         L = model.transformer_config.L
@@ -205,9 +220,19 @@ if __name__ == "__main__":
             torch.manual_seed(8)
             input_ids = tokenizer(prompt,
                                   return_tensors="pt").input_ids.to(args.device)
+
+            # Warm up
+            for _ in range(warmup_iters):
+                model.generate(input_ids=input_ids,
+                               max_length=max_length,
+                               do_sample=False,
+                               return_dict_in_generate=True,
+                               output_hidden_states=False,
+                               num_beams=num_beams)
+
             tic = time.time()
             output = model.generate(input_ids=input_ids,
-                                    max_length=256,
+                                    max_length=max_length,
                                     do_sample=False,
                                     return_dict_in_generate=True,
                                     output_hidden_states=False,
@@ -245,6 +270,7 @@ if __name__ == "__main__":
     avg_tflops = np.mean(tflopss)
     avg_compute_tflops = np.mean(compute_tflopss)
     latency_32_tokens = 32.0 / (avg_speed / batch_size)
+    num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
 
     heads = [
         "Model", "Device", "Dummy", "Load (s)", "Autoregressive", "Batchsize",
@@ -254,8 +280,8 @@ if __name__ == "__main__":
     values = [
         args.model, args.device, args.dummy, f"{load_time:.2f}",
         f"{autoregressive}", f"{batch_size}", f"{num_micro_batches}",
-        f"{num_beams}", "2", f"{decoder_length_per_step}", f"{avg_tflops:.4f}",
-        f"{avg_compute_tflops:.4f}", f"{avg_speed:.2f}",
+        f"{num_beams}", f"{num_pp_stages}", f"{decoder_length_per_step}",
+        f"{avg_tflops:.4f}", f"{avg_compute_tflops:.4f}", f"{avg_speed:.2f}",
         f"{latency_32_tokens:.2f}"
     ]
     write_tsv(heads, values, "results.tsv")

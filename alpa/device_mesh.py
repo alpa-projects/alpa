@@ -1721,6 +1721,8 @@ class PhysicalDeviceMeshGroup:
                         mesh.shard_args_to_arrays((aval,), (indices,), (spec,),
                                                   (arg,))[0])
                 rets.append(ReplicatedDistributedArray(meshes, arrays))
+        
+        return rets
 
     def set_runtime_random_seed(self, seed: int):
         for m in self.meshes:

@@ -216,7 +216,6 @@ def weight_init_func(pt_module, name_map, params, bufs):
     return params, bufs
 
 
-batch_size = 64  # 512
 num_channels = 3
 image_size = 224
 patch_size = 14
@@ -261,6 +260,7 @@ arch_params = {
     "mlp_d": 20480,
 }
 parallel_config = {
+    "batch_size": 64,  # 512
     "num_micro_batches": 2,  # 128,
     "num_auto_layers": 16,
     "auto_sharding_option": {'force_batch_dim_to_mesh_dim': 0},
@@ -285,8 +285,8 @@ params.update(arch_params)
 pt_module_gen = lambda: ViT(params=params)
 
 dataloader = [
-    (torch.randn(batch_size, num_channels, image_size, image_size), torch.randn(batch_size, num_classes)),
-    (torch.randn(batch_size, num_channels, image_size, image_size), torch.randn(batch_size, num_classes)),
+    (torch.randn(parallel_config["batch_size"], num_channels, image_size, image_size), torch.randn(parallel_config["batch_size"], num_classes)),
+    (torch.randn(parallel_config["batch_size"], num_channels, image_size, image_size), torch.randn(parallel_config["batch_size"], num_classes)),
 ]
 loss_func = lambda *args, **kwargs: nn.functional.mse_loss(
     *args, **kwargs)

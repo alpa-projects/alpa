@@ -260,8 +260,8 @@ arch_params = {
     "mlp_d": 20480,
 }
 parallel_config = {
-    "global_batch_size": 64,  # 512
-    "num_micro_batches": 2,  # 128,
+    "global_batch_size": 128,  # 512
+    "num_micro_batches": 16,  # 128,
     "num_auto_layers": 16,
     "auto_sharding_option": {'force_batch_dim_to_mesh_dim': 0},
 }

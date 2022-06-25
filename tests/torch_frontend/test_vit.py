@@ -260,7 +260,7 @@ arch_params = {
     "mlp_d": 20480,
 }
 parallel_config = {
-    "batch_size": 64,  # 512
+    "global_batch_size": 64,  # 512
     "num_micro_batches": 2,  # 128,
     "num_auto_layers": 16,
     "auto_sharding_option": {'force_batch_dim_to_mesh_dim': 0},
@@ -283,10 +283,11 @@ parallel_config = {
 
 params.update(arch_params)
 pt_module_gen = lambda: ViT(params=params)
+global_batch_size = parallel_config["global_batch_size"]
 
 dataloader = [
-    (torch.randn(parallel_config["batch_size"], num_channels, image_size, image_size), torch.randn(parallel_config["batch_size"], num_classes)),
-    (torch.randn(parallel_config["batch_size"], num_channels, image_size, image_size), torch.randn(parallel_config["batch_size"], num_classes)),
+    (torch.randn(global_batch_size, num_channels, image_size, image_size), torch.randn(global_batch_size, num_classes)),
+    (torch.randn(global_batch_size, num_channels, image_size, image_size), torch.randn(global_batch_size, num_classes)),
 ]
 loss_func = lambda *args, **kwargs: nn.functional.mse_loss(
     *args, **kwargs)

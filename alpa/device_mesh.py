@@ -83,6 +83,9 @@ ReshardingBroadcastTask = namedtuple("ReshardingBroadcastTask",
                                      ["broadcast_specs", "group_name"])
 
 
+########################################
+# Ray Workers
+########################################
 class DaemonMoveWorker:
     """
         A ray actor that moves local checkpoint into the shared
@@ -341,7 +344,7 @@ class MeshHostWorker:
         from alpa.serialization import load_sharded_array
         entire_arr = load_sharded_array(ckpt_dir, metadatas)
         tensor_buffers = [None] * self.num_devices
-        for index, uuid, device_id in zip(shard_indices, device_ids):
+        for index, device_id in zip(shard_indices, device_ids):
             data = entire_arr[index]
             if data.dtype == np.int64:
                 data = data.astype(np.int32)
@@ -768,6 +771,9 @@ class MeshHostWorker:
         self.move_worker = None
 
 
+########################################
+# DeviceMeshs
+########################################
 class PhysicalDeviceMesh(ABC):
     """The base class of physical device mesh.
 
@@ -1189,51 +1195,50 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     ##### Buffer Related Functions #####
     def get_remote_buffers(self,
-                           buf_refs: List["RemoteBufferRef"],
+                           tensor_refs: List["RemoteTensorRef"],
                            batching=False):
         """Get values of remote buffers."""
 
         if batching:
             # Batch the remote calls by host ids
-            group_by_host_id = [[] for _ in range(self.num_hosts)]
-            for buf_ref in buf_refs:
-                group_by_host_id[buf_ref.host_id].append(buf_ref.uuid)
+            tensor_ids = [ref.uuid for ref in tensor_refs]
 
+            # [host_id-> (buf_idx-> (device_id->device_buffer))]
             obj_refs = []
             for host_id in range(self.num_hosts):
                 obj_refs.append(self.workers[host_id].get_buffers.remote(
-                    group_by_host_id[host_id]))
-
-            host_results = ray.get(obj_refs)
-
+                    tensor_ids))
+            # [buf_idx-> (host_id-> (device_id->device_buffer))]
             ret = []
-            host_cts = [0 for _ in range(self.num_hosts)]
-            for buf_ref in buf_refs:
-                ret.append(
-                    host_results[buf_ref.host_id][host_cts[buf_ref.host_id]])
-                host_cts[buf_ref.host_id] += 1
+            for ref_idx, _ in range(len(tensor_refs)):
+                buffers = []
+                for host_idx in range(self.num_hosts):
+                    buffers.append(obj_refs[host_idx][ref_idx])
+                ret.append(buffers)
+            ret = (ray.get(ret))   
 
             return ret
         else:
             obj_refs = []
-            for buf_ref in buf_refs:
-                obj_refs.append(
-                    self.workers[buf_ref.host_id].get_buffers.remote(
-                        buf_ref.uuid))
+            for tensor_ref in tensor_refs:
+                obj_refs.append([
+                    worker.get_buffers.remote(tensor_ref.uuid)
+                    for worker in self.workers
+                ])
             return ray.get(obj_refs)
 
-    def delete_remote_buffers(self, buf_refs: List["RemoteBufferRef"]):
+    def delete_remote_buffers(self, tensor_refs: List["RemoteTensorRef"]):
         """Delete remote buffers."""
         if (self.workers is None or not ray or not ray.worker or
                 not ray.is_initialized()):
             return
 
         # Put delete requests into per-host buffers
-        for buf_ref in buf_refs:
-            self.to_delete_remote_buffers[buf_ref.host_id].append(buf_ref.uuid)
-            self.to_delete_remote_buffers_ct = max(
-                self.to_delete_remote_buffers_ct,
-                len(self.to_delete_remote_buffers[buf_ref.host_id]))
+        for tensor_ref in tensor_refs:
+            for to_delete_list in self.to_delete_remote_buffers:
+                to_delete_list.append(tensor_ref.uuid)
+            self.to_delete_remote_buffers_ct += (len(tensor_refs) *
+                                                 self.num_devices_per_host)
 
         # Execute the delete requests if there are enough requests
         if (self.to_delete_remote_buffers_ct >
@@ -1245,13 +1250,12 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             self.to_delete_remote_buffers_ct = 0
 
     def block_until_ready_remote_buffers(self,
-                                         buf_refs: List["RemoteBufferRef"]):
+                                         tensor_refs: List["RemoteTensorRef"]):
         """Block until the remote buffers are ready."""
         tasks = []
-        for buf_ref in buf_refs:
-            tasks.append(
-                self.workers[buf_ref.host_id].block_until_ready_buffers.remote(
-                    buf_ref.uuid))
+        tensor_uuids = [ref.uuid for ref in tensor_refs]
+        for worker in self.workers:
+            tasks.append(worker.block_until_ready_buffers.remote(tensor_uuids))
         ray.get(tasks)
 
     ##### Executable Related Functions #####
@@ -1274,22 +1278,16 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 if not isinstance(arg, ShapedArray):
                     arg = np.asarray(arg)
                 bufs = _shard_array(arg, self, indices, num_micro_batches)
-                bufs = np.array(bufs).reshape(
-                    (self.num_hosts, self.num_devices_per_host,
-                     num_micro_batches))
-                bufs = bufs.transpose([2, 0, 1]).reshape(
-                    (num_micro_batches,
-                     self.num_hosts * self.num_devices_per_host))
-                ret_bufs.append(bufs)
+                ret_bufs.append(np.array(bufs))
             else:
                 if (isinstance(arg, DistributedArray) and
                         arg.device_mesh == self and arg.indices == indices):
                     # Fast path for DistributedArray
-                    ret_bufs.append(arg.remote_buffers)
+                    ret_bufs.append(arg.remote_ref)
                 elif isinstance(arg, ReplicatedDistributedArray):
                     replica = arg.get_replica_on_mesh(self)
                     assert replica.indices == indices
-                    ret_bufs.append(replica.remote_buffers)
+                    ret_bufs.append(replica.remote_ref)
                 else:  # Slow path
                     slow_path = True
                     if type(arg) not in [ShapedArray, ShapeDtypeStruct]:
@@ -1320,9 +1318,9 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                              args: Sequence[np.array]):
         arrays = []
         for i in range(len(avals)):
-            buffers = _shard_array(args[i], self, shard_indices[i])
+            remote_ref = _shard_array(args[i], self, shard_indices[i])
             arrays.append(
-                DistributedArray(self, avals[i], sharding_specs[i], buffers,
+                DistributedArray(self, avals[i], sharding_specs[i], remote_ref,
                                  shard_indices[i]))
         return arrays
 
@@ -1333,13 +1331,13 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             for aval, spec in zip(avals, sharding_specs)
         ]
 
-        def outs_handler(bufs):
+        def outs_handler(refs):
             ret = []
             for i, aval in enumerate(avals):
                 dis_array = DistributedArray(device_mesh=self,
                                              aval=aval,
                                              sharding_spec=sharding_specs[i],
-                                             remote_buffers=bufs[i],
+                                             remote_ref=refs[i],
                                              indices=indices[i])
                 ret.append(dis_array)
             return ret
@@ -1416,7 +1414,10 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.launched = False
 
 
-def next_tensor_uuid(number=1):
+########################################
+# Distributed Array and Buffers
+########################################
+def next_tensor_uuids(number=1):
     """Return the next uuid of a remote buffer."""
     global remote_buffer_counter
     if number == 1:
@@ -1425,6 +1426,34 @@ def next_tensor_uuid(number=1):
         ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
     remote_buffer_counter = (remote_buffer_counter + number) % (1 << 60)
     return ret
+
+
+class RemoteTensorRef:
+    """A reference to all device buffers of a logical tensor"""
+
+    def __init__(self, device_mesh: PhysicalDeviceMesh, uuid: int = None):
+        self.device_mesh = device_mesh
+        self.uuid = (uuid if uuid is not None else next_tensor_uuids())
+        self.is_deleted_on_workers = False
+        logger.debug(f"RemoteBufferRef uuid: {self.uuid} created on mesh "
+                     f"with devices {self.device_mesh.device_strs}.")
+
+    def set_deleted_on_workers(self):
+        """
+        Set the tensor as deleted on workers.
+        For some tensors (e.g., donated tensors), if we know the workers has
+        already deleted them, then we do not need to do the remote call
+        "delete_remote_buffers" again.
+        """
+        self.is_deleted_on_workers = True
+
+    def __repr__(self):
+        return (f"RemoteBufferRef(uuid = {self.uuid}, "
+                f"loc = Mesh ({self.device_mesh.mesh_id}))")
+
+    def __del__(self):
+        if not self.is_deleted_on_workers:
+            self.device_mesh.delete_remote_buffers((self,))
 
 
 class DistributedArray:
@@ -1443,12 +1472,12 @@ class DistributedArray:
                  device_mesh: PhysicalDeviceMesh,
                  aval: ShapedArray,
                  sharding_spec: ShardingSpec,
-                 uuid: int,
+                 remote_ref: RemoteTensorRef,
                  indices: Optional[Sequence[Index]] = None):
         self.device_mesh = device_mesh
         self.aval = aval
         self.sharding_spec = sharding_spec
-        self.uuid = uuid if uuid is not None else next_tensor_uuid()
+        self.remote_ref = remote_ref
 
         if indices is None:
             indices = pxla.spec_to_indices(self.aval.shape, self.sharding_spec)
@@ -1466,26 +1495,14 @@ class DistributedArray:
         self.device_mesh.block_until_ready_remote_buffers(self.uuid)
 
     def delete(self):
-        if not self.is_deleted_on_workers:
-            self.device_mesh.delete_remote_buffers((self.uuid,))
+        self.remote_ref = None
         self._npy_value = None
 
     def flush(self):
         self._npy_value = None
 
-    def set_deleted_on_workers(self):
-        """
-        Set the buffer as deleted on workers.
-
-        For some buffers (e.g., donated buffers), if we know the workers has
-        already deleted them, then we do not need to do the remote call
-        "delete_remote_buffers" again.
-        """
-        self.is_deleted_on_workers = True
-
     ##### distributed save/load #####
     def save(self, ckpt_dir: str, local_cache_dir: Union[str, None] = None):
-        # FIXME(yonghao): infer host id from buffer index.
         """
             Save one replica of the array to `ckpt_dir` distributedly.
 
@@ -1506,12 +1523,13 @@ class DistributedArray:
         indices_per_host = {}
         for buf_idx, indice in zip(self.one_replica_buffer_indices,
                                    one_replica_indices):
-            if buf_refs_per_host.get(buf_ref.host_id) is None:
-                buf_refs_per_host[buf_ref.host_id] = [buf_ref.uuid]
-                indices_per_host[buf_ref.host_id] = [indice]
+            host_id = buf_idx // self.device_mesh.num_devices_per_host
+            if buf_refs_per_host.get(host_id) is None:
+                buf_refs_per_host[host_id] = [self.remote_ref.uuid]
+                indices_per_host[host_id] = [indice]
             else:
-                buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
-                indices_per_host[buf_ref.host_id].append(indice)
+                buf_refs_per_host[host_id].append(self.remote_ref.uuid)
+                indices_per_host[host_id].append(indice)
         for host_id, uuids in buf_refs_per_host.items():
             if len(uuids) > 0:
                 self.device_mesh.workers[host_id].save_tensor.remote(
@@ -1526,28 +1544,25 @@ class DistributedArray:
             return a new DistributedArray
         """
         # pylint: disable=import-outside-toplevel
-        from alpa.mesh_executable import create_remote_buffer_refs
-        buf_refs, _ = create_remote_buffer_refs(device_mesh, 1)
+        tensor_ref = RemoteTensorRef(device_mesh)
         indices = pxla.spec_to_indices(aval.shape, sharding_spec)
 
-        buf_refs_per_host = {}
         indices_per_host = {}
         device_ids_per_host = {}
-        for buf_ref, indice in zip(buf_refs, indices):
-            if buf_refs_per_host.get(buf_ref.host_id) is None:
-                buf_refs_per_host[buf_ref.host_id] = [buf_ref.uuid]
-                indices_per_host[buf_ref.host_id] = [indice]
-                device_ids_per_host[buf_ref.host_id] = [buf_ref.device_id]
+        for buf_idx, indice in enumerate(indices):
+            host_id = buf_idx // device_mesh.num_devices_per_host
+            device_id = buf_idx % device_mesh.num_devices_per_host
+            if indices_per_host.get(host_id) is None:
+                indices_per_host[host_id] = [indice]
+                device_ids_per_host[host_id] = [device_id]
             else:
-                buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
-                indices_per_host[buf_ref.host_id].append(indice)
-                device_ids_per_host[buf_ref.host_id].append(buf_ref.device_id)
-        for host_id, uuids in buf_refs_per_host.items():
-            if len(uuids) > 0:
-                device_mesh.workers[host_id].load_tensor.remote(
-                    path, uuids, indices_per_host[host_id],
-                    device_ids_per_host[host_id])
-        return DistributedArray(device_mesh, aval, sharding_spec, buf_refs,
+                indices_per_host[host_id].append(indice)
+                device_ids_per_host[host_id].append(device_id)
+        for host_id, worker in enumerate(device_mesh.workers):
+            worker.load_tensor.remote(
+                path, tensor_ref.uuid, indices_per_host[host_id],
+                device_ids_per_host[host_id])
+        return DistributedArray(device_mesh, aval, sharding_spec, tensor_ref,
                                 indices)
 
     @property
@@ -1570,7 +1585,7 @@ class DistributedArray:
             npy_value = np.empty(self.aval.shape, self.aval.dtype)
             if not self._fetched_np_buffers:
                 fetched_np_buffers = self.device_mesh.get_remote_buffers(
-                    (self.uuid, self.one_replica_buffer_indices))
+                    (self.remote_ref.uuid, self.one_replica_buffer_indices))
             else:
                 fetched_np_buffers = self._fetched_np_buffers
             for ct, i in enumerate(self.one_replica_buffer_indices):
@@ -1600,6 +1615,7 @@ def fetch(distributed_arrays: Any):
     buf_refs = []
     device_mesh = distributed_arrays[0].device_mesh
 
+    # FIXME(yonghao): get remote buffers but only with one replica
     for array in tree_leaves(distributed_arrays):
         assert array.device_mesh == device_mesh, (
             "Only support fetching from the same mesh.")
@@ -1678,6 +1694,9 @@ xla.pytype_aval_mappings[ReplicatedDistributedArray] = attrgetter("aval")
 xla.canonicalize_dtype_handlers[ReplicatedDistributedArray] = lambda x: x
 
 
+########################################
+##### Physical Mesh Group #####
+########################################
 class VirtualPhysicalMesh:
     """
     A virtual physical mesh used for pipeline parallel compilation.
@@ -2008,6 +2027,9 @@ class PhysicalDeviceMeshGroup:
             cg.instantiate()
 
 
+########################################
+# Device Cluster
+########################################
 class DeviceCluster:
     """
     A ray cluster with GPU devices.
@@ -2199,31 +2221,27 @@ def set_seed(seed: int):
 # Register ShardArg Handler
 ########################################
 def _device_mesh_put(device_mesh, shards, num_batch, batch_dim):
-    # pylint: disable=import-outside-toplevel
-    from alpa.mesh_executable import create_remote_buffer_refs
-    buf_refs, buf_uuids = create_remote_buffer_refs(device_mesh, num_batch)
-    device_ids = np.arange(device_mesh.num_devices_per_host)
-    uuid_step = device_mesh.num_devices_per_host * num_batch
+    tensor_uuids = next_tensor_uuids(num_batch)
+    tensor_refs = [RemoteTensorRef(device_mesh, uuid) for uuid in tensor_uuids]
     shard_step = device_mesh.num_devices_per_host
     for host_id in range(device_mesh.num_hosts):
         device_mesh.workers[host_id].put_tensor.remote(
-            buf_uuids[host_id * uuid_step:(host_id + 1) * uuid_step],
-            device_ids, shards[host_id * shard_step:(host_id + 1) * shard_step],
-            num_batch, batch_dim)
-    return buf_refs
+            tensor_uuids,
+            shards[host_id * shard_step:(host_id + 1) * shard_step], num_batch,
+            batch_dim)
+    return tensor_refs
 
 
 def _device_mesh_put_dummy(array, device_mesh, indices, num_batch):
-    # pylint: disable=import-outside-toplevel
-    from alpa.mesh_executable import create_remote_buffer_refs
-    buf_refs, buf_uuids = create_remote_buffer_refs(device_mesh, num_batch)
+    tensor_uuids = next_tensor_uuids(num_batch)
+    tensor_refs = [RemoteTensorRef(device_mesh, uuid) for uuid in tensor_uuids]
     step = device_mesh.num_devices_per_host * num_batch
     for host_id in range(device_mesh.num_hosts):
         device_mesh.workers[host_id].shard_and_put_non_zero_buffer.remote(
-            buf_uuids[host_id * step:(host_id + 1) * step], array.shape,
+            tensor_uuids, array.shape,
             array.dtype, indices[host_id * step:(host_id + 1) * step],
             num_batch)
-    return buf_refs
+    return tensor_refs
 
 
 def _shard_abstract_array(array,

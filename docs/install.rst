@@ -91,6 +91,7 @@ Install from Source
 1.  Clone repos
 
   .. code:: bash
+
     git clone --recursive git@github.com:alpa-projects/alpa.git
 
 2. Install Alpa
@@ -103,6 +104,7 @@ Install from Source
 3. Build and install jaxlib
 
   .. code:: bash
+
     cd alpa/build_jaxlib
     python3 build/build.py --enable_cuda --dev_install --tf_path=$(pwd)/../third_party/tensorflow-alpa
     cd dist

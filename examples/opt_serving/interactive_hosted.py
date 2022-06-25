@@ -130,9 +130,9 @@ def worker_main(model_name, path, port):
 
 
 @app.route("/completions", methods=["POST"])
-@app.route("/v1/engines/<engine>/completions", methods=["POST"])
-@app.route("/v2/engines/<engine>/completions", methods=["POST"])
-@app.route("/engines/<engine>/completions", methods=["POST"])
+# @app.route("/v1/engines/<engine>/completions", methods=["POST"])
+# @app.route("/v2/engines/<engine>/completions", methods=["POST"])
+# @app.route("/engines/<engine>/completions", methods=["POST"])
 def completions(engine=None):
     # prompt can be 4 types:
     # - str. Basic case. Return one generation.

@@ -1,11 +1,11 @@
 <html>
 <head>
-    <title>Serving OPT Language Model with Alpa</title>
+    <title>Serving OPT-175B Language Model with Alpa</title>
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
     <script type="text/javascript">
     // these constants are only used for providing user expectations.
-    var OVERHEAD = 3;
-    var PER_TOKEN = 0.12;
+    var OVERHEAD = 1;
+    var PER_TOKEN = 0.3;
 
     // examples for the user
     var EXAMPLES = {
@@ -13,8 +13,8 @@
             "prompt": "Question: What is the color of the cloud?\nAnswer: White\n\nQuestion: What is the color of the sky?\nAnswer:",
             "length": 64
         },
-        "ion": {
-            "prompt": "Ion Stoica is a Romanian-American computer scientist specializing in",
+        "cryptocurrency": {
+            "prompt": "What do you think about the future of Cryptocurrency?",
             "length": 128
         },
         "chatbot": {
@@ -24,6 +24,10 @@
         "poetry": {
             "prompt": "A sonnet about Dodos\n\n",
             "length": 128
+        },
+        "math": {
+            "prompt": "Question: If x is 2 and y is 5, what is x * y?\nAnswer: 10\n\nQuestion: If x is 12 and y is 9, what is x * y?\nAnswer:",
+            "length": 64
         }
     };
 
@@ -55,7 +59,7 @@
         var submitData = getFormData($("form"));
         console.log(JSON.stringify(submitData));
         $.ajax({
-            url: "/v1/engines/175b/completions",
+            url: "/completions",
             type: "POST",
             processData: true,
             contentType: "application/json",
@@ -152,6 +156,7 @@ label {
 #examples span {
     margin-right: 1em;
 }
+textarea { font-size: 22px; }
 </style>
 <body>
 <div class="header">
@@ -175,9 +180,10 @@ This model will generate MANY offensive things. Due to this being an alpha demo,
 <p id="examples">
     <span style="font-weight: bold">Examples:</span>
     <span><a href='javascript:set_prompt("question");'>Question</a></span>
-    <span><a href='javascript:set_prompt("ion");'>Facts about Ion</a></span>
+    <span><a href='javascript:set_prompt("cryptocurrency");'>Cryptocurrency</a></span>
     <span><a href='javascript:set_prompt("chatbot");'>Chatbot</a></span>
     <span><a href='javascript:set_prompt("poetry");'>Poetry</a></span>
+    <span><a href='javascript:set_prompt("math");'>Math</a></span>
 </div>
 <div class="request">
 <form method="POST" action="/generate" id="generate-form">

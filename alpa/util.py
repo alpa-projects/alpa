@@ -823,16 +823,22 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
         return clone_jaxpr_eqn(eqn, new_invars, new_outvars)
 
     op_name_cnt = 0
+    remat_name_cnt = 0
 
-    def next_op_name():
+    def next_rng_op_name():
         nonlocal op_name_cnt
         op_name_cnt += 1
         return bytes(f"alpa_rng_{op_name_cnt}", encoding="utf8")
 
+    def next_remat_name():
+        nonlocal remat_name_cnt
+        remat_name_cnt += 1
+        return remat_name_cnt
+
     def new_get_seed_eqn(deps):
         return new_jaxpr_eqn([], [gensym_fn(_state_aval)], get_state_p, {
             "deps": deps,
-            "op_name": next_op_name()
+            "op_name": next_rng_op_name()
         })
 
     def new_set_seed_eqn(get_seed_eqn, deps, *dep_args):
@@ -841,7 +847,7 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
         return new_jaxpr_eqn([seed_var, *dep_args], [gensym_fn(_state_aval)],
                              set_state_p, {
                                  "deps": deps,
-                                 "op_name": next_op_name()
+                                 "op_name": next_rng_op_name()
                              })
 
     def difference_cross_marker(eqns, base, dif):
@@ -908,11 +914,13 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
             new_eqns.append(_offload_remat_process_pipeline(eqn, discarded))
             cur_pipeline = eqn
         elif eqn_idx in offloaded_eqns:
-            eqn.params["name"] += "_original"
-            deps = (eqn.params["name"],)
+            new_params = dict(eqn.params)
+            new_params["name"] = f"remat_alpa$original_{next_remat_name()}"
+            deps = (new_params["name"],)
             get_seed_eqn = new_get_seed_eqn(deps)
             seed_eqn[eqn_idx] = get_seed_eqn
-            new_eqns.extend([get_seed_eqn, eqn])
+            cloned_eqn = clone_jaxpr_eqn(eqn, params=new_params)
+            new_eqns.extend([get_seed_eqn, cloned_eqn])
         elif eqn_idx not in offload_to:
             new_eqns.append(eqn)
         else:
@@ -932,7 +940,7 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
                         v = var_pipeline_mapping[v]
                         var_mapping[v] = new_v
             cloned_fwd = clone_jaxpr_eqn(inserted, outvars=new_outvars)
-            cloned_fwd.params["name"] += "_cloned"
+            cloned_fwd.params["name"] = f"remat_alpa$cloned_{next_remat_name()}"
             # get backup seed and set prev seed
             backup_seed = new_get_seed_eqn(())
             set_seed_deps = (cloned_fwd.params["name"],)

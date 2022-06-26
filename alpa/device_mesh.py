@@ -57,9 +57,6 @@ from alpa.util import (benchmark_func, list_gpu_info, jax_tensor_to_cupy,
                        jax_tensor_to_xla_buffer, OrderedSet,
                        update_jax_platform, is_ray_node_resource)
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
 if global_config.nccl_mode == "cupy":
     from alpa.collective.mesh_run_nccl_collective import (
         cupy_nccl_send_tile as mesh_run_send_tile, cupy_nccl_recv_tile as
@@ -71,6 +68,9 @@ else:
         xla_nccl_send_tile as mesh_run_send_tile, xla_nccl_recv_tile as
         mesh_run_recv_tile, xla_nccl_allgather as mesh_run_allgather,
         xla_nccl_broadcast as mesh_run_broadcast)
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 ReshardingTileSpec = namedtuple("ReshardingSendSpec",
                                 ["offset", "rank", "gpu_idx"])

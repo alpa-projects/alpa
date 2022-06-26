@@ -15,7 +15,7 @@ _GLOO_AVAILABLE = True
 
 logger = logging.getLogger(__name__)
 
-if global_config.nccl_mode == "from_cupy":
+if global_config.nccl_mode == "cupy":
     try:
         from alpa.collective.collective_group.nccl_collective_group import (
             NCCLGroup)
@@ -27,7 +27,7 @@ if global_config.nccl_mode == "from_cupy":
 else:
     try:
         from alpa.collective.collective_group.xla_nccl_collective_group import (
-            XLANCCLGroup)
+            XLANCCLGroup as NCCLGroup)
         from alpa.collective.collective_group.xla_nccl_util import get_nccl_runtime_version
         nccl_version = get_nccl_runtime_version()
     except ImportError:
@@ -35,7 +35,7 @@ else:
         print("NCCL from xla_extention seems unavailable! "
               "Please check whether your local tensorflow-alpa "
               "has already been up-to-date. You could also set "
-              "global_config.nccl_mode == \"from_cupy\" to "
+              "global_config.nccl_mode == \"cupy\" to "
               "use another set of nccl apis from cupy. ")
 
 try:
@@ -85,10 +85,7 @@ class GroupManager:
             self._group_name_map[g] = group_name
         if backend == types.Backend.NCCL:
             logger.debug(f"Creating NCCL group: '{group_name}'...")
-            if global_config.nccl_mode == "from_xla_extension":
-                g = XLANCCLGroup(world_size, rank, group_name)
-            else:
-                g = NCCLGroup(world_size, rank, group_name)
+            g = NCCLGroup(world_size, rank, group_name)
             self._name_group_map[group_name] = g
             self._group_name_map[g] = group_name
         return self._name_group_map[group_name]
@@ -421,6 +418,8 @@ def broadcast_partialgpu(tensor_list,
         devices_ids: local devices in this cross-host collective group.
         devices_global_rank: the corresponding global rank for local devices.
         group_name (str): the collective group name to perform broadcast.
+        local_start_pos_list (list[int]): the list contains starting positions of the
+        contiguous data to be sent in every tensor.
 
     Returns:
         None
@@ -436,8 +435,8 @@ def broadcast_partialgpu(tensor_list,
     opts.world_size = world_size
     opts.devices_ids = devices_ids
     opts.devices_global_rank = devices_global_rank
-    opts.local_start_pos_list = \
-        local_start_pos_list if local_start_pos_list is not None else []
+    opts.local_start_pos_list = (local_start_pos_list
+            if local_start_pos_list is not None else [])
     g.broadcast_partialgpu(tensor_list, opts)
 
 
@@ -612,6 +611,8 @@ def send_multigpu(tensor,
         dst_rank (int): the rank of the destination process.
         dst_gpu_index (int): the destination gpu index.
         group_name (str): the name of the collective group.
+        start_pos (int): the starting position of the contiguous
+        data to be sent in this tensor.
         n_elements (int): if specified, send the next n elements
             from the starting address of tensor.
 
@@ -671,7 +672,9 @@ def recv_multigpu(tensor,
     Args:
         tensor: the received tensor, located on a GPU.
         src_rank (int): the rank of the source process.
-        src_gpu_index (int)： the index of the source gpu on the src process.
+        src_gpu_index (int): the index of the source gpu on the src process.
+        start_pos (int): the starting position of the contiguous
+        data to be sent in this tensor.
         group_name (str): the name of the collective group.
 
     Returns:

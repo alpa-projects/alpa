@@ -152,12 +152,12 @@ class MeshHostWorker:
                 jax_tensor = device_put(jnp.ones((1,), dtype=jnp.int8), d)
                 self.signal_tensors.append(
                     jax_tensor_to_xla_buffer(jax_tensor) if global_config.
-                    nccl_mode == "from_xla_extension" else jax_tensor_to_cupy(
+                    nccl_mode == "xla_extension" else jax_tensor_to_cupy(
                         jax_tensor, take_ownership=True))
 
         self.launched = True
 
-        if global_config.nccl_mode == "from_xla_extension":
+        if global_config.nccl_mode == "xla_extension":
             self.send_tile_func = self.xla_nccl_send_tile
             self.recv_tile_func = self.xla_nccl_recv_tile
             self.allgather_func = self.xla_nccl_allgather
@@ -644,13 +644,13 @@ class MeshHostWorker:
         for allgather_spec in allgather_specs:
             device_ids = sorted(allgather_spec.device_ids)
             if repr(device_ids) not in self.allgather_communicators:
-                if global_config.nccl_mode == "from_xla_extension":
-                    self.allgather_communicators[repr(device_ids)] = \
+                if global_config.nccl_mode == "xla_extension":
+                    self.allgather_communicators[repr(device_ids)] = (
                         self.nccl_local_allgather_init_comms(list(device_ids), 
-                            ENV.NCCL_USE_MULTISTREAM.val)
+                            ENV.NCCL_USE_MULTISTREAM.val))
                 else:
-                    self.allgather_communicators[repr(device_ids)] = \
-                        self.nccl_local_allgather_init_comms(list(device_ids))
+                    self.allgather_communicators[repr(device_ids)] = (
+                        self.nccl_local_allgather_init_comms(list(device_ids)))
         self.allgather_tasks[uuid] = all_gather_task
 
     def run_allgather_task(self, uuid, buffer_uuids):
@@ -666,15 +666,15 @@ class MeshHostWorker:
                            tensor_slices: Sequence[slice], output_slice):
 
         if repr(sorted(device_ids)) not in self.allgather_communicators:
-            if global_config.nccl_mode == "from_xla_extension":
-                communicators = \
-                    self.nccl_local_allgather_init_comms(list(device_ids), 
-                        ENV.NCCL_USE_MULTISTREAM.val)
+            if global_config.nccl_mode == "xla_extension":
+                communicators = (
+                    self.nccl_local_allgather_init_comms(list(device_ids),
+                        ENV.NCCL_USE_MULTISTREAM.val))
             else:
-                communicators = \
-                    self.nccl_local_allgather_init_comms(list(device_ids))
-            self.allgather_communicators[repr(sorted(device_ids))] = \
-                communicators
+                communicators = (
+                    self.nccl_local_allgather_init_comms(list(device_ids)))
+            self.allgather_communicators[repr(sorted(device_ids))] = (
+                communicators)
 
         communicators = self.allgather_communicators[repr(sorted(device_ids))]
         is_bool = self.buffers[uuids[device_ids[0]]].dtype == np.bool_

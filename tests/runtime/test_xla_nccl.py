@@ -8,12 +8,15 @@ from alpa.mesh_executable import next_remote_buffer_uuid
 from alpa.global_env import global_config
 
 
-class PybindNCCLTest(unittest.TestCase):
+class XLANCCLTest(unittest.TestCase):
 
     def setUp(self):
         init(cluster="ray")
 
-    def test_pybind_nccl_allgather(self):
+    def test_xla_nccl_allgather(self):
+        backup_nccl_mode = global_config.nccl_mode
+        global_config.nccl_mode = "xla_extension"
+        
         data_shape = (1, 4)
         size = (4, 4)
         virtual_mesh = get_global_virtual_physical_mesh()
@@ -46,11 +49,13 @@ class PybindNCCLTest(unittest.TestCase):
         for i in range(4):
             for j in range(4):
                 assert refs[i][j * shard_len, 0] == j
+        
+        global_config.nccl_mode = backup_nccl_mode
 
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(PybindNCCLTest("test_pybind_nccl_allgather"))
+    suite.addTest(XLANCCLTest("test_xla_nccl_allgather"))
     return suite
 
 

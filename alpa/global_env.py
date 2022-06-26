@@ -53,6 +53,9 @@ class GlobalConfig:
         # Cross mesh resharding mode. Possible choices: {"send_recv",
         # "broadcast"}
         self.resharding_mode = "send_recv"
+        # Which nccl to use. Possible choices: {"cupy",
+        # "xla_extension"}
+        self.nccl_mode = "xla_extension"
 
         ########## Options of XLA compilation ##########
         # Whether to use xla while instruction for preventing CSE in

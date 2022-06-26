@@ -909,11 +909,12 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
     seed_eqn = {}
     cur_pipeline = None
     for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
-        # Rewrite pipeline_markers
         if eqn.primitive is pipeline_p:
+            # Rewrite pipeline_markers
             new_eqns.append(_offload_remat_process_pipeline(eqn, discarded))
             cur_pipeline = eqn
         elif eqn_idx in offloaded_eqns:
+            # Add get-seed before the original fwd remat call
             new_params = dict(eqn.params)
             new_params["name"] = f"remat_alpa$original_{next_remat_name()}"
             deps = (new_params["name"],)
@@ -926,7 +927,7 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
         else:
             inserted_idx = offload_to[eqn_idx]
             var_mapping = {}
-            # insert forward remat call
+            # clone the forward remat call
             inserted = closed_jaxpr.eqns[inserted_idx]
             new_outvars = []
             for v in inserted.outvars:
@@ -947,7 +948,7 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
             set_seed = new_set_seed_eqn(seed_eqn[inserted_idx], set_seed_deps,
                                         backup_seed.outvars[0])
             # restore seed
-            restore_seed_deps = (cur_pipeline.params["name"],)
+            restore_seed_deps = (cur_pipeline.params["name"],) if cur_pipeline else ()
             restore_dep_vars = [
                 v for v in cloned_fwd.outvars if is_meaningful(v)
             ]

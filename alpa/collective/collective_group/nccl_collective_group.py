@@ -17,7 +17,6 @@ from alpa.collective.collective_group.cuda_stream import get_stream_pool
 logger = logging.getLogger(__name__)
 
 
-
 class NCCLGroup(BaseGroup):
     """NCCL-based collective operations."""
 

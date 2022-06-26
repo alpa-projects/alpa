@@ -14,6 +14,7 @@ from alpa.collective.types import (AllReduceOptions, BarrierOptions,
 
 logger = logging.getLogger(__name__)
 
+
 class Rendezvous:
     """A rendezvous class for different actor/task processes to meet.
 
@@ -113,6 +114,7 @@ class Rendezvous:
         """Delete the named actor."""
         ray.kill(self._store)
         self._store = None
+
 
 class BaseGroup(metaclass=ABCMeta):
     """Abstract class for collective groups."""

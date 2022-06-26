@@ -62,16 +62,14 @@ logger.setLevel(logging.INFO)
 
 if global_config.nccl_mode == "cupy":
     from alpa.collective.mesh_run_nccl_collective import (
-        cupy_nccl_send_tile as mesh_run_send_tile,
-        cupy_nccl_recv_tile as mesh_run_recv_tile,
-        cupy_nccl_allgather as mesh_run_allgather,
+        cupy_nccl_send_tile as mesh_run_send_tile, cupy_nccl_recv_tile as
+        mesh_run_recv_tile, cupy_nccl_allgather as mesh_run_allgather,
         cupy_nccl_broadcast as mesh_run_broadcast)
 else:
     assert global_config.nccl_mode == "xla_extension"
     from alpa.collective.mesh_run_nccl_collective import (
-        xla_nccl_send_tile as mesh_run_send_tile,
-        xla_nccl_recv_tile as mesh_run_recv_tile,
-        xla_nccl_allgather as mesh_run_allgather,
+        xla_nccl_send_tile as mesh_run_send_tile, xla_nccl_recv_tile as
+        mesh_run_recv_tile, xla_nccl_allgather as mesh_run_allgather,
         xla_nccl_broadcast as mesh_run_broadcast)
 
 ReshardingTileSpec = namedtuple("ReshardingSendSpec",
@@ -165,7 +163,9 @@ class MeshHostWorker:
         self.launched = True
 
         if global_config.nccl_mode == "xla_extension":
-            self.nccl_local_allgather_init_comms = lambda x: xe.nccl_init_communicator(x, ENV.NCCL_USE_MULTISTREAM.val)
+            self.nccl_local_allgather_init_comms = (
+                lambda x: xe.nccl_init_communicator(
+                    x, ENV.NCCL_USE_MULTISTREAM.val))
         else:
             self.nccl_local_allgather_init_comms = nccl.NcclCommunicator.initAll
 
@@ -379,8 +379,8 @@ class MeshHostWorker:
         g._get_nccl_broadcast_communicator(  # pylint: disable=protected-access
             comm_key, world_size, device_ids, devices_global_rank, nccl_uid)
 
-    def send_tile(self, uuid: int, offset: Sequence[slice],
-                  dst_rank: int, dst_gpu_idx: int, group_name: str):
+    def send_tile(self, uuid: int, offset: Sequence[slice], dst_rank: int,
+                  dst_gpu_idx: int, group_name: str):
         if global_config.pipeline_use_signal_send_recv:
             signal = self.signal_tensors[uuid % len(self.local_devices)]
             col.send_multigpu(signal,
@@ -390,7 +390,8 @@ class MeshHostWorker:
                               start_pos=0,
                               n_elements=1)
         else:
-            mesh_run_send_tile(self, uuid, offset, dst_rank, dst_gpu_idx, group_name)
+            mesh_run_send_tile(self, uuid, offset, dst_rank, dst_gpu_idx,
+                               group_name)
 
     def recv_tile(self, uuid: int, device_id: int,
                   indices_in_dst_tile: Sequence[slice], src_rank: int,
@@ -407,7 +408,8 @@ class MeshHostWorker:
                               start_pos=0,
                               n_elements=1)
         else:
-            mesh_run_recv_tile(self, uuid, device_id, indices_in_dst_tile, src_rank, src_gpu_idx, group_name)
+            mesh_run_recv_tile(self, uuid, device_id, indices_in_dst_tile,
+                               src_rank, src_gpu_idx, group_name)
 
     @staticmethod
     def init_p2p_communicator(group_name, my_rank, my_gpu_idx, peer_rank,
@@ -437,9 +439,8 @@ class MeshHostWorker:
         task: ReshardingSendTask = self.send_tasks[uuid]
         for send_tile_spec, buf_uuid in zip(task.tile_specs, buf_uuids):
             send_tile_spec: ReshardingTileSpec
-            self.send_tile(buf_uuid, send_tile_spec.offset,
-                           send_tile_spec.rank, send_tile_spec.gpu_idx,
-                           task.group_name)
+            self.send_tile(buf_uuid, send_tile_spec.offset, send_tile_spec.rank,
+                           send_tile_spec.gpu_idx, task.group_name)
 
     def run_resharding_recv_task(self, uuid, buf_uuids, set_empty_buffer=True):
         task: ReshardingRecvTask = self.recv_tasks[uuid]
@@ -472,13 +473,13 @@ class MeshHostWorker:
                            allgather_spec.tensor_slices,
                            allgather_spec.output_slice)
 
-    def allgather(self, uuids: Sequence[int],
-                  device_ids: Sequence[int],
+    def allgather(self, uuids: Sequence[int], device_ids: Sequence[int],
                   tensor_slices: Sequence[slice], output_slice):
 
         if repr(sorted(device_ids)) not in self.allgather_communicators:
-            self.allgather_communicators[repr(sorted(device_ids))] = (
-                self.nccl_local_allgather_init_comms(list(device_ids)))
+            self.allgather_communicators[repr(
+                sorted(device_ids))] = (self.nccl_local_allgather_init_comms(
+                    list(device_ids)))
 
         mesh_run_allgather(self, uuids, device_ids, tensor_slices, output_slice)
 

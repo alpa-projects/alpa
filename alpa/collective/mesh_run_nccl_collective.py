@@ -1,3 +1,5 @@
+"""Implementation of devive_mesh's send/recv/allgather/broadcast."""
+
 from typing import Sequence
 import logging
 
@@ -10,8 +12,7 @@ import cupy
 
 import alpa.collective as col
 from alpa.collective.collective_group import nccl_util
-from alpa.util import (jax_tensor_to_cupy,
-                       cupy_to_jax_tensor, jax_tensor_set,
+from alpa.util import (jax_tensor_to_cupy, cupy_to_jax_tensor, jax_tensor_set,
                        xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
                        xla_buffer_to_cupy, cupy_to_xla_buffer,
                        is_continuous_subset, infer_offset_and_n_elements,
@@ -20,25 +21,25 @@ from alpa.util import (jax_tensor_to_cupy,
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-def xla_nccl_send_tile(mesh, uuid: int, offset: Sequence[slice],
-                       dst_rank: int, dst_gpu_idx: int, group_name: str):
+
+def xla_nccl_send_tile(mesh, uuid: int, offset: Sequence[slice], dst_rank: int,
+                       dst_gpu_idx: int, group_name: str):
 
     tensor_shape = mesh.buffers[uuid].shape
     if is_continuous_subset(offset, tensor_shape):
-        start_pos, n_elements = (
-            infer_start_pos_and_n_elements(tensor_shape, offset))
+        start_pos, n_elements = (infer_start_pos_and_n_elements(
+            tensor_shape, offset))
         col.send_multigpu(mesh.buffers[uuid],
-                            dst_rank,
-                            dst_gpu_idx,
-                            group_name,
-                            start_pos=start_pos,
-                            n_elements=n_elements)
+                          dst_rank,
+                          dst_gpu_idx,
+                          group_name,
+                          start_pos=start_pos,
+                          n_elements=n_elements)
     else:
         # slower path, because of indexing.
-        logger.debug(
-            "Send goes along the slowest path. "
-            "If this is for transformers, please check the resharding "
-            "specs.")
+        logger.debug("Send goes along the slowest path. "
+                     "If this is for transformers, please check the resharding "
+                     "specs.")
         start_indices = tuple(o.start for o in offset)
         slice_sizes = tuple(o.stop - o.start for o in offset)
         src_buffer = jax_tensor_index(
@@ -47,11 +48,12 @@ def xla_nccl_send_tile(mesh, uuid: int, offset: Sequence[slice],
         to_send = jax_tensor_to_xla_buffer(src_buffer)
         n_elements = np.prod(slice_sizes)
         col.send_multigpu(to_send,
-                            dst_rank,
-                            dst_gpu_idx,
-                            group_name,
-                            start_pos=0,
-                            n_elements=n_elements)
+                          dst_rank,
+                          dst_gpu_idx,
+                          group_name,
+                          start_pos=0,
+                          n_elements=n_elements)
+
 
 def xla_nccl_recv_tile(mesh, uuid: int, device_id: int,
                        indices_in_dst_tile: Sequence[slice], src_rank: int,
@@ -60,14 +62,14 @@ def xla_nccl_recv_tile(mesh, uuid: int, device_id: int,
     slice_shape = tuple(ind.stop - ind.start for ind in indices_in_dst_tile)
     is_bool = mesh.buffers[uuid].dtype == np.bool_
     if is_continuous_subset(indices_in_dst_tile, tensor_shape):
-        start_pos, n_elements = infer_start_pos_and_n_elements(tensor_shape,
-                                    indices_in_dst_tile)
+        start_pos, n_elements = infer_start_pos_and_n_elements(
+            tensor_shape, indices_in_dst_tile)
         col.recv_multigpu(mesh.buffers[uuid],
-                            src_rank,
-                            src_gpu_idx,
-                            group_name,
-                            start_pos=start_pos,
-                            n_elements=n_elements)
+                          src_rank,
+                          src_gpu_idx,
+                          group_name,
+                          start_pos=start_pos,
+                          n_elements=n_elements)
     else:
         tmp_buffer = device_put(
             jnp.ones(slice_shape, dtype=mesh.buffers[uuid].dtype),
@@ -75,11 +77,11 @@ def xla_nccl_recv_tile(mesh, uuid: int, device_id: int,
         to_recv = jax_tensor_to_xla_buffer(tmp_buffer)
         n_elements = np.prod(slice_shape)
         col.recv_multigpu(to_recv,
-                            src_rank,
-                            src_gpu_idx,
-                            group_name,
-                            start_pos=0,
-                            n_elements=n_elements)
+                          src_rank,
+                          src_gpu_idx,
+                          group_name,
+                          start_pos=0,
+                          n_elements=n_elements)
         start_indices = tuple(
             ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
         new_buffer = jax_tensor_set(
@@ -89,13 +91,14 @@ def xla_nccl_recv_tile(mesh, uuid: int, device_id: int,
     if is_bool:
         mesh.buffers[uuid] = _uint8_to_bool(mesh.buffers[uuid])
 
-def xla_nccl_allgather(mesh, uuids: Sequence[int],
-                        device_ids: Sequence[int],
-                        tensor_slices: Sequence[slice], output_slice):
+
+def xla_nccl_allgather(mesh, uuids: Sequence[int], device_ids: Sequence[int],
+                       tensor_slices: Sequence[slice], output_slice):
 
     if repr(sorted(device_ids)) not in mesh.allgather_communicators:
-        mesh.allgather_communicators[repr(sorted(device_ids))] = (
-            mesh.nccl_local_allgather_init_comms(list(device_ids)))
+        mesh.allgather_communicators[repr(
+            sorted(device_ids))] = (mesh.nccl_local_allgather_init_comms(
+                list(device_ids)))
 
     communicators = mesh.allgather_communicators[repr(sorted(device_ids))]
     is_bool = mesh.buffers[uuids[device_ids[0]]].dtype == np.bool_
@@ -108,14 +111,14 @@ def xla_nccl_allgather(mesh, uuids: Sequence[int],
     for device_id, tensor_slice in zip(device_ids, tensor_slices):
         uuid = uuids[device_id]
         xla_buffer = mesh.buffers[uuid]
-        start_pos, _ = infer_start_pos_and_n_elements(
-            tensor_shape, tensor_slice)
+        start_pos, _ = infer_start_pos_and_n_elements(tensor_shape,
+                                                      tensor_slice)
         buffers.append(xla_buffer)
         local_start_pos_list.append(start_pos)
 
     _, local_n_elements = infer_offset_and_n_elements(tensor_slices[0])
     xe.nccl_local_all_gather(communicators, buffers, local_start_pos_list,
-                                global_start_pos, local_n_elements)
+                             global_start_pos, local_n_elements)
 
     for device_id, buf in zip(device_ids, buffers):
         uuid = uuids[device_id]
@@ -123,8 +126,9 @@ def xla_nccl_allgather(mesh, uuids: Sequence[int],
             buf = _uint8_to_bool(buf)
         mesh.buffers[uuid] = buf
 
+
 def xla_nccl_broadcast(mesh, uuids, comm_key, world_size, devices_ids,
-                        devices_global_rank, tensor_slices, group_name):
+                       devices_global_rank, tensor_slices, group_name):
     buffers = []
     local_start_pos_list = []
     is_bool = mesh.buffers[uuids[devices_ids[0]]].dtype == np.bool_
@@ -146,8 +150,8 @@ def xla_nccl_broadcast(mesh, uuids, comm_key, world_size, devices_ids,
             if global_rank == 0:
                 start_indices = tuple(o.start for o in tensor_slice)
                 tmp = jax_tensor_index(
-                    xla_buffer_to_jax_tensor(mesh.buffers[uuid]),
-                    start_indices, slice_shape)
+                    xla_buffer_to_jax_tensor(mesh.buffers[uuid]), start_indices,
+                    slice_shape)
             else:
                 tmp = device_put(
                     jnp.ones(slice_shape, dtype=mesh.buffers[uuid].dtype),
@@ -156,8 +160,8 @@ def xla_nccl_broadcast(mesh, uuids, comm_key, world_size, devices_ids,
             buffers.append(jax_tensor_to_xla_buffer(tmp))
 
     col.broadcast_partialgpu(buffers, n_elements, comm_key, world_size,
-                                devices_ids, devices_global_rank, group_name,
-                                local_start_pos_list)
+                             devices_ids, devices_global_rank, group_name,
+                             local_start_pos_list)
 
     for xla_buffer, device_id, global_rank, tensor_slice in zip(
             buffers, devices_ids, devices_global_rank, tensor_slices):
@@ -178,13 +182,14 @@ def xla_nccl_broadcast(mesh, uuids, comm_key, world_size, devices_ids,
         if is_bool:
             mesh.buffers[uuid] = _uint8_to_bool(mesh.buffers[uuid])
 
+
 # Note: in this device mesh code, we will use 3 types of tensors:
 # (1) JAX high-level _DeviceArray, which is index-able, has __cuda_array__
 #     interface
 # (2) XLA low-level PyLocalBuffer, which is not index-able
 # (3) cupy array, which is an intermediate format for ray collective
-def cupy_nccl_send_tile(mesh, uuid: int, offset: Sequence[slice],
-                        dst_rank: int, dst_gpu_idx: int, group_name: str):
+def cupy_nccl_send_tile(mesh, uuid: int, offset: Sequence[slice], dst_rank: int,
+                        dst_gpu_idx: int, group_name: str):
     """
     Send a slice of a source buffer to a target GPU.
 
@@ -205,16 +210,15 @@ def cupy_nccl_send_tile(mesh, uuid: int, offset: Sequence[slice],
         else:
             ind, n_elements = infer_offset_and_n_elements(offset)
             col.send_multigpu(to_send[ind],
-                                dst_rank,
-                                dst_gpu_idx,
-                                group_name,
-                                n_elements=n_elements)
+                              dst_rank,
+                              dst_gpu_idx,
+                              group_name,
+                              n_elements=n_elements)
     else:
         # slower path, because of indexing.
-        logger.debug(
-            "Send goes along the slowest path. "
-            "If this is for transformers, please check the resharding "
-            "specs.")
+        logger.debug("Send goes along the slowest path. "
+                     "If this is for transformers, please check the resharding "
+                     "specs.")
         start_indices = tuple(o.start for o in offset)
         slice_sizes = tuple(o.stop - o.start for o in offset)
         src_buffer = jax_tensor_index(
@@ -222,7 +226,7 @@ def cupy_nccl_send_tile(mesh, uuid: int, offset: Sequence[slice],
             slice_sizes)
         to_send = jax_tensor_to_cupy(src_buffer)
         col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
-        
+
 
 def cupy_nccl_recv_tile(mesh, uuid: int, device_id: int,
                         indices_in_dst_tile: Sequence[slice], src_rank: int,
@@ -241,32 +245,29 @@ def cupy_nccl_recv_tile(mesh, uuid: int, device_id: int,
         src_gpu_idx: the sender gpu index on the source rank.
         group_name: collective group name.
     """
-    
+
     tensor_shape = mesh.buffers[uuid].shape
     slice_shape = tuple(ind.stop - ind.start for ind in indices_in_dst_tile)
     is_bool = mesh.buffers[uuid].dtype == np.bool_
     if is_continuous_subset(indices_in_dst_tile, tensor_shape):
-        to_recv = xla_buffer_to_cupy(mesh.buffers[uuid],
-                                        take_ownership=True)
+        to_recv = xla_buffer_to_cupy(mesh.buffers[uuid], take_ownership=True)
         if slice_shape == tensor_shape:
             col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
         else:
-            ind, n_elements = infer_offset_and_n_elements(
-                indices_in_dst_tile)
+            ind, n_elements = infer_offset_and_n_elements(indices_in_dst_tile)
             col.recv_multigpu(to_recv[ind],
-                                src_rank,
-                                src_gpu_idx,
-                                group_name,
-                                n_elements=n_elements)
+                              src_rank,
+                              src_gpu_idx,
+                              group_name,
+                              n_elements=n_elements)
         mesh.buffers[uuid] = cupy_to_xla_buffer(to_recv)
     else:
         # The following call will allocate memory and cause a few H2D and
         # D2D kernels.
         # See: https://github.com/alpa-projects/alpa/issues/145
-        logger.debug(
-            "Recv goes along the slowest path. "
-            "If this is for transformers, please check the resharding "
-            "specs.")
+        logger.debug("Recv goes along the slowest path. "
+                     "If this is for transformers, please check the resharding "
+                     "specs.")
         tmp_buffer = device_put(
             jnp.ones(slice_shape, dtype=mesh.buffers[uuid].dtype),
             mesh.local_devices[device_id])
@@ -290,8 +291,7 @@ def cupy_nccl_recv_tile(mesh, uuid: int, device_id: int,
         mesh.buffers[uuid] = _uint8_to_bool(mesh.buffers[uuid])
 
 
-def cupy_nccl_allgather(mesh, uuids: Sequence[int],
-                        device_ids: Sequence[int],
+def cupy_nccl_allgather(mesh, uuids: Sequence[int], device_ids: Sequence[int],
                         tensor_slices: Sequence[slice], output_slice):
 
     cupy_buffers = []
@@ -321,6 +321,7 @@ def cupy_nccl_allgather(mesh, uuids: Sequence[int],
             buf = _uint8_to_bool(buf)
         mesh.buffers[uuid] = buf
 
+
 def cupy_nccl_broadcast(mesh, uuids, comm_key, world_size, devices_ids,
                         devices_global_rank, tensor_slices, group_name):
     to_use = []
@@ -346,8 +347,8 @@ def cupy_nccl_broadcast(mesh, uuids, comm_key, world_size, devices_ids,
             if global_rank == 0:
                 start_indices = tuple(o.start for o in tensor_slice)
                 tmp = jax_tensor_index(
-                    xla_buffer_to_jax_tensor(mesh.buffers[uuid]),
-                    start_indices, slice_shape)
+                    xla_buffer_to_jax_tensor(mesh.buffers[uuid]), start_indices,
+                    slice_shape)
                 tmp = jax_tensor_to_cupy(tmp)
             else:
                 tmp = device_put(
@@ -359,7 +360,7 @@ def cupy_nccl_broadcast(mesh, uuids, comm_key, world_size, devices_ids,
 
     _, n_elements = infer_offset_and_n_elements(tensor_slices[0])
     col.broadcast_partialgpu(to_use, n_elements, comm_key, world_size,
-                                devices_ids, devices_global_rank, group_name)
+                             devices_ids, devices_global_rank, group_name)
 
     for for_buffer_tensor, device_id, global_rank, tensor_slice in zip(
             for_buffer, devices_ids, devices_global_rank, tensor_slices):
@@ -380,7 +381,8 @@ def cupy_nccl_broadcast(mesh, uuids, comm_key, world_size, devices_ids,
             mesh.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
         if is_bool:
             mesh.buffers[uuid] = _uint8_to_bool(mesh.buffers[uuid])
-            
+
+
 # in XLA pred(bool) and uint8 are different, but xla->dlpack->xla
 # turns a bool into uint8. This implementation is slow.
 def _uint8_to_bool(xla_buffer):

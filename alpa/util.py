@@ -863,9 +863,6 @@ def is_continuous_subset(tensor_slice, tensor_shape, row_major=True):
         return slice_shape[dim + 1:] == tensor_shape[dim + 1:]
 
 
-def infer_slice_size(slice_shape):
-    return np.prod(slice_shape)
-
 
 def infer_start_pos_and_n_elements(tensor_shape, tensor_slice):
     start_pos = 0

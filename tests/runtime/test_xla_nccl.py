@@ -42,8 +42,8 @@ class XLANCCLTest(unittest.TestCase):
                 slice(0, size[1], None)
             ])
         ray.get(
-            worker.xla_nccl_allgather.remote(uuids, device_ids, tensor_slices,
-                                             output_slice))
+            worker.allgather.remote(uuids, device_ids, tensor_slices,
+                                    output_slice))
         ray.get(worker.block_until_ready_buffers.remote(uuids))
         refs = ray.get(worker.get_buffers.remote(uuids))
         for i in range(4):

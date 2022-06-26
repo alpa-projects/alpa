@@ -31,13 +31,13 @@ else:
             XLANCCLGroup as NCCLGroup)
         from alpa.collective.collective_group.xla_nccl_util import get_nccl_runtime_version
         nccl_version = get_nccl_runtime_version()
-    except ImportError:
+    except AttributeError:
         _NCCL_AVAILABLE = False
-        print("NCCL from xla_extention seems unavailable! "
-              "Please check whether your local tensorflow-alpa "
-              "has already been up-to-date. You could also set "
-              "global_config.nccl_mode == \"cupy\" to "
-              "use another set of nccl apis from cupy. ")
+        logger.warning("NCCL from xla_extention seems unavailable! "
+                       "Please check whether your local tensorflow-alpa "
+                       "has already been up-to-date. You could also set "
+                       "global_config.nccl_mode == \"cupy\" to "
+                       "use another set of nccl apis from cupy. ")
 
 try:
     from alpa.collective.collective_group.gloo_collective_group import (

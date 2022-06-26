@@ -5,8 +5,7 @@ import ray
 from jax._src.lib import xla_extension as xe
 
 from alpa.collective.collective_group import xla_nccl_util
-from alpa.collective.collective_group.nccl_collective_group import Rendezvous
-from alpa.collective.collective_group.base_collective_group import BaseGroup
+from alpa.collective.collective_group.base_collective_group import BaseGroup, Rendezvous
 from alpa.collective.const import get_store_name, ENV
 from alpa.collective.types import (Backend, BroadcastOptions, AllReduceOptions,
                                    BarrierOptions, ReduceOptions,

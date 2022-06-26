@@ -240,4 +240,3 @@ if __name__ == "__main__":
         f"{latency_32_tokens:.2f}"
     ]
     write_tsv(heads, values, "results.tsv")
-

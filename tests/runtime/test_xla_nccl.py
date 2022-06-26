@@ -16,7 +16,7 @@ class XLANCCLTest(unittest.TestCase):
     def test_xla_nccl_allgather(self):
         backup_nccl_mode = global_config.nccl_mode
         global_config.nccl_mode = "xla_extension"
-        
+
         data_shape = (1, 4)
         size = (4, 4)
         virtual_mesh = get_global_virtual_physical_mesh()
@@ -49,7 +49,7 @@ class XLANCCLTest(unittest.TestCase):
         for i in range(4):
             for j in range(4):
                 assert refs[i][j * shard_len, 0] == j
-        
+
         global_config.nccl_mode = backup_nccl_mode
 
 

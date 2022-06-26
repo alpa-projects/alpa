@@ -646,8 +646,8 @@ class MeshHostWorker:
             if repr(device_ids) not in self.allgather_communicators:
                 if global_config.nccl_mode == "xla_extension":
                     self.allgather_communicators[repr(device_ids)] = (
-                        self.nccl_local_allgather_init_comms(list(device_ids), 
-                            ENV.NCCL_USE_MULTISTREAM.val))
+                        self.nccl_local_allgather_init_comms(
+                            list(device_ids), ENV.NCCL_USE_MULTISTREAM.val))
                 else:
                     self.allgather_communicators[repr(device_ids)] = (
                         self.nccl_local_allgather_init_comms(list(device_ids)))
@@ -667,14 +667,13 @@ class MeshHostWorker:
 
         if repr(sorted(device_ids)) not in self.allgather_communicators:
             if global_config.nccl_mode == "xla_extension":
-                communicators = (
-                    self.nccl_local_allgather_init_comms(list(device_ids),
-                        ENV.NCCL_USE_MULTISTREAM.val))
+                communicators = (self.nccl_local_allgather_init_comms(
+                    list(device_ids), ENV.NCCL_USE_MULTISTREAM.val))
             else:
-                communicators = (
-                    self.nccl_local_allgather_init_comms(list(device_ids)))
-            self.allgather_communicators[repr(sorted(device_ids))] = (
-                communicators)
+                communicators = (self.nccl_local_allgather_init_comms(
+                    list(device_ids)))
+            self.allgather_communicators[repr(
+                sorted(device_ids))] = (communicators)
 
         communicators = self.allgather_communicators[repr(sorted(device_ids))]
         is_bool = self.buffers[uuids[device_ids[0]]].dtype == np.bool_
@@ -702,7 +701,8 @@ class MeshHostWorker:
                 buf = _uint8_to_bool(buf)
             self.buffers[uuid] = buf
 
-    def cupy_nccl_allgather(self, uuids: Sequence[int], device_ids: Sequence[int],
+    def cupy_nccl_allgather(self, uuids: Sequence[int],
+                            device_ids: Sequence[int],
                             tensor_slices: Sequence[slice], output_slice):
         cupy_buffers = []
         communicators = self.allgather_communicators[repr(sorted(device_ids))]

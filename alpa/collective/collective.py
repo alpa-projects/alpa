@@ -25,6 +25,7 @@ if global_config.nccl_mode == "cupy":
                        "following the guide at: "
                        "https://docs.cupy.dev/en/stable/install.html.")
 else:
+    assert global_config.nccl_mode == "xla_extension"
     try:
         from alpa.collective.collective_group.xla_nccl_collective_group import (
             XLANCCLGroup as NCCLGroup)
@@ -418,8 +419,8 @@ def broadcast_partialgpu(tensor_list,
         devices_ids: local devices in this cross-host collective group.
         devices_global_rank: the corresponding global rank for local devices.
         group_name (str): the collective group name to perform broadcast.
-        local_start_pos_list (list[int]): the list contains starting positions of the
-        contiguous data to be sent in every tensor.
+        local_start_pos_list (list[int]): the list contains starting positions
+        of the contiguous data to be sent in every tensor.
 
     Returns:
         None
@@ -436,7 +437,7 @@ def broadcast_partialgpu(tensor_list,
     opts.devices_ids = devices_ids
     opts.devices_global_rank = devices_global_rank
     opts.local_start_pos_list = (local_start_pos_list
-            if local_start_pos_list is not None else [])
+                                 if local_start_pos_list is not None else [])
     g.broadcast_partialgpu(tensor_list, opts)
 
 

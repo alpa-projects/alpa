@@ -261,7 +261,7 @@ arch_params = {
 }
 parallel_config = {
     "global_batch_size": 256,  # 512
-    "num_micro_batches": 16,  # 128,
+    "num_micro_batches": 32,  # 128,
     "num_auto_layers": 16,
     "auto_sharding_option": {'force_batch_dim_to_mesh_dim': 0},
 }

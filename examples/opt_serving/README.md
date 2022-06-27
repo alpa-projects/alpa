@@ -1,4 +1,7 @@
-# Examples: Serving OPT-175B using Alpa
+# Serving OPT-175B using Alpa
+
+This tutorial shows how to setup a serving system to serve the largest available pretrained language model OPT-175B.
+
 As a serving system, Alpa provides the following unique advantages:
 - **Support commodity hardware**: With Alpa, you can serve OPT-175B using your in-house GPU cluster, without needing the latest generations of A100 80GB GPUs nor fancy InfiniBand connections -- no hardware constraints!
 - **Flexible parallelism strategies**: Alpa will automatically figure out the appropriate model-parallel strategies based on your cluster setup.
@@ -32,7 +35,7 @@ model = get_model(model_name="alpa/opt-2.7b",
                   path="/home/ubuntu/opt_weights/")
 
 # Generate
-prompt = "Paris is the capital city of "
+prompt = "Paris is the capital city of"
 
 input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to("cuda")
 output = model.generate(input_ids=input_ids, max_length=256, do_sample=True)
@@ -55,7 +58,7 @@ pip3 install torch torchvision torchaudio --extra-index-url https://download.pyt
 cd examples/opt_serving && bash build.sh
 ```
 
-## Get OPT weights
+## Get OPT Weights
 There are two ways you can obtain the pretrained OPT weights.
 
 1. You can download the original OPT weights released by [Metaseq](https://github.com/facebookresearch/metaseq/tree/main/projects/OPT), 
@@ -92,7 +95,7 @@ Run distributed generation with the 175B model using Alpa. Note you will need >3
 python3 benchmark_text_gen.py --model alpa/opt-175b --path [PATH_TO_WEIGHT] --debug
 ```
 
-# Launch a Web Server to Serve the OPT models
+## Launch a Web Server to Serve the OPT Models
 
 Launch the web server:
 ```shell

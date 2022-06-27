@@ -201,7 +201,8 @@ class MeshHostWorker:
                     dim_size = len(range(*filled_slice))
                     shard_shape.append(dim_size)
                 tensors[b][device_id] = (self.backend.buffer_from_pyval(
-                    np.full(shape, 1e-8, dtype), self.local_devices[device_id]))
+                    np.full(shard_shape, 1e-8, dtype),
+                    self.local_devices[device_id]))
         for uuid, tensor in zip(uuids, tensors):
             self.buffers[uuid] = tensor
 
@@ -349,7 +350,7 @@ class MeshHostWorker:
             self.move_worker.move.remote(local_cache_dir, ckpt_dir)
 
     def load_tensor(self, ckpt_dir: str, uuid: Sequence[int],
-                    shard_indices: Sequence[Index], device_ids: Sequence[int]):
+                    device_ids: Sequence[int], shard_indices: Sequence[Index]):
         metadatas = list(
             filter(lambda fname: fname.startswith(".metadata"),
                    os.listdir(ckpt_dir)))
@@ -541,27 +542,31 @@ class MeshHostWorker:
         self.recv_tasks[uuid] = ReshardingRecvTask(recv_specs=tasks,
                                                    group_name=group_name)
 
-    def run_resharding_send_task(self, uuid, buf_uuids):
+    def run_resharding_send_task(self, uuid, tensor_uuid):
         task: ReshardingSendTask = self.send_tasks[uuid]
-        for send_tile_spec, buf_uuid in zip(task.tile_specs, buf_uuids):
+        for send_tile_spec in task.tile_specs:
             send_tile_spec: ReshardingTileSpec
-            self.send_tile(buf_uuid, send_tile_spec.offset, send_tile_spec.rank,
+            self.send_tile(tensor_uuid, send_tile_spec.offset, send_tile_spec.rank,
                            send_tile_spec.gpu_idx, task.group_name)
 
-    def run_resharding_recv_task(self, uuid, buf_uuids, set_empty_buffer=True):
+    def run_resharding_recv_task(self,
+                                 uuid,
+                                 tensor_uuid,
+                                 set_empty_buffer=True):
         task: ReshardingRecvTask = self.recv_tasks[uuid]
-        if set_empty_buffer and uuid not in self.buffers:
-            self.buffers[uuid] = [None] * self.num_devices
-        for recv_spec, buf_uuid in zip(task.recv_specs, buf_uuids):
+        if set_empty_buffer and tensor_uuid not in self.buffers:
+            self.buffers[tensor_uuid] = [None] * self.num_devices
+        buffers = self.buffers[tensor_uuid]
+        for recv_spec in task.recv_specs:
             recv_spec: ReshardingRecvSpec
             device_id = recv_spec.device_id
             if set_empty_buffer:
-                self.buffers[uuid][device_id] = self.backend.buffer_from_pyval(
+                buffers[device_id] = self.backend.buffer_from_pyval(
                     np.full(recv_spec.shape, 1e-8, recv_spec.dtype),
                     self.local_devices[device_id])
             for recv_tile_spec in recv_spec.tile_specs:
                 recv_tile_spec: ReshardingTileSpec
-                self.recv_tile(buf_uuid, device_id, recv_tile_spec.offset,
+                self.recv_tile(tensor_uuid, device_id, recv_tile_spec.offset,
                                recv_tile_spec.rank, recv_tile_spec.gpu_idx,
                                task.group_name)
 
@@ -1509,7 +1514,7 @@ class RemoteTensorRef:
             self.device_mesh.delete_remote_buffers((self,))
 
 
-def create_remote_tensor_refs(device_mesh, num):
+def create_remote_tensor_refs(device_mesh, num=1):
     tensor_uuids = next_tensor_uuids(num)
     if num == 1:
         tensor_refs = RemoteTensorRef(device_mesh, tensor_uuids)
@@ -1583,22 +1588,23 @@ class DistributedArray:
         one_replica_indices = [
             self.indices[i] for i in self.one_replica_buffer_ids
         ]
-        buf_refs_per_host = {}
+        device_ids_per_host = {}
         indices_per_host = {}
         for buf_id, indice in zip(self.one_replica_buffer_ids,
                                    one_replica_indices):
-            host_id = buf_id // self.device_mesh.num_devices_per_host
-            if buf_refs_per_host.get(host_id) is None:
-                buf_refs_per_host[host_id] = [self.remote_ref.uuid]
+            host_id, device_id = divmod(buf_id,
+                                        self.device_mesh.num_devices_per_host)
+            if indices_per_host.get(host_id) is None:
                 indices_per_host[host_id] = [indice]
+                device_ids_per_host[host_id] = [device_id]
             else:
-                buf_refs_per_host[host_id].append(self.remote_ref.uuid)
                 indices_per_host[host_id].append(indice)
-        for host_id, uuids in buf_refs_per_host.items():
-            if len(uuids) > 0:
+                device_ids_per_host[host_id].append(device_id)
+        for host_id, indices in indices_per_host.items():
+            if len(indices) > 0:
                 self.device_mesh.workers[host_id].save_tensor.remote(
-                    ckpt_dir, local_cache_dir, uuids, indices_per_host[host_id],
-                    self.shape)
+                    ckpt_dir, local_cache_dir, self.remote_ref.uuid,
+                    device_ids_per_host[host_id], indices, self.shape)
 
     @classmethod
     def load(cls, path: str, aval: ShapedArray, device_mesh: PhysicalDeviceMesh,
@@ -1614,8 +1620,8 @@ class DistributedArray:
         indices_per_host = {}
         device_ids_per_host = {}
         for buf_idx, indice in enumerate(indices):
-            host_id = buf_idx // device_mesh.num_devices_per_host
-            device_id = buf_idx % device_mesh.num_devices_per_host
+            host_id, device_id = divmod(buf_idx,
+                                        device_mesh.num_devices_per_host)
             if indices_per_host.get(host_id) is None:
                 indices_per_host[host_id] = [indice]
                 device_ids_per_host[host_id] = [device_id]
@@ -1624,8 +1630,8 @@ class DistributedArray:
                 device_ids_per_host[host_id].append(device_id)
         for host_id, worker in enumerate(device_mesh.workers):
             worker.load_tensor.remote(
-                path, tensor_ref.uuid, indices_per_host[host_id],
-                device_ids_per_host[host_id])
+                path, tensor_ref.uuid, device_ids_per_host[host_id],
+                indices_per_host[host_id])
         return DistributedArray(device_mesh, aval, sharding_spec, tensor_ref,
                                 indices)
 

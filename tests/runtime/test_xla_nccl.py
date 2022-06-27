@@ -13,8 +13,9 @@ class XLANCCLTest(unittest.TestCase):
     def setUp(self):
         init(cluster="ray")
 
-    @unittest.skip("We should fix this test case by putting an all-gather task "
-                   "and run it, instead of directly calling worker.allgather.remote.")
+    @unittest.skip(
+        "We should fix this test case by putting an all-gather task "
+        "and run it, instead of directly calling worker.allgather.remote.")
     def test_xla_nccl_allgather(self):
         backup_nccl_mode = global_config.nccl_mode
         global_config.nccl_mode = "xla_extension"

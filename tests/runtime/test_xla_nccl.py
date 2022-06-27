@@ -22,7 +22,9 @@ class XLANCCLTest(unittest.TestCase):
         mesh_shape = (1, 4)
         size = (4, 4)
         virtual_mesh = get_global_virtual_physical_mesh()
-        mesh = virtual_mesh.slice_2d(range(mesh_shape[0]), [range(mesh_shape[1])] * mesh_shape[0]).get_physical_mesh()
+        mesh = virtual_mesh.slice_2d(range(mesh_shape[0]),
+                                     [range(mesh_shape[1])] *
+                                     mesh_shape[0]).get_physical_mesh()
         worker = mesh.workers[0]
         device_ids = np.arange(mesh.num_devices_per_host)
 
@@ -36,7 +38,7 @@ class XLANCCLTest(unittest.TestCase):
             shards.append(data)
         ray.get(worker.put_buffers.remote(uuids, device_ids, shards, 1, 0))
 
-        # Put allgather task 
+        # Put allgather task
         output_slice = [slice(0, size[0], None), slice(0, size[1], None)]
         tensor_slices = []
         for i in range(mesh.num_devices_per_host):
@@ -44,8 +46,10 @@ class XLANCCLTest(unittest.TestCase):
                 slice(i * shard_len, (i + 1) * shard_len, None),
                 slice(0, size[1], None)
             ])
-        ray.get(worker.put_resharding_allgather_task.remote(0, (
-            ReshardingAllGatherSpec(device_ids, tensor_slices, output_slice),)))
+        ray.get(
+            worker.put_resharding_allgather_task.remote(
+                0, (ReshardingAllGatherSpec(device_ids, tensor_slices,
+                                            output_slice),)))
 
         # Run allgather task
         ray.get(worker.run_allgather_task.remote(0, uuids))

@@ -4,11 +4,11 @@ Usages:
 1. benchmark huggingface torch-based OPT or GPT-2 generation:
 python benchmark_text_gen.py --model facebook/opt-125m --debug
 
-2. benchmark alpa parallelized OPT generation:
-python benchmark_text_gen.py --model alpa/opt-2.7b --debug
-
-3. benchmark jax.jit based OPT generation without alpa, on a single GPU:
+2. benchmark jax.jit based OPT generation without alpa, on a single GPU:
 python benchmark_text_gen.py --model jax/opt-125m
+
+3. benchmark alpa parallelized OPT generation:
+python benchmark_text_gen.py --model alpa/opt-2.7b --debug
 
 4. benchmark alpa parallelized OPT forward computation, batch_size, decoder length, and #micro_batches can be configured.
 python benchmark_text_gen.py --model alpa/opt-2.7b --forward

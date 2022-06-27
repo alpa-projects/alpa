@@ -906,12 +906,11 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
 
 
 def init_cache_dis_array(executable, config, batch_size, dummy=False):
-    alpa.global_config.use_dummy_value_for_benchmarking = dummy
     cache = init_cache_np(config, batch_size)
+    alpa.global_config.use_dummy_value_for_benchmarking = dummy
     _, batch_info = executable.get_input_placement_specs()
-    cache_info = batch_info["cache"]
     flat_args, in_tree = tree_flatten(cache)
-    flat_info = tree_leaves(cache_info)
+    flat_info = tree_leaves(batch_info["cache"])
     ret = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
     alpa.global_config.use_dummy_value_for_benchmarking = False
     return ret

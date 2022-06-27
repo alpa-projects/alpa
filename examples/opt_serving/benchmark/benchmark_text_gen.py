@@ -49,6 +49,7 @@ if __name__ == "__main__":
     warmup_iters = 5
     n_iters = 10
     global_config.pipeline_sync_for_timer = True
+    global_config.shard_parallel_sync_for_timer = True
 
     # Note(Hao): we need to use "opt-30b" and disable "add_bos_token".
     if args.model.startswith("alpa") or args.model.startswith("jax"):
@@ -177,8 +178,13 @@ if __name__ == "__main__":
         L = model.transformer_config.L
         seq_len = model.transformer_config.seq_len
         vocab_size = model.transformer_config.vocab_size
-        num_gpus = alpa.get_global_cluster(
-        ).num_devices if "alpa" in args.model else 1
+        if "alpa" in args.model:
+            if alpa.get_global_cluster():
+                num_gpus = alpa.get_global_cluster().num_devices
+            else:
+                num_gpus = alpa.get_global_physical_mesh().num_devices
+        else:
+            num_gpus = 1
 
         # benchmark
         for i in range(n_iters):

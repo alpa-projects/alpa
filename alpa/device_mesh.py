@@ -695,11 +695,26 @@ class PhysicalDeviceMesh(ABC):
         """Shard arguments (np.ndarray) as distributed arrays."""
         raise NotImplementedError()
 
+    def shard_args_to_arrays_ps(self,
+            placement_specs: PlacementSpec, args: Sequence[Any]):
+        """
+        Shard arguments (np.ndarray) as distributed arrays according to
+        PlacementSpec.
+        """
+        avals = tuple(x.aval for x in placement_specs)
+        assert all(len(x.mesh_ids) == 1 and x.mesh_ids[0] == self.mesh_id
+                   for x in placement_specs)
+        specs = tuple(x.sharding_specs[0] for x in placement_specs)
+        indices = tuple(pxla.spec_to_indices(aval.shape, spec)
+                        for aval, spec in zip(avals, specs))
+        return self.shard_args_to_arrays(avals, indices, specs, args)
+
     @abstractmethod
     def get_outputs_handler(self, avals: Sequence[ShapedArray],
                             sharding_specs: Sequence[ShardingSpec]):
-        """Get a function that wraps low-level buffers to high-level output
-        arrays."""
+        """
+        Get a function that wraps low-level buffers to high-level output arrays.
+        """
         raise NotImplementedError()
 
     @abstractmethod
@@ -787,6 +802,8 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
                              args: Sequence[Any]):
         arrays = []
         for i in range(len(avals)):
+            if global_config.use_dummy_value_for_benchmarking:
+                args[i] = np.full(avals[i].shape, 1e-8, avals[i].dtype)
             shards = [
                 args[i][shard_indices[i][k]] for k in range(len(self.devices))
             ]
@@ -1107,7 +1124,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 size = np.prod(arg.shape) * arg.dtype.itemsize
                 bandwidth = size / (time.time() - tic)
                 total_bytes += size
-                print("Slow path "
+                print("Slow path. "
                       f"shape: {arg.shape}, "
                       f"bandwidth: {bandwidth/1024**2:.2f} MB/s "
                       f"total_bytes: {total_bytes/1024**2:.2f} MB "
@@ -1698,11 +1715,11 @@ class PhysicalDeviceMeshGroup:
         cg = self.collective_groups[src_mesh_id][dst_mesh_id]
         self._instantiate_nccl_group(cg)
 
-    def shard_args_to_arrays(self, load_infos: PlacementSpec,
+    def shard_args_to_arrays(self, placement_specs: PlacementSpec,
                              args: Sequence[Any]):
         rets = []
 
-        for info, arg in zip(load_infos, args):
+        for info, arg in zip(placement_specs, args):
             aval = info.aval
             if len(info.mesh_ids) == 1:
                 mesh = self.meshes[info.mesh_ids[0]]

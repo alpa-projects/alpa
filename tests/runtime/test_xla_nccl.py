@@ -1,9 +1,11 @@
 """Test cross-mesh resharding."""
 import unittest
+
 import numpy as np
 import ray
+
 from alpa import init
-from alpa.device_mesh import get_global_virtual_physical_mesh
+from alpa.device_mesh import get_global_virtual_physical_mesh, ReshardingAllGatherSpec
 from alpa.mesh_executable import next_remote_buffer_uuid
 from alpa.global_env import global_config
 
@@ -17,23 +19,26 @@ class XLANCCLTest(unittest.TestCase):
         backup_nccl_mode = global_config.nccl_mode
         global_config.nccl_mode = "xla_extension"
 
-        data_shape = (1, 4)
+        mesh_shape = (1, 4)
         size = (4, 4)
         virtual_mesh = get_global_virtual_physical_mesh()
-        mesh = virtual_mesh.slice_2d(range(data_shape[0]),
-                                     [range(data_shape[1])] *
-                                     data_shape[0]).get_physical_mesh()
+        mesh = virtual_mesh.slice_2d(range(mesh_shape[0]),
+                                     [range(mesh_shape[1])] *
+                                     mesh_shape[0]).get_physical_mesh()
         worker = mesh.workers[0]
         device_ids = np.arange(mesh.num_devices_per_host)
-        uuids = next_remote_buffer_uuid(data_shape[1])
+
+        # Put buffers
+        uuids = next_remote_buffer_uuid(mesh_shape[1])
         shard_len = size[0] // mesh.num_devices_per_host
         shards = []
         for i in range(mesh.num_devices_per_host):
             data = np.zeros(size, dtype=int)
             data[i * shard_len:(i + 1) * shard_len, :] = i
             shards.append(data)
-
         ray.get(worker.put_buffers.remote(uuids, device_ids, shards, 1, 0))
+
+        # Put allgather task
         output_slice = [slice(0, size[0], None), slice(0, size[1], None)]
         tensor_slices = []
         for i in range(mesh.num_devices_per_host):
@@ -42,9 +47,12 @@ class XLANCCLTest(unittest.TestCase):
                 slice(0, size[1], None)
             ])
         ray.get(
-            worker.allgather.remote(uuids, device_ids, tensor_slices,
-                                    output_slice))
-        ray.get(worker.block_until_ready_buffers.remote(uuids))
+            worker.put_resharding_allgather_task.remote(
+                0, (ReshardingAllGatherSpec(device_ids, tensor_slices,
+                                            output_slice),)))
+
+        # Run allgather task
+        ray.get(worker.run_allgather_task.remote(0, uuids))
         refs = ray.get(worker.get_buffers.remote(uuids))
         for i in range(4):
             for j in range(4):

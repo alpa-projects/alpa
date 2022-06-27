@@ -1,24 +1,20 @@
-import dataclasses
-from functools import partial
-import os
+import argparse
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-from alpa.testing import assert_allclose
 import alpa
 
-from examples.opt_serving.model.opt_model import (get_config, init_model_aval,
-                                                  inference_step_no_cache,
-                                                  init_cache_np,
-                                                  build_position_ids,
-                                                  load_params_np)
+from examples.opt_serving.model.opt_model import (
+    get_opt_config, get_pipeshard_executable, load_params_dis_array,
+    init_cache_dis_array, load_params_np, init_cache_np, get_jax_executable,
+    build_position_ids, init_model_aval)
 
 
-def test_opt_125M_shard_parallel():
-    name = "125M"
-    config = get_config(name)
-    np_weights_folder = f"/home/ubuntu/opt_weights/{name}_np"
+def test_opt_125M_shard_parallel(args):
+    name = args.model.split("-")[1].upper()
+
+    config = get_opt_config(name)
 
     # Init model
     input_ids = jnp.array([[5625, 16, 10, 2721, 183, 8, 38, 236, 7]],
@@ -28,13 +24,7 @@ def test_opt_125M_shard_parallel():
 
     model, params = init_model_aval(config, jnp.float16)
     params = load_params_np(params, np_weights_folder, config)
-
-    # Get expected results
-    logits_no_cache = inference_step_no_cache(params, {
-        "input_ids": input_ids,
-        "position_ids": position_ids,
-    }, model.apply)
-    print("logits_no_cache", logits_no_cache)
+    cache = build_init_cache(config)
 
     # Parallelize
     method = alpa.ShardParallel(devices=jax.local_devices()[:4],
@@ -48,7 +38,7 @@ def test_opt_125M_shard_parallel():
                              attention_cache=batch["cache"])
         return output.logits, output.attention_cache
 
-    cache = build_init_cache(config)
+    params, cache = jax.tree_map(jnp.array, (params, cache))
 
     for i in range(input_ids.shape[1]):
         input_ids_step = input_ids[:, i:i + 1]
@@ -59,13 +49,9 @@ def test_opt_125M_shard_parallel():
                 "position_ids": position_ids_step,
                 "cache": cache,
             })
-        assert_allclose(logits_step, logits_no_cache[:, i:i + 1])
 
     # Dump IR
-    executable = inference_step_with_cache.last_executable
-    with open("infer.hlo", "w") as fout:
-        fout.write(executable.get_hlo_text())
-
+    executable.dump_debug_info("tmp")
     assert executable.get_hlo_text().count(
         "all-reduce(") == 1 + 2 * config.decoder_layers
 
@@ -141,5 +127,10 @@ def test_opt_125M_pipeshard_parallel():
 
 
 if __name__ == "__main__":
-    #test_opt_125M_shard_parallel()
-    test_opt_125M_pipeshard_parallel()
+    parser.add_argument("--model", type=str, default="alpa/opt-125m")
+    parser.add_argument("--path", type=str, default="/home/ubuntu/opt_weights/")
+    parser.add_argument("--dummy", action="store_true")
+    args = parser.parse_args()
+
+    test_opt_125M_shard_parallel(args)
+    #test_opt_125M_pipeshard_parallel()

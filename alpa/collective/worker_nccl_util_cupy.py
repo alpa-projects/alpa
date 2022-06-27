@@ -24,8 +24,8 @@ logger.setLevel(logging.INFO)
 #     interface
 # (2) XLA low-level PyLocalBuffer, which is not index-able
 # (3) cupy array, which is an intermediate format for ray collective
-def send_tile(worker, uuid: int, offset: Sequence[slice],
-              dst_rank: int, dst_gpu_idx: int, group_name: str):
+def send_tile(worker, uuid: int, offset: Sequence[slice], dst_rank: int,
+              dst_gpu_idx: int, group_name: str):
     """
     Send a slice of a source buffer to a target GPU.
 

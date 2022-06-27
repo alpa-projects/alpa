@@ -14,7 +14,6 @@ from alpa.collective.collective_group import nccl_util
 from alpa.util import (jax_tensor_set, jax_tensor_index,
                        xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
                        is_continuous_subset, infer_offset_and_n_elements)
-                       
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

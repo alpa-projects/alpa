@@ -5,15 +5,16 @@ from typing import Sequence
 import cupy
 import jax.numpy as jnp
 from jax import device_put
+from jax._src.dlpack import from_dlpack, to_dlpack
+from jax._src.lib import xla_bridge as xb, xla_client as xc
 import numpy as np
 
 import alpa.collective as col
 from alpa.collective.collective_group import nccl_util
-from alpa.util import (jax_tensor_to_cupy, cupy_to_jax_tensor, jax_tensor_set,
+from alpa.util import (jax_tensor_set, jax_tensor_index,
                        xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
-                       xla_buffer_to_cupy, cupy_to_xla_buffer,
-                       is_continuous_subset, infer_offset_and_n_elements,
-                       jax_tensor_index)
+                       is_continuous_subset, infer_offset_and_n_elements)
+                       
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -218,7 +219,48 @@ def broadcast(worker, uuids, comm_key, world_size, devices_ids,
             worker.buffers[uuid] = _uint8_to_bool(worker.buffers[uuid])
 
 
-init_local_comm = cupy.nccl.NcclCommunicator.initAll
+init_local_comm = cupy.cuda.nccl.NcclCommunicator.initAll
+
+
+def to_signal_buffer(jax_tensor):
+    return jax_tensor_to_cupy(jax_tensor, take_ownership=True)
+
+
+def xla_buffer_to_cupy(xla_buf, take_ownership=False):
+    """Convert an xla buffer directly to cupy, w/o transitioning from jax
+    buffer."""
+    return cupy.fromDlpack(
+        xc._xla.buffer_to_dlpack_managed_tensor(  # pylint: disable=protected-access
+            xla_buf,
+            take_ownership=take_ownership))
+
+
+def cupy_to_xla_buffer(tensor):
+    """Convert cupy tensors to XLA buffers."""
+    if isinstance(tensor, list):
+        return list(map(cupy_to_xla_buffer, tensor))
+    cpu_backend = xb.get_backend("cpu")
+    try:
+        gpu_backend = xb.get_backend("gpu")
+    except RuntimeError:
+        gpu_backend = None
+    buf = xc._xla.dlpack_managed_tensor_to_buffer(  # pylint: disable=protected-access
+        tensor.toDlpack(), cpu_backend, gpu_backend)
+    return buf
+
+
+def jax_tensor_to_cupy(tensors, take_ownership=False):
+    """Convert a Jax DeviceArray to cupy tensor; zero copy."""
+    if isinstance(tensors, list):
+        return list(map(jax_tensor_to_cupy, tensors))
+    return cupy.fromDlpack(to_dlpack(tensors, take_ownership=take_ownership))
+
+
+def cupy_to_jax_tensor(tensors):
+    """Convert cupy tensors to JAX tensors."""
+    if isinstance(tensors, list):
+        return list(map(cupy_to_jax_tensor, tensors))
+    return from_dlpack(tensors.toDlpack())
 
 
 # in XLA pred(bool) and uint8 are different, but xla->dlpack->xla

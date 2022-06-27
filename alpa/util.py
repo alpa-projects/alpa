@@ -17,7 +17,6 @@ import jax
 import jax.numpy as jnp
 from jax._src import dispatch
 from jax._src.api import FLAGS, ShapeDtypeStruct
-from jax._src.dlpack import from_dlpack, to_dlpack
 from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.api_util import shaped_abstractify
 from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
@@ -33,7 +32,6 @@ import flax
 from flax.training import train_state
 import ray
 import tqdm
-import cupy as cp
 
 from alpa.global_env import global_config, is_worker
 
@@ -901,43 +899,6 @@ def xla_buffer_to_jax_tensor(xla_buf):
 def jax_tensor_to_xla_buffer(jax_buf):
     """Convert a JAX Device array back to XLA buffer."""
     return jax_buf.device_buffer
-
-
-def xla_buffer_to_cupy(xla_buf, take_ownership=False):
-    """Convert an xla buffer directly to cupy, w/o transitioning from jax
-    buffer."""
-    return cp.fromDlpack(
-        xc._xla.buffer_to_dlpack_managed_tensor(  # pylint: disable=protected-access
-            xla_buf,
-            take_ownership=take_ownership))
-
-
-def cupy_to_xla_buffer(tensor):
-    """Convert cupy tensors to XLA buffers."""
-    if isinstance(tensor, list):
-        return list(map(cupy_to_xla_buffer, tensor))
-    cpu_backend = xb.get_backend("cpu")
-    try:
-        gpu_backend = xb.get_backend("gpu")
-    except RuntimeError:
-        gpu_backend = None
-    buf = xc._xla.dlpack_managed_tensor_to_buffer(  # pylint: disable=protected-access
-        tensor.toDlpack(), cpu_backend, gpu_backend)
-    return buf
-
-
-def jax_tensor_to_cupy(tensors, take_ownership=False):
-    """Convert a Jax DeviceArray to cupy tensor; zero copy."""
-    if isinstance(tensors, list):
-        return list(map(jax_tensor_to_cupy, tensors))
-    return cp.fromDlpack(to_dlpack(tensors, take_ownership=take_ownership))
-
-
-def cupy_to_jax_tensor(tensors):
-    """Convert cupy tensors to JAX tensors."""
-    if isinstance(tensors, list):
-        return list(map(cupy_to_jax_tensor, tensors))
-    return from_dlpack(tensors.toDlpack())
 
 
 # Note: use Python jit instead of CPP jit,

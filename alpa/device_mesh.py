@@ -52,8 +52,7 @@ from alpa.monkey_patch import set_override_backend
 from alpa.shard_parallel.auto_sharding import LogicalDeviceMesh
 from alpa.parallel_plan import PlacementSpec
 from alpa.timer import timers
-from alpa.util import (benchmark_func, list_gpu_info, jax_tensor_to_cupy,
-                       jax_tensor_to_xla_buffer, OrderedSet,
+from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
                        update_jax_platform, is_ray_node_resource)
 
 if global_config.nccl_mode == "cupy":
@@ -146,15 +145,11 @@ class MeshHostWorker:
 
         if global_config.pipeline_use_signal_send_recv:
             print("Use signal send recv for debugging.")
-            self.signal_tensors = []
+            self.signal_buffers = []
             for d in self.local_devices:
                 jax_tensor = device_put(jnp.ones((1,), dtype=jnp.int8), d)
-                if global_config.nccl_mode == "xla_extension":
-                    self.signal_tensors.append(
-                        jax_tensor_to_xla_buffer(jax_tensor))
-                else:
-                    self.signal_tensors.append(
-                        jax_tensor_to_cupy(jax_tensor, take_ownership=True))
+                self.signal_buffers.append(
+                    worker_nccl_util.to_signal_buffer(jax_tensor))
 
         self.launched = True
 
@@ -407,7 +402,7 @@ class MeshHostWorker:
     def send_tile(self, uuid: int, offset: Sequence[slice], dst_rank: int,
                   dst_gpu_idx: int, group_name: str):
         if global_config.pipeline_use_signal_send_recv:
-            signal = self.signal_tensors[uuid % len(self.local_devices)]
+            signal = self.signal_buffers[uuid % len(self.local_devices)]
             col.send_multigpu(signal,
                               dst_rank,
                               dst_gpu_idx,
@@ -425,7 +420,7 @@ class MeshHostWorker:
             raise RuntimeError("Buffer has not been created.")
 
         if global_config.pipeline_use_signal_send_recv:
-            signal = self.signal_tensors[uuid % len(self.local_devices)]
+            signal = self.signal_buffers[uuid % len(self.local_devices)]
             col.recv_multigpu(signal,
                               src_rank,
                               src_gpu_idx,

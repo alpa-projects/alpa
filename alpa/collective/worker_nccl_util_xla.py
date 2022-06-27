@@ -165,3 +165,6 @@ def broadcast(worker, uuids, comm_key, world_size, devices_ids,
 
 def init_local_comm(device_ids):
     return xe.nccl_init_communicator(device_ids, ENV.NCCL_USE_MULTISTREAM.val)
+
+
+to_signal_buffer = jax_tensor_to_xla_buffer

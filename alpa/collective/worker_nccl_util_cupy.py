@@ -1,4 +1,4 @@
-"""Implementation of devive_mesh's send/recv/allgather/broadcast."""
+"""Utility functions for device mesh workers to call nccl APIs."""
 import logging
 from typing import Sequence
 
@@ -25,7 +25,7 @@ logger.setLevel(logging.INFO)
 # (2) XLA low-level PyLocalBuffer, which is not index-able
 # (3) cupy array, which is an intermediate format for ray collective
 def send_tile(worker, uuid: int, offset: Sequence[slice],
-                        dst_rank: int, dst_gpu_idx: int, group_name: str):
+              dst_rank: int, dst_gpu_idx: int, group_name: str):
     """
     Send a slice of a source buffer to a target GPU.
 
@@ -65,8 +65,8 @@ def send_tile(worker, uuid: int, offset: Sequence[slice],
 
 
 def recv_tile(worker, uuid: int, device_id: int,
-                        indices_in_dst_tile: Sequence[slice], src_rank: int,
-                        src_gpu_idx: int, group_name: str):
+              indices_in_dst_tile: Sequence[slice], src_rank: int,
+              src_gpu_idx: int, group_name: str):
     """
     Receive a slice from a source GPU and in-place write it on the target
     buffer.
@@ -128,8 +128,7 @@ def recv_tile(worker, uuid: int, device_id: int,
 
 
 def allgather(worker, uuids: Sequence[int], device_ids: Sequence[int],
-                        tensor_slices: Sequence[slice], output_slice):
-
+              tensor_slices: Sequence[slice], output_slice):
     cupy_buffers = []
     communicators = worker.allgather_communicators[repr(sorted(device_ids))]
     relative_idx = dict(zip(sorted(device_ids), range(len(device_ids))))
@@ -159,7 +158,7 @@ def allgather(worker, uuids: Sequence[int], device_ids: Sequence[int],
 
 
 def broadcast(worker, uuids, comm_key, world_size, devices_ids,
-                        devices_global_rank, tensor_slices, group_name):
+              devices_global_rank, tensor_slices, group_name):
     to_use = []
     for_buffer = []
     is_bool = worker.buffers[uuids[devices_ids[0]]].dtype == np.bool_

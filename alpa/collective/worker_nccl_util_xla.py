@@ -1,4 +1,4 @@
-"""Implementation of devive_mesh's send/recv/allgather/broadcast."""
+"""Utility functions for device mesh workers to call nccl APIs."""
 import logging
 from typing import Sequence
 
@@ -20,7 +20,6 @@ logger.setLevel(logging.INFO)
 
 def send_tile(worker, uuid: int, offset: Sequence[slice], dst_rank: int,
               dst_gpu_idx: int, group_name: str):
-
     tensor_shape = worker.buffers[uuid].shape
     if is_continuous_subset(offset, tensor_shape):
         start_pos, n_elements = (infer_start_pos_and_n_elements(
@@ -87,12 +86,6 @@ def recv_tile(worker, uuid: int, device_id: int,
 
 def allgather(worker, uuids: Sequence[int], device_ids: Sequence[int],
               tensor_slices: Sequence[slice], output_slice):
-
-    if repr(sorted(device_ids)) not in worker.allgather_communicators:
-        worker.allgather_communicators[repr(
-            sorted(device_ids))] = (worker.nccl_local_allgather_init_comms(
-                list(device_ids)))
-
     communicators = worker.allgather_communicators[repr(sorted(device_ids))]
     tensor_shape = worker.buffers[uuids[device_ids[0]]].shape
     global_start_pos, _ = infer_start_pos_and_n_elements(

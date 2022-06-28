@@ -473,11 +473,6 @@ def set_buffers(buffer_dict, uuids, buffers):
 def delete_donated_buffers(buffer_dict, uuids, donated_invars):
     """Delete the donated buffers from the local buffer dictionary."""
     for i in range(len(uuids)):
-        #for j in range(len(uuids[i])):
-        #    uuid = uuids[i][j]
-        #    if isinstance(uuid,
-        #                  (np.int64, int)) and buffer_dict[uuid].is_deleted():
-        #        del buffer_dict[uuid]
         if donated_invars[i]:
             for j in range(len(uuids[i])):
                 del buffer_dict[uuids[i][j]]

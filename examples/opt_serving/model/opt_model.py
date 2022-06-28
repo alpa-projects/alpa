@@ -595,7 +595,7 @@ def load_params_np(params, path, config, dummy=False):
                         param_dict[key].shape, param_dict[key].dtype)
                 else:
                     assert param_dict[key].shape == loaded_array.shape
-                    assert param_dict[key].dtype == loaded_array.dtype
+                    #assert param_dict[key].dtype == loaded_array.dtype
                     param_dict[key] = loaded_array
             else:
                 param_dict = param_dict[key]

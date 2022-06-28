@@ -63,7 +63,7 @@ def adam(lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0):
             new_state = {}
             new_state["exp_avgs"] = {k: torch.zeros_like(v) for k, v in optim_state["exp_avgs"].items()}
             new_state["exp_avg_sqs"] = {k: torch.zeros_like(v) for k, v in optim_state["exp_avg_sqs"].items()}
-            new_state["step"] = torch.full_like(optim_state["step"], 1),
+            new_state["step"] = torch.full_like(optim_state["step"], 1)
             return new_state
 
         return optim_func, optim_state_init_func, optim_state

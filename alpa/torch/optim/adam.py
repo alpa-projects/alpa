@@ -33,8 +33,8 @@ def adam(lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0):
                 exp_avg = optim_state["exp_avgs"][k]
                 exp_avg_sq = optim_state["exp_avg_sqs"][k]
 
-                bias_correction1 = 1 - beta1 ** step
-                bias_correction2 = 1 - beta2 ** step
+                bias_correction1 = 1 - torch.pow(beta1, step)
+                bias_correction2 = 1 - torch.pow(beta2, step)
 
                 if weight_decay != 0:
                     grad = grad + weight_decay * param

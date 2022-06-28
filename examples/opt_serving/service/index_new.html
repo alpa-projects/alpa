@@ -23,7 +23,7 @@
             "length": 64
         },
         "chatbot": {
-            "prompt": "A chat between a professor and a graduate student in Computer Science.\n\nStudent: Which is the best Computer Science graduate school in the US? \nProfessor: I think it is UC Berkeley. \nStudent: How about Stanford University? \nProfessor:",
+            "prompt": "A chat between a professor and a graduate student in Computer Science.\n\nStudent: Which is the best Computer Science graduate school in the US? UC Berkeley or Carnegie Mellon?\nProfessor:",
             "length": 128
         },
         "philosophy": {
@@ -78,6 +78,12 @@
         });
     }
 
+    function test() {
+        $("#promptDisplay").text("A chat between a professor and a graduate student in Computer Science.\n\nStudent: Which is the best Computer Science graduate school in the US? UC Berkeley or CMU?\nProfessor: ");
+        $("#response").text("Sorry I don't know\n");
+        $("#error").text("");
+    }
+
     // actual logic
     $(document).ready(function() {
       $("#generate-form").submit(function(event) {
@@ -126,15 +132,13 @@
 /*    font-size: 16pt;*/
 /*}*/
 #result {
-    /*white-space: pre-wrap;*/
+    white-space: pre-line;
     word-wrap: break-word;
-    font-size: 20pt;
     clear: both;
-    min-height: 10em;
-    /*padding: 1em;*/
+    min-height: 12em;
 }
 #promptDisplay {
-    font-weight: bold;
+    font-weight: 600;
 }
 .loader {
     border: 4px solid #f3f3f3;
@@ -167,9 +171,6 @@ label {
 }
 #error {
     color: red;
-}
-#examples span {
-    margin-right: 1em;
 }
 
 </style>
@@ -284,13 +285,13 @@ label {
 <div id="loader_holder_super">
     <div id="loader_holder">
         <div class="loader"></div>
-        <div class="display-6">Please be patient. Your generation may take <span id="eta">X</span> seconds.</div>
+        <div>Please be patient. Your generation may take at most <span id="eta">X</span> seconds.</div>
     </div>
 </div>
 
-<div id="result" class="form-control">
 
-    <span id="promptDisplay"></span><span id="response"></span><span id="error"></span>
+<div id="result" class="form-control p-2" style="font-size: 20px"><span id="promptDisplay"></span><span id="response"></span>
+    <span id="error"></span>
 </div>
 
 

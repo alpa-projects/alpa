@@ -78,7 +78,6 @@
         });
     }
 
-
     // actual logic
     $(document).ready(function() {
       $("#generate-form").submit(function(event) {
@@ -199,7 +198,7 @@ label {
       <div class="py-5">
         <img class="d-block mx-auto mb-2" src="alpa-logo.svg" width="368">
       </div>
-      <h1 class="display-5 fw col-lg-10 mx-auto">Simple, affordable large model training and serving using Alpa</h1>
+      <h1 class="display-5 fw col-lg-10 mx-auto">Simple, affordable large model training and serving</h1>
     <div class="col-lg-10 py-2 mx-auto">
       <p class="lead mb-4">
           Alpa is a system for training and serving gigantic machine learning models.
@@ -222,10 +221,10 @@ label {
         </svg>
         <strong class="display-6 fw-bold">Free, Unlimited OPT-175B Text Generation</strong>
     </span>
-    <div>
-        <span>using</span>
-        <a href="https://github.com/facebookresearch/metaseq/tree/main/projects/OPT" target="_blank">opt-175B</a> and <a href="https://github.com/alpa-projects/alpa" target="_blank">Alpa</a> backend
-    </div>
+<!--    <div style="padding-left: 50px">-->
+<!--        <span>using</span>-->
+<!--        <a href="https://github.com/facebookresearch/metaseq/tree/main/projects/OPT" target="_blank">opt-175B</a> and <a href="https://github.com/alpa-projects/alpa" target="_blank">Alpa</a> backend-->
+<!--    </div>-->
 
 <div class="p-4 mb-3 bg-light rounded-4">
 <p id="examples">
@@ -278,7 +277,7 @@ label {
        <output class='col-sm-2 col-form-label'>0.5</output>
     </div>
     <div class="submit-holder">
-        <input class="btn btn-primary btn-lg" type="submit" value="Compute" id="generate-form-button"/>
+        <input class="btn btn-primary btn-lg" type="submit" value="Generate" id="generate-form-button"/>
     </div>
 </form>
 
@@ -415,7 +414,7 @@ label {
     <div class="container">
       <footer class="d-flex flex-wrap justify-content-between align-items-center py-3 border-top">
       <div class="col-md-4 d-flex align-items-center">
-          <a href="/" class="mb-3 me-2 mb-md-0 text-muted text-decoration-none lh-1">
+          <a href="#home" class="mb-3 me-2 mb-md-0 text-muted text-decoration-none lh-1">
             <img alt="alpa logo" class="bi me-2" width="40" src="alpa-logo.svg">
           </a>
           <span class="mb-3 mb-md-0 text-muted">&copy; 2022 Alpa authors.</span>
@@ -430,8 +429,6 @@ label {
       </footer>
     </div>
 </div>
-
-
 
 </body>
 </html>

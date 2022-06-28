@@ -229,7 +229,7 @@ def completions(engine=None):
 
 @app.route("/")
 def index():
-    fn = "./service/index.html"
+    fn = "./service/index_new.html"
     with open(fn) as f:
         return f.read()
 

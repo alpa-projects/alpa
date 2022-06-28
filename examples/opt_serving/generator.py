@@ -723,5 +723,4 @@ class Generator:
                         torch.zeros_like(generated_ids[g, 1:],
                                          dtype=torch.float16)
                 }
-        time.sleep(15)
         return retvals

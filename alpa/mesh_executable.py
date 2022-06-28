@@ -71,9 +71,14 @@ class MeshDriverExecutable(ABC):
         """
         raise NotImplementedError()
 
-    def get_execution_time_costs(self, warmup: int):
-        """Get the execution time costs with internal timers."""
-        raise NotImplementedError()
+    def get_execution_time_costs(self):
+        """Return the pure execution time costs recorded by an internal
+        timer."""
+        return self.physical_mesh.get_remote_timer(self.exec_timer_name).costs
+
+    def get_shard_args_time_costs(self):
+        """Return the time costs of sharding input arguments."""
+        return timers(self.shard_args_timer_name).costs
 
     def get_hlo_text(self, status: HloStatus):
         """Return the HLO IR in the text format."""
@@ -133,8 +138,6 @@ class RemoteBufferRef:
         self.uuid = (uuid
                      if uuid is not None else next_remote_buffer_uuid().item())
         self.is_deleted_on_workers = False
-        logger.debug(f"RemoteBufferRef uuid: {self.uuid} created on mesh "
-                     f"with devices {self.device_mesh.device_strs}.")
 
     def set_deleted_on_workers(self):
         """
@@ -273,7 +276,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         self._set_executable(physical_mesh, hlo_module, stage_plan)
 
         # Set up timers
-        self.timer_name = get_execution_timer_name(self.exec_uuid)
+        self.exec_timer_name = get_execution_timer_name(self.exec_uuid)
+        self.shard_args_timer_name = self.exec_timer_name + "-shard-args"
         self.sync_func = get_sync_func_driver(physical_mesh)
 
     def _set_executable(self, physical_mesh, hlo_module, stage_plan):
@@ -283,7 +287,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             for w in physical_mesh.workers:
                 w.put_executable.remote(self.exec_uuid,
                                         NormalMeshWorkerExecutable, hlo_proto,
-                                        stage_plan)
+                                        stage_plan, self.donated_invars)
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
 
@@ -310,10 +314,13 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         num_devices_per_host = physical_mesh.num_devices_per_host
         num_outs = len(self.out_avals)
 
+        timers(self.shard_args_timer_name).start()
         input_bufs = physical_mesh.shard_args_to_bufs(self.input_indices,
                                                       self.donated_invars,
                                                       (False,) * len(args),
                                                       None, args)
+        timers(self.shard_args_timer_name).stop()
+
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             # Shape: (num_hosts, num_args, num_devices_per_host)
             input_uuids = (get_uuid_np_array(input_bufs).reshape(
@@ -359,10 +366,10 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             sync_func = (self.sync_func if
                          global_config.shard_parallel_sync_for_timer else None)
 
-            timers(self.timer_name).start(sync_func)
+            timers(self.exec_timer_name).start(sync_func)
             output_bufs = self.compiled.execute_sharded_on_local_devices(
                 input_bufs)
-            timers(self.timer_name).stop(sync_func)
+            timers(self.exec_timer_name).stop(sync_func)
 
         return self.outs_handler(output_bufs)
 
@@ -417,12 +424,6 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                                            self.physical_mesh.devices)
         return costs
 
-    def get_execution_time_costs(self, warmup):
-        """Return the pure execution time costs recorded by an internal
-        timer."""
-        return self.physical_mesh.get_remote_timer(
-            self.timer_name).costs[warmup:]
-
     def get_total_allocation_size(self):
         """Get the total allocated memory size of this executable."""
         if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
@@ -469,26 +470,25 @@ def set_buffers(buffer_dict, uuids, buffers):
         buffer_dict[uuid] = buf
 
 
-def delete_donated_buffers(buffer_dict, uuids):
+def delete_donated_buffers(buffer_dict, uuids, donated_invars):
     """Delete the donated buffers from the local buffer dictionary."""
     for i in range(len(uuids)):
-        for j in range(len(uuids[i])):
-            uuid = uuids[i][j]
-            if isinstance(uuid,
-                          (np.int64, int)) and buffer_dict[uuid].is_deleted():
-                del buffer_dict[uuid]
+        if donated_invars[i]:
+            for j in range(len(uuids[i])):
+                del buffer_dict[uuids[i][j]]
 
 
 class NormalMeshWorkerExecutable(MeshWorkerExecutable):
     """The worker part of a normal mesh executable."""
 
     def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
-                 stage_plan: StagePlan):
+                 stage_plan: StagePlan, donated_invars: Sequence[bool]):
         num_devices = np.prod(stage_plan.logical_mesh_shape)
         assert num_devices == len(worker.backend.devices())
 
         self.compiled = run_backend_compilation(worker.backend, hlo_proto,
                                                 stage_plan, num_devices)
+        self.donated_invars = donated_invars
         self.worker = worker
 
         # Set up timers
@@ -518,7 +518,7 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
             set_buffers(buffer_dict, output_uuids[i], output_bufs[i])
 
         # Delete donated input buffers
-        delete_donated_buffers(buffer_dict, input_uuids)
+        delete_donated_buffers(buffer_dict, input_uuids, self.donated_invars)
 
     def profile_with_dummy_inputs(self, backend, local_devices):
         """Profile the time cost of this executable with dummy inputs."""
@@ -704,7 +704,8 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                 "XLA_SKIP_NCCL_COLLECTIVE_IDS")
 
         # Set up timers
-        self.timer_name = get_execution_timer_name(self.exec_uuid)
+        self.exec_timer_name = get_execution_timer_name(self.exec_uuid)
+        self.shard_args_timer_name = self.exec_timer_name + "-shard-args"
         self.sync_func = get_sync_func_driver(physical_mesh)
 
     def launch_on_driver(self, *args):
@@ -717,6 +718,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         num_devices_per_host = physical_mesh.num_devices_per_host
         num_outs = len(self.out_avals)
 
+        timers(self.shard_args_timer_name).start()
         input_bufs = physical_mesh.shard_args_to_bufs(
             self.global_arg_shard_indices, self.donated_invars,
             self.batch_invars, num_micro_batches, args)
@@ -727,6 +729,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             micro_batches = input_bufs[i]
             first_batch_bufs[i] = micro_batches[0]
             next_batches_bufs.extend(micro_batches[1:])
+        timers(self.shard_args_timer_name).stop()
 
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             # Shape: (num_hosts, num_args, num_devices_per_host)
@@ -786,7 +789,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                          global_config.shard_parallel_sync_for_timer else None)
 
             # Prepare gradient buffers
-            timers(self.timer_name).start(sync_func)
+            timers(self.exec_timer_name).start(sync_func)
             grad_bufs = (
                 self.allocate_zero_buffers.execute_sharded_on_local_devices([]))
 
@@ -815,7 +818,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                 grad_bufs)
             output_bufs = self.apply_grad.execute_sharded_on_local_devices(
                 tmp_input_bufs)
-            timers(self.timer_name).stop(sync_func)
+            timers(self.exec_timer_name).stop(sync_func)
 
         # Wrap output buffers as ShardedArray
         return self.outs_handler(output_bufs)
@@ -828,12 +831,6 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                               self.avals, self.global_arg_sharding_specs)
         ]
         return tree_unflatten(self.in_tree, placement_specs)
-
-    def get_execution_time_costs(self, warmup):
-        """Return the pure execution time costs recorded by an internal
-        timer."""
-        return self.physical_mesh.get_remote_timer(
-            self.timer_name).costs[warmup:]
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size of this executable."""
@@ -967,7 +964,8 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
             set_buffers(buffer_dict, output_uuids[i], output_bufs[i])
 
         # Delete donated input buffers
-        delete_donated_buffers(buffer_dict, first_batch_uuids)
+        delete_donated_buffers(buffer_dict, first_batch_uuids,
+                               self.donated_invars)
 
         # Delete micro batch buffers
         if next_batches_uuids is not None:
@@ -1017,6 +1015,7 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
                 w.put_executable.remote(self.exec_uuid,
                                         PartialGradAccMeshWorkerExecutable,
                                         hlo_proto, stage_plan,
+                                        self.donated_invars,
                                         self.out_acc_grad_indices)
             self.hlo_text = None  # will be fetched from the workers later
             self.grad_sync_channel_ids = None
@@ -1054,8 +1053,9 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
     """
 
     def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
-                 stage_plan: StagePlan, output_acc_grad_indices: str):
-        super().__init__(worker, uuid, hlo_proto, stage_plan)
+                 stage_plan: StagePlan, donated_invars: Sequence[bool],
+                 output_acc_grad_indices: str):
+        super().__init__(worker, uuid, hlo_proto, stage_plan, donated_invars)
         self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
             self.compiled.hlo_modules()[0], output_acc_grad_indices)
         self.skip_allreduce_env_name = (self.compiled.hlo_modules()[0].name() +
@@ -1108,7 +1108,7 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
                 xb.get_backend("gpu"), physical_mesh.devices, grad_shard_shapes,
                 grad_shard_dtypes)
 
-        self.timer_name = get_execution_timer_name(self.exec_uuid)
+        self.exec_timer_name = get_execution_timer_name(self.exec_uuid)
         self.sync_func = get_sync_func_driver(physical_mesh)
 
     def launch_on_driver(self, *args):
@@ -1145,10 +1145,10 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
                         output_uuids[i][host_id][device_id])
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
-            timers(self.timer_name).start(self.sync_func)
+            timers(self.exec_timer_name).start(self.sync_func)
             output_bufs = (
                 self.allocate_zero_buffers.execute_sharded_on_local_devices([]))
-            timers(self.timer_name).stop(self.sync_func)
+            timers(self.exec_timer_name).stop(self.sync_func)
 
         return self.outs_handler(output_bufs)
 

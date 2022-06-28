@@ -4,11 +4,11 @@ Usages:
 1. benchmark huggingface torch-based OPT or GPT-2 generation:
 python benchmark_text_gen.py --model facebook/opt-125m --debug
 
-2. benchmark alpa parallelized OPT generation:
-python benchmark_text_gen.py --model alpa/opt-2.7b --debug
-
-3. benchmark jax.jit based OPT generation without alpa, on a single GPU:
+2. benchmark jax.jit based OPT generation without alpa, on a single GPU:
 python benchmark_text_gen.py --model jax/opt-125m
+
+3. benchmark alpa parallelized OPT generation:
+python benchmark_text_gen.py --model alpa/opt-2.7b --debug
 
 4. benchmark alpa parallelized OPT forward computation, batch_size, decoder length, and #micro_batches can be configured.
 python benchmark_text_gen.py --model alpa/opt-2.7b --forward
@@ -49,6 +49,7 @@ if __name__ == "__main__":
     warmup_iters = 5
     n_iters = 10
     global_config.pipeline_sync_for_timer = True
+    global_config.shard_parallel_sync_for_timer = True
 
     # Note(Hao): we need to use "opt-30b" and disable "add_bos_token".
     if args.model.startswith("alpa") or args.model.startswith("jax"):
@@ -129,7 +130,7 @@ if __name__ == "__main__":
             # print(a)
             latency = time.time() - tic
 
-            compute_latency = model.get_execution_time_costs(warmup=0)[-1]
+            compute_latency = model.get_execution_time_costs()[-1]
             # print(f"input length: {input_ids.shape[1]}, output_length: {input_ids.shape[1]}, num_gpus: {num_gpus}")
             assert decoder_length_per_step == input_ids.shape[1]
 
@@ -177,8 +178,13 @@ if __name__ == "__main__":
         L = model.transformer_config.L
         seq_len = model.transformer_config.seq_len
         vocab_size = model.transformer_config.vocab_size
-        num_gpus = alpa.get_global_cluster(
-        ).num_devices if "alpa" in args.model else 1
+        if "alpa" in args.model:
+            if alpa.get_global_cluster():
+                num_gpus = alpa.get_global_cluster().num_devices
+            else:
+                num_gpus = alpa.get_global_physical_mesh().num_devices
+        else:
+            num_gpus = 1
 
         # benchmark
         for i in range(n_iters):
@@ -201,8 +207,7 @@ if __name__ == "__main__":
 
             if "alpa" in args.model:
                 compute_latency = sum(
-                    model.executable.get_execution_time_costs(
-                        warmup=0)[-gen_len:])
+                    model.executable.get_execution_time_costs()[-gen_len:])
             else:
                 compute_latency = latency
             tflops = compute_gpt_tflops_inference_with_padding(

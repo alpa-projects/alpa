@@ -1,3 +1,4 @@
+"""Test the correctness of cache implementation."""
 from functools import partial
 
 import jax
@@ -5,7 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from alpa.testing import assert_allclose
-from examples.opt_serving.model.opt_model import (get_config, init_model_aval,
+from examples.opt_serving.model.opt_model import (get_opt_config, init_model_aval,
                                                   inference_step_no_cache,
                                                   init_cache_np,
                                                   build_position_ids,
@@ -21,11 +22,9 @@ def print_params(params, prefix=""):
 
 
 def test_opt_125M():
-    #TODO: align dtype
-    name = "2.7B"
-    config = get_config(name)
-    # np_weights_folder = f"/home/ubuntu/opt_weights/{name}_np"
-    np_weights_folder = f"/dataset/opt_weights/{name}_np"
+    name = "125M"
+    config = get_opt_config(name, dtype=jnp.float32)
+    np_weights_folder = f"/home/ubuntu/opt_weights/{name}_np"
     batch_size = 1
 
     # Init model
@@ -47,7 +46,7 @@ def test_opt_125M():
     print("logits_no_cache", logits_no_cache)
 
     # JIT
-    @partial(jax.jit)
+    @jax.jit
     def inference_step_with_cache(params, batch):
         print("traced")
         output = model.apply(params,

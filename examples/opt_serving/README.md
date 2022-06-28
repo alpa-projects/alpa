@@ -45,7 +45,9 @@ print(generated_string)
 ```
 
 ## Requirements
-1. Install Alpa following the [installation guide](https://alpa-projects.github.io/install.html).
+1. Install Alpa following the [installation guide](https://alpa-projects.github.io/install.html).  
+   You can either install by python wheel or build from source, but you always need to clone
+   the [Alpa repo](https://github.com/alpa-projects/alpa) to fetch the code for examples below.
 2. Install additional requirements for serving:
 ```shell
 pip3 install transformers flask cython
@@ -70,30 +72,32 @@ then use our script [convert_to_numpy_weight.py](scripts/convert_to_numpy_weight
 
 
 ## Run and Benchmark Generation in the Command Line
+The code of this tutorial is under [examples/opt_serving](https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving).
+Add the root directory of Alpa repo to the environment variable ``PYTHONPATH`` if you install Alpa by wheel (Not required if you install Alpa from source).
 
-Run generation using the 125M model with PyTorch/HuggingFace backend:
-```shell
-cd benchmark
-python3 benchmark_text_gen.py --model facebook/opt-125m
-```
+- Run generation using the 125M model with PyTorch/HuggingFace backend:
+  ```shell
+  cd benchmark
+  python3 benchmark_text_gen.py --model facebook/opt-125m
+  ```
 
-Run generation using the 125M model with JAX backend in debug model to output the generated text:
-```shell
-python3 benchmark_text_gen.py --model jax/opt-125m --path [PATH_TO_WEIGHT] --debug
-```
+- Run generation using the 125M model with JAX backend in debug model to output the generated text:
+  ```shell
+  python3 benchmark_text_gen.py --model jax/opt-125m --path [PATH_TO_WEIGHT] --debug
+  ```
 
-Run model-parallel generation using the 2.7B model with Alpa:
-```shell
-ray start --head
+- Run model-parallel generation using the 2.7B model with Alpa:
+  ```shell
+  ray start --head
 
-python3 benchmark_text_gen.py --model alpa/opt-2.7b --path [PATH_TO_WEIGHT] --debug
-```
+  python3 benchmark_text_gen.py --model alpa/opt-2.7b --path [PATH_TO_WEIGHT] --debug
+  ```
 
-Run distributed generation with the 175B model using Alpa. Note you will need >350GB total GPU memory in the entire cluster to successfully run the inference.
-```shell
-# Remember to start Ray on the entire cluster before running the generation
-python3 benchmark_text_gen.py --model alpa/opt-175b --path [PATH_TO_WEIGHT] --debug
-```
+- Run distributed generation with the 175B model using Alpa. Note you will need >350GB total GPU memory in the entire cluster to successfully run the inference.
+  ```shell
+  # Remember to start Ray on the entire cluster before running the generation
+  python3 benchmark_text_gen.py --model alpa/opt-175b --path [PATH_TO_WEIGHT] --debug
+  ```
 
 ## Launch a Web Server to Serve the OPT Models
 

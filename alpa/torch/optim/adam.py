@@ -54,9 +54,9 @@ def adam(lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0):
             return params, optim_state
 
         optim_state = {
-            exp_avgs: {k: torch.empty_like(param, device="meta") for k in params},
-            exp_avg_sqs: {k: torch.empty_like(param, device="meta") for k in params},
-            step: torch.empty(1, device="meta"),
+            "exp_avgs": {k: torch.empty_like(param, device="meta") for k in params},
+            "exp_avg_sqs": {k: torch.empty_like(param, device="meta") for k in params},
+            "step": torch.empty(1, device="meta"),
         }
 
         def optim_state_init_func(optim_state):

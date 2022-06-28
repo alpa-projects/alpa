@@ -789,7 +789,11 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
                     for x in micro_batches
                 ])
             else:
-                bufs.append(pxla._shard_arg(arg, self.devices, indices))
+                if (isinstance(arg, pxla.ShardedDeviceArray) and 
+                    arg.indices == indices):
+                    bufs.append(arg.device_buffers)
+                else:
+                    bufs.append(pxla._shard_arg(arg, self.devices, indices))
 
             if isinstance(arg, xe.DeviceArray) and donated:
                 arg.delete()
@@ -848,8 +852,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     ##### Other Functions #####
     def sync_workers(self):
-        for device in self.devices:
-            device.synchronize_all_activity()
+        self.devices[0].synchronize_all_activity()
 
     def shutdown(self, forced=False):
         self.sync_workers()

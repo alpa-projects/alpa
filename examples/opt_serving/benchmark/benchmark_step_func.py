@@ -70,7 +70,7 @@ def run_benchmark(args):
         params = load_params_dis_array(path, executable, params_aval, config, dummy)
         cache = init_cache_dis_array(executable, config, batch_size, dummy)
         set_skip_shard_args_check(cache)
-        sync_func = lambda : executable.sync()
+        sync_func = lambda : None
         infer_step = executable
         num_gpus = len(method.devices)
     else:
@@ -78,13 +78,14 @@ def run_benchmark(args):
 
     step_latencies = []
     compute_latencies = []
+    shard_args_latencies = []
     for i in range(input_ids.shape[1]):
         input_ids_step = input_ids[:, i:i + 1]
         position_ids_step = np.full_like(input_ids_step, i + config.pad + 1)
 
         sync_func()
         start_time = time.time()
-        logits_step, cache = infer_step(
+        infer_step(
             params, {
                 "input_ids": input_ids_step,
                 "position_ids": position_ids_step,
@@ -94,17 +95,22 @@ def run_benchmark(args):
         end_time = time.time()
         step_latencies.append(end_time - start_time)
         if executable:
-            compute_latencies.append(executable.get_execution_time_costs(0)[-1])
+            compute_latencies.append(executable.get_execution_time_costs()[-1])
+            shard_args_latencies.append(executable.get_shard_args_time_costs()[-1])
         else:
             compute_latencies.append(step_latencies[-1])
+            shard_args_latencies.append(0)
 
         print(f"{i}, step_latency: {step_latencies[-1] * 1000:.2f} ms")
 
+    warmup = 3
     heads = ["Model", "Parallel Method", "Dummy", "#gpu",
-             "Step Latency (ms)", "Compute Latency (ms)"]
+             "Step Latency (ms)", "Compute Latency (ms)",
+             "ShardArgs Latency (ms)"]
     values = [args.model, args.parallel_method, args.dummy, num_gpus,
-              f"{np.mean(step_latencies[3:]) * 1e3:.2f}",
-              f"{np.mean(compute_latencies[3:]) * 1e3:.2f}"]
+              f"{np.mean(step_latencies[warmup:]) * 1e3:.2f}",
+              f"{np.mean(compute_latencies[warmup:]) * 1e3:.2f}",
+              f"{np.mean(shard_args_latencies[warmup:]) * 1e3:.2f}"]
     write_tsv(heads, values, "result_step_func.tsv")
 
 

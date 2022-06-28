@@ -1,29 +1,51 @@
-<html>
+<html lang="en">
 <head>
-    <title>Serving OPT Language Model with Alpa</title>
+    <title>Serving OPT-175B Language Model with Alpa</title>
+    <link rel="icon" type="image/x-icon" href="alpa-logo.ico">
+    <script src="//code.jquery.com/jquery-1.11.0.min.js"></script>
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.0-beta1/dist/js/bootstrap.bundle.min.js" integrity="sha384-pprn3073KE6tl6bjs2QrFaJGz5/SUsLqktiwsUTF55Jfv3qYSDhgCecCxMW52nD2" crossorigin="anonymous"></script>
+    <script async defer src="https://buttons.github.io/buttons.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://superal.github.io/canvas2image/canvas2image.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.0-beta1/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-0evHe/X+R7YkIZDRvuzKMRqM+OrBnVFBL6DOitfPri4tjfHxaWutUpFmBp4vmVor" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.1.1/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-social/5.1.1/bootstrap-social.css">
+
     <script type="text/javascript">
     // these constants are only used for providing user expectations.
-    var OVERHEAD = 3;
-    var PER_TOKEN = 0.12;
+    var OVERHEAD = 1;
+    var PER_TOKEN = 0.4;
 
     // examples for the user
     var EXAMPLES = {
-        "question": {
+        "fact": {
             "prompt": "Question: What is the color of the cloud?\nAnswer: White\n\nQuestion: What is the color of the sky?\nAnswer:",
-            "length": 64
-        },
-        "ion": {
-            "prompt": "Ion Stoica is a Romanian-American computer scientist specializing in",
-            "length": 128
+            "length": 32
         },
         "chatbot": {
-            "prompt": "A chat between a teacher and student who wants to learn about tacos.\n\nTeacher: Hi there. What would you like to learn about today?\nStudent:",
+            "prompt": "A chat between a professor and a graduate student in Computer Science.\n\nStudent: Which is the best Computer Science graduate school in the US? UC Berkeley or Carnegie Mellon?\nProfessor:",
             "length": 128
         },
-        "poetry": {
-            "prompt": "A sonnet about Dodos\n\n",
+        "philosophy": {
+            "prompt": "What is the meaning of life?",
             "length": 128
+        },
+        "translation": {
+            "prompt": "Please translate the following sentence from English into Chinese: I love you!",
+            "length": 64
+        },
+        "cryptocurrency": {
+            "prompt": "What do you think about the future of Bitcoin?",
+            "length": 256
+        },
+        "elonmusk": {
+            "prompt": "Do you think Elon Musk and Amber Heard make a good match?",
+            "length": 256
+        },
+        "math": {
+            "prompt": "Question: If x is 2 and y is 5, what is x + y?\nAnswer: 7\n\nQuestion: If x is 8 and y is 9, what is x + y?\nAnswer:",
+            "length": 32
         }
     };
 
@@ -42,6 +64,27 @@
         $("#textbox").val(EXAMPLES[name]["prompt"]);
     }
 
+    function takeshot() {
+      let div = document.getElementById('generation');
+      html2canvas(div).then(
+      function (canvas) {
+            // return Canvas2Image.saveAsPNG(canvas);
+                    var url = canvas.toDataURL();
+                      $("<a>", {
+                        href: url,
+                        download: "my-opt175b-result"
+                      })
+                      .on("click", function() {$(this).remove()})
+                      .appendTo("body")[0].click()
+        });
+    }
+
+    function test() {
+        $("#promptDisplay").text("A chat between a professor and a graduate student in Computer Science.\n\nStudent: Which is the best Computer Science graduate school in the US? UC Berkeley or CMU?\nProfessor: ");
+        $("#response").text("Sorry I don't know\n");
+        $("#error").text("");
+    }
+
     // actual logic
     $(document).ready(function() {
       $("#generate-form").submit(function(event) {
@@ -55,7 +98,7 @@
         var submitData = getFormData($("form"));
         console.log(JSON.stringify(submitData));
         $.ajax({
-            url: "/v1/engines/175b/completions",
+            url: "/completions",
             type: "POST",
             processData: true,
             contentType: "application/json",
@@ -82,41 +125,18 @@
     });
     </script>
 </head>
-<style type="text/css">
-body {
-    font-family: sans-serif;
-}
-.leftside {
-}
-.rightside {
-    width: 30em;
-}
+<style>
 .submit-holder {
     margin-top: 2em;
 }
-.submit input {
-    font-size: 16pt;
-}
-.slider {
-    width: 20em;
-}
-#faq {
-    max-width: 60em;
-}
 #result {
-    font-family: monospace;
-    white-space: pre-wrap;
+    white-space: pre-line;
     word-wrap: break-word;
-    font-size: 16pt;
     clear: both;
-    margin-top: 1em;
-    border: 1px solid black;
-    padding: 1em;
-    width: 50em;
     min-height: 12em;
 }
 #promptDisplay {
-    font-weight: bold;
+    font-weight: 600;
 }
 .loader {
     border: 4px solid #f3f3f3;
@@ -143,92 +163,269 @@ label {
     width: 10em;
     text-align: right;
     font-size: 60%;
+    font-weight: bold;
 }
 #loader_holder_super {
 }
 #error {
     color: red;
 }
-#examples span {
-    margin-right: 1em;
-}
 </style>
-<body>
-<div class="header">
-    <h1>Serving OPT Langauge Model with Alpa</h1>
-</div>
-<div id="about">
-<p>
-OPT is a generative language model released by Meta AI. It reproduces the famous GPT-3 model.
-In this demo, we use Alpa and the weights released by Meta to serve this mode.
+
+<!--  <body class="d-flex h-100 text-center text-dark bg-dark">-->
+<body class="bg-white wy-text-center">
+    <header id="home">
+        <nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top border-bottom">
+            <div class="container d-flex flex-wrap justify-content-center">
+              <a href="#home" class="d-flex align-items-center mb-3 mb-md-0 me-md-auto text-decoration-none">
+                  <img alt="alpa logo" class="bi me-2" width="40"  src="https://raw.githubusercontent.com/alpa-projects/alpa/hao-webserver/examples/opt_serving/service/alpa-logo.svg">
+              </a>
+              <ul class="nav nav-pills">
+                <li class="nav-item"><a href="#generation" class="nav-link" aria-current="page">Generation</a></li>
+                <li class="nav-item"><a href="#faq" class="nav-link">FAQs</a></li>
+                <li class="nav-item"><a href="#contact" class="nav-link">Contact</a></li>
+                <li class="nav-item"><a href="https://github.com/alpa-projects/alpa" class="nav-link" target="_blank"><i class="fa-brands fa-github"></i> GitHub</a></li>
+              </ul>
+            </div>
+        </nav>
+    </header>
+
+
+  <div class="container my-5 text-center">
+      <div class="py-5">
+        <img class="d-block mx-auto mb-2" src="https://raw.githubusercontent.com/alpa-projects/alpa/hao-webserver/examples/opt_serving/service/alpa-logo.svg" width="368">
+      </div>
+      <h1 class="display-5 fw col-lg-10 mx-auto">Simple, affordable large model training and serving</h1>
+    <div class="col-lg-10 py-2 mx-auto">
+      <p class="lead mb-4">
+          Alpa is a system for training and serving gigantic machine learning models.
+          <br  \>
+          Alpa makes training and serving large models like GPT-3 simple, cost-effective, accessible to everyone.</p>
+      <div class="d-grid gap-2 d-sm-flex justify-content-sm-center">
+
+        <a href="#generation" class="btn btn-primary btn-lg px-4 gap-3">Try Live OPT-175B Generation</a>
+        <a href="https://alpa-projects.github.io/tutorials/opt_serving.html" class="btn btn-outline-primary btn-lg px-4" target="_blank">Host Your Own Service</a>
+      </div>
+    </div>
+  </div>
+
+<!--<div class="bg-white" id="generation">-->
+<div class="container py-5" id="generation">
+    <div class="p-4 mb-3 bg-light rounded-4">
+    <span>
+        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="gold" class="bi bi-lightning-fill" viewBox="0 0 24 24">
+            <path d="M5.52.359A.5.5 0 0 1 6 0h4a.5.5 0 0 1 .474.658L8.694 6H12.5a.5.5 0 0 1 .395.807l-7 9a.5.5 0 0 1-.873-.454L6.823 9.5H3.5a.5.5 0 0 1-.48-.641l2.5-8.5z"/>
+        </svg>
+        <strong class="display-6 fw-bold">Free, Unlimited OPT-175B Text Generation</strong>
+    </span>
+<!--    <div style="padding-left: 50px">-->
+<!--        <span>using</span>-->
+<!--        <a href="https://github.com/facebookresearch/metaseq/tree/main/projects/OPT" target="_blank">opt-175B</a> and <a href="https://github.com/alpa-projects/alpa" target="_blank">Alpa</a> backend-->
+<!--    </div>-->
+
+<div class="p-4 mb-3 bg-light rounded-4">
+<p id="examples">
+    <span class="lead fw-bold ">Examples:
+    <a type="button" class="btn btn-outline-primary btn-lg" href='javascript:set_prompt("fact");'><i class="fa-brands fa-wikipedia-w"></i> Fact</a>
+    <a type="button" class="btn btn-outline-secondary btn-lg" href='javascript:set_prompt("chatbot");'><i class="fa-solid fa-robot"></i> Chatbot</a>
+    <a type="button" class="btn btn-outline-success btn-lg" href='javascript:set_prompt("philosophy");'><i class="fa-solid fa-lightbulb"></i> Philosophy</a>
+    <a type="button" class="btn btn-outline-danger btn-lg" href='javascript:set_prompt("translation");'><i class="fa-solid fa-language"></i> Translation</a>
+    <a type="button" class="btn btn-outline-warning btn-lg" href='javascript:set_prompt("cryptocurrency");'><i class="fa-brands fa-bitcoin" style="font-size:24px;"></i> Cryptocurrency</a>
+    <a type="button" class="btn btn-outline-info btn-lg" href='javascript:set_prompt("elonmusk");'><i class="fa-solid fa-rocket"></i> Elon Musk</a>
+    <a type="button" class="btn btn-outline-dark btn-lg" href='javascript:set_prompt("math");'><i class="fa-solid fa-calculator"></i> Math</a>
+    </span>
 </p>
 
-<p><span style="color: red">WARNING:</span>
-This model will generate MANY offensive things. Due to this being an alpha demo, NO safety measures are in place. </p>
-<p>Tips for better generation:</p>
-<ul>
-    <li>Use the examples to get an idea of how to control it.</li>
-    <li><b>Avoid spaces at the end of your query.</b> New lines are great though.</li>
-    <li>Simple questions trigger chatbot mode. Try "Question: ... Answer:" to get more factual responses.</li>
-    <li>Using proper capitalization and punctuation can help avoid chatbot mode. Sometimes.</li>
-</ul>
-<p id="examples">
-    <span style="font-weight: bold">Examples:</span>
-    <span><a href='javascript:set_prompt("question");'>Question</a></span>
-    <span><a href='javascript:set_prompt("ion");'>Facts about Ion</a></span>
-    <span><a href='javascript:set_prompt("chatbot");'>Chatbot</a></span>
-    <span><a href='javascript:set_prompt("poetry");'>Poetry</a></span>
-</div>
-<div class="request">
 <form method="POST" action="/generate" id="generate-form">
-    <div class="leftside">
-        <textarea name="prompt" rows="12" cols="100" id="textbox"></textarea>
+    <div class="mb-3">
+        <label for="textbox" class="form-label"></label>
+        <textarea class="form-control" style="font-size: 20px;" name="prompt" rows="8" id="textbox" placeholder="My name is Alpa and I am an ML expert specializing"></textarea>
     </div>
-    <div class="rightside">
-    <div>
-    <label>Response Length:</label>
-    <input type="range" value="64" min="32" max="512" step="32" class="slider"
-        oninput="this.nextElementSibling.value = this.value" name="max_tokens"
-        id='length_slider'>
-    <output class='a' id="length_slider_output">64</output>
+
+    <!--<button type="button" class="btn btn-secondary wrapper" data-toggle="tooltip" data-placement="bottom" title="Tooltip on right">-->
+    <!--  Tooltip on right-->
+    <!--</button>-->
+
+    <div class="form-group row" data-html2canvas-ignore="true">
+    <label for="length_slider" class="col-sm-2 col-form-label">Response Length:  </label>
+    <div class="col-sm-8 my-2">
+        <input type="range" value="64" min="32" max="512" step="32" class="form-range"
+            oninput="this.parentNode.nextElementSibling.value = this.value" name="max_tokens"
+            id='length_slider'>
     </div>
-    <div>
-    <label>Temperature:</label>
-    <input type="range" value="0.7" min="0.1" max="1.0" step="0.10" class="slider"
-        oninput="this.nextElementSibling.value = this.value" name="temperature">
-    <output>0.7</output>
+    <output class='col-sm-2 col-form-label' id="length_slider_output">64</output>
     </div>
-    <div>
-    <label>top-p:</label>
-    <input type="range" value="0.5" min="0.0" max="1.0" step="0.10" class="slider"
-        oninput="this.nextElementSibling.value = this.value" name="top_p">
-    <output>0.5</output>
+
+    <div class="form-group row" data-html2canvas-ignore="true">
+        <label for="temperature_slider" class="col-sm-2 col-form-label">Temperature:</label>
+        <div class="col-sm-8 my-2">
+            <input type="range" value="0.7" min="0.1" max="1.0" step="0.10" class="form-range"
+            oninput="this.parentNode.nextElementSibling.value = this.value" name="temperature" id="temperature_slider">
+        </div>
+            <output class='col-sm-2 col-form-label'>0.7</output>
+    </div>
+
+    <div class="form-group row" data-html2canvas-ignore="true">
+        <label for="topp_slider" class="col-sm-2 col-form-label">Top-p:</label>
+        <div class="col-sm-8 my-2">
+        <input type="range" value="0.5" min="0.0" max="1.0" step="0.10" class="form-range"
+            oninput="this.parentNode.nextElementSibling.value = this.value" name="top_p" id="topp_slider">
+        </div>
+       <output class='col-sm-2 col-form-label'>0.5</output>
     </div>
     <div class="submit-holder">
-        <input type="submit" value="Submit" id="generate-form-button"/>
-    </div>
+        <input class="btn btn-primary btn-lg" type="submit" value="Generate" id="generate-form-button"/>
     </div>
 </form>
-</div>
-<div id="loader_holder_super">
-<div id="loader_holder">
-    <div class="loader"></div>
-    <div>
-        Please be patient. Your generation may take <span id="eta">X</span> seconds.
+
+<div id="loader_holder_super" class="py-2">
+    <div id="loader_holder">
+        <div class="loader"></div>
+        <div>Please be patient. Your generation may take at most <span id="eta">X</span> seconds.</div>
     </div>
 </div>
+
+
+<div id="result" class="form-control p-2" style="font-size: 20px"><span id="promptDisplay"></span><span id="response"></span>
+    <span id="error"></span>
 </div>
 
-<div id="result"><span id="promptDisplay"></span><span id="response"></span><span id="error"></span></div>
 
-<div id="links">
+</div>
+    <div class="text-center">
+        <span class="mx-1" style="font-size: 18px">Like the result? </span>
+          <a href="https://twitter.com/intent/tweet?text=Prompting%20OPT-175B%20with%20Alpa%20is%20fun!%20Try%20it%20yourself%20(unlimited)%20at%20http%3A%2F%2Fopt.alpa.ai%2F!%20%23alpa" target="_blank" class="btn btn-block btn-social btn-twitter"><span class="fa-brands fa-twitter"></span>Tweet it! #alpa</a>
+          <a class="btn btn-block btn-social btn-tumblr" onclick="takeshot()"><span class="fa-solid fa-camera"></span>Screenshot</a>
+          <a href="https://github.com/alpa-projects/alpa/stargazers" target="_blank" class="btn btn-block btn-social btn-github"><span class="fa-brands fa-github"></span>Star Alpa on GitHub</a>
+    </div>
+    <div id="output2"></div>
+</div>
+</div>
 
-<h2>Links</h2>
-<ul>
-    <li>Start Alpa on <a href="https://github.com/alpa-projects/alpa">github</a> </li>
-    <li>This website interface is modified from <a href="https://github.com/facebookresearch/metaseq">metaseq</a> </li>
-    <li>Check out the <a href="https://arxiv.org/abs/2201.12023">Alpa paper</a> and <a href="https://arxiv.org/abs/2205.01068">OPT paper</a> for technical details.</li>
-</ul>
+
+<div class="container bg-white py-3" id="faq">
+    <h1 class="display-6 py-3 fw">Frequently Asked Questions</h1>
+    <div class="accordion accordion-flush" id="accordionPanelsStayOpenExample">
+      <div class="accordion-item">
+        <h2 class="accordion-header" id="panelsStayOpen-headingOne">
+          <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#panelsStayOpen-collapseOne" aria-expanded="true" aria-controls="panelsStayOpen-collapseOne">
+              What is Alpa?
+          </button>
+        </h2>
+        <div id="panelsStayOpen-collapseOne" class="accordion-collapse collapse show" aria-labelledby="panelsStayOpen-headingOne">
+          <div class="accordion-body">
+              Alpa is an open-source system for training large-scale neural networks. Alpa aims to automate large-scale distributed training and serving with <strong>just a few lines of code</strong>.
+              Alpa was initially developed by folks in the Sky Lab, UC Berkeley. Some advanced techniques used in Alpa have been written in <a href="https://arxiv.org/pdf/2201.12023.pdf" target="_blank"> a paper published in OSDI'2022</a>.
+              Alpa community is growing with new contributors from Google, Amazon, and Meta.
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion-item">
+        <h2 class="accordion-header" id="panelsStayOpen-headingTwo">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#panelsStayOpen-collapseTwo" aria-expanded="false" aria-controls="panelsStayOpen-collapseTwo">
+            What is OPT-175B? How does it compare to GPT-3?
+          </button>
+        </h2>
+        <div id="panelsStayOpen-collapseTwo" class="accordion-collapse collapse" aria-labelledby="panelsStayOpen-headingTwo">
+          <div class="accordion-body">
+              OPT-175B is a GPT-3 equivalent model trained by Meta and made publicly available in the <a href="https://github.com/facebookresearch/metaseq/tree/main/metaseq" target="_blank">MetaSeq project</a>.
+              It is by far the largest pretrained language model available in open source, with 175 billion parameters. For detailed performance of OPT-175B,
+              check the <a href="https://arxiv.org/pdf/2205.01068v4.pdf" target="_blank">OPT paper</a>.
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion-item">
+        <h2 class="accordion-header" id="panelsStayOpen-headingThree">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#panelsStayOpen-collapseThree" aria-expanded="false" aria-controls="panelsStayOpen-collapseThree">
+            Why should I choose Alpa over Metatron-LM or DeepSpeed?
+          </button>
+        </h2>
+        <div id="panelsStayOpen-collapseThree" class="accordion-collapse collapse" aria-labelledby="panelsStayOpen-headingThree">
+          <div class="accordion-body">
+            Because Alpa is more scalable, performance, and cost-effective.
+          </div>
+        </div>
+      </div>
+
+
+      <div class="accordion-item">
+        <h2 class="accordion-header" id="panelsStayOpen-headingFour">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#panelsStayOpen-collapseFour" aria-expanded="false" aria-controls="panelsStayOpen-collapseFour">
+            How many GPUs are needed to run the serving service for OPT-175B or GPT-3?
+          </button>
+        </h2>
+        <div id="panelsStayOpen-collapseFour" class="accordion-collapse collapse" aria-labelledby="panelsStayOpen-headingFour">
+          <div class="accordion-body">
+            It depends on which types of GPUs used. A hard constraint now is that the total GPU memory in the cluster needs to be greater than 350GB in order to successfully run the model inference.
+              Many existing training or serving systems usually rely on using the latest generations of GPUs with the largest memory capacity, such as 80GB A100. In contrast, Alpa, due to its more powerful
+              backend, enables serving OPT-175B with more flexible parallelisms on older generations of GPUs, such as 40GB A100, V100, T4, M60, etc.
+              <br  \>
+              Take an example, if you choose to use 16GB V100 GPUs, then you would need 350 / 16 = 22 V100 GPUs to run the service.
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion-item">
+        <h2 class="accordion-header" id="panelsStayOpen-headingFive">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#panelsStayOpen-collapseFive" aria-expanded="false" aria-controls="panelsStayOpen-collapseFive">
+            How do you keep it free?
+          </button>
+        </h2>
+        <div id="panelsStayOpen-collapseFive" class="accordion-collapse collapse" aria-labelledby="panelsStayOpen-headingFive">
+          <div class="accordion-body">
+            Alpa does not require the latest generation GPUs (such as 80GB A100 to do the work), hence reduces the machine cost.
+              With that, we leverage older generations of hardware provided by our sponsors: <a href="https://mbzuai.ac.ae/" target="_blank">MBZUAI</a>
+              and <a href="https://sky.cs.berkeley.edu/" target="_blank">Sky Lab, UC Berkeley</a>.
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion-item">
+        <h2 class="accordion-header" id="panelsStayOpen-heading">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#panelsStayOpen-collapse" aria-expanded="false" aria-controls="panelsStayOpen-collapse">
+            Can I use this free generation service for my business?
+          </button>
+        </h2>
+        <div id="panelsStayOpen-collapse" class="accordion-collapse collapse" aria-labelledby="panelsStayOpen-heading">
+          <div class="accordion-body">
+            Your usage of this service is subject to Alpa's open source license. Your usage of the OPT-175B model is subject to Meta's OPT-175B license.
+          </div>
+        </div>
+      </div>
+    </div>
+</div>
+
+
+<div class="container py-5 my-5 text-center bg-light rounded-4" id="contact">
+  <h1 class="display-5 fw col-lg-10 mx-auto py-5">Interested in contributing to the Alpa project?</h1>
+    <div class="col-lg-9 mx-auto">
+      <div class="d-grid gap-2 d-sm-flex justify-content-sm-center">
+        <a href="https://github.com/alpa-projects/alpa/fork" target="_blank" class="btn btn-primary btn-lg px-4 gap-3">Fork on GitHub</a>
+        <a href="https://docs.google.com/forms/d/e/1FAIpQLScXE0pDOm1FBcKS8C9JxAS6GbD-8b037NqH36ndKRMrGJ3_Cw/viewform" class="btn btn-outline-primary btn-lg px-4" target="_blank">Join Alpa Slack</a>
+      </div>
+    </div>
+</div>
+
+<div>
+    <div class="container">
+      <footer class="d-flex flex-wrap justify-content-between align-items-center py-3 border-top">
+      <div class="col-md-4 d-flex align-items-center">
+          <a href="#home" class="mb-3 me-2 mb-md-0 text-muted text-decoration-none lh-1">
+            <img alt="alpa logo" class="bi me-2" width="40" src="https://raw.githubusercontent.com/alpa-projects/alpa/hao-webserver/examples/opt_serving/service/alpa-logo.svg">
+          </a>
+          <span class="mb-3 mb-md-0 text-muted">&copy; 2022 Alpa authors.</span>
+        </div>
+
+        <ul class="nav col-md-4 justify-content-end">
+          <li class="nav-item"><a href="#generation" class="nav-link px-2 text-muted">Generation</a></li>
+          <li class="nav-item"><a href="#faq" class="nav-link px-2 text-muted">FAQs</a></li>
+          <li class="nav-item"><a href="https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/MODEL_LICENSE.md" target="_blank" class="nav-link px-2 text-muted">OPT License</a></li>
+          <li class="nav-item"><a href="https://github.com/alpa-projects/alpa" target="_blank" class="nav-link px-2 text-muted">GitHub</a></li>
+        </ul>
+      </footer>
+    </div>
 </div>
 
 </body>

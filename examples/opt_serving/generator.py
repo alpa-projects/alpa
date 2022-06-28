@@ -361,7 +361,7 @@ class GeneratorInterface:
 
         # TODO (Hao & Yonghao): support beam search
         if beam_size > 1:
-            raise NotImplementedError("We only support beam=1 now.")
+            raise NotImplementedError("We only support beam = 1 now.")
 
         sampling_topp = top_p if top_p > 0 else -1
         sampling = top_p > 0.0
@@ -380,7 +380,7 @@ class GeneratorInterface:
             max_positions=None,
             ignore_invalid_inputs=False,
         ).next_epoch_itr(shuffle=False)
-        logger.info(f"Serve batch {batch_request_uuid}")
+        logger.info(f"Serve batch {batch_request_uuid} with {len(batches)} compute batches.")
         for batch_idx, batch in enumerate(batches):
             src_tokens = batch["src_tokens"]
             src_lengths = batch["src_lengths"]

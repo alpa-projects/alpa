@@ -4,12 +4,13 @@ import argparse
 import queue
 import threading
 import os
-import logging
 import logging.handlers
+import traceback
 
 import random
 import torch
-from flask import Flask, request
+from flask import Flask, request, jsonify
+from werkzeug.exceptions import HTTPException
 
 from examples.opt_serving.generator import GeneratorInterface
 from examples.opt_serving.service.queue import PriorityQueueRingShard
@@ -129,10 +130,29 @@ def worker_main(model_name, path, port):
     app.run(host="0.0.0.0", port=port, threaded=True)
 
 
+@app.errorhandler(Exception)
+def handle_exception(e):
+    # pass through HTTP errors
+    if isinstance(e, HTTPException):
+        return e
+    # now you're handling non-HTTP exceptions only
+    response = jsonify(
+        {
+            "error": {
+                "message": str(e),
+                "type": "oops",
+                # "stacktrace": traceback.format_tb(e.__traceback__),
+            }
+        }
+    )
+    if isinstance(e, ValueError):
+        response.status = 400
+    else:
+        response.status = 500
+    return response
+
+
 @app.route("/completions", methods=["POST"])
-@app.route("/v1/engines/<engine>/completions", methods=["POST"])
-@app.route("/v2/engines/<engine>/completions", methods=["POST"])
-@app.route("/engines/<engine>/completions", methods=["POST"])
 def completions(engine=None):
     # prompt can be 4 types:
     # - str. Basic case. Return one generation.
@@ -158,8 +178,8 @@ def completions(engine=None):
         prompts = [prompts]
     assert isinstance(prompts[0], list)
     # final case: multi pre-tokenized
-    assert len(prompts[0]) > 0
-
+    if len(prompts[0]) <= 0:
+        raise Exception("The prompt must be nonempty.")
     if "min_tokens" in generation_args:
         generation_args["min_tokens"] = int(generation_args["min_tokens"])
     if "max_tokens" in generation_args:

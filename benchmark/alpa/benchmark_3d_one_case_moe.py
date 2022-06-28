@@ -188,7 +188,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts,
         state = train_step(state, batch, rngkey)
         executable.sync()
 
-    latencies = executable.get_execution_time_costs(warmup=1)
+    latencies = executable.get_execution_time_costs()[1:]
     max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
     print_used_time("Benchmark")
 

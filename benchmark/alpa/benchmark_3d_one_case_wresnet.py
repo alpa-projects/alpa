@@ -250,7 +250,7 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
         state, metrics = train_step(state, batch)
         executable.sync()
 
-    latencies = executable.get_execution_time_costs(warmup=2)
+    latencies = executable.get_execution_time_costs()[2:]
     if isinstance(method, PipeshardParallel):
         max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
     else:

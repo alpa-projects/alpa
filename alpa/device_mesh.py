@@ -540,8 +540,9 @@ class MeshHostWorker:
 
     ##### Other Functions #####
     def sync(self):
-        for device in self.local_devices:
-            device.synchronize_all_activity()
+        # Because of SPMD, we can only sync one device
+        # for smaller runtime overhead
+        self.local_devices[0].synchronize_all_activity()
 
     @staticmethod
     def check_alive():
@@ -852,6 +853,8 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     ##### Other Functions #####
     def sync_workers(self):
+        # Because of SPMD, we can only sync one device
+        # for smaller runtime overhead
         self.devices[0].synchronize_all_activity()
 
     def shutdown(self, forced=False):
@@ -1056,7 +1059,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 global_config.delete_remote_buffers_threshold):
             for host_id in range(self.num_hosts):
                 self.workers[host_id].delete_buffers.remote(
-                    self.to_delete_remote_buffers[host_id])
+                    np.array(self.to_delete_remote_buffers[host_id]))
                 self.to_delete_remote_buffers[host_id] = []
             self.to_delete_remote_buffers_ct = 0
 

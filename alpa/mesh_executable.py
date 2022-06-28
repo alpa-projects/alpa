@@ -79,8 +79,7 @@ class MeshDriverExecutable(ABC):
 
     def get_shard_args_time_costs(self):
         """Return the time costs of sharding input arguments."""
-        return self.physical_mesh.get_remote_timer(
-            self.shard_args_timer_name).costs
+        return timers(self.shard_args_timer_name).costs
 
     def get_hlo_text(self, status: HloStatus):
         """Return the HLO IR in the text format."""
@@ -140,8 +139,6 @@ class RemoteBufferRef:
         self.uuid = (uuid
                      if uuid is not None else next_remote_buffer_uuid().item())
         self.is_deleted_on_workers = False
-        logger.debug(f"RemoteBufferRef uuid: {self.uuid} created on mesh "
-                     f"with devices {self.device_mesh.device_strs}.")
 
     def set_deleted_on_workers(self):
         """
@@ -479,8 +476,7 @@ def delete_donated_buffers(buffer_dict, uuids):
     for i in range(len(uuids)):
         for j in range(len(uuids[i])):
             uuid = uuids[i][j]
-            if isinstance(uuid,
-                          (np.int64, int)) and buffer_dict[uuid].is_deleted():
+            if buffer_dict[uuid].is_deleted():
                 del buffer_dict[uuid]
 
 

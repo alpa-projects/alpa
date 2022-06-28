@@ -25,15 +25,14 @@ def run_benchmark(args):
     path = os.path.join(args.path, f"{name}_np")
 
     alpa.global_config.shard_parallel_sync_for_timer = True
+    alpa.global_config.pipeline_parallel_sync_for_timer = True
+    alpa.global_config.delete_remote_buffers_threshold = 700
 
     config = get_opt_config(name)
-
+    model, params_aval = init_model_aval(config)
     batch_size = 1
-    seq_len = 8
+    seq_len = 16
     dummy = args.dummy
-
-    input_ids = np.random.randint(0, 10000, size=(batch_size, seq_len), dtype=np.int32)
-    position_ids = build_position_ids(input_ids, config.pad)
 
     def inference_step_with_cache(params, batch):
         output = model.apply(params,
@@ -43,7 +42,6 @@ def run_benchmark(args):
         return output.logits, output.attention_cache
 
     if args.parallel_method == "jit":
-        model, params_aval = init_model_aval(config)
         params = load_params_np(params_aval, path, config, dummy)
         cache = init_cache_np(config, batch_size)
         params, cache = jax.tree_map(jnp.array, (params, cache))
@@ -52,11 +50,15 @@ def run_benchmark(args):
         sync_func = lambda : jax.local_devices()[0].synchronize_all_activity()
         executable = None
         num_gpus = 1
-    elif args.parallel_method == "local_shard":
-        model, params_aval = init_model_aval(config)
+    elif args.parallel_method in ["local_shard", "ray_shard"]:
+        if args.parallel_method == "local_shard":
+            alpa.init(cluster="local")
+            num_gpus = len(jax.local_devices())
+        else:
+            alpa.init(cluster="ray")
+            num_gpus = alpa.get_global_cluster().num_devices
 
-        method = alpa.ShardParallel(devices=jax.local_devices(),
-                                    auto_sharding_option=alpa.AutoShardingOption())
+        method = alpa.ShardParallel(auto_sharding_option=alpa.AutoShardingOption())
         infer_step = alpa.parallelize(inference_step_with_cache, method=method)
         executable = infer_step.get_executable(
             params_aval, {
@@ -70,11 +72,17 @@ def run_benchmark(args):
         params = load_params_dis_array(path, executable, params_aval, config, dummy)
         cache = init_cache_dis_array(executable, config, batch_size, dummy)
         set_skip_shard_args_check(cache)
-        sync_func = lambda : None
         infer_step = executable
-        num_gpus = len(method.devices)
+        if args.parallel_method == "local_shard":
+            # Already synced by the local timer
+            sync_func = lambda : None
+        elif args.parallel_method == "ray_shard":
+            sync_func = lambda : executable.sync()
     else:
         raise ValueError("Invalid parallel method: {args.parallel_method}")
+
+    input_ids = np.random.randint(0, 10000, size=(batch_size, seq_len), dtype=np.int32)
+    position_ids = build_position_ids(input_ids, config.pad)
 
     step_latencies = []
     compute_latencies = []
@@ -93,6 +101,7 @@ def run_benchmark(args):
             })
         sync_func()
         end_time = time.time()
+
         step_latencies.append(end_time - start_time)
         if executable:
             compute_latencies.append(executable.get_execution_time_costs()[-1])

@@ -42,7 +42,7 @@ def adam(lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0):
                 # Decay the first and second moment running average coefficient
                 exp_avg = exp_avg * beta1 + (1 - beta1) * grad
                 exp_avg_sq = exp_avg_sq * beta2 + (1 - beta2) * grad * grad.conj()
-                denom = (exp_avg_sq.sqrt() / math.sqrt(bias_correction2)) + eps
+                denom = (torch.sqrt(exp_avg_sq) / math.sqrt(bias_correction2)) + eps
 
                 step_size = lr / bias_correction1
                 param = param + (-step_size * exp_avg / denom)

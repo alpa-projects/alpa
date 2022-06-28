@@ -23,11 +23,11 @@ from benchmark.util import compute_gpt_parameter_count, compute_inference_gpt_tf
 def create_infer_params_aval(rngkey, model, batch, no_embedding):
     if no_embedding:
         params = jax.eval_shape(model.init, rngkey, batch["x"],
-                            batch["attention_mask"])
+                                batch["attention_mask"])
     else:
         params = jax.eval_shape(model.init, rngkey, batch["input_ids"],
-                            batch["attention_mask"], batch["token_type_ids"],
-                            batch["position_ids"])
+                                batch["attention_mask"],
+                                batch["token_type_ids"], batch["position_ids"])
     return params
 
 
@@ -47,7 +47,7 @@ def get_infer_step(parallel_method, model, no_embedding):
         loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
         loss = (label_mask * loss).sum() / label_mask.sum()
         return loss
-    
+
     def infer_step_without_embedding(params, batch, rng_key):
         out = model.apply(params,
                           batch["x"],
@@ -73,8 +73,9 @@ def benchmark_gpt_bert_internal(model_type,
     print_used_time(None)
 
     # Model configs
-    (_, no_embedding, batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
-     num_micro_batches, parallel_mode, parallel_args) = benchmark_case
+    (_, no_embedding, batch_size, seq_len, hidden_size, num_layers, num_heads,
+     vocab_size, num_micro_batches, parallel_mode,
+     parallel_args) = benchmark_case
     dtype = jnp.float16
     tie_word_embeddings = False
 
@@ -103,11 +104,14 @@ def benchmark_gpt_bert_internal(model_type,
     rngkey = jax.random.PRNGKey(0)
     if no_embedding:
         batch = {
-            "x": jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
-                              dtype=dtype),
-            "y": jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
-                              dtype=dtype),
-            "attention_mask": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
+            "x":
+                jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
+                                  dtype=dtype),
+            "y":
+                jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
+                                  dtype=dtype),
+            "attention_mask":
+                jnp.ones((batch_size, seq_len), dtype=jnp.int32),
         }
     else:
         batch = {
@@ -123,15 +127,14 @@ def benchmark_gpt_bert_internal(model_type,
     if model_type == "gpt":
         if no_embedding:
             model = FlaxBertLayerCollection(BertConfig(
-                    hidden_size=hidden_size,
-                    intermediate_size=hidden_size * 4,
-                    num_attention_heads=num_heads,
-                    num_hidden_layers=num_layers,
-                    gradient_checkpointing=add_manual_remat,
-                    add_manual_pipeline_markers=add_manual_layer_marker,
-                    pipeline_mp_size=num_manual_pipeline_stages
-                    ),
-                                dtype=dtype)
+                hidden_size=hidden_size,
+                intermediate_size=hidden_size * 4,
+                num_attention_heads=num_heads,
+                num_hidden_layers=num_layers,
+                gradient_checkpointing=add_manual_remat,
+                add_manual_pipeline_markers=add_manual_layer_marker,
+                pipeline_mp_size=num_manual_pipeline_stages),
+                                            dtype=dtype)
 
         else:
             model = FlaxGPTForLMModule(BertConfig(
@@ -146,7 +149,7 @@ def benchmark_gpt_bert_internal(model_type,
                 add_manual_pipeline_markers=add_manual_layer_marker,
                 pipeline_mp_size=num_manual_pipeline_stages,
             ),
-                                    dtype=dtype)
+                                       dtype=dtype)
     else:
         raise ValueError(f"Invalid model {model_type}")
 

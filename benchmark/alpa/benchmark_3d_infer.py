@@ -57,9 +57,9 @@ if __name__ == "__main__":
     # Run all cases
     for benchmark_case in suite:
         if model_type in ["gpt"]:
-            (model_name, no_embedding, batch_size, seq_len, hidden_size, num_layers,
-             num_heads, vocab_size, num_micro_batches, parallel_mode,
-             parallel_args) = benchmark_case
+            (model_name, no_embedding, batch_size, seq_len, hidden_size,
+             num_layers, num_heads, vocab_size, num_micro_batches,
+             parallel_mode, parallel_args) = benchmark_case
             model_config = (batch_size, seq_len, hidden_size, num_layers,
                             num_heads)
         else:

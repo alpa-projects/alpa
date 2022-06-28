@@ -283,7 +283,7 @@ arch_params = {
 parallel_config = {
     "global_batch_size": 512,  # 512
     "num_micro_batches": 512,  # 128,
-    "num_auto_layers": 96,
+    "num_auto_layers": 48,
 }
 
 """

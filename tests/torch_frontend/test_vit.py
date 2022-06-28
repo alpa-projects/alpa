@@ -252,19 +252,18 @@ params = {
 #     "mlp_d": 5120,
 # }
 
-# ViT-10B model
-arch_params = {
-    "n_layers": 32,
-    "n_heads": 32,
-    "hidden_d": 5120,
-    "mlp_d": 20480,
-}
-parallel_config = {
-    "global_batch_size": 512,  # 512
-    "num_micro_batches": 256,  # 128,
-    "num_auto_layers": 16,
-    "auto_sharding_option": {'force_batch_dim_to_mesh_dim': 0},
-}
+# # ViT-10B model
+# arch_params = {
+#     "n_layers": 32,
+#     "n_heads": 32,
+#     "hidden_d": 5120,
+#     "mlp_d": 20480,
+# }
+# parallel_config = {
+#     "global_batch_size": 512,  # 512
+#     "num_micro_batches": 256,  # 128,
+#     "num_auto_layers": 16,
+# }
 
 # # ViT-25B model
 # arch_params = {
@@ -273,6 +272,19 @@ parallel_config = {
 #     "hidden_d": 7680,
 #     "mlp_d": 30720,
 # }
+
+# ViT-120B model
+arch_params = {
+    "n_layers": 96,
+    "n_heads": 80,
+    "hidden_d": 10240,
+    "mlp_d": 40960,
+}
+parallel_config = {
+    "global_batch_size": 512,  # 512
+    "num_micro_batches": 512,  # 128,
+    "num_auto_layers": 96,
+}
 
 """
 32: get_solution_case("15B", num_micro_batches=128,
@@ -320,7 +332,8 @@ class TorchViTTest(unittest.TestCase):
         parallel_method = alpa.PipeshardParallel(
             stage_mode="uniform",
             num_micro_batches=num_micro_batches,
-            default_auto_sharding_option=alpa.AutoShardingOption(force_data_parallel=True))
+            # default_auto_sharding_option=alpa.AutoShardingOption(force_data_parallel=True),
+        )
         auto_layer_con_func = alpa.automatic_layer_construction(
             layer_num=num_auto_layers, remat_layer=True)
 

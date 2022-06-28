@@ -126,12 +126,12 @@
 /*    font-size: 16pt;*/
 /*}*/
 #result {
-    white-space: pre-wrap;
+    /*white-space: pre-wrap;*/
     word-wrap: break-word;
     font-size: 20pt;
     clear: both;
     min-height: 10em;
-    padding: 1em;
+    /*padding: 1em;*/
 }
 #promptDisplay {
     font-weight: bold;
@@ -181,7 +181,7 @@ label {
         <nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top border-bottom">
             <div class="container d-flex flex-wrap justify-content-center">
               <a href="#home" class="d-flex align-items-center mb-3 mb-md-0 me-md-auto text-decoration-none">
-                  <img alt="alpa logo" class="bi me-2" width="40"  src="alpa-logo.svg">
+                  <img alt="alpa logo" class="bi me-2" width="40"  src="https://raw.githubusercontent.com/alpa-projects/alpa/hao-webserver/examples/opt_serving/service/alpa-logo.svg">
               </a>
               <ul class="nav nav-pills">
                 <li class="nav-item"><a href="#generation" class="nav-link" aria-current="page">Generation</a></li>
@@ -196,7 +196,7 @@ label {
 
   <div class="container my-5 text-center">
       <div class="py-5">
-        <img class="d-block mx-auto mb-2" src="alpa-logo.svg" width="368">
+        <img class="d-block mx-auto mb-2" src="https://raw.githubusercontent.com/alpa-projects/alpa/hao-webserver/examples/opt_serving/service/alpa-logo.svg" width="368">
       </div>
       <h1 class="display-5 fw col-lg-10 mx-auto">Simple, affordable large model training and serving</h1>
     <div class="col-lg-10 py-2 mx-auto">
@@ -284,14 +284,13 @@ label {
 <div id="loader_holder_super">
     <div id="loader_holder">
         <div class="loader"></div>
-        <div>Please be patient. Your generation may take <span id="eta">X</span> seconds.</div>
+        <div class="display-6">Please be patient. Your generation may take <span id="eta">X</span> seconds.</div>
     </div>
 </div>
 
-<div id="result" class="form-control ">
-    <span id="promptDisplay"></span>
-    <span id="response"></span>
-    <span id="error"></span>
+<div id="result" class="form-control">
+
+    <span id="promptDisplay"></span><span id="response"></span><span id="error"></span>
 </div>
 
 
@@ -319,7 +318,7 @@ label {
         <div id="panelsStayOpen-collapseOne" class="accordion-collapse collapse show" aria-labelledby="panelsStayOpen-headingOne">
           <div class="accordion-body">
               Alpa is an open-source system for training large-scale neural networks. Alpa aims to automate large-scale distributed training and serving with <strong>just a few lines of code</strong>.
-              Alpa was initially developed by folks in the Sky Lab, UC Berkeley. Some advanced techniques used in Alpa have been written in <a href="https://arxiv.org/pdf/2201.12023.pdf" target="_blank"> paper and published in OSDI'2022</a>.
+              Alpa was initially developed by folks in the Sky Lab, UC Berkeley. Some advanced techniques used in Alpa have been written in <a href="https://arxiv.org/pdf/2201.12023.pdf" target="_blank"> a paper published in OSDI'2022</a>.
               Alpa is actively developed by new contributors from Google, Amazon, and Meta.
           </div>
         </div>
@@ -415,7 +414,7 @@ label {
       <footer class="d-flex flex-wrap justify-content-between align-items-center py-3 border-top">
       <div class="col-md-4 d-flex align-items-center">
           <a href="#home" class="mb-3 me-2 mb-md-0 text-muted text-decoration-none lh-1">
-            <img alt="alpa logo" class="bi me-2" width="40" src="alpa-logo.svg">
+            <img alt="alpa logo" class="bi me-2" width="40" src="https://raw.githubusercontent.com/alpa-projects/alpa/hao-webserver/examples/opt_serving/service/alpa-logo.svg">
           </a>
           <span class="mb-3 mb-md-0 text-muted">&copy; 2022 Alpa authors.</span>
         </div>

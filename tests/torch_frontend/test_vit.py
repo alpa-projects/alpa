@@ -260,8 +260,8 @@ arch_params = {
     "mlp_d": 20480,
 }
 parallel_config = {
-    "global_batch_size": 256,  # 512
-    "num_micro_batches": 32,  # 128,
+    "global_batch_size": 512,  # 512
+    "num_micro_batches": 256,  # 128,
     "num_auto_layers": 16,
     "auto_sharding_option": {'force_batch_dim_to_mesh_dim': 0},
 }
@@ -303,12 +303,26 @@ class TorchViTTest(unittest.TestCase):
     def test_vit_pipeshard(self):
         num_micro_batches = parallel_config["num_micro_batches"]
         num_auto_layers = parallel_config["num_auto_layers"]
+        #parallel_method = alpa.PipeshardParallel(
+        #    stage_mode="auto",
+        #    num_micro_batches=num_micro_batches,
+        #    default_auto_sharding_option=alpa.AutoShardingOption(**parallel_config["auto_sharding_option"]),
+        #)
+
+        #parallel_method = alpa.ManualPipeshardParallel(
+        #    forward_stage_layer_ids=[[0,1,2,3], [4,5,6,7], [8,9,10,11], [12,13,14,15]],
+        #    submesh_physical_shapes=[(1, 4)] * 4,
+        #    submesh_logical_shapes=[(4, 1)] * 4,
+        #    submesh_autosharding_option_dicts=[{"force_batch_dim_to_mesh_dim": 0}] * 4,
+        #    num_micro_batches=num_micro_batches,
+        #)
+
         parallel_method = alpa.PipeshardParallel(
-            stage_mode="auto",
+            stage_mode="uniform",
             num_micro_batches=num_micro_batches,
-            default_auto_sharding_option=alpa.AutoShardingOption(**parallel_config["auto_sharding_option"]),
-        )
-        auto_layer_con_func = alpa.automatic_layer_construction(layer_num=num_auto_layers)
+            default_auto_sharding_option=alpa.AutoShardingOption(force_data_parallel=True))
+        auto_layer_con_func = alpa.automatic_layer_construction(
+            layer_num=num_auto_layers, remat_layer=True)
 
         train_torch_module(pt_module_gen, weight_init_func, dataloader,
                            loss_func, optim_gen, parallel_method, auto_layer_con_func=auto_layer_con_func)

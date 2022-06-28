@@ -101,10 +101,18 @@ def train_torch_module(pt_module_gen, weight_init_func, dataloader, loss_func,
                 atorch.enable_dist_for_func(create_train_state),
                 method=alpa.CreateStateParallel(train_step, pt_batch))
 
+        create_state_executable = create_train_state.get_executable()
+        create_state_executable.dump_debug_info("create_state_debug_info")
+
+        train_step_executable = train_step.get_last_executable()
+        train_step_executable.dump_debug_info("train_state_debug_info")
+
         # Initialize weights and optimizer states
+        print("Create train state")
         state = create_train_state()
 
         # Run training loops
+        print("Run training loops")
         for i, pt_batch in enumerate(dataloader):
             pt_batch = atorch.to_format(atorch.mode(), pt_batch)
             state, loss_value = train_step(state, pt_batch)

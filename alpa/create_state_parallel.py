@@ -1,5 +1,6 @@
 """Compile executables for creating training state distributedly."""
 from collections import defaultdict, deque
+import os
 from typing import Sequence, Optional
 
 from jax._src.lib import xla_bridge as xb, xla_extension as xe
@@ -18,7 +19,7 @@ from alpa.pipeline_parallel.pipeshard_executable import PipeshardDriverExecutabl
 from alpa.pipeline_parallel.runtime_emitter import PipeshardConfig
 from alpa.pipeline_parallel.stage_construction import UniformStageOption
 from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
-                                               AutoShardingOption)
+                                               AutoShardingOption, HloStatus)
 from alpa.util import jaxpr_to_hlo_module
 
 
@@ -68,6 +69,24 @@ class CreateStateExecutable(PipeshardDriverExecutable):
                     meshes, distributed_arrays)
 
         return outputs
+
+    def dump_debug_info(self, folder: str):
+        """
+        Dump intermediate representations and other informations for debugging.
+        """
+        os.makedirs(folder, exist_ok=True)
+        name = self.stages[0].spmd_partitioned_hlo_module.name()
+        name = name[:name.index("create_state_parallel") - 1]
+        prefix = os.path.join(folder, name)
+
+        fully_optimized_hlo_texts = self.get_hlo_text(HloStatus.FULLY_OPTIMIZED)
+        for stage_idx in range(len(self.stages)):
+            with open(f"{prefix}_stage_{stage_idx}.hlo", "w") as f:
+                f.write(fully_optimized_hlo_texts[stage_idx])
+
+        with open(f"{prefix}_resharding_tasks.txt", "w") as f:
+            for task in self.resharding_tasks:
+                f.write(str(task) + "\n\n")
 
 
 def compile_create_state_executable(fun, in_tree, out_tree_thunk,

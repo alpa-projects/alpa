@@ -224,6 +224,8 @@ def get_model(model_name,
         init_cache = init_cache_np(config, 1)
     else:
         assert "alpa/opt" in model_name
+        print(f"Load model {model_name} ... (This can take several minutes for very large models)")
+
         alpa.init()
         num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
         config = get_opt_config(name, num_pp_stages=num_pp_stages, dtype=dtype)

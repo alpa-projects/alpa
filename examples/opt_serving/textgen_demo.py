@@ -13,11 +13,10 @@ model = get_model(model_name="alpa/opt-2.7b",
                   path="/home/ubuntu/opt_weights/")
 
 # Generate
-prompt = "Paris is the capital city of "
+prompt = "Paris is the capital city of"
 
 input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to("cuda")
 output = model.generate(input_ids=input_ids, max_length=256, do_sample=True)
 generated_string = tokenizer.batch_decode(output, skip_special_tokens=True)
 
 print(generated_string)
-

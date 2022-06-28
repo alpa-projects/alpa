@@ -1,20 +1,17 @@
 Install Alpa
 ============
 
-Requirements
-------------
-- CUDA >= 11.1
-- cuDNN >= 8.0.5
-- python >= 3.7
+This page provides instructions to install alpa from Python wheels or from source. The minimum supported python version is 3.7.
 
 Prerequisites
 -------------
 
-Regardless of installing from wheels or from source, we need to install a few prerequisite packages:
+Regardless of installing from wheels or from source, there are a few prerequisite packages:
 
 1. CUDA toolkit:
 
   Follow the official guides to install `CUDA <https://developer.nvidia.com/cuda-toolkit>`_ and `cuDNN <https://developer.nvidia.com/cudnn>`_.
+  Alpa requires CUDA >= 11.1 and  cuDNN >= 8.0.5.
 
 2. Install the ILP solver used by Alpa:
 
@@ -47,8 +44,13 @@ Regardless of installing from wheels or from source, we need to install a few pr
 
 .. _install-from-wheels:
 
-Install from Python Wheels
---------------------------
+Methods
+-------
+Choose one of the methods below.
+
+Method 1: Install from Python Wheels
+####################################
+
 Alpa provides wheels for the following CUDA (cuDNN) and Python versions:
 
 - CUDA (cuDNN): 11.1 (8.0.5), 11.2 (8.1.0), 11.3 (8.2.0)
@@ -86,12 +88,13 @@ If you need to use other CUDA, cuDNN, or Python versions, please follow the next
 
 .. _install-from-source:
 
-Install from Source
--------------------
+Method 2: Install from Source
+#############################
+
 1.  Clone repos
 
   .. code:: bash
-  
+
     git clone --recursive git@github.com:alpa-projects/alpa.git
 
 2. Install Alpa
@@ -99,12 +102,12 @@ Install from Source
   .. code:: bash
 
     cd alpa
-    pip3 install -e .[dev]  # Note that the suffix `[dev]` is required to build custom modules.
+    pip3 install -e ".[dev]"  # Note that the suffix `[dev]` is required to build custom modules.
 
 3. Build and install jaxlib
 
   .. code:: bash
-  
+
     cd alpa/build_jaxlib
     python3 build/build.py --enable_cuda --dev_install --tf_path=$(pwd)/../third_party/tensorflow-alpa
     cd dist
@@ -129,8 +132,7 @@ You can check the installation by running the following test script.
   ray start --head
   python3 tests/test_install.py
 
-
-PyTorch Frontend [Experimental]
+[Optional] PyTorch Frontend
 -------------------------------------
 
 While Alpa is mainly designed for Jax, Alpa also provides an experimental PyTorch frontend.
@@ -152,7 +154,7 @@ To enable Alpa for PyTorch, install the following dependencies:
     cd functorch/
     python3 setup.py install
 
-Please look at tests/test_torch_simple.py for usage examples.
+Please look at ``tests/torch_frontend/test_simple.py`` for usage examples.
 
 Troubleshooting
 ---------------

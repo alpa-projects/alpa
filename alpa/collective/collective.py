@@ -5,21 +5,39 @@ from typing import List
 
 import numpy as np
 import ray
+from jax._src.lib import xla_extension as xe
+
 from alpa.collective import types
+from alpa.global_env import global_config
 
 _NCCL_AVAILABLE = True
 _GLOO_AVAILABLE = True
 
 logger = logging.getLogger(__name__)
 
-try:
-    from alpa.collective.collective_group.nccl_collective_group import (
-        NCCLGroup)
-except ImportError:
-    _NCCL_AVAILABLE = False
-    logger.warning("NCCL seems unavailable. Please install Cupy "
-                   "following the guide at: "
-                   "https://docs.cupy.dev/en/stable/install.html.")
+if global_config.nccl_mode == "cupy":
+    try:
+        from alpa.collective.collective_group.nccl_collective_group import (
+            NCCLGroup)
+    except ImportError:
+        _NCCL_AVAILABLE = False
+        logger.warning("NCCL seems unavailable. Please install Cupy "
+                       "following the guide at: "
+                       "https://docs.cupy.dev/en/stable/install.html.")
+else:
+    assert global_config.nccl_mode == "xla_extension"
+    try:
+        from alpa.collective.collective_group.xla_nccl_collective_group import (
+            XLANCCLGroup as NCCLGroup)
+        from alpa.collective.collective_group.xla_nccl_util import get_nccl_runtime_version
+        nccl_version = get_nccl_runtime_version()
+    except AttributeError:
+        _NCCL_AVAILABLE = False
+        logger.warning("NCCL from xla_extention seems unavailable! "
+                       "Please check whether your local tensorflow-alpa "
+                       "has already been up-to-date. You could also set "
+                       "global_config.nccl_mode == \"cupy\" to "
+                       "use another set of nccl apis from cupy. ")
 
 try:
     from alpa.collective.collective_group.gloo_collective_group import (
@@ -387,7 +405,8 @@ def broadcast_partialgpu(tensor_list,
                          world_size,
                          devices_ids,
                          devices_global_rank,
-                         group_name: str = "default"):
+                         group_name: str = "default",
+                         local_start_pos_list=None):
     """Broadcast the tensor from a source GPU to some other GPUs.
     This function is different from broadcast_multigpu that it only
     uses a subset of gpus in one host.
@@ -400,6 +419,8 @@ def broadcast_partialgpu(tensor_list,
         devices_ids: local devices in this cross-host collective group.
         devices_global_rank: the corresponding global rank for local devices.
         group_name (str): the collective group name to perform broadcast.
+        local_start_pos_list (list[int]): the list contains starting positions
+        of the contiguous data to be sent in every tensor.
 
     Returns:
         None
@@ -415,6 +436,8 @@ def broadcast_partialgpu(tensor_list,
     opts.world_size = world_size
     opts.devices_ids = devices_ids
     opts.devices_global_rank = devices_global_rank
+    opts.local_start_pos_list = (local_start_pos_list
+                                 if local_start_pos_list is not None else [])
     g.broadcast_partialgpu(tensor_list, opts)
 
 
@@ -577,7 +600,8 @@ def send_multigpu(tensor,
                   dst_rank: int,
                   dst_gpu_index: int,
                   group_name: str = "default",
-                  n_elements: int = 0):
+                  start_pos=0,
+                  n_elements=0):
     """Send a tensor to a remote GPU synchronously.
 
     The function asssume each process owns >1 GPUs, and the sender
@@ -588,6 +612,8 @@ def send_multigpu(tensor,
         dst_rank (int): the rank of the destination process.
         dst_gpu_index (int): the destination gpu index.
         group_name (str): the name of the collective group.
+        start_pos (int): the starting position of the contiguous
+        data to be sent in this tensor.
         n_elements (int): if specified, send the next n elements
             from the starting address of tensor.
 
@@ -607,6 +633,7 @@ def send_multigpu(tensor,
     opts = types.SendOptions()
     opts.dst_rank = dst_rank
     opts.dst_gpu_index = dst_gpu_index
+    opts.start_pos = start_pos
     opts.n_elements = n_elements
     g.send([tensor], opts)
 
@@ -636,7 +663,8 @@ def recv_multigpu(tensor,
                   src_rank: int,
                   src_gpu_index: int,
                   group_name: str = "default",
-                  n_elements: int = 0):
+                  start_pos=0,
+                  n_elements=0):
     """Receive a tensor from a remote GPU synchronously.
 
     The function asssume each process owns >1 GPUs, and the sender
@@ -645,7 +673,9 @@ def recv_multigpu(tensor,
     Args:
         tensor: the received tensor, located on a GPU.
         src_rank (int): the rank of the source process.
-        src_gpu_index (int)： the index of the source gpu on the src process.
+        src_gpu_index (int): the index of the source gpu on the src process.
+        start_pos (int): the starting position of the contiguous
+        data to be sent in this tensor.
         group_name (str): the name of the collective group.
 
     Returns:
@@ -664,6 +694,7 @@ def recv_multigpu(tensor,
     opts = types.RecvOptions()
     opts.src_rank = src_rank
     opts.src_gpu_index = src_gpu_index
+    opts.start_pos = start_pos
     opts.n_elements = n_elements
     g.recv([tensor], opts)
 
@@ -732,7 +763,7 @@ check_and_get_group = _check_and_get_group
 
 def _check_single_tensor_input(tensor):
     """Check if the tensor is with a supported type."""
-    if isinstance(tensor, np.ndarray):
+    if isinstance(tensor, (np.ndarray, xe.DeviceArray)):
         return
     if types.cupy_available():
         if isinstance(tensor, types.cp.ndarray):

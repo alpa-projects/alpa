@@ -7,14 +7,13 @@ from jax.tree_util import tree_map, tree_flatten, tree_unflatten, PyTreeDef
 import numpy as np
 import ray.exceptions
 
-from alpa.device_mesh import MeshHostWorker
+from alpa.device_mesh import MeshHostWorker, RemoteTensorRef, next_tensor_uuids
 from alpa.global_env import global_config
 from alpa.device_mesh import PhysicalDeviceMeshGroup
 from alpa.mesh_executable import (
     AllocZeroBufferWorkerExecutable, ConcatMeshWorkerExecutable,
     MemzeroWorkerExecutable, PartialGradAccMeshWorkerExecutable,
-    next_mesh_executable_uuid, get_uuid_np_array, next_remote_buffer_uuid,
-    RemoteBufferRef, PlacementSpec)
+    next_mesh_executable_uuid, PlacementSpec)
 from alpa.pipeline_parallel.runtime_emitter import (
     AllocateZeroWorkerExecutableConfig, ConcatWorkerExecutableConfig,
     ExecutableConfig, MemZeroWorkerExecutableConfig,
@@ -87,16 +86,16 @@ class PipeshardDriverExecutable:
         # Create a PipeshardMeshWorkerExecuable for each MeshHostWorker
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
             mesh_grad_uuids = pipeshard_config.grad_uuids[mesh_idx]
-            for worker_idx, worker in enumerate(physical_mesh.workers):
+            for worker in physical_mesh.workers:
                 acc_grad_local_uuids = []
                 if len(mesh_grad_uuids) > 0:
-                    acc_grad_local_uuids = mesh_grad_uuids[worker_idx]
+                    acc_grad_local_uuids = mesh_grad_uuids
                 args = (pipeshard_config.instruction_lists[worker],
-                        input_config.input_local_uuid_lists[worker],
-                        self.output_local_uuid_list[worker],
+                        input_config.input_local_uuid_lists[mesh_idx],
+                        self.output_local_uuid_list[mesh_idx],
                         pipeshard_config.executable_configs[worker],
                         acc_grad_local_uuids,
-                        pipeshard_config.reduced_var_uuid_lists[worker],
+                        pipeshard_config.reduced_var_uuid_lists[mesh_idx],
                         self.donate_invars[mesh_idx])
                 worker.put_executable.remote(self.exec_uuid,
                                              PipeshardMeshWorkerExecuable,
@@ -134,8 +133,8 @@ class PipeshardDriverExecutable:
         output_uuids = [None for _ in range(self.num_mesh)]
 
         num_outs = [
-            len(self.output_local_uuid_list[mesh.workers[0]])
-            for mesh in self.mesh_group
+            len(self.output_local_uuid_list[mesh_idx])
+            for mesh_idx in range(len(self.num_mesh))
         ]
 
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
@@ -156,43 +155,34 @@ class PipeshardDriverExecutable:
             input_bufs[mesh_idx] = flatten_bufs
 
             # Convert bufs to uuids
-            num_hosts = physical_mesh.num_hosts
-            num_devices_per_host = physical_mesh.num_devices_per_host
-            input_uuids = get_uuid_np_array(input_bufs[mesh_idx]).reshape(
-                (-1, num_hosts, num_devices_per_host)).transpose([1, 0, 2])
-            output_uuids[mesh_idx] = next_remote_buffer_uuid(
-                num_hosts * num_outs[mesh_idx] * num_devices_per_host).reshape(
-                    num_hosts, num_outs[mesh_idx], num_devices_per_host)
+            input_uuids = [ref.uuid for ref in input_bufs[mesh_idx]]
+            output_uuids[mesh_idx] = next_tensor_uuids(num_outs[mesh_idx])
+            if num_outs[mesh_idx] == 1:
+                output_uuids[mesh_idx] = np.array([output_uuids[mesh_idx]])
 
             # Execute
-            for i, worker in enumerate(physical_mesh.workers):
+            for worker in physical_mesh.workers:
                 worker.run_executable.remote(
                     self.exec_uuid,
-                    input_uuids[i],
-                    output_uuids[mesh_idx][i],
+                    input_uuids,
+                    output_uuids[mesh_idx],
                     sync_for_timer=global_config.pipeline_sync_for_timer)
 
         # Handle donation
         for mesh_idx in range(len(self.mesh_group)):
             inputs = input_bufs[mesh_idx]
-            for bufs, donate in zip(inputs, self.donate_invars[mesh_idx]):
+            for ref, donate in zip(inputs, self.donate_invars[mesh_idx]):
                 if donate:
-                    for buf in bufs:
-                        buf.set_deleted_on_workers()
+                    ref.set_deleted_on_workers()
 
         # Construct output_bufs
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
-            num_devices_per_host = physical_mesh.num_devices_per_host
-            output_uuid_transposed = output_uuids[mesh_idx].transpose([1, 0, 2])
-            output_bufs[mesh_idx] = np.empty(
-                (num_outs[mesh_idx], physical_mesh.num_devices), dtype=object)
+            output_uuid = output_uuids[mesh_idx]
+            output_bufs[mesh_idx] = np.empty((num_outs[mesh_idx],),
+                                             dtype=object)
             for i in range(num_outs[mesh_idx]):
-                for j in range(physical_mesh.num_devices):
-                    host_id = j // num_devices_per_host
-                    device_id = j % num_devices_per_host
-                    output_bufs[mesh_idx][i][j] = RemoteBufferRef(
-                        physical_mesh, host_id, device_id,
-                        output_uuid_transposed[i][host_id][device_id])
+                output_bufs[mesh_idx][i] = RemoteTensorRef(
+                    physical_mesh, output_uuid[i])
 
         # Check if there is OOM
         if global_config.pipeline_check_alive:
@@ -308,15 +298,6 @@ class PipeshardDriverExecutable:
             ret += str(task) + "\n\n"
         return ret
 
-    def _debug_check(self):
-        for mesh in self.mesh_group:
-            num_outs = -1
-            for worker in mesh.workers:
-                if num_outs == -1:
-                    num_outs = len(self.output_local_uuid_list[worker])
-                else:
-                    assert len(self.output_local_uuid_list[worker]) == num_outs
-
     ##### Other Functions #####
     def sync(self):
         """Sync device activities on all workers."""
@@ -423,16 +404,15 @@ class PipeshardMeshWorkerExecuable:
         # create a local buffer environment
         assert len(self.input_local_uuids) == len(input_global_uuids)
         buffers = {}
-        for local_ids, global_ids in zip(self.input_local_uuids,
+        for local_id, global_id in zip(self.input_local_uuids,
                                          input_global_uuids):
-            for local_id, global_id in zip(local_ids, global_ids):
-                buffers[local_id] = self.global_buffers[global_id]
+            buffers[local_id] = self.global_buffers[global_id]
         # add preallocated buffers for gradient accumulation
         buffers.update(self.acc_grad_buffers)
         # donate invars
-        for global_ids, donate in zip(input_global_uuids, self.donate_invars):
+        for global_id, donate in zip(input_global_uuids, self.donate_invars):
             if donate:
-                self.worker.delete_buffers(global_ids)
+                self.worker.delete_buffers(global_id)
         # load the local env
         self.worker.buffers = buffers
         sync_func = self.worker.sync if sync_for_timer else None
@@ -455,25 +435,25 @@ class PipeshardMeshWorkerExecuable:
             elif instruction.opcode == PipelineInstType.SEND:
                 timers("resharding_send").start()
                 self.worker.run_resharding_send_task(instruction.task_uuid,
-                                                     instruction.input_uuids)
+                                                     instruction.input_uuids[0])
                 timers("resharding_send").suspend()
             elif instruction.opcode == PipelineInstType.RECV:
                 timers("resharding_recv").start()
                 self.worker.run_resharding_recv_task(
-                    instruction.task_uuid, instruction.output_uuids,
+                    instruction.task_uuid, instruction.output_uuids[0],
                     instruction.opaques["set_empty_buffer"])
                 # TODO(lmzheng): move this to run_resharding_recv_task
                 if instruction.opaques["allgather_uuid"] is not None:
                     self.worker.run_allgather_task(
                         instruction.opaques["allgather_uuid"],
-                        instruction.output_uuids)
+                        instruction.output_uuids[0])
                 timers("resharding_recv").suspend()
             elif instruction.opcode == PipelineInstType.BROADCAST:
                 timers("resharding_broadcast").start()
                 self.worker.run_resharding_broadcast_task(
                     instruction.task_uuid,
-                    instruction.input_uuids if instruction.input_uuids
-                    is not None else instruction.output_uuids)
+                    (instruction.input_uuids if instruction.input_uuids
+                    is not None else instruction.output_uuids)[0])
                 timers("resharding_broadcast").suspend()
             elif instruction.opcode == PipelineInstType.FREE:
                 timers("free").start()
@@ -492,18 +472,16 @@ class PipeshardMeshWorkerExecuable:
 
         # copy to global env
         assert len(self.output_local_uuids) == len(output_global_uuids)
-        for local_ids, global_ids in zip(self.output_local_uuids,
-                                         output_global_uuids):
-            for local_id, global_id in zip(local_ids, global_ids):
-                self.global_buffers[global_id] = buffers[local_id]
+        for local_id, global_id in zip(self.output_local_uuids,
+                                       output_global_uuids):
+            self.global_buffers[global_id] = buffers[local_id]
         # now acc_grad_buffers are those after grad acc, before apply grad
         # with memzero. These buffers are reused in the next iteration.
         # TODO(yonghao): never donate them
         if self.use_memzero:
-            for in_uuids, out_uuids in zip(self.acc_in_uuids,
-                                           self.acc_out_uuids):
-                for in_uuid, out_uuid in zip(in_uuids, out_uuids):
-                    self.acc_grad_buffers[in_uuid] = buffers[out_uuid]
+            for in_uuid, out_uuid in zip(self.acc_in_uuids,
+                                         self.acc_out_uuids):
+                self.acc_grad_buffers[in_uuid] = buffers[out_uuid]
         # restore global environment
         self.worker.buffers = self.global_buffers
         buffers.clear()

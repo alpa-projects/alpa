@@ -233,6 +233,7 @@ class PipeshardConfig:
     # Executable configs
     instruction_lists: Dict[Any, Sequence[PipelineInstruction]]
     xla_stages: Sequence[XlaShardedPipelineComputation]
+    # FIXME(yonghao): share this setting within a mesh
     executable_configs: Dict[Any, Sequence[ExecutableConfig]]
     executable_uuids: Sequence[int]
     schedule: PipelineSchedule
@@ -242,7 +243,7 @@ class PipeshardConfig:
     # Input configs
     input_config: PipeshardInputConfig
     grad_uuids: Sequence[np.ndarray]
-    reduced_var_uuid_lists: Dict[Any, np.ndarray]
+    reduced_var_uuid_lists: Sequence[np.ndarray]
     # Output configs
     output_local_uuid_list: Sequence[Sequence[int]]
     outs_handler: Callable
@@ -416,20 +417,22 @@ class PipelineInstEmitter:
             self._compile_collect_outputs())
         outs_handler = self._get_outs_handler(mesh_output_indices,
                                               output_spec_list)
-
-        # Insert buffer free instructions
-        reduced_var_uuid_lists = {}
-        for worker in instruction_lists:
-            mesh_idx, worker_idx = worker_to_idx[worker]
-            used_outside = flatten_uuid_set(output_local_uuid_list[mesh_idx])
+        # Add gradient accumulation buffer
+        reduced_var_uuid_lists = []
+        for mesh_idx in range(len(num_mesh)):
             reduced_var_uuids = grad_uuids[mesh_idx]
             reduced_var_uuids = np.array([
                 donation_mapping[mesh_idx].recursive_lookup(uuid)
                 for uuid in reduced_var_uuids
             ])
+            reduced_var_uuid_lists.append(reduced_var_uuids)
+        # Insert buffer free instructions
+        for worker in instruction_lists:
+            mesh_idx, worker_idx = worker_to_idx[worker]
+            used_outside = flatten_uuid_set(output_local_uuid_list[mesh_idx])
+            
             donated = set(donation_mapping[mesh_idx].keys())
             used_outside.update(flatten_uuid_set(reduced_var_uuids))
-            reduced_var_uuid_lists[worker] = reduced_var_uuids
             instruction_lists[worker] = self._compile_free(
                 worker, used_outside, donated, instruction_lists)
 
@@ -933,7 +936,7 @@ class PipelineInstEmitter:
                 spec_list.append([])
                 indices_list.append([])
 
-                for _, mesh_idx in enumerate(outvar_idx_to_mesh_idx[i]):
+                for mesh_idx in outvar_idx_to_mesh_idx[i]:
                     outvar_index_on_mesh = mesh_output_indices[i][mesh_idx]
                     spec = output_spec_list[mesh_idx][outvar_index_on_mesh]
 

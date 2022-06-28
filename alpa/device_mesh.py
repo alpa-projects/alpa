@@ -580,11 +580,11 @@ class MeshHostWorker:
                 self.allgather_communicators[repr(device_ids)] = communicators
         self.allgather_tasks[uuid] = all_gather_task
 
-    def run_allgather_task(self, uuid, buffer_uuids):
+    def run_allgather_task(self, uuid, tensor_uuid):
         task: ReshardingAllGatherTask = self.allgather_tasks[uuid]
         allgather_specs = task.allgather_specs
         for allgather_spec in allgather_specs:
-            self.allgather(buffer_uuids, allgather_spec.device_ids,
+            self.allgather(tensor_uuid, allgather_spec.device_ids,
                            allgather_spec.tensor_slices,
                            allgather_spec.output_slice)
 
@@ -621,15 +621,15 @@ class MeshHostWorker:
 
     def run_resharding_broadcast_task(self,
                                       uuid,
-                                      buf_uuid,
+                                      tensor_uuid,
                                       set_empty_buffer=True):
         task: ReshardingBroadcastTask = self.broadcast_tasks[uuid]
         broadcast_specs = task.broadcast_specs
-        if set_empty_buffer and buf_uuid not in self.buffers:
+        if set_empty_buffer and tensor_uuid not in self.buffers:
             picked_spec = list(broadcast_specs.values())[0]
             shape = picked_spec.recv_tile_shape
             dtype = picked_spec.dtype
-            self.buffers[buf_uuid] = [
+            self.buffers[tensor_uuid] = [
                 self.backend.buffer_from_pyval(np.full(shape, 1e-8, dtype),
                                                self.local_devices[device_id])
                 for device_id in range(self.num_devices)
@@ -637,7 +637,7 @@ class MeshHostWorker:
         for group_idx in broadcast_specs:
             broadcast_spec: ReshardingBroadcastSpec = broadcast_specs[group_idx]
 
-            self.broadcast(buf_uuid, broadcast_spec.comm_key,
+            self.broadcast(tensor_uuid, broadcast_spec.comm_key,
                            broadcast_spec.world_size,
                            broadcast_spec.devices_ids,
                            broadcast_spec.devices_global_rank,

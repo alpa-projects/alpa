@@ -130,7 +130,7 @@ if __name__ == "__main__":
             # print(a)
             latency = time.time() - tic
 
-            compute_latency = model.get_execution_time_costs(warmup=0)[-1]
+            compute_latency = model.get_execution_time_costs()[-1]
             # print(f"input length: {input_ids.shape[1]}, output_length: {input_ids.shape[1]}, num_gpus: {num_gpus}")
             assert decoder_length_per_step == input_ids.shape[1]
 
@@ -207,8 +207,7 @@ if __name__ == "__main__":
 
             if "alpa" in args.model:
                 compute_latency = sum(
-                    model.executable.get_execution_time_costs(
-                        warmup=0)[-gen_len:])
+                    model.executable.get_execution_time_costs()[-gen_len:])
             else:
                 compute_latency = latency
             tflops = compute_gpt_tflops_inference_with_padding(

@@ -28,8 +28,6 @@ def run_benchmark(args):
     alpa.global_config.pipeline_parallel_sync_for_timer = True
     alpa.global_config.delete_remote_buffers_threshold = 700
 
-    config = get_opt_config(name)
-    model, params_aval = init_model_aval(config)
     batch_size = 1
     seq_len = 16
     dummy = args.dummy
@@ -42,6 +40,8 @@ def run_benchmark(args):
         return output.logits, output.attention_cache
 
     if args.parallel_method == "jit":
+        config = get_opt_config(name)
+        model, params_aval = init_model_aval(config)
         params = load_params_np(params_aval, path, config, dummy)
         cache = init_cache_np(config, batch_size)
         params, cache = jax.tree_map(jnp.array, (params, cache))
@@ -50,16 +50,35 @@ def run_benchmark(args):
         sync_func = lambda : jax.local_devices()[0].synchronize_all_activity()
         executable = None
         num_gpus = 1
-    elif args.parallel_method in ["local_shard", "ray_shard"]:
-        if args.parallel_method == "local_shard":
-            alpa.init(cluster="local")
-            num_gpus = len(jax.local_devices())
+    else:
+        if args.parallel_method in ["shard_local", "shard_ray"]:
+            assert dummy == True, 'Only support dummy weights. Plasese add "--dummy".'
+
+            config = get_opt_config(name)
+            model, params_aval = init_model_aval(config)
+            if args.parallel_method == "local_shard":
+                alpa.init(cluster="local")
+                num_gpus = len(jax.local_devices())
+            else:
+                alpa.init(cluster="ray")
+                num_gpus = alpa.get_global_cluster().num_devices
+
+            method = alpa.ShardParallel(auto_sharding_option=alpa.AutoShardingOption())
+            infer_step = alpa.parallelize(inference_step_with_cache, method=method)
         else:
+            assert args.parallel_method == "pipeshard"
             alpa.init(cluster="ray")
             num_gpus = alpa.get_global_cluster().num_devices
+            num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
+            config = get_opt_config(name, num_pp_stages=num_pp_stages)
+            model, params_aval = init_model_aval(config)
 
-        method = alpa.ShardParallel(auto_sharding_option=alpa.AutoShardingOption())
-        infer_step = alpa.parallelize(inference_step_with_cache, method=method)
+            method = alpa.PipeshardParallel(num_micro_batches=1,
+                                            pipeline_schedule="inference")
+            infer_step = alpa.manual_layer_construction(inference_step_with_cache)
+            infer_step = alpa.parallelize(infer_step, method=method)
+            alpa.global_config.always_donate_micro_batch_vars = False
+
         executable = infer_step.get_executable(
             params_aval, {
                 "input_ids": jax.core.ShapedArray((batch_size, 1), jnp.int32),
@@ -68,7 +87,6 @@ def run_benchmark(args):
             })
         executable.dump_debug_info("tmp")
 
-        assert dummy == True, 'Only support dummy weights. Plasese add "--dummy".'
         params = load_params_dis_array(path, executable, params_aval, config, dummy)
         cache = init_cache_dis_array(executable, config, batch_size, dummy)
         set_skip_shard_args_check(cache)
@@ -76,10 +94,8 @@ def run_benchmark(args):
         if args.parallel_method == "local_shard":
             # Already synced by the local timer
             sync_func = lambda : None
-        elif args.parallel_method == "ray_shard":
+        else:
             sync_func = lambda : executable.sync()
-    else:
-        raise ValueError("Invalid parallel method: {args.parallel_method}")
 
     input_ids = np.random.randint(0, 10000, size=(batch_size, seq_len), dtype=np.int32)
     position_ids = build_position_ids(input_ids, config.pad)
@@ -129,7 +145,7 @@ if __name__ == "__main__":
     parser.add_argument("--path", type=str, default="/home/ubuntu/opt_weights/")
     parser.add_argument("--dummy", action="store_true")
     parser.add_argument("--parallel-method", type=str, required=True,
-        choices=["jit", "local_shard", "ray_shard", "pipeshard"])
+        choices=["jit", "shard_local", "shard_ray", "pipeshard"])
     args = parser.parse_args()
 
     run_benchmark(args)

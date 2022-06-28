@@ -223,7 +223,6 @@ class PipeshardDriverExecutable:
 
     ##### Profiling and Debugging Related Functions #####
     def get_execution_time_costs(self,
-                                 warmup=2,
                                  timer_name="overall",
                                  return_all_costs=False):
         """Get the execution time costs with internal timers."""
@@ -233,7 +232,7 @@ class PipeshardDriverExecutable:
                 f"Query timer name from the following: {timer_names.keys()}.")
         mesh_costs = []
         for mesh in self.mesh_group:
-            mesh_costs.append(mesh.get_remote_timer(timer_name).costs[warmup:])
+            mesh_costs.append(mesh.get_remote_timer(timer_name).costs)
         if return_all_costs:
             return mesh_costs
 
@@ -246,6 +245,10 @@ class PipeshardDriverExecutable:
                 if cost < min_costs[i]:
                     min_costs[i] = cost
         return max_costs
+
+    def get_shard_args_time_costs(self):
+        # TODO(lmzheng): Implement this
+        return [0]
 
     def reset_benchmark_timers(self):
         """Reset all benchmarking timers."""
@@ -390,6 +393,7 @@ class PipeshardMeshWorkerExecuable:
                                            PartialGradAccMeshWorkerExecutable,
                                            task_config.hlo_proto,
                                            task_config.stage_plan,
+                                           task_config.donated_invars,
                                            task_config.grad_sync_channel_ids)
                 self.partial_grad_exec_uuids.add(task_config.exec_uuid)
             elif isinstance(task_config, MemZeroWorkerExecutableConfig):

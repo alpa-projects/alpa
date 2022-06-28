@@ -288,7 +288,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             for w in physical_mesh.workers:
                 w.put_executable.remote(self.exec_uuid,
                                         NormalMeshWorkerExecutable, hlo_proto,
-                                        stage_plan)
+                                        stage_plan, self.donated_invars)
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
 
@@ -471,25 +471,30 @@ def set_buffers(buffer_dict, uuids, buffers):
         buffer_dict[uuid] = buf
 
 
-def delete_donated_buffers(buffer_dict, uuids):
+def delete_donated_buffers(buffer_dict, uuids, donated_invars):
     """Delete the donated buffers from the local buffer dictionary."""
     for i in range(len(uuids)):
-        for j in range(len(uuids[i])):
-            uuid = uuids[i][j]
-            if buffer_dict[uuid].is_deleted():
-                del buffer_dict[uuid]
+        #for j in range(len(uuids[i])):
+        #    uuid = uuids[i][j]
+        #    if isinstance(uuid,
+        #                  (np.int64, int)) and buffer_dict[uuid].is_deleted():
+        #        del buffer_dict[uuid]
+        if donated_invars[i]:
+            for j in range(len(uuids[i])):
+                del buffer_dict[uuids[i][j]]
 
 
 class NormalMeshWorkerExecutable(MeshWorkerExecutable):
     """The worker part of a normal mesh executable."""
 
     def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
-                 stage_plan: StagePlan):
+                 stage_plan: StagePlan, donated_invars: Sequence[bool]):
         num_devices = np.prod(stage_plan.logical_mesh_shape)
         assert num_devices == len(worker.backend.devices())
 
         self.compiled = run_backend_compilation(worker.backend, hlo_proto,
                                                 stage_plan, num_devices)
+        self.donated_invars = donated_invars
         self.worker = worker
 
         # Set up timers
@@ -519,7 +524,7 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
             set_buffers(buffer_dict, output_uuids[i], output_bufs[i])
 
         # Delete donated input buffers
-        delete_donated_buffers(buffer_dict, input_uuids)
+        delete_donated_buffers(buffer_dict, input_uuids, self.donated_invars)
 
     def profile_with_dummy_inputs(self, backend, local_devices):
         """Profile the time cost of this executable with dummy inputs."""
@@ -965,7 +970,7 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
             set_buffers(buffer_dict, output_uuids[i], output_bufs[i])
 
         # Delete donated input buffers
-        delete_donated_buffers(buffer_dict, first_batch_uuids)
+        delete_donated_buffers(buffer_dict, first_batch_uuids, self.donated_invars)
 
         # Delete micro batch buffers
         if next_batches_uuids is not None:
@@ -1015,6 +1020,7 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
                 w.put_executable.remote(self.exec_uuid,
                                         PartialGradAccMeshWorkerExecutable,
                                         hlo_proto, stage_plan,
+                                        self.donated_invars,
                                         self.out_acc_grad_indices)
             self.hlo_text = None  # will be fetched from the workers later
             self.grad_sync_channel_ids = None
@@ -1052,8 +1058,9 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
     """
 
     def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
-                 stage_plan: StagePlan, output_acc_grad_indices: str):
-        super().__init__(worker, uuid, hlo_proto, stage_plan)
+            stage_plan: StagePlan, donated_invars: Sequence[bool],
+                 output_acc_grad_indices: str):
+        super().__init__(worker, uuid, hlo_proto, stage_plan, donated_invars)
         self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
             self.compiled.hlo_modules()[0], output_acc_grad_indices)
         self.skip_allreduce_env_name = (self.compiled.hlo_modules()[0].name() +

@@ -47,7 +47,7 @@ def run_benchmark(args):
         params, cache = jax.tree_map(jnp.array, (params, cache))
 
         infer_step = jax.jit(inference_step_with_cache)
-        sync_func = lambda : jax.local_devices()[0].synchronize_all_activity()
+        sync_func = lambda: jax.local_devices()[0].synchronize_all_activity()
         executable = None
         num_gpus = 1
     else:
@@ -63,8 +63,10 @@ def run_benchmark(args):
                 alpa.init(cluster="ray")
                 num_gpus = alpa.get_global_cluster().num_devices
 
-            method = alpa.ShardParallel(auto_sharding_option=alpa.AutoShardingOption())
-            infer_step = alpa.parallelize(inference_step_with_cache, method=method)
+            method = alpa.ShardParallel(
+                auto_sharding_option=alpa.AutoShardingOption())
+            infer_step = alpa.parallelize(inference_step_with_cache,
+                                          method=method)
         else:
             assert args.parallel_method == "pipeshard"
             alpa.init(cluster="ray")
@@ -75,29 +77,37 @@ def run_benchmark(args):
 
             method = alpa.PipeshardParallel(num_micro_batches=1,
                                             pipeline_schedule="inference")
-            infer_step = alpa.manual_layer_construction(inference_step_with_cache)
+            infer_step = alpa.manual_layer_construction(
+                inference_step_with_cache)
             infer_step = alpa.parallelize(infer_step, method=method)
             alpa.global_config.always_donate_micro_batch_vars = False
 
         executable = infer_step.get_executable(
             params_aval, {
-                "input_ids": jax.core.ShapedArray((batch_size, 1), jnp.int32),
-                "position_ids": jax.core.ShapedArray((batch_size, 1), jnp.int32),
-                "cache": init_cache_aval(config, batch_size),
+                "input_ids":
+                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                "position_ids":
+                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                "cache":
+                    init_cache_aval(config, batch_size),
             })
         executable.dump_debug_info("tmp")
 
-        params = load_params_dis_array(path, executable, params_aval, config, dummy)
+        params = load_params_dis_array(path, executable, params_aval, config,
+                                       dummy)
         cache = init_cache_dis_array(executable, config, batch_size, dummy)
         set_skip_shard_args_check(cache)
         infer_step = executable
         if args.parallel_method == "local_shard":
             # Already synced by the local timer
-            sync_func = lambda : None
+            sync_func = lambda: None
         else:
-            sync_func = lambda : executable.sync()
+            sync_func = lambda: executable.sync()
 
-    input_ids = np.random.randint(0, 10000, size=(batch_size, seq_len), dtype=np.int32)
+    input_ids = np.random.randint(0,
+                                  10000,
+                                  size=(batch_size, seq_len),
+                                  dtype=np.int32)
     position_ids = build_position_ids(input_ids, config.pad)
 
     step_latencies = []
@@ -121,7 +131,8 @@ def run_benchmark(args):
         step_latencies.append(end_time - start_time)
         if executable:
             compute_latencies.append(executable.get_execution_time_costs()[-1])
-            shard_args_latencies.append(executable.get_shard_args_time_costs()[-1])
+            shard_args_latencies.append(
+                executable.get_shard_args_time_costs()[-1])
         else:
             compute_latencies.append(step_latencies[-1])
             shard_args_latencies.append(0)
@@ -129,13 +140,16 @@ def run_benchmark(args):
         print(f"{i}, step_latency: {step_latencies[-1] * 1000:.2f} ms")
 
     warmup = 3
-    heads = ["Model", "Parallel Method", "Dummy", "#gpu",
-             "Step Latency (ms)", "Compute Latency (ms)",
-             "ShardArgs Latency (ms)"]
-    values = [args.model, args.parallel_method, args.dummy, num_gpus,
-              f"{np.mean(step_latencies[warmup:]) * 1e3:.2f}",
-              f"{np.mean(compute_latencies[warmup:]) * 1e3:.2f}",
-              f"{np.mean(shard_args_latencies[warmup:]) * 1e3:.2f}"]
+    heads = [
+        "Model", "Parallel Method", "Dummy", "#gpu", "Step Latency (ms)",
+        "Compute Latency (ms)", "ShardArgs Latency (ms)"
+    ]
+    values = [
+        args.model, args.parallel_method, args.dummy, num_gpus,
+        f"{np.mean(step_latencies[warmup:]) * 1e3:.2f}",
+        f"{np.mean(compute_latencies[warmup:]) * 1e3:.2f}",
+        f"{np.mean(shard_args_latencies[warmup:]) * 1e3:.2f}"
+    ]
     write_tsv(heads, values, "result_step_func.tsv")
 
 
@@ -144,7 +158,10 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="alpa/opt-2.7b")
     parser.add_argument("--path", type=str, default="/home/ubuntu/opt_weights/")
     parser.add_argument("--dummy", action="store_true")
-    parser.add_argument("--parallel-method", type=str, required=True,
+    parser.add_argument(
+        "--parallel-method",
+        type=str,
+        required=True,
         choices=["jit", "shard_local", "shard_ray", "pipeshard"])
     args = parser.parse_args()
 

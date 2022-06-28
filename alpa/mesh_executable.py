@@ -74,8 +74,7 @@ class MeshDriverExecutable(ABC):
     def get_execution_time_costs(self):
         """Return the pure execution time costs recorded by an internal
         timer."""
-        return self.physical_mesh.get_remote_timer(
-            self.exec_timer_name).costs
+        return self.physical_mesh.get_remote_timer(self.exec_timer_name).costs
 
     def get_shard_args_time_costs(self):
         """Return the time costs of sharding input arguments."""
@@ -970,7 +969,8 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
             set_buffers(buffer_dict, output_uuids[i], output_bufs[i])
 
         # Delete donated input buffers
-        delete_donated_buffers(buffer_dict, first_batch_uuids, self.donated_invars)
+        delete_donated_buffers(buffer_dict, first_batch_uuids,
+                               self.donated_invars)
 
         # Delete micro batch buffers
         if next_batches_uuids is not None:
@@ -1058,7 +1058,7 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
     """
 
     def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
-            stage_plan: StagePlan, donated_invars: Sequence[bool],
+                 stage_plan: StagePlan, donated_invars: Sequence[bool],
                  output_acc_grad_indices: str):
         super().__init__(worker, uuid, hlo_proto, stage_plan, donated_invars)
         self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(

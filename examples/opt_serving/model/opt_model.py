@@ -834,7 +834,8 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
         flat_args, in_tree = tree_flatten(params_aval)
         flat_info = tree_leaves(params_info)
         if hasattr(executable, "mesh_group"):
-            ret = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
+            ret = executable.mesh_group.shard_args_to_arrays(
+                flat_info, flat_args)
         else:
             ret = executable.physical_mesh.shard_args_to_arrays_ps(
                 flat_info, flat_args)

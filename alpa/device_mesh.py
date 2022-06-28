@@ -540,8 +540,8 @@ class MeshHostWorker:
 
     ##### Other Functions #####
     def sync(self):
-        # Because of SPMD, we can only sync one device
-        # for smaller runtime overhead
+        # We sync one device instead of all for smaller runtime overhead.
+        # This is correct because of SPMD.
         self.local_devices[0].synchronize_all_activity()
 
     @staticmethod
@@ -696,18 +696,20 @@ class PhysicalDeviceMesh(ABC):
         """Shard arguments (np.ndarray) as distributed arrays."""
         raise NotImplementedError()
 
-    def shard_args_to_arrays_ps(self,
-            placement_specs: PlacementSpec, args: Sequence[Any]):
+    def shard_args_to_arrays_ps(self, placement_specs: PlacementSpec,
+                                args: Sequence[Any]):
         """
         Shard arguments (np.ndarray) as distributed arrays according to
         PlacementSpec.
         """
         avals = tuple(x.aval for x in placement_specs)
-        assert all(len(x.mesh_ids) == 1 and x.mesh_ids[0] == self.mesh_id
-                   for x in placement_specs)
+        assert all(
+            len(x.mesh_ids) == 1 and x.mesh_ids[0] == self.mesh_id
+            for x in placement_specs)
         specs = tuple(x.sharding_specs[0] for x in placement_specs)
-        indices = tuple(pxla.spec_to_indices(aval.shape, spec)
-                        for aval, spec in zip(avals, specs))
+        indices = tuple(
+            pxla.spec_to_indices(aval.shape, spec)
+            for aval, spec in zip(avals, specs))
         return self.shard_args_to_arrays(avals, indices, specs, args)
 
     @abstractmethod
@@ -790,8 +792,8 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
                     for x in micro_batches
                 ])
             else:
-                if (isinstance(arg, pxla.ShardedDeviceArray) and 
-                    arg.indices == indices):
+                if (isinstance(arg, pxla.ShardedDeviceArray) and
+                        arg.indices == indices):
                     bufs.append(arg.device_buffers)
                 else:
                     bufs.append(pxla._shard_arg(arg, self.devices, indices))
@@ -853,8 +855,8 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     ##### Other Functions #####
     def sync_workers(self):
-        # Because of SPMD, we can only sync one device
-        # for smaller runtime overhead
+        # We sync one device instead of all for smaller runtime overhead.
+        # This is correct because of SPMD.
         self.devices[0].synchronize_all_activity()
 
     def shutdown(self, forced=False):

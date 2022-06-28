@@ -47,7 +47,7 @@ def initialize_with_zeros(*args):
         return jax.tree_map(lambda x: torch.zeros(*x.shape, dtype=x.dtype),
                             args)
     else:
-        return jax.tree_map(lambda x: jnp.zeros(x.shape, x.dtype), args)
+        return jax.tree_map(lambda x: jnp.zeros(x.shape, torch_to_numpy_dtype_dict[x.dtype]), args)
 
 
 def to_format(target_format: str, inp: Any):

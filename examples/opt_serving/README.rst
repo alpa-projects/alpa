@@ -4,20 +4,24 @@ Serving OPT-175B using Alpa
 
 This tutorial shows how to setup a serving system to serve the largest available pretrained language model `OPT-175B <https://github.com/facebookresearch/metaseq/tree/main/projects/OPT>`_.
 
+This tutorial is best to be read in its rendered version on the `Alpa documentation page <https://alpa-projects.github.io/tutorials/opt_serving.html>`_.
+
 
 Overview
 ========
 As a serving system, Alpa offers the following unique advantages:
 
+* **Designed for large models**: Cannot fit the model into a single GPU? Not a problem, Alpa is designed for training and serving big models like GPT-3.
+
 * **Support commodity hardware**: With Alpa, you can serve OPT-175B using your in-house GPU cluster, without needing the latest generations of A100 80GB GPUs nor fancy InfiniBand connections -- no hardware constraints!
 
-* **Flexible parallelism strategies**: Alpa will automatically figure out the appropriate model-parallel strategies based on your cluster setup.
+* **Flexible parallelism strategies**: Alpa will automatically figure out the appropriate model-parallel strategies based on your cluster setup and your model architecture.
 
 In this example, we use Alpa to serve the open-source OPT model, supporting all sizes ranging from 125M to 175B. Specifically, Alpa provides:
 
-* A backend to perform efficient model-parallel inference for the large OPT models.
+* A distributed backend to perform efficient model-parallel inference for the large OPT models.
 
-* A web frontend to collect and batch inference requests from users.
+* An web frontend to collect and batch inference requests from users.
 
 .. note::
 
@@ -25,7 +29,8 @@ In this example, we use Alpa to serve the open-source OPT model, supporting all 
 
 .. note:: 
 
-  You will need at least 350GB memory to to serve the OPT-175B model. For example, you can use 4 x AWS p3.16xlarge instances, which provide 4 (instance) x 8 (GPU/instance) x 16 (GB/GPU) = 512 GB memory.
+  You will need at least 350GB memory on your entire cluster to to serve the OPT-175B model.
+  For example, you can use 4 x AWS p3.16xlarge instances, which provide 4 (instance) x 8 (GPU/instance) x 16 (GB/GPU) = 512 GB memory.
     
   You can also follow this guide to setup a serving system to serve smaller versions of OPT, such as OPT-66B, OPT-30B, etc.
   Pick an appropriate size from `OPT weight downloading page <https://github.com/facebookresearch/metaseq/tree/main/projects/OPT>`_ based on your available resources.
@@ -90,43 +95,47 @@ Convert weights into Alpa formats by yourself
 ---------------------------------------------
 We provide detailed instructions below on how to convert the original OPT-175B weights into Alpa-compatible formats. You can follow the same procedures to get Alpa-compatible weights for other model sizes.
 
-0. Download and verify the weights:
-    First, download Metaseq's original OPT-175B weights in 992 shards, verify the `MD5 of the shards <https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/assets/opt175b_md5sum_shards.csv>`_  of the shards, and put the shards under a folder, say, ``PATH_TO_992_SHARDS/``.
+1. Download and verify the original weights
+    First, download Metaseq's original OPT-175B weights in 992 shards, verify the `MD5 of each shard <https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/assets/opt175b_md5sum_shards.csv>`_ , and put the shards under a folder, say, ``PATH_TO_992_SHARDS/``.
 
-1. Consolidate the weights from 992 shards into one single checkpoint:
-    Use the script `step_1_consolidate_992_shards_to_singleton.py <https://github.com/alpa-projects/alpa/blob/hao-add-weight-script/examples/opt_serving/scripts/step_1_consolidate_992_shards_to_singleton.py>`_ to consolidate the 992 shards into one single checkpoint.
-  
+2. Consolidate the weights from 992 shards into one single checkpoint
+    Use the script `step_2_consolidate_992_shards_to_singleton.py <https://github.com/alpa-projects/alpa/blob/hao-add-weight-script/examples/opt_serving/scripts/step_2_consolidate_992_shards_to_singleton.py>`_ as:
+
   .. code:: shell
   
-    python step_1_consolidate_992_shards_to_singleton.py --read-prefix PATH_TO_992_SHARDS/checkpoint_last --save_prefix PATH_TO_SAVE_CHECKPOINT
+    python step_2_consolidate_992_shards_to_singleton.py --read-prefix PATH_TO_992_SHARDS/checkpoint_last --save_prefix PATH_TO_SAVE_CHECKPOINT
   
-  The consolidated checkpoint will be saved at ``PATH_TO_SAVE_CHECKPOINT``.
+  The consolidated checkpoint will be saved at ``PATH_TO_SAVE_CHECKPOINT`` as specified in the command.
   
   .. note::
   
     The above script will require a peak memory (RAM) usage as large as twice of the model size. 
     For example, if you are performing consolidation for the 175B model, it will approximately have a peak memory usage of 175B x 2 bytes x 2 = 700GB. 
-    Please make sure you RAM is sufficient to run the script.
+    Please make sure you RAM is sufficient to run the script without throwing an OOM exception.
     
   .. note::
   
-    The above script will save the consolidated checkpoint at ``PATH_TO_SAVE_CHECKPOINT``, hence will require at least 350GB disk space available.
+    The above script will save the model weights as a single consolidated checkpoint at ``PATH_TO_SAVE_CHECKPOINT``, hence will require at least 350GB disk space available.
   
 
-2. Convert the model into Alpa-compatible formats
-  
-    Alpa ingests weights simply from numpy formats. Use the script `step_2_convert_to_numpy_weights.py <https://github.com/alpa-projects/alpa/blob/hao-add-weight-script/examples/opt_serving/scripts/step_2_convert_to_numpy_weights.py>`_ to convert the
+3. Convert the single checkpoint into Alpa-compatible formats
+    Alpa ingests weights simply from numpy formats. Use the script `step_3_convert_to_numpy_weights.py <https://github.com/alpa-projects/alpa/blob/hao-add-weight-script/examples/opt_serving/scripts/step_3_convert_to_numpy_weights.py>`_ to convert the
     single checkpoint into numpy formats:
     
     .. code:: shell
   
-      python step_2_convert_to_numpy_weights.py --ckpt_path PATH_TO_SAVE_CHECKPOINT --output-folder OUTPUT_PATH
-    
-    The weights will be saved at the folder ``OUTPUT_PATH``.
+      python step_3_convert_to_numpy_weights.py --ckpt_path PATH_TO_SAVE_CHECKPOINT --output-folder OUTPUT_PATH
+
+
+    The weights will be saved at the folder ``OUTPUT_PATH`` as specified in the command.
     
   .. note::
   
-    The above script also require 350GB free disk space to write the numpy-formatted weights.
+    Similarly, the above script also require 350GB free disk space to write the numpy-formatted weights.
+
+
+4. Verify the output weights
+    Verify the MD5 of your converted weights to ensure there are no errors during the conversion.
     
     
 Download Alpa-compatible weights
@@ -138,7 +147,7 @@ Alternatively, we provide links to download the preprocessed 125M, 2.7B, 30B mod
  * `OPT-30B weights <https://drive.google.com/file/d/1_MBcgwTqHFboV0JkGWR03AOHusrxcHlu/view?usp=sharing>`_
    
 Due to Meta's license on the OPT-175B model, we are not able to provide public links for downloading the preprocessed OPT-175B weights. 
-If you need the weights for other model sizes but have trouble following the guide :ref:`Preprocess weights into numpy formats by yourself<process-weights>`,
+If you need the weights for other model sizes but have trouble following :ref:`the guide<process-weights>` to perform the conversion by yourself,
 please join `Alpa slack <https://forms.gle/YEZTCrtZD6EAVNBQ7>`_ to request a copy from the Alpa developer team.
 
 
@@ -153,28 +162,30 @@ Run generation using the 125M model with PyTorch/HuggingFace backend:
   python3 benchmark_text_gen.py --model facebook/opt-125m
 
 
-Run generation using the 125M model with JAX backend in debug model to see the generated text:
+Run generation using the 125M model with JAX backend in debug mode to see the generated text:
 
 .. code:: shell
 
   python3 benchmark_text_gen.py --model jax/opt-125m --path [PATH_TO_WEIGHT] --debug
 
 
-Run model-parallel generation using the 2.7B model with Alpa:
+Run model-parallel generation on multiple GPUs using the 2.7B model with Alpa:
 
 .. code:: shell
 
+  # Start ray on the node
   ray start --head
 
   python3 benchmark_text_gen.py --model alpa/opt-2.7b --path [PATH_TO_WEIGHT] --debug
 
 
-Run distributed generation with the 175B model using Alpa. Note you will need >350GB total GPU memory in the entire cluster to successfully run the inference.
+Run distributed generation with the 175B model using Alpa on a cluster of GPUs. Note you will need >350GB total GPU memory in the entire cluster to successfully run the inference.
 
+Before running the command below, start Ray on the cluster following `this guide <https://docs.ray.io/en/latest/cluster/cloud.html#manual-cluster>`_.
 
 .. code:: shell
 
-  # Remember to start Ray on the entire cluster before running the generation
+  # Remember to start Ray on all nodes of the cluster
   python3 benchmark_text_gen.py --model alpa/opt-175b --path [PATH_TO_WEIGHT] --debug
 
 Launch a Web Server to Serve the OPT Models
@@ -201,4 +212,4 @@ Code structure
 
 License
 =======
-The use of the OPT pretrained weights are subject to the `Model License <https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/MODEL_LICENSE.md>`_ by Metaseq.
+The use of the OPT pretrained weights is subject to the `Model License <https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/MODEL_LICENSE.md>`_ by Metaseq.

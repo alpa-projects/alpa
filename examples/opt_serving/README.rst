@@ -14,19 +14,20 @@ As a serving system, Alpa offers the following unique advantages:
 * **Flexible parallelism strategies**: Alpa will automatically figure out the appropriate model-parallel strategies based on your cluster setup.
 
 In this example, we use Alpa to serve the open-source OPT model, supporting all sizes ranging from 125M to 175B. Specifically, Alpa provides:
+
 * A backend to perform efficient model-parallel inference for the large OPT models.
+
 * A web frontend to collect and batch inference requests from users.
 
 .. note::
 
-  The pre-trained OPT model weights can be obtained from [Metaseq](https://github.com/facebookresearch/metaseq), subject to their license.
+  The pre-trained OPT model weights can be obtained from `Metaseq <https://github.com/facebookresearch/metaseq>`_, subject to their license.
 
 .. note:: 
 
   You will need at least 350GB memory to to serve the OPT-175B model. For example, you can use 4 x AWS p3.16xlarge instances, which provide 4 (instance) x 8 (GPU/instance) x 16 (GB/GPU) = 512 GB memory.
     
-  You can also follow this guide to setup a serving system to serve smaller versions of OPT, such as OPT-66B, OPT-30B, etc. 
-    
+  You can also follow this guide to setup a serving system to serve smaller versions of OPT, such as OPT-66B, OPT-30B, etc.
   Pick an appropriate size from `OPT weight downloading page <https://github.com/facebookresearch/metaseq/tree/main/projects/OPT>`_ based on your available resources.
 
 Demo
@@ -81,51 +82,51 @@ Requirements
   
 Get Alpa-compatible OPT Weights
 ===============================
-There are two ways to obtain Alpa-compatible OPT weights: proprocessing the weights by yourself or downloading a copy of preprocessed weights provided by the Alpa team. 
+There are two ways to obtain Alpa-compatible OPT weights: converting the weights by yourself or downloading a copy of processed weights provided by the Alpa team.
 
 .. _process-weights:
 
-Preprocess weights into numpy formats by yourself
--------------------------------------------------
+Convert weights into Alpa formats by yourself
+---------------------------------------------
 We provide detailed instructions below on how to convert the original OPT-175B weights into Alpa-compatible formats. You can follow the same procedures to get Alpa-compatible weights for other model sizes.
 
-0. Download and verify the weights
-  First, download Metaseq's original 992 shards, verify the `MD5 of the shards <https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/assets/opt175b_md5sum_shards.csv>`_  of the shards, and put the shards under a folder, say, ``PATH_TO_992_SHARDS/``.
+0. Download and verify the weights:
+    First, download Metaseq's original OPT-175B weights in 992 shards, verify the `MD5 of the shards <https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/assets/opt175b_md5sum_shards.csv>`_  of the shards, and put the shards under a folder, say, ``PATH_TO_992_SHARDS/``.
 
-1. Consolidate the weights from 992 shards into one single checkpoint
-  Use the script `step_1_consolidate_992_shards_to_singleton.py <scripts/step_1_consolidate_992_shards.py>`_ to consolidate the 992 shards into one single checkpoint.
+1. Consolidate the weights from 992 shards into one single checkpoint:
+    Use the script `step_1_consolidate_992_shards_to_singleton.py <https://github.com/alpa-projects/alpa/blob/hao-add-weight-script/examples/opt_serving/scripts/step_1_consolidate_992_shards_to_singleton.py>`_ to consolidate the 992 shards into one single checkpoint.
   
-  ..code:: shell
+  .. code:: shell
   
-    cd scripts && python step_1_consolidate_992_shards_to_singleton.py --read-prefix PATH_TO_992_SHARDS/checkpoint_last --save_prefix PATH_TO_SAVE_CHECKPOINT
+    python step_1_consolidate_992_shards_to_singleton.py --read-prefix PATH_TO_992_SHARDS/checkpoint_last --save_prefix PATH_TO_SAVE_CHECKPOINT
   
-  The consolidated checkpoint will be save at ``PATH_TO_SAVE_CHECKPOINT``.
+  The consolidated checkpoint will be saved at ``PATH_TO_SAVE_CHECKPOINT``.
   
   .. note::
   
     The above script will require a peak memory (RAM) usage as large as twice of the model size. 
     For example, if you are performing consolidation for the 175B model, it will approximately have a peak memory usage of 175B x 2 bytes x 2 = 700GB. 
-    Please make sure you RAM can support such a peak memory usage.
+    Please make sure you RAM is sufficient to run the script.
     
   .. note::
   
-    The above script will save the consolidated checkpoint at ``PATH_TO_SAVE_CHECKPOINT``, hence will require at least 350GB disk space.
+    The above script will save the consolidated checkpoint at ``PATH_TO_SAVE_CHECKPOINT``, hence will require at least 350GB disk space available.
   
 
 2. Convert the model into Alpa-compatible formats
   
-    Alpa ingests weights simply from numpy formats. Use the script `step_2_convert_to_numpy_weights.py <scripts/step_2_convert_to_numpy_weights.py>`_ to convert the 
+    Alpa ingests weights simply from numpy formats. Use the script `step_2_convert_to_numpy_weights.py <https://github.com/alpa-projects/alpa/blob/hao-add-weight-script/examples/opt_serving/scripts/step_2_convert_to_numpy_weights.py>`_ to convert the
     single checkpoint into numpy formats:
     
-    ..code:: shell
+    .. code:: shell
   
-      cd scripts && python step_2_convert_to_numpy_weights.py --ckpt_path PATH_TO_SAVE_CHECKPOINT --output-folder PATH_TO_SAVE_CHECKPOINT
+      python step_2_convert_to_numpy_weights.py --ckpt_path PATH_TO_SAVE_CHECKPOINT --output-folder OUTPUT_PATH
     
-    The weights will be saved at the folder specified as ``PATH_TO_SAVE_CHECKPOINT``.
+    The weights will be saved at the folder ``OUTPUT_PATH``.
     
   .. note::
   
-    The above script also require at least 350GB disk space to write the numpy-formatted weights.
+    The above script also require 350GB free disk space to write the numpy-formatted weights.
     
     
 Download Alpa-compatible weights
@@ -137,7 +138,8 @@ Alternatively, we provide links to download the preprocessed 125M, 2.7B, 30B mod
  * `OPT-30B weights <https://drive.google.com/file/d/1_MBcgwTqHFboV0JkGWR03AOHusrxcHlu/view?usp=sharing>`_
    
 Due to Meta's license on the OPT-175B model, we are not able to provide public links for downloading the preprocessed OPT-175B weights. 
-If you need the weights for other model sizes but have trouble following the guide :ref:`Preprocess weights into numpy formats by yourself<process-weights>`, please join `Alpa slack <https://forms.gle/YEZTCrtZD6EAVNBQ7`_ to request a copy from the Alpa developer team. 
+If you need the weights for other model sizes but have trouble following the guide :ref:`Preprocess weights into numpy formats by yourself<process-weights>`,
+please join `Alpa slack <https://forms.gle/YEZTCrtZD6EAVNBQ7>`_ to request a copy from the Alpa developer team.
 
 
 Run and Benchmark Generation in the Command Line
@@ -165,6 +167,8 @@ Run model-parallel generation using the 2.7B model with Alpa:
   ray start --head
 
   python3 benchmark_text_gen.py --model alpa/opt-2.7b --path [PATH_TO_WEIGHT] --debug
+
+
 Run distributed generation with the 175B model using Alpa. Note you will need >350GB total GPU memory in the entire cluster to successfully run the inference.
 
 
@@ -184,7 +188,7 @@ Launch the web server:
   python3 interactive_hosted.py --model alpa/opt-175b --port 10001 --path [PATH_TO_WEIGHT]
 
 
-Then open `·https://[IP-ADDRESS]:10001`` in your browser to try out the model!
+Then open ``https://[IP-ADDRESS]:10001`` in your browser to try out the model!
 
 Code structure
 ==============
@@ -197,4 +201,4 @@ Code structure
 
 License
 =======
-The use of the OPT pretrained weights are subject to the [Model License](https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/MODEL_LICENSE.md) by Metaseq.
+The use of the OPT pretrained weights are subject to the `Model License <https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/MODEL_LICENSE.md>`_ by Metaseq.

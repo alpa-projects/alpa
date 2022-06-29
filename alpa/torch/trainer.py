@@ -110,6 +110,7 @@ def train_torch_module(pt_module_gen, weight_init_func, dataloader, loss_func,
         # Initialize weights and optimizer states
         print("Create train state")
         state = create_train_state()
+        train_step_executable.sync()
 
         # Run training loops
         print("Run training loops")
@@ -118,9 +119,9 @@ def train_torch_module(pt_module_gen, weight_init_func, dataloader, loss_func,
             for i, pt_batch in enumerate(dataloader):
                 pt_batch = atorch.to_format(atorch.mode(), pt_batch)
                 state, loss_value = train_step(state, pt_batch)
-                # train_step_executable.sync()
+                train_step_executable.sync()
                 # # do whatever with the loss value, e.g. plot it on a graph
-                # print(f"Iter: {i}, Loss: {float(loss_value):.6f}")
+                print(f"Iter: {i}, Loss: {float(loss_value):.6f}")
         # latencies = executable.get_execution_time_costs(warmup=2)
         # print(f"latencies (sec): {latencies}")
         # print(f"avg. latency (sec): {np.mean(latencies)}")

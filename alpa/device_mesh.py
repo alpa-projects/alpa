@@ -19,7 +19,6 @@ time.
 from abc import ABC, abstractmethod
 from collections import defaultdict, namedtuple
 from collections.abc import Iterable
-from itertools import chain
 import logging
 from operator import attrgetter
 import os
@@ -63,8 +62,10 @@ from alpa.util import (benchmark_func, list_gpu_info, jax_tensor_to_cupy,
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-ReshardingTileSpec = namedtuple("ReshardingSendSpec",
+ReshardingTileSpec = namedtuple("ReshardingTileSpec",
                                 ["offset", "rank", "gpu_idx"])
+ReshardingSendSpec = namedtuple("ReshardingSendSpec",
+                                ["device_id", "tile_spec"])
 ReshardingSendTask = namedtuple("ReshardingSendTask",
                                 ["tile_specs", "group_name"])
 ReshardingRecvSpec = namedtuple("ReshardingRecvSpec",
@@ -488,7 +489,7 @@ class MeshHostWorker:
                                   src_gpu_idx,
                                   group_name,
                                   n_elements=n_elements)
-            buffer = cupy_to_xla_buffer(to_recv)
+            self.buffers[uuid][device_id] = cupy_to_xla_buffer(to_recv)
         else:
             # The following call will allocate memory and cause a few H2D and
             # D2D kernels.
@@ -545,9 +546,11 @@ class MeshHostWorker:
     def run_resharding_send_task(self, uuid, tensor_uuid):
         task: ReshardingSendTask = self.send_tasks[uuid]
         for send_tile_spec in task.tile_specs:
-            send_tile_spec: ReshardingTileSpec
-            self.send_tile(tensor_uuid, send_tile_spec.offset, send_tile_spec.rank,
-                           send_tile_spec.gpu_idx, task.group_name)
+            send_tile_spec: ReshardingSendSpec
+            self.send_tile(tensor_uuid, send_tile_spec.device_id,
+                           send_tile_spec.tile_spec.offset,
+                           send_tile_spec.tile_spec.rank,
+                           send_tile_spec.tile_spec.gpu_idx, task.group_name)
 
     def run_resharding_recv_task(self,
                                  uuid,
@@ -1334,8 +1337,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 slow_path = True
                 if not isinstance(arg, ShapedArray):
                     arg = np.asarray(arg)
-                bufs = _shard_array(arg, self, indices, num_micro_batches)
-                ret_bufs.append(np.array(bufs))
+                refs = _shard_array(arg, self, indices, num_micro_batches)
+                ret_bufs.append(np.array(refs))
             else:
                 if (isinstance(arg, DistributedArray) and
                         arg.device_mesh == self and arg.indices == indices):
@@ -1349,8 +1352,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                     slow_path = True
                     if type(arg) not in [ShapedArray, ShapeDtypeStruct]:
                         arg = xla.canonicalize_dtype(arg)
-                    bufs = shard_arg_handlers[type(arg)](arg, self, indices)
-                    ret_bufs.append(bufs)
+                    ref = shard_arg_handlers[type(arg)](arg, self, indices)[0]
+                    ret_bufs.append(ref)
                     if donated and hasattr(arg, "delete"):
                         # shard_arg_handler always creates new buffers,
                         # so we can delete the old buffers
@@ -1478,10 +1481,7 @@ remote_buffer_counter = 0
 def next_tensor_uuids(number=1):
     """Return the next uuid of a remote buffer."""
     global remote_buffer_counter
-    if number == 1:
-        ret = remote_buffer_counter
-    else:
-        ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
+    ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
     remote_buffer_counter = (remote_buffer_counter + number) % (1 << 60)
     return ret
 
@@ -1491,7 +1491,7 @@ class RemoteTensorRef:
 
     def __init__(self, device_mesh: PhysicalDeviceMesh, uuid: int = None):
         self.device_mesh = device_mesh
-        self.uuid = (uuid if uuid is not None else next_tensor_uuids())
+        self.uuid = (uuid if uuid is not None else next_tensor_uuids()[0])
         self.is_deleted_on_workers = False
         logger.debug(f"RemoteBufferRef uuid: {self.uuid} created on mesh "
                      f"with devices {self.device_mesh.device_strs}.")
@@ -1516,12 +1516,9 @@ class RemoteTensorRef:
 
 def create_remote_tensor_refs(device_mesh, num=1):
     tensor_uuids = next_tensor_uuids(num)
-    if num == 1:
-        tensor_refs = RemoteTensorRef(device_mesh, tensor_uuids)
-    else:
-        tensor_refs = [
-            RemoteTensorRef(device_mesh, uuid) for uuid in tensor_uuids
-        ]
+    tensor_refs = [
+        RemoteTensorRef(device_mesh, uuid) for uuid in tensor_uuids
+    ]
     return tensor_refs, tensor_uuids
 
 

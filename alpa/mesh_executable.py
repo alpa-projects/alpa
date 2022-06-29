@@ -244,8 +244,6 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
             # Shape: (num_outs,)
             output_uuids = next_tensor_uuids(num_outs)
-            if num_outs == 1:
-                output_uuids = [output_uuids]
 
             if "sync_before" not in kwargs:
                 kwargs["sync_before"] = kwargs["sync_after"] = (
@@ -620,8 +618,6 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
 
             # Shape: (num_outs,)
             output_uuids = next_tensor_uuids(num_outs)
-            if num_outs == 1:
-                output_uuids = [output_uuids]
 
             # Execute SPMD binary
             for i in range(num_hosts):
@@ -970,8 +966,6 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             # Get output uuids
             output_uuids = next_tensor_uuids(num_outs)
-            if num_outs == 1:
-                output_uuids = [output_uuids]
 
             # Execute SPMD binary
             for i in range(num_hosts):

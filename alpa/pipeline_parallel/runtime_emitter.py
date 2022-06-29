@@ -419,7 +419,7 @@ class PipelineInstEmitter:
                                               output_spec_list)
         # Add gradient accumulation buffer
         reduced_var_uuid_lists = []
-        for mesh_idx in range(len(num_mesh)):
+        for mesh_idx in range(num_mesh):
             reduced_var_uuids = grad_uuids[mesh_idx]
             reduced_var_uuids = np.array([
                 donation_mapping[mesh_idx].recursive_lookup(uuid)
@@ -721,7 +721,7 @@ class PipelineInstEmitter:
 
         # Get local uuids for each input
         input_local_uuid_lists = [[] for _ in range(num_mesh)]
-        for mesh_idx in range(len(num_mesh)):
+        for mesh_idx in range(num_mesh):
             mesh_arg_list = mesh_arg_lists[mesh_idx]
             num_args = len(mesh_arg_list)
             # shape: (num_args, num_hosts, num_devices_per_host)

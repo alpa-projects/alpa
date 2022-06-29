@@ -9,7 +9,7 @@ import time
 from collections import OrderedDict
 from functools import partial, partialmethod
 import threading
-from typing import Sequence, Any, Union
+from typing import Iterable, Sequence, Any, Union
 from warnings import warn
 
 import jax
@@ -262,6 +262,10 @@ class DisjointDict:
         self.values = {}
 
     def update(self, keys, values):
+        if not isinstance(keys, Iterable):
+            assert not isinstance(values, Iterable)
+            self.values[keys] = values
+            return
         for key, value in zip(keys, values):
             self.values[key] = value
 

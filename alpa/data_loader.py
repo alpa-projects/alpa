@@ -128,10 +128,10 @@ class MeshDriverDataLoader:
         self.output_arrays = []
         for i in range(len(avals)):
             tensor_ref, tensor_uuid = create_remote_tensor_refs(physical_mesh)
-            self.output_uuids.append(tensor_uuid)
+            self.output_uuids.append(tensor_uuid[0])
             self.output_arrays.append(
                 DistributedArray(physical_mesh, avals[i], sharding_specs[i],
-                                 tensor_ref))
+                                 tensor_ref[0]))
 
         # Create worker part data loaders
         self.worker_data_loaders = []

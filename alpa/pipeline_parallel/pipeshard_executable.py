@@ -134,7 +134,7 @@ class PipeshardDriverExecutable:
 
         num_outs = [
             len(self.output_local_uuid_list[mesh_idx])
-            for mesh_idx in range(len(self.num_mesh))
+            for mesh_idx in range(self.num_mesh)
         ]
 
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
@@ -157,8 +157,6 @@ class PipeshardDriverExecutable:
             # Convert bufs to uuids
             input_uuids = [ref.uuid for ref in input_bufs[mesh_idx]]
             output_uuids[mesh_idx] = next_tensor_uuids(num_outs[mesh_idx])
-            if num_outs[mesh_idx] == 1:
-                output_uuids[mesh_idx] = np.array([output_uuids[mesh_idx]])
 
             # Execute
             for worker in physical_mesh.workers:

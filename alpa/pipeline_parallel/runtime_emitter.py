@@ -430,7 +430,7 @@ class PipelineInstEmitter:
         for worker in instruction_lists:
             mesh_idx, worker_idx = worker_to_idx[worker]
             used_outside = flatten_uuid_set(output_local_uuid_list[mesh_idx])
-            
+
             donated = set(donation_mapping[mesh_idx].keys())
             used_outside.update(flatten_uuid_set(reduced_var_uuids))
             instruction_lists[worker] = self._compile_free(
@@ -468,8 +468,9 @@ class PipelineInstEmitter:
             return
         # TODO(yonghao): only compile alloc once, use multiple times
         recv_uuid_list = self._compile_alloc(invars, dst_specs, mesh_idx,
-                                           batch_idx, False, instruction_lists,
-                                           executable_config_lists)
+                                             batch_idx, False,
+                                             instruction_lists,
+                                             executable_config_lists)
 
         for invar, recv_uuid in zip(invars, recv_uuid_list):
             var_key = self.env.get_var_with_accumulate(invar, batch_idx)
@@ -535,8 +536,8 @@ class PipelineInstEmitter:
                     outvar, batch_idx, mesh_idx)
             for idx in range(len(stage.invars)):
                 if donated_invars[idx]:
-                    donation_mapping[mesh_idx].update(
-                        input_uuids[idx], output_uuids[idx])
+                    donation_mapping[mesh_idx].update(input_uuids[idx],
+                                                      output_uuids[idx])
 
             for worker in physical_mesh.workers:
                 kwargs = {
@@ -955,12 +956,12 @@ class PipelineInstEmitter:
                     # construct DistributedArray
                     mesh_idx = mesh_idx_list[i]
                     device_mesh = mesh_group[mesh_idx]
-                    arr = DistributedArray(device_mesh=device_mesh,
-                                           aval=aval,
-                                           sharding_spec=spec_list[i],
-                                           remote_ref=refs[mesh_idx][
-                                               outvar_index_on_mesh_list[i]],
-                                           indices=indices_list[i])
+                    arr = DistributedArray(
+                        device_mesh=device_mesh,
+                        aval=aval,
+                        sharding_spec=spec_list[i],
+                        remote_ref=refs[mesh_idx][outvar_index_on_mesh_list[i]],
+                        indices=indices_list[i])
                 else:
                     # construct RepliatedDistributedArray
                     meshes = []
@@ -970,12 +971,12 @@ class PipelineInstEmitter:
                         spec = spec_list[i][j]
                         meshes.append(mesh_group[mesh_idx])
                         distributed_arrays.append(
-                            DistributedArray(device_mesh=mesh_group[mesh_idx],
-                                             aval=aval,
-                                             sharding_spec=spec,
-                                             remote_ref=refs[mesh_idx]
-                                             [outvar_index_on_mesh],
-                                             indices=indices_list[i][j]))
+                            DistributedArray(
+                                device_mesh=mesh_group[mesh_idx],
+                                aval=aval,
+                                sharding_spec=spec,
+                                remote_ref=refs[mesh_idx][outvar_index_on_mesh],
+                                indices=indices_list[i][j]))
                     arr = ReplicatedDistributedArray(meshes, distributed_arrays)
                 ret.append(arr)
             return ret
@@ -1040,8 +1041,8 @@ class PipelineInstEmitter:
     @staticmethod
     def _compile_broadcast_resharding_task(
             src_mesh, src_uuid: int,
-            resharding_task: SymbolicBroadcastReshardingTask,
-            recv_uuid: int, instruction_lists):
+            resharding_task: SymbolicBroadcastReshardingTask, recv_uuid: int,
+            instruction_lists):
 
         # add broadcast-based resharding task for each worker
         for w, task_uuid in resharding_task.broadcast_worker_task_ids.items():

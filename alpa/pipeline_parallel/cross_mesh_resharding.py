@@ -9,8 +9,9 @@ from jax.interpreters import pxla
 import ray
 
 import alpa.collective as col
-from alpa.device_mesh import (DistributedArray, RemoteTensorRef, ReshardingAllGatherSpec,
-                              ReshardingRecvSpec, ReshardingSendSpec, ReshardingTileSpec,
+from alpa.device_mesh import (DistributedArray, RemoteTensorRef,
+                              ReshardingAllGatherSpec, ReshardingRecvSpec,
+                              ReshardingSendSpec, ReshardingTileSpec,
                               ReshardingBroadcastSpec, _device_mesh_put_dummy)
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
@@ -538,10 +539,14 @@ class SymbolicReshardingTask(ReshardingTask):
                     # Sender's task
                     sender_worker = (self.collective_group.
                                      device_str_to_mesh_worker_map[sender])
-                    src_device_id = self.collective_group.device_str_to_device_id_map[sender]
+                    src_device_id = self.collective_group.device_str_to_device_id_map[
+                        sender]
                     self._sender_tasks[sender_worker].append(
-                        ReshardingSendSpec(src_device_id, ReshardingTileSpec(src_tiles[sender_idx].offset,
-                                           receiver_rank, receiver_gpu_idx)))
+                        ReshardingSendSpec(
+                            src_device_id,
+                            ReshardingTileSpec(src_tiles[sender_idx].offset,
+                                               receiver_rank,
+                                               receiver_gpu_idx)))
                     # Receiver's task
                     sender_rank, sender_gpu_idx = \
                         self.collective_group.device_str_to_rank_map[sender]

@@ -38,9 +38,8 @@ def send_tile(worker, uuid: int, device_id: int, offset: Sequence[slice],
                      "specs.")
         start_indices = tuple(o.start for o in offset)
         slice_sizes = tuple(o.stop - o.start for o in offset)
-        src_buffer = jax_tensor_index(
-            xla_buffer_to_jax_tensor(buffer), start_indices,
-            slice_sizes)
+        src_buffer = jax_tensor_index(xla_buffer_to_jax_tensor(buffer),
+                                      start_indices, slice_sizes)
         to_send = jax_tensor_to_xla_buffer(src_buffer)
         n_elements = np.prod(slice_sizes)
         col.send_multigpu(to_send,
@@ -67,9 +66,8 @@ def recv_tile(worker, uuid: int, device_id: int,
                           start_pos=start_pos,
                           n_elements=n_elements)
     else:
-        tmp_buffer = device_put(
-            jnp.ones(slice_shape, dtype=buffer.dtype),
-            worker.local_devices[device_id])
+        tmp_buffer = device_put(jnp.ones(slice_shape, dtype=buffer.dtype),
+                                worker.local_devices[device_id])
         to_recv = jax_tensor_to_xla_buffer(tmp_buffer)
         n_elements = np.prod(slice_shape)
         col.recv_multigpu(to_recv,
@@ -80,9 +78,9 @@ def recv_tile(worker, uuid: int, device_id: int,
                           n_elements=n_elements)
         start_indices = tuple(
             ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
-        new_buffer = jax_tensor_set(
-            xla_buffer_to_jax_tensor(buffer),
-            xla_buffer_to_jax_tensor(to_recv), start_indices)
+        new_buffer = jax_tensor_set(xla_buffer_to_jax_tensor(buffer),
+                                    xla_buffer_to_jax_tensor(to_recv),
+                                    start_indices)
         worker.buffers[uuid][device_id] = jax_tensor_to_xla_buffer(new_buffer)
 
 
@@ -131,13 +129,11 @@ def broadcast(worker, uuid, comm_key, world_size, devices_ids,
             tmp = None
             if global_rank == 0:
                 start_indices = tuple(o.start for o in tensor_slice)
-                tmp = jax_tensor_index(
-                    xla_buffer_to_jax_tensor(buffer),
-                    start_indices, slice_shape)
+                tmp = jax_tensor_index(xla_buffer_to_jax_tensor(buffer),
+                                       start_indices, slice_shape)
             else:
-                tmp = device_put(
-                    jnp.ones(slice_shape, dtype=buffer.dtype),
-                    worker.local_devices[device_id])
+                tmp = device_put(jnp.ones(slice_shape, dtype=buffer.dtype),
+                                 worker.local_devices[device_id])
             local_start_pos_list.append(0)
             buffers.append(jax_tensor_to_xla_buffer(tmp))
 
@@ -157,9 +153,9 @@ def broadcast(worker, uuid, comm_key, world_size, devices_ids,
         else:
             start_indices = tuple(
                 ind_in_dst.start for ind_in_dst in tensor_slice)
-            new_buffer = jax_tensor_set(
-                xla_buffer_to_jax_tensor(buffer),
-                xla_buffer_to_jax_tensor(xla_buffer), start_indices)
+            new_buffer = jax_tensor_set(xla_buffer_to_jax_tensor(buffer),
+                                        xla_buffer_to_jax_tensor(xla_buffer),
+                                        start_indices)
             new_buffer = jax_tensor_to_xla_buffer(new_buffer)
         worker.buffers[uuid][device_id] = new_buffer
 

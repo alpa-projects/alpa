@@ -22,7 +22,8 @@ import numpy as np
 import ray
 
 from alpa.device_mesh import (LocalPhysicalDeviceMesh,
-                              DistributedPhysicalDeviceMesh, RemoteTensorRef, next_tensor_uuids)
+                              DistributedPhysicalDeviceMesh, RemoteTensorRef,
+                              next_tensor_uuids)
 from alpa.global_env import global_config
 from alpa.parallel_plan import PlacementSpec, StagePlan
 from alpa.shard_parallel.auto_sharding import (get_input_output_sharding_specs,
@@ -393,8 +394,8 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
         self.sync_func = get_sync_func_worker(worker)
 
     def execute_on_worker(self, input_uuids: Sequence[int],
-                          output_uuids: Sequence[int],
-                          sync_before: bool, sync_after: bool):
+                          output_uuids: Sequence[int], sync_before: bool,
+                          sync_after: bool):
         """Run the executable on the worker."""
         buffer_dict = self.worker.buffers
 
@@ -613,7 +614,6 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         num_grads = len(grad_avals)
         physical_mesh = self.physical_mesh
         num_hosts = physical_mesh.num_hosts
-        num_devices_per_host = physical_mesh.num_devices_per_host
         num_outs = len(self.out_avals)
 
         timers(self.shard_args_timer_name).start()
@@ -645,8 +645,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             for i in range(num_hosts):
                 physical_mesh.workers[i].run_executable.remote(
                     self.exec_uuid, first_batch_uuids, next_batches_uuids,
-                    output_uuids,
-                    global_config.shard_parallel_sync_for_timer,
+                    output_uuids, global_config.shard_parallel_sync_for_timer,
                     global_config.shard_parallel_sync_for_timer)
 
             # Gather output buffers
@@ -797,8 +796,8 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
 
     def execute_on_worker(self, first_batch_uuids: Sequence[int],
                           next_batches_uuids: Sequence[int],
-                          output_uuids: Sequence[int],
-                          sync_before: bool, sync_after: bool):
+                          output_uuids: Sequence[int], sync_before: bool,
+                          sync_after: bool):
         """Run the executable on the worker."""
         buffer_dict = self.buffer_dict
         num_micro_batches = self.num_micro_batches
@@ -821,8 +820,8 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
                 # Feed in the data of the next batch
                 tmp_input_bufs[-self.num_grads:] = grad_bufs
                 for j, idx in enumerate(self.accumulate_grad_batch_arg_indices):
-                    tmp_input_bufs[idx] = buffer_dict[next_batches_uuids[j * (num_micro_batches - 1) +
-                                           (i - 1)]]
+                    tmp_input_bufs[idx] = buffer_dict[next_batches_uuids[
+                        j * (num_micro_batches - 1) + (i - 1)]]
             if i == num_micro_batches - 1:
                 os.environ[self.skip_allreduce_env_name] = ""
             grad_bufs = self.accumulate_grad.execute_sharded_on_local_devices(
@@ -940,9 +939,8 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
 
     # pylint: disable=arguments-differ
     def execute_on_worker(self, input_uuids: Sequence[int],
-                          output_uuids: Sequence[int],
-                          sync_before: bool, sync_after: bool,
-                          skip_grad_sync: bool):
+                          output_uuids: Sequence[int], sync_before: bool,
+                          sync_after: bool, skip_grad_sync: bool):
         """Run the executable on the worker."""
         os.environ[self.skip_allreduce_env_name] = (self.grad_sync_channel_ids
                                                     if skip_grad_sync else "")
@@ -995,7 +993,6 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
         physical_mesh = self.physical_mesh
         num_hosts = physical_mesh.num_hosts
         num_outs = len(self.out_avals)
-        num_devices_per_host = physical_mesh.num_devices_per_host
 
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             # Get output uuids
@@ -1034,8 +1031,8 @@ class AllocZeroBufferWorkerExecutable(MeshWorkerExecutable):
         self.sync_func = get_sync_func_worker(worker)
 
     def execute_on_worker(self, input_uuids: Sequence[int],
-                          output_uuids: Sequence[int],
-                          sync_before: bool, sync_after: bool):
+                          output_uuids: Sequence[int], sync_before: bool,
+                          sync_after: bool):
         """Run the executable on the worker."""
         # pylint: disable=unused-argument
         buffer_dict = self.worker.buffers
@@ -1068,8 +1065,8 @@ class MemzeroWorkerExecutable(MeshWorkerExecutable):
         self.sync_func = get_sync_func_worker(worker)
 
     def execute_on_worker(self, input_uuids: Sequence[int],
-                          output_uuids: Sequence[int],
-                          sync_before: bool, sync_after: bool):
+                          output_uuids: Sequence[int], sync_before: bool,
+                          sync_after: bool):
         """Run the executable on the worker."""
         # pylint: disable=unused-argument
         buffer_dict = self.worker.buffers
@@ -1108,8 +1105,8 @@ class ConcatMeshWorkerExecutable(MeshWorkerExecutable):
         self.sync_func = get_sync_func_worker(worker)
 
     def execute_on_worker(self, input_uuids: Sequence[int],
-                          output_uuids: Sequence[int],
-                          sync_before: bool, sync_after: bool):
+                          output_uuids: Sequence[int], sync_before: bool,
+                          sync_after: bool):
         """Run the executable on the worker."""
         buffer_dict = self.worker.buffers
 

@@ -754,7 +754,7 @@ def profile_layer_communication_cost(
             input_indices = pxla.spec_to_indices(invar.aval.shape,
                                                  out_sharding_spec)
             remote_ref = _shard_device_array(jnp.zeros_like(invar.aval),
-                                                 src_phy_mesh, input_indices)
+                                             src_phy_mesh, input_indices)
             DistributedArray(src_phy_mesh, invar.aval, in_sharding_spec,
                              remote_ref, input_indices)
             if global_config.resharding_mode == "send_recv":

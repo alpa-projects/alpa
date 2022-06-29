@@ -7,7 +7,8 @@ from jax.interpreters import pxla, xla
 import numpy as np
 import ray
 
-from alpa.device_mesh import (LocalPhysicalDeviceMesh, DistributedArray, create_remote_tensor_refs)
+from alpa.device_mesh import (LocalPhysicalDeviceMesh, DistributedArray,
+                              create_remote_tensor_refs)
 
 
 class DataLoader:

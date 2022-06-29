@@ -11,10 +11,11 @@ import ray.exceptions
 from alpa.device_mesh import MeshHostWorker, RemoteTensorRef, next_tensor_uuids
 from alpa.global_env import global_config
 from alpa.device_mesh import PhysicalDeviceMeshGroup
-from alpa.mesh_executable import (
-    AllocZeroBufferWorkerExecutable, ConcatMeshWorkerExecutable,
-    MemzeroWorkerExecutable, PartialGradAccMeshWorkerExecutable,
-    next_mesh_executable_uuid)
+from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
+                                  ConcatMeshWorkerExecutable,
+                                  MemzeroWorkerExecutable,
+                                  PartialGradAccMeshWorkerExecutable,
+                                  next_mesh_executable_uuid)
 from alpa.pipeline_parallel.runtime_emitter import (
     AllocateZeroWorkerExecutableConfig, ConcatWorkerExecutableConfig,
     ExecutableConfig, MemZeroWorkerExecutableConfig,
@@ -302,7 +303,6 @@ class PipeshardDriverExecutable:
         all_profiled = [ray.get(handles) for handles in all_profiled_handles]
         return all_profiled
 
-
     ##### Other Functions #####
     def sync(self):
         """Sync device activities on all workers."""
@@ -413,7 +413,7 @@ class PipeshardMeshWorkerExecuable:
         assert len(self.input_local_uuids) == len(input_global_uuids)
         buffers = {}
         for local_id, global_id in zip(self.input_local_uuids,
-                                         input_global_uuids):
+                                       input_global_uuids):
             buffers[local_id] = self.global_buffers[global_id]
         # add preallocated buffers for gradient accumulation
         buffers.update(self.acc_grad_buffers)
@@ -461,7 +461,7 @@ class PipeshardMeshWorkerExecuable:
                 self.worker.run_resharding_broadcast_task(
                     instruction.task_uuid,
                     (instruction.input_uuids if instruction.input_uuids
-                    is not None else instruction.output_uuids)[0])
+                     is not None else instruction.output_uuids)[0])
                 timers("resharding_broadcast").suspend()
             elif instruction.opcode == PipelineInstType.FREE:
                 timers("free").start()
@@ -487,8 +487,7 @@ class PipeshardMeshWorkerExecuable:
         # with memzero. These buffers are reused in the next iteration.
         # TODO(yonghao): never donate them
         if self.use_memzero:
-            for in_uuid, out_uuid in zip(self.acc_in_uuids,
-                                         self.acc_out_uuids):
+            for in_uuid, out_uuid in zip(self.acc_in_uuids, self.acc_out_uuids):
                 self.acc_grad_buffers[in_uuid] = buffers[out_uuid]
         # restore global environment
         self.worker.buffers = self.global_buffers

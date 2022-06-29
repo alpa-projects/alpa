@@ -58,9 +58,8 @@ def send_tile(worker, uuid: int, device_id: int, offset: Sequence[slice],
                      "specs.")
         start_indices = tuple(o.start for o in offset)
         slice_sizes = tuple(o.stop - o.start for o in offset)
-        src_buffer = jax_tensor_index(
-            xla_buffer_to_jax_tensor(buffer), start_indices,
-            slice_sizes)
+        src_buffer = jax_tensor_index(xla_buffer_to_jax_tensor(buffer),
+                                      start_indices, slice_sizes)
         to_send = jax_tensor_to_cupy(src_buffer)
         col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
 
@@ -106,9 +105,8 @@ def recv_tile(worker, uuid: int, device_id: int,
         logger.debug("Recv goes along the slowest path. "
                      "If this is for transformers, please check the resharding "
                      "specs.")
-        tmp_buffer = device_put(
-            jnp.ones(slice_shape, dtype=buffer.dtype),
-            worker.local_devices[device_id])
+        tmp_buffer = device_put(jnp.ones(slice_shape, dtype=buffer.dtype),
+                                worker.local_devices[device_id])
         to_recv = jax_tensor_to_cupy(tmp_buffer, take_ownership=True)
         col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
         recv_tensor = cupy_to_jax_tensor(to_recv)
@@ -121,9 +119,8 @@ def recv_tile(worker, uuid: int, device_id: int,
         # new_buffer = dynamic_update_slice(src_buf, update, start_indices)
         # which is not in-place and will cause extra allocation-related
         # kernels.
-        new_buffer = jax_tensor_set(
-            xla_buffer_to_jax_tensor(buffer), recv_tensor,
-            start_indices)
+        new_buffer = jax_tensor_set(xla_buffer_to_jax_tensor(buffer),
+                                    recv_tensor, start_indices)
         new_buffer = jax_tensor_to_xla_buffer(new_buffer)
     if is_bool:
         new_buffer = _uint8_to_bool(new_buffer)
@@ -182,14 +179,12 @@ def broadcast(worker, uuid, comm_key, world_size, devices_ids,
             tmp = None
             if global_rank == 0:
                 start_indices = tuple(o.start for o in tensor_slice)
-                tmp = jax_tensor_index(
-                    xla_buffer_to_jax_tensor(buffer),
-                    start_indices, slice_shape)
+                tmp = jax_tensor_index(xla_buffer_to_jax_tensor(buffer),
+                                       start_indices, slice_shape)
                 tmp = jax_tensor_to_cupy(tmp)
             else:
-                tmp = device_put(
-                    jnp.ones(slice_shape, dtype=buffer.dtype),
-                    worker.local_devices[device_id])
+                tmp = device_put(jnp.ones(slice_shape, dtype=buffer.dtype),
+                                 worker.local_devices[device_id])
                 tmp = jax_tensor_to_cupy(tmp, take_ownership=True)
             to_use.append(tmp)
             for_buffer.append(tmp)
@@ -211,9 +206,8 @@ def broadcast(worker, uuid, comm_key, world_size, devices_ids,
             recv_tensor = cupy_to_jax_tensor(for_buffer_tensor)
             start_indices = tuple(
                 ind_in_dst.start for ind_in_dst in tensor_slice)
-            new_buffer = jax_tensor_set(
-                xla_buffer_to_jax_tensor(buffer), recv_tensor,
-                start_indices)
+            new_buffer = jax_tensor_set(xla_buffer_to_jax_tensor(buffer),
+                                        recv_tensor, start_indices)
             new_buffer = jax_tensor_to_xla_buffer(new_buffer)
         if is_bool:
             new_buffer = _uint8_to_bool(new_buffer)

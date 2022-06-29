@@ -329,6 +329,7 @@ class TorchViTTest(unittest.TestCase):
         #    num_micro_batches=num_micro_batches,
         #)
 
+        alpa.global_config.xla_client_mem_fraction = 0.7
         parallel_method = alpa.PipeshardParallel(
             stage_mode="uniform",
             num_micro_batches=num_micro_batches,
@@ -339,6 +340,7 @@ class TorchViTTest(unittest.TestCase):
 
         train_torch_module(pt_module_gen, weight_init_func, dataloader,
                            loss_func, optim_gen, parallel_method, auto_layer_con_func=auto_layer_con_func)
+        alpa.global_config.xla_client_mem_fraction = 0.9
 
 
 def suite():

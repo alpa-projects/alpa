@@ -1072,8 +1072,10 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
     def _device_id_to_local_id(self, device_indices):
         """translate device ids in the mesh to local ids on each host"""
         if self.num_hosts == 1:
-            return (device_indices,)
+            mapping = [{device_id: cnt for cnt, device_id in enumerate(device_ids)} for device_ids in device_indices]
+            return (device_indices,), (mapping,)
         per_host_ids = [[] for _ in range(self.num_hosts)]
+        per_host_local_id_to_idx = [[] for _ in range(self.num_hosts)]
         device_per_host = self.num_devices_per_host
         for device_ids in device_indices:
             if device_ids is None:
@@ -1081,12 +1083,15 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                     per_host_ids[host_id].append(None)
                 continue
             tmp_per_host_ids = [[] for _ in range(self.num_hosts)]
+            tmp_per_host_local_id_to_idx = [{} for _ in range(self.num_hosts)]
             for device_id in device_ids:
                 host_id, device_id = divmod(device_id, device_per_host)
+                tmp_per_host_local_id_to_idx[host_id][device_id] = len(tmp_per_host_ids[host_id])
                 tmp_per_host_ids[host_id].append(device_id)
             for host_id in range(self.num_hosts):
                 per_host_ids[host_id].append(tmp_per_host_ids[host_id])
-        return per_host_ids
+                per_host_local_id_to_idx[host_id].append(per_host_local_id_to_idx)
+        return per_host_ids, per_host_local_id_to_idx
 
     ##### Buffer Related Functions #####
     def get_remote_buffers(self,
@@ -1097,10 +1102,11 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
         if device_indices is None:
             device_indices = [None] * len(tensor_refs)
+        # FIXME(yonghao): we need a local_id->local_ret_idx mapping
         if batching:
             # Batch the remote calls by host ids
             tensor_ids = [ref.uuid for ref in tensor_refs]
-            local_device_ids = self._device_id_to_local_id(device_indices)
+            local_device_ids, local_id_to_idx = self._device_id_to_local_id(device_indices)
 
             # [host_id-> (buf_idx-> (local_device_id->device_buffer))]
             obj_refs = []
@@ -1116,27 +1122,31 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                     # TODO(yonghao): add cache for this mapping together with device id to local id
                     host_id, local_id = divmod(device_id,
                                                self.num_devices_per_host)
-                    buffers.append(per_host_results[host_id][ref_idx][local_id])
+                    local_idx = local_id_to_idx[host_id][ref_idx][local_id]
+                    buffers.append(per_host_results[host_id][ref_idx][local_idx])
                 ret.append(buffers)
             return ret
         else:
             obj_refs = []
+            id_to_idx_mappings = []
             for tensor_ref, device_ids in zip(tensor_refs, device_indices):
-                local_device_ids = self._device_id_to_local_id([device_ids])[0]
+                local_device_ids, local_id_to_idx = self._device_id_to_local_id([device_ids])
                 obj_refs.append([
                     worker.get_buffers.remote(tensor_ref.uuid, local_ids)
-                    for worker, local_ids in zip(self.workers, local_device_ids)
+                    for worker, local_ids in zip(self.workers, local_device_ids[0])
                 ])
+                id_to_idx_mappings.append(local_id_to_idx[0])
             # [buf_idx -> (host_id -> (device_id->device_buffer))]
             tensor_values = [ray.get(refs) for refs in obj_refs]
             # [buf_id -> (flatten_id -> device_buffer)]
             ret = []
-            for per_host_values, device_ids in zip(tensor_values, device_indices):
+            for per_host_values, device_ids, id_to_idx_mapping in zip(tensor_values, device_indices, id_to_idx_mappings):
                 bufs = []
                 for device_id in device_ids:
                     host_id, local_id = divmod(device_id,
                                                self.num_devices_per_host)
-                    bufs.append(per_host_values[host_id][local_id])
+                    local_idx = id_to_idx_mapping[host_id][local_id]
+                    bufs.append(per_host_values[host_id][local_idx])
                 ret.append(bufs)
             return ret
                 

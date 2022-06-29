@@ -241,7 +241,7 @@ def get_model(model_name: str,
                                 num_pp_stages=None,
                                 mark_boundary=False,
                                 dtype=dtype,
-                                num_batch=batch_size * num_beams)
+                                batch_size=batch_size * num_beams)
         transformer_config = TransformerModelConfig(
             H=config.decoder_embed_dim,
             L=config.decoder_layers,
@@ -267,7 +267,7 @@ def get_model(model_name: str,
         alpa.init()
         num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
         config = get_opt_config(name, num_pp_stages=num_pp_stages, dtype=dtype,
-                                num_batch=batch_size * num_beams)
+                                batch_size=batch_size * num_beams)
         transformer_config = TransformerModelConfig(
             H=config.decoder_embed_dim,
             L=config.decoder_layers,
@@ -290,7 +290,6 @@ def get_model(model_name: str,
         if autoregressive:
             init_cache = init_cache_dis_array(executable,
                                               config,
-                                              1,
                                               dummy=dummy)
             set_skip_shard_args_check(init_cache)
         executable.sync()

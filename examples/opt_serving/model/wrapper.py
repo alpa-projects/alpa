@@ -3,6 +3,10 @@ from typing import Sequence, Any
 
 import alpa
 import jax
+from jax import xla
+from jax import ShapeDtypeStruct, ShapedArray
+from jax.interpreters import pxla
+from jax.interpreters.pxla import NoSharding, Replicated, ShardingSpec
 import jax.numpy as jnp
 import numpy as np
 import torch
@@ -100,8 +104,37 @@ class WrappedInferenceFunc(GenerationMixin):
             past_key_values = ret.past_key_values
         return ret
 
+    def _reorder_cache(self, past, beam_idx):
+        # Current beam_idx is a torch tensor from beam scorer. To speedup,
+        # we need to have alpa's own beam scorer
+        to_device = lambda x: beam_idx.to(x.device)
+        cache = {}
+        cpu_idx = beam_idx.to("cpu").numpy()
+        if type(cpu_idx) not in [ShapedArray, ShapeDtypeStruct]:
+            cpu_idx = xla.canonicalize_dtype(cpu_idx)
 
-def get_hf_gpt_model(model_name, device):
+        def to_mesh(mesh):
+            if mesh in cache:
+                return cache[mesh]
+            avals = [ShapedArray(cpu_idx.shape, cpu_idx.dtype)]
+            replicated_spec = ShardingSpec([NoSharding()] * len(cpu_idx.shape),
+                                           [Replicated(mesh.num_devices)])
+            specs = [replicated_spec]
+            indices = [pxla.spec_to_indices(cpu_idx.shape, replicated_spec)]
+            ary = mesh.shard_args_to_arrays(avals, indices, specs, [cpu_idx])[0]
+            cache[mesh] = ary
+            return ary
+
+        reshard = lambda x: to_device(x) if hasattr(x, "device") else to_mesh(
+            x.device_mesh)
+        return tuple(
+            tuple(
+                past_state.index_select(0, reshard(past_state))
+                for past_state in layer_past)
+            for layer_past in past)
+
+
+def get_hf_gpt_model(model_name, device, num_beams):
     raw_model = GPT2LMHeadModel.from_pretrained(model_name)
     raw_model = raw_model.to(device)
 
@@ -116,6 +149,7 @@ def get_hf_gpt_model(model_name, device):
         return InferenceFuncOutput(out.logits, out.past_key_values)
 
     inference_func_config = raw_model.config
+    inference_func_config.num_beams = num_beams
     transformer_config = TransformerModelConfig(
         H=raw_model.config.n_embd,
         L=raw_model.config.n_layer,
@@ -127,7 +161,7 @@ def get_hf_gpt_model(model_name, device):
                                 executable, transformer_config)
 
 
-def get_hf_opt_model(model_name, device):
+def get_hf_opt_model(model_name, device, num_beams):
     raw_model = OPTForCausalLM.from_pretrained(
         model_name,
         torch_dtype=torch.float16 if "cuda" in device else torch.float32)
@@ -150,7 +184,7 @@ def get_hf_opt_model(model_name, device):
                         output_hidden_states=output_hidden_states)
         return InferenceFuncOutput(out.logits, out.past_key_values)
 
-    inference_func_config = InferenceFuncConfig()
+    inference_func_config = InferenceFuncConfig(num_beams=num_beams)
     for key in inference_func_config.__dataclass_fields__.keys():
         setattr(inference_func_config, key, getattr(raw_model.config, key))
     transformer_config = TransformerModelConfig(
@@ -171,6 +205,7 @@ def get_model(model_name: str,
               dtype=jnp.float16,
               dummy=False,
               batch_size=1,
+              num_beams=1,
               decoding_length_per_step=1,
               num_micro_batches=1,
               support_output_attentions=False,
@@ -191,9 +226,9 @@ def get_model(model_name: str,
             f"Cannot support num_micro_batches > 1 in autoregressive mode.")
 
     if "gpt" in model_name:
-        return get_hf_gpt_model(model_name, device)
+        return get_hf_gpt_model(model_name, device, num_beams)
     if "facebook/opt" in model_name:
-        return get_hf_opt_model(model_name, device)
+        return get_hf_opt_model(model_name, device, num_beams)
 
     assert ("jax/opt" in model_name or "alpa/opt" in model_name)
     name = model_name.split("-")[1].upper()
@@ -205,7 +240,8 @@ def get_model(model_name: str,
         config = get_opt_config(name,
                                 num_pp_stages=None,
                                 mark_boundary=False,
-                                dtype=dtype)
+                                dtype=dtype,
+                                num_batch=batch_size * num_beams)
         transformer_config = TransformerModelConfig(
             H=config.decoder_embed_dim,
             L=config.decoder_layers,
@@ -230,7 +266,8 @@ def get_model(model_name: str,
 
         alpa.init()
         num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
-        config = get_opt_config(name, num_pp_stages=num_pp_stages, dtype=dtype)
+        config = get_opt_config(name, num_pp_stages=num_pp_stages, dtype=dtype,
+                                num_batch=batch_size * num_beams)
         transformer_config = TransformerModelConfig(
             H=config.decoder_embed_dim,
             L=config.decoder_layers,
@@ -292,7 +329,7 @@ def get_model(model_name: str,
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)
 
-    inference_func_config = InferenceFuncConfig()
+    inference_func_config = InferenceFuncConfig(num_beams=num_beams)
     return WrappedInferenceFunc(inference_func, inference_func_config,
                                 executable, transformer_config)
 

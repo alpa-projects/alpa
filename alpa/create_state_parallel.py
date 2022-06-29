@@ -9,7 +9,8 @@ from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 
 from alpa.device_mesh import ReplicatedDistributedArray, PhysicalDeviceMeshGroup
 from alpa.mesh_executable import (NormalMeshDriverExecutable,
-                                  GradAccMeshDriverExecutable, PlacementSpec)
+                                  GradAccMeshDriverExecutable)
+from alpa.parallel_plan import PlacementSpec
 from alpa.pipeline_parallel.compile_executable import compile_pipeshard_executable_internal
 from alpa.pipeline_parallel.layer_construction import add_pipeline_marks_for_sliced_eqns
 from alpa.pipeline_parallel.pipeshard_executable import PipeshardDriverExecutable
@@ -95,14 +96,14 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
 
         # Run sharding propagation
         xe.set_hlo_module_output_shardings(hlo_module, sharding_protos)
-        hlo_module, strategy_config = run_auto_sharding_pass(
+        hlo_module, stage_plan = run_auto_sharding_pass(
             hlo_module,
             physical_mesh.get_logical_mesh(
-                executable.strategy_config.logical_mesh_shape), "single", 1,
+                executable.stage_plan.logical_mesh_shape), "single", 1,
             AutoShardingOption(enable_auto_sharding=False))
 
-        return NormalMeshDriverExecutable(physical_mesh, hlo_module,
-                                          strategy_config, avals, out_avals,
+        return NormalMeshDriverExecutable(physical_mesh, hlo_module, stage_plan,
+                                          avals, out_avals,
                                           [False] * len(avals))
     else:
         # Construct a new pipelined jaxpr

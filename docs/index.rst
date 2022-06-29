@@ -18,6 +18,8 @@ Alpa can automatically generate dstirbuted execution plans that unify data, oper
 
    tutorials/pipeshard_parallelism.rst
    tutorials/alpa_vs_pmap.rst
+   tutorials/perf_tuning_guide.rst
+   tutorials/opt_serving.md
 
 .. toctree::
    :maxdepth: 1

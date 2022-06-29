@@ -19,6 +19,7 @@ SPMD_PARTITIONED
 FULLY_OPTIMIZED
 """
 import dataclasses
+from enum import Enum, auto
 import logging
 import multiprocessing
 import os
@@ -33,7 +34,7 @@ from jax.core import ShapedArray
 from jax.interpreters import pxla
 
 from alpa.global_env import global_config
-from alpa.measure_record import (StrategyConfig)
+from alpa.parallel_plan import StagePlan
 from alpa.timer import timers
 from alpa.util import check_arithmetic_sequence, get_compile_options, XlaPassContext
 
@@ -42,6 +43,39 @@ logger.setLevel(logging.INFO)
 
 # A constant to represent infinity
 INFINITY_COST = 1e13
+
+
+@dataclasses.dataclass
+class AutoShardingOption:
+    """Options of the auto-sharding solver."""
+    # Whether enable auto-sharding. If it is False, then the solver
+    # does tho run ILP but only uses the ShardingPropagation pass.
+    enable_auto_sharding: bool = True
+    # Whether to allow all-gather during re-sharding.
+    allow_all_gather: bool = True
+    # Whether to allow all-to-all during re-sharding.
+    allow_all_to_all: bool = True
+    # Whether to allow replicated parameters.
+    allow_replicated_parameters: bool = True
+    # Whether to forcibly generate data-parallel.
+    force_data_parallel: bool = False
+    # Forcibly map the batch dimension to a mesh dimension.
+    force_batch_dim_to_mesh_dim: Optional[int] = None
+    # Whether to forcibly generate a strategy similar to ZeRO optimizer stage 3.
+    force_zero_stage_3: bool = False
+    # The threshold of all-gather combiner if force_zero_stage_3 is true.
+    force_zero_stage_3_all_gather_threshold: int = 1 << 25
+    # Prefer reduce-scatter over all-reduce.
+    prefer_reduce_scatter: bool = False
+    # Allow mixed 1d mesh and 2d mesh shape.
+    allow_mixed_mesh_shape: bool = False
+    # Allow replicated dot computation.
+    allow_recompute_heavy_op: bool = False
+    # If it is not empty, forcibly use a simple heuristic instead of the ILP
+    # solver.
+    force_simple_heuristic: str = ""
+    # The threshold of all-reduce combiner in bytes.
+    all_reduce_threshold: int = 1 << 60
 
 
 class LogicalDeviceMesh:
@@ -74,6 +108,15 @@ class LogicalDeviceMesh:
     @property
     def num_devices(self):
         return np.prod(self.id_mesh.shape)
+
+    def flatten(self):
+        """
+        Flatten the logical mesh into an effective 1d logical mesh,
+        """
+        return LogicalDeviceMesh(
+            self.physical_mesh, self.id_mesh.reshape(-1, 1),
+            [max(self.mesh_alpha), max(self.mesh_alpha)],
+            [min(self.mesh_beta), min(self.mesh_beta)])
 
     def all_gather_cost(self, num_bytes, mesh_dim):
         num_devices = self.id_mesh.shape[mesh_dim]
@@ -126,37 +169,15 @@ class LogicalDeviceMesh:
                                      other.mesh_alpha, other.mesh_beta))
 
 
-@dataclasses.dataclass
-class AutoShardingOption:
-    """Options of the auto-sharding solver."""
-    # Whether enable auto-sharding. If it is False, then the solver
-    # does tho run ILP but only uses the ShardingPropagation pass.
-    enable_auto_sharding: bool = True
-    # Whether to allow all-gather during re-sharding.
-    allow_all_gather: bool = True
-    # Whether to allow all-to-all during re-sharding.
-    allow_all_to_all: bool = True
-    # Whether to allow replicated parameters.
-    allow_replicated_parameters: bool = True
-    # Whether to forcibly generate data-parallel.
-    force_data_parallel: bool = False
-    # Forcibly map the batch dimension to a mesh dimension.
-    force_batch_dim_to_mesh_dim: Optional[int] = None
-    # Whether to forcibly generate a strategy similar to ZeRO optimizer stage 3.
-    force_zero_stage_3: bool = False
-    # The threshold of all-gather combiner if force_zero_stage_3 is true.
-    force_zero_stage_3_all_gather_threshold: int = 1 << 25
-    # Prefer reduce-scatter over all-reduce.
-    prefer_reduce_scatter: bool = False
-    # Allow mixed 1d mesh and 2d mesh shape.
-    allow_mixed_mesh_shape: bool = False
-    # Allow replicated dot computation.
-    allow_recompute_heavy_op: bool = False
-    # If it is not empty, forcibly use a simple heuristic instead of the ILP
-    # solver.
-    force_simple_heuristic: str = ""
-    # The threshold of all-reduce combiner in bytes.
-    all_reduce_threshold: int = 1 << 60
+class HloStatus(Enum):
+    """
+    The status of an HloModule.
+    See also the docstring at the beginning of this file.
+    """
+    UNOPTIMIZED = auto()
+    SHARDING_ANNOTATED = auto()
+    SPMD_PARTITIONED = auto()
+    FULLY_OPTIMIZED = auto()
 
 
 def run_auto_sharding_pass(
@@ -224,21 +245,13 @@ def run_auto_sharding_pass(
         all_gather_threshold = 1 << 60
 
     # Set configs for force_data_parallel
-    mesh_shape = logical_mesh.shape
     if force_data_parallel:
         # Forcibly generate data-parallel strategy
         allow_all_gather = False
         allow_all_to_all = False
 
-        if mesh_shape[0] == 1:
-            force_batch_dim_to_mesh_dim = 1
-        elif mesh_shape[1] == 1:
-            force_batch_dim_to_mesh_dim = 0
-        else:
-            raise ValueError(
-                f"Cannot force data parallel for the mesh shape {mesh_shape}. "
-                "Please make sure the mesh shape only has a single non-one "
-                "dimension.")
+        logical_mesh = logical_mesh.flatten()
+        force_batch_dim_to_mesh_dim = 0
     else:
         # Use default settings
         allow_all_gather = as_option.allow_all_gather
@@ -348,17 +361,16 @@ def run_auto_sharding_pass(
         hlo_stage_names, hlo_stages = get_auto_sharded_hlo_stages()
         hooked_proto = get_hooked_sharding_protos()
 
-    strategy_config = StrategyConfig(build_random_seed, logical_mesh.shape,
-                                     all_gather_threshold,
-                                     as_option.all_reduce_threshold, last_s_val,
-                                     last_objective)
+    stage_plan = StagePlan(build_random_seed, logical_mesh.shape,
+                           all_gather_threshold, as_option.all_reduce_threshold,
+                           last_s_val, last_objective)
 
     if return_mode == "single":
-        return hlo_module, strategy_config
+        return hlo_module, stage_plan
     elif return_mode == "stages":
-        return hlo_stage_names, hlo_stages, strategy_config
+        return hlo_stage_names, hlo_stages, stage_plan
     elif return_mode == "stages_and_hook":
-        return hlo_stage_names, hlo_stages, hooked_proto, strategy_config
+        return hlo_stage_names, hlo_stages, hooked_proto, stage_plan
     else:
         raise ValueError("Invalid return mode:" + return_mode)
 
@@ -404,7 +416,7 @@ def run_spmd_partitioner_pass(
 def run_backend_compilation(backend: xe.Client,
                             hlo_module: Union[xe.HloModule, xe.XlaComputation,
                                               bytes],
-                            strategy_config: StrategyConfig,
+                            stage_plan: StagePlan,
                             num_devices: int,
                             bypass_device_assignment_check: bool = False):
     """Compile a spmd partitioned Hlo Module to an XLA executable.
@@ -412,7 +424,7 @@ def run_backend_compilation(backend: xe.Client,
     Args:
       backend: The XLA backend client.
       hlo_module: The input HLO Module, whose status should be SPMD_PARTITIONED.
-      strategy_config: The auto-sharding strategy solution.
+      stage_plan: The auto-sharding strategy solution.
       num_devices: The total number of devices.
       bypass_device_assignment_check: Whether to compile without exact devices.
     """
@@ -422,7 +434,7 @@ def run_backend_compilation(backend: xe.Client,
         device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=False,
         parameter_is_tupled_arguments=False,
-        build_random_seed=strategy_config.build_random_seed)
+        build_random_seed=stage_plan.build_random_seed)
 
     if isinstance(hlo_module, xe.HloModule):
         xla_computation = xe.XlaComputation(
@@ -440,9 +452,9 @@ def run_backend_compilation(backend: xe.Client,
 
             # Communication combiner options
             "combiner::all_gather_threshold":
-                strategy_config.all_gather_threshold,
+                stage_plan.all_gather_threshold,
             "combiner::all_reduce_threshold":
-                strategy_config.all_reduce_threshold,
+                stage_plan.all_reduce_threshold,
             "combiner::use_continuous_buffer":
                 True,
     }):

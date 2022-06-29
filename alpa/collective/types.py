@@ -87,6 +87,7 @@ class BroadcastOptions:
     devices_global_rank = []
     n_elements = 0
     timeout_ms = unset_timeout_ms
+    local_start_pos_list = []
 
 
 @dataclass
@@ -101,6 +102,7 @@ class SendOptions:
     dst_gpu_index = 0
     n_elements = 0
     timeout_ms = unset_timeout_ms
+    start_pos = 0
 
 
 @dataclass
@@ -109,3 +111,4 @@ class RecvOptions:
     src_gpu_index = 0
     n_elements = 0
     unset_timeout_ms = unset_timeout_ms
+    start_pos = 0

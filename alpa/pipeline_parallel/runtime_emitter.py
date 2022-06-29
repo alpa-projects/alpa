@@ -15,12 +15,12 @@ from alpa.global_env import global_config
 from alpa.device_mesh import (DistributedArray, PhysicalDeviceMeshGroup,
                               ReplicatedDistributedArray)
 from alpa.mesh_executable import next_mesh_executable_uuid
+from alpa.parallel_plan import PlacementSpec
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.pipeline_parallel.schedules import PipelineSchedule
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     CrossMeshCommunicator, SymbolicBroadcastReshardingTask,
     SymbolicReshardingTask, ReshardingTask)
-from alpa.serialization import LoadInfo
 from alpa.util import (DisjointDict, OrderedSet, get_shard_shape,
                        get_microbatch_sharding_spec, compile_concatenate)
 
@@ -135,8 +135,10 @@ MemZeroWorkerExecutableConfig = namedtuple(
 ConcatWorkerExecutableConfig = namedtuple("ConcatWorkerExecutableConfig",
                                           ["exec_uuid", "hlo_proto"])
 PartialGradWorkerExecutableConfig = namedtuple(
-    "PartialGradWorkerExecutableConfig",
-    ["exec_uuid", "hlo_proto", "strategy_config", "grad_sync_channel_ids"])
+    "PartialGradWorkerExecutableConfig", [
+        "exec_uuid", "hlo_proto", "stage_plan", "donated_invars",
+        "grad_sync_channel_ids"
+    ])
 
 ExecutableConfig = Union[AllocateZeroWorkerExecutableConfig,
                          MemZeroWorkerExecutableConfig,
@@ -248,8 +250,8 @@ class PipeshardConfig:
     output_local_uuid_list: Sequence[Sequence[int]]
     outs_handler: Callable
     # Others
-    load_info: LoadInfo
-    hlo_texts_before_spmd_partitioner: Sequence[str]
+    input_placement_specs: Sequence[PlacementSpec]
+    sharding_annotated_hlo_texts: Sequence[str]
     flop_count: int
 
 
@@ -277,9 +279,7 @@ class PipelineInstEmitter:
         self.num_batch = num_batch
         self.in_tree = in_tree
         self.flop_count = flop_count
-        self.hlo_texts_before_spmd_partitioner = [
-            x.get_hlo_text() for x in stages
-        ]
+        self.sharding_annotated_hlo_texts = [x.get_hlo_text() for x in stages]
 
         ##### Internal states #####
         self.uuid_counter = 0  # counter for local buffer uuid
@@ -437,8 +437,8 @@ class PipelineInstEmitter:
                 worker, used_outside, donated, instruction_lists)
 
         # Compile load info
-        load_info = self._compile_load_info(input_config.mesh_arg_indices,
-                                            input_shard_specs)
+        input_placement_specs = self._compile_input_placement_spec(
+            input_config.mesh_arg_indices, input_shard_specs)
         return PipeshardConfig(
             # Executable configs
             instruction_lists,
@@ -457,8 +457,8 @@ class PipelineInstEmitter:
             output_local_uuid_list,
             outs_handler,
             # Others
-            load_info,
-            self.hlo_texts_before_spmd_partitioner,
+            input_placement_specs,
+            self.sharding_annotated_hlo_texts,
             self.flop_count)
 
     def _compile_get_vars_from_mesh(self, invars, dst_specs, mesh_idx,
@@ -572,7 +572,7 @@ class PipelineInstEmitter:
             hlo_module = stage.get_spmd_partitioned()
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             exec_config = PartialGradWorkerExecutableConfig(
-                exec_uuid, hlo_proto, stage.strategy_config,
+                exec_uuid, hlo_proto, stage.stage_plan, stage.donated_invars,
                 stage.output_acc_grad_indices)
             for worker in self.mesh_group[mesh_idx].workers:
                 executable_config_lists[worker].append(exec_config)
@@ -696,7 +696,9 @@ class PipelineInstEmitter:
 
             mesh_arg_lists[mesh_idx] = mesh_arg_list
             delete_after_run = [
-                var in donated_invar_set or var in global_batch_invar_set
+                var in donated_invar_set or
+                (var in global_batch_invar_set and
+                 global_config.always_donate_micro_batch_vars)
                 for var, _ in mesh_arg_list
             ]
             donate_invars.append(delete_after_run)
@@ -980,23 +982,27 @@ class PipelineInstEmitter:
 
         return outs_handler
 
-    def _compile_load_info(self, mesh_arg_indices, input_shard_specs):
+    def _compile_input_placement_spec(self, mesh_arg_indices,
+                                      input_shard_specs):
         assert self.in_tree is not None
 
-        # build load_info_arr: flatten global index => LoadInfo object
-        load_info_arr = [None] * len(self.is_batch)
+        # build spec_arr: List[flatten global index -> PlacementSpec]
+        spec_arr = [None] * len(self.is_batch)
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
             for local_idx, global_idx in enumerate(mesh_arg_indices[mesh_idx]):
-                aval, mesh, spec = (self.global_invars[global_idx].aval,
-                                    physical_mesh,
-                                    input_shard_specs[mesh_idx][local_idx])
-                if load_info_arr[global_idx] is None:
-                    load_info_arr[global_idx] = LoadInfo(aval, [mesh], [spec])
+                shard_spec = input_shard_specs[mesh_idx][local_idx]
+                if spec_arr[global_idx] is None:
+                    spec_arr[global_idx] = PlacementSpec(
+                        self.global_invars[global_idx].aval,
+                        (physical_mesh.mesh_id,), (shard_spec,))
                 else:
-                    load_info_arr[global_idx].add_replica(mesh, spec)
+                    old_val = spec_arr[global_idx]
+                    spec_arr[global_idx] = PlacementSpec(
+                        old_val.aval,
+                        old_val.mesh_ids + (physical_mesh.mesh_id,),
+                        old_val.sharding_specs + (shard_spec,))
 
-        # build load_info_arr
-        return tree_unflatten(self.in_tree, load_info_arr)
+        return tree_unflatten(self.in_tree, spec_arr)
 
     # TODO(yonghao): set empty buffer is not compatiable with local allgather
     @staticmethod

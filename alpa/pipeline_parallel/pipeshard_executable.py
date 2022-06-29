@@ -1,9 +1,10 @@
 """The dirver part and worker part of a pipeshard executable."""
 import logging
+import os
 import time
 from typing import Optional, Sequence
 
-from jax.tree_util import tree_map, tree_flatten, tree_unflatten, PyTreeDef
+from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 import numpy as np
 import ray.exceptions
 
@@ -13,12 +14,13 @@ from alpa.device_mesh import PhysicalDeviceMeshGroup
 from alpa.mesh_executable import (
     AllocZeroBufferWorkerExecutable, ConcatMeshWorkerExecutable,
     MemzeroWorkerExecutable, PartialGradAccMeshWorkerExecutable,
-    next_mesh_executable_uuid, PlacementSpec)
+    next_mesh_executable_uuid)
 from alpa.pipeline_parallel.runtime_emitter import (
     AllocateZeroWorkerExecutableConfig, ConcatWorkerExecutableConfig,
     ExecutableConfig, MemZeroWorkerExecutableConfig,
     PartialGradWorkerExecutableConfig, PipelineInstType, PipelineInstruction,
     PipeshardConfig)
+from alpa.shard_parallel.auto_sharding import HloStatus
 from alpa.timer import timers
 from alpa.util import OrderedSet
 
@@ -54,11 +56,11 @@ class PipeshardDriverExecutable:
         self.stages = pipeshard_config.xla_stages
         self.schedule = pipeshard_config.schedule
         self.flop_count = pipeshard_config.flop_count
-        self.load_info = pipeshard_config.load_info
+        self.input_placement_specs = pipeshard_config.input_placement_specs
         # List[stage_idx -> str]
-        self.hlo_texts_after_spmd_partitioner = []
-        self.hlo_texts_before_spmd_partitioner = (
-            pipeshard_config.hlo_texts_before_spmd_partitioner)
+        self.fully_optimized_hlo_texts = []
+        self.sharding_annotated_hlo_texts = (
+            pipeshard_config.sharding_annotated_hlo_texts)
         # List[stage_idx -> executable_uuid]
         self.executable_uuids = pipeshard_config.executable_uuids
 
@@ -190,12 +192,7 @@ class PipeshardDriverExecutable:
 
     def get_input_placement_specs(self):
         """Return the preferred placement specs for input arguments."""
-
-        def load_info_to_placement_spec(load_info):
-            return PlacementSpec([x.mesh_id for x in load_info.meshes],
-                                 load_info.specs)
-
-        return tree_map(load_info_to_placement_spec, self.load_info)
+        return self.input_placement_specs
 
     def __call__(self, *args):
         """Fast call without signature matching."""
@@ -211,14 +208,8 @@ class PipeshardDriverExecutable:
         out = self.launch_on_driver(*args_flat)
         return tree_unflatten(self.out_tree, out)
 
-    ##### Load/Store Related Functions #####
-    def get_load_info(self):
-        """Get the load info for model checkpoints."""
-        return self.load_info
-
     ##### Profiling and Debugging Related Functions #####
     def get_execution_time_costs(self,
-                                 warmup=2,
                                  timer_name="overall",
                                  return_all_costs=False):
         """Get the execution time costs with internal timers."""
@@ -228,7 +219,7 @@ class PipeshardDriverExecutable:
                 f"Query timer name from the following: {timer_names.keys()}.")
         mesh_costs = []
         for mesh in self.mesh_group:
-            mesh_costs.append(mesh.get_remote_timer(timer_name).costs[warmup:])
+            mesh_costs.append(mesh.get_remote_timer(timer_name).costs)
         if return_all_costs:
             return mesh_costs
 
@@ -242,17 +233,21 @@ class PipeshardDriverExecutable:
                     min_costs[i] = cost
         return max_costs
 
+    def get_shard_args_time_costs(self):
+        # TODO(lmzheng): Implement this
+        return [0]
+
     def reset_benchmark_timers(self):
         """Reset all benchmarking timers."""
         for name in timer_names:
             for mesh in self.mesh_group:
                 mesh.reset_remote_timer(name)
 
-    def get_hlo_text(self, after_spmd_partitioner=True):
+    def get_hlo_text(self, status: HloStatus = HloStatus.FULLY_OPTIMIZED):
         """Return the HLO text for all stages."""
-        if after_spmd_partitioner:
-            if self.hlo_texts_after_spmd_partitioner:
-                return self.hlo_texts_after_spmd_partitioner
+        if status == HloStatus.FULLY_OPTIMIZED:
+            if self.fully_optimized_hlo_texts:
+                return self.fully_optimized_hlo_texts
 
             hlo_texts = []
             for stage_idx in range(len(self.stages)):
@@ -263,10 +258,28 @@ class PipeshardDriverExecutable:
                 hlo_text = physical_mesh.workers[0].get_exec_hlo_text.remote(
                     self.executable_uuids[stage_idx])
                 hlo_texts.append(hlo_text)
-            self.hlo_texts_after_spmd_partitioner = ray.get(hlo_texts)
-            return self.hlo_texts_after_spmd_partitioner
+            self.fully_optimized_hlo_texts = ray.get(hlo_texts)
+            return self.fully_optimized_hlo_texts
         else:
-            return self.hlo_texts_before_spmd_partitioner
+            return self.sharding_annotated_hlo_texts
+
+    def dump_debug_info(self, folder: str):
+        """
+        Dump intermediate representations and other informations for debugging.
+        """
+        os.makedirs(folder, exist_ok=True)
+        name = self.stages[0].spmd_partitioned_hlo_module.name()
+        name = name[:name.index("pipeshard_parallel") - 1]
+        prefix = os.path.join(folder, name)
+
+        fully_optimized_hlo_texts = self.get_hlo_text(HloStatus.FULLY_OPTIMIZED)
+        for stage_idx in range(len(self.stages)):
+            with open(f"{prefix}_stage_{stage_idx}.hlo", "w") as f:
+                f.write(fully_optimized_hlo_texts[stage_idx])
+
+        with open(f"{prefix}_resharding_tasks.txt", "w") as f:
+            for task in self.resharding_tasks:
+                f.write(str(task) + "\n\n")
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size on each mesh."""
@@ -289,12 +302,6 @@ class PipeshardDriverExecutable:
         all_profiled = [ray.get(handles) for handles in all_profiled_handles]
         return all_profiled
 
-    def print_resharding_tasks(self):
-        """Pretty print all compiled resharding tasks."""
-        ret = ""
-        for task in self.resharding_tasks:
-            ret += str(task) + "\n\n"
-        return ret
 
     ##### Other Functions #####
     def sync(self):
@@ -326,8 +333,10 @@ class PipeshardDriverExecutable:
 
 
 class PipeshardMeshWorkerExecuable:
-    """An executable that executes static pipeline runtime instructions on a
-    worker."""
+    """
+    An executable that executes static pipeline runtime instructions on a
+    worker.
+    """
 
     def __init__(self, worker: MeshHostWorker, uuid: int,
                  instructions: Sequence[PipelineInstruction],
@@ -362,7 +371,8 @@ class PipeshardMeshWorkerExecuable:
                 self.worker.put_executable(task_config.exec_uuid,
                                            PartialGradAccMeshWorkerExecutable,
                                            task_config.hlo_proto,
-                                           task_config.strategy_config,
+                                           task_config.stage_plan,
+                                           task_config.donated_invars,
                                            task_config.grad_sync_channel_ids)
                 self.partial_grad_exec_uuids.add(task_config.exec_uuid)
             elif isinstance(task_config, MemZeroWorkerExecutableConfig):

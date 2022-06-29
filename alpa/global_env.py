@@ -7,11 +7,13 @@ class GlobalConfig:
 
     def __init__(self):
         ########## Options of device mesh ##########
+        # See https://jax.readthedocs.io/en/latest/gpu_memory_allocation.html
         self.xla_client_mem_fraction = float(
             os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", 0.9))
         self.xla_gpu_autotune_level = 4
+        # The threshold to tigger a batched deletion on workers.
         self.delete_remote_buffers_threshold = 200
-        # use AWS EFA network interface
+        # Whether to use AWS EFA network interface
         self.use_aws_efa = os.environ.get("ALPA_USE_AWS_EFA",
                                           "").lower() in ["true", "1"]
         # Random seed used for compilation
@@ -20,15 +22,13 @@ class GlobalConfig:
         self.runtime_random_seed = 42
 
         ########## Options of shard_parallel ##########
+        # Whether to sync before and after the executable for accurate internal
+        # timer
         self.shard_parallel_sync_for_timer = False
 
         ########## Options of pipeline_parallel ##########
-        # Whether to debug with local runtime. The local runtime checks
-        # correctness of stage construction and other graph level operations.
-        self.debug_with_local_runtime = False
         # Whether to debug with pipeshard runtime. If turned on, no physical
         # resource is required until launching PipeshardExecutable.
-        # TODO(yonghao): deprecate it later.
         self.debug_with_pipeshard_runtime = False
         # Whether to use the whole cluster for stage profiling. If not, only
         # use the given mesh.
@@ -40,6 +40,7 @@ class GlobalConfig:
         self.profile_maximum_retry = 2
         # Whether to forcely set stage construction's submesh choices
         self.overwrite_submesh_choices = None
+        self.always_donate_micro_batch_vars = True
 
         ########## Options of pipeline runtime ##########
         self.pipeline_check_alive = True
@@ -49,14 +50,19 @@ class GlobalConfig:
         # Whether to use distributed compilation in pipeline parallel for
         # each stage. Disabling it helps debug.
         self.pipeline_distributed_compile = True
+        # Whether to use single-byte signal tensor for send/recv.
+        # This is a debug option.
         self.pipeline_use_signal_send_recv = False
-        self.precompile_resharding_tasks = True
+        # Whether to use the scatter-gater/local-all-gather optimization.
         self.use_scatter_gather = True
         self.eagerly_create_communicators = True
         self.use_memzero_for_gradient_accumulation = False
         # Cross mesh resharding mode. Possible choices: {"send_recv",
         # "broadcast"}
         self.resharding_mode = "send_recv"
+        # Which nccl to use. Possible choices: {"cupy",
+        # "xla_extension"}
+        self.nccl_mode = "cupy"
 
         ########## Options of XLA compilation ##########
         # Whether to use xla while instruction for preventing CSE in
@@ -72,10 +78,6 @@ class GlobalConfig:
 
         ########## Options of logging ##########
         self.print_compilation_time = False
-
-        ########## Options of ray namespace ##########
-        self.default_ray_namespace_prefix = "alpa-train"
-        self.unittest_ray_namespace_prefix = "alpa-unittest"
 
 
 global_config = GlobalConfig()

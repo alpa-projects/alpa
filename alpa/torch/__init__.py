@@ -1,26 +1,28 @@
-"""Miscellaneous functions available in `alpa.torch.*` namespace
-"""
+"""Miscellaneous functions available in `alpa.torch.*` namespace."""
+
 try:
     import torch
 except ImportError as e:
     print("""
-Attempted to use Alpa-PyTorch frontend, but PyTorch is not installed.
+        Attempted to use Alpa-PyTorch frontend, but PyTorch is not installed.
 
-Please follow instructions at docs/torch_build_instructions.txt
-to install PyTorch and related dependencies.
-""")
+        Please follow instructions at 
+        https://alpa-projects.github.io/install.html#pytorch-frontend-experimental
+        to install PyTorch and related dependencies.""")
     raise e
 
 from typing import Any, Callable, Union, Tuple
 from functools import partial, wraps
 
 import numpy as np
+
 import alpa
 from alpa.device_mesh import DistributedArray
-from alpa.torch.nn import functionalize, materialize, meta_init
-from alpa.torch.ops.mapping import enable_dist_for_funcs, zeros_like_on_device
+from alpa.torch.nn import functionalize, meta_init
+from alpa.torch.ops.mapping import enable_dist_for_func
 from alpa.torch.tensor_utils import (make_shaped_array_from_pt_tensor,
-                                     meta_like, to_format, assert_format)
+                                     initialize_with_zeros, to_format,
+                                     assert_format)
 from alpa.torch import trainer
 
 # If True, prints verbose log for debugging.
@@ -28,15 +30,15 @@ debug = False
 
 
 def set_mode(new_mode: str):
-    """This sets the current Alpa mode. Supports one of following:
+    """This sets the current alpa.torch mode. Supports one of following:
 
     "local":
-    - Pure PT eager mode on single CPU/GPU
+    - Pure PT eager mode on a single CPU/GPU
     - Allows print in middle of graph
     - No dist training
 
     "dist":
-    - Graph mode by lowering PT program to JAX and then run with Alpa
+    - Graph mode by lowering PT programs to JAX and then run them with Alpa
     - Doesn't allow print in middle of graph
     - Supports dist training
     """
@@ -52,14 +54,6 @@ def mode():
         return "local"
     else:
         return "dist"
-
-
-def manual_seed(seed: int):
-    """This sets both `torch.manual_seed` and XLA seed under the hood.
-
-    TODO: add XLA seed setting
-    """
-    torch.manual_seed(seed)
 
 
 def functorch_value_and_grad(func: Callable,

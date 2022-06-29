@@ -8,8 +8,8 @@ python3 run_all.py
 # Run files whose names contain "pipeline"
 python3 run_all.py --run-pattern pipeline
 
-# Run files whose names contain "auto_sharding"
-python3 run_all.py --run-pattern auto_sharding
+# Run files whose names contain "shard_parallel"
+python3 run_all.py --run-pattern shard_parallel
 
 # Run files whose names do not contain "torch"
 python3 run_all.py --skip-pattern torch
@@ -24,10 +24,9 @@ import time
 from typing import Sequence
 import unittest
 
-from alpa.util import run_with_timeout
-
 slow_testcases = set([
-    "test_pipeline_stage_construction.py",
+    "pipeline_parallel/test_stage_construction.py",
+    "torch_frontend/test_zhen.py",
 ])
 
 
@@ -35,10 +34,10 @@ def run_unittest_files(files, args):
     """Run unit test files one by one in separates processes."""
     os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = str(
         args.xla_client_mem_fraction)
+    # Must import alpa after setting the global env
+    from alpa.util import run_with_timeout
 
     for filename in files:
-        if not filename.startswith("test"):
-            continue
         if args.run_pattern is not None and args.run_pattern not in filename:
             continue
         if args.skip_pattern is not None and args.skip_pattern in filename:
@@ -101,7 +100,7 @@ if __name__ == "__main__":
                             choices=["sorted", "random", "reverse_sorted"])
     args = arg_parser.parse_args()
 
-    files = glob.glob("*.py")
+    files = glob.glob("**/test_*.py", recursive=True)
     if args.order == "sorted":
         files.sort()
     elif args.order == "random":

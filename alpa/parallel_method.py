@@ -98,9 +98,55 @@ class ShardParallel(ParallelMethod):
                                         *avals)
 
 
+class DataParallel(ShardParallel):
+    """
+    Use vanilla data parallelism.
+    This method syncs gradient by using all-reduce.
+    """
+
+    def __init__(self,
+                 devices: Optional[Union[LogicalDeviceMesh,
+                                         PhysicalDeviceMesh]] = None,
+                 num_micro_batches: Optional[int] = None):
+        as_option = AutoShardingOption(force_data_parallel=True,
+                                       prefer_reduce_scatter=False)
+        super().__init__(devices, num_micro_batches, as_option)
+
+
+class Zero2Parallel(ShardParallel):
+    """
+    Use zero-2 based data parallelism. This method
+    1. replaces all-reduce by reduce-scatter and all-gather.
+    2. partitions more tensors such as optimizer states.
+    """
+
+    def __init__(self,
+                 devices: Optional[Union[LogicalDeviceMesh,
+                                         PhysicalDeviceMesh]] = None,
+                 num_micro_batches: Optional[int] = None):
+        as_option = AutoShardingOption(force_data_parallel=True,
+                                       prefer_reduce_scatter=True)
+        super().__init__(devices, num_micro_batches, as_option)
+
+
+class Zero3Parallel(ShardParallel):
+    """
+    Use zero-3 based data parallelism.
+    Note that this method is experimental and not fully tested.
+    """
+
+    def __init__(self,
+                 devices: Optional[Union[LogicalDeviceMesh,
+                                         PhysicalDeviceMesh]] = None,
+                 num_micro_batches: Optional[int] = None):
+        as_option = AutoShardingOption(force_zero_stage_3=True)
+        super().__init__(devices, num_micro_batches, as_option)
+
+
 class PipeshardParallel(ParallelMethod):
-    """Use pipeshard parallelism which combines pipeline parallelism and shard
-    parallelism.
+    """
+    Use pipeshard parallelism which combines pipeline parallelism and
+    shard parallelism.
 
     Args:
         devices: Specify the devices to use. If it is None, use all the devices
@@ -135,7 +181,7 @@ class PipeshardParallel(ParallelMethod):
             pipeline_schedule: str = "1f1b",
             stage_mode: str = "uniform",
             submesh_physical_shape_space: str = "power_of_two",
-            submesh_logical_shape_space: str = "default",
+            submesh_logical_shape_space: str = "single_node_model_parallel",
             auto_stage_imbalance_tolerance: float = np.inf,
             use_hlo_cost_model: bool = False,
             profiling_database_filename: Optional[str] = None,

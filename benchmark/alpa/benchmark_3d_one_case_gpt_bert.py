@@ -285,14 +285,7 @@ def benchmark_gpt_bert_internal(model_type,
     else:
         compilation_times = None
 
-    # Dump hlo ir for debugging
-    stage_hlo_texts = executable.get_hlo_text()
-    for i in range(len(stage_hlo_texts)):
-        with open(f"tmp/stage_{i}.hlo", "w") as fout:
-            fout.write(stage_hlo_texts[i])
-    with open(f"tmp/resharding_tasks.txt", "w") as fout:
-        fout.write(executable.print_resharding_tasks())
-
+    executable.dump_debug_info("tmp")
     executable.sync()
     print_used_time("Compile (worker)")
 
@@ -302,7 +295,7 @@ def benchmark_gpt_bert_internal(model_type,
         state = train_step(state, batch, rngkey)
         executable.sync()
 
-    latencies = executable.get_execution_time_costs(warmup=1)
+    latencies = executable.get_execution_time_costs()[1:]
     max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
 
     # Benchmark latency with driver overhead

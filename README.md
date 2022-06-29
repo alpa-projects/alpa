@@ -2,8 +2,8 @@
 [**Documentation**](https://alpa-projects.github.io) |
 [**Slack**](https://forms.gle/YEZTCrtZD6EAVNBQ7)
 
-[![Build Jaxlib and Jax](https://github.com/alpa-projects/alpa/actions/workflows/build_jax.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/build_jax.yml)
 [![CI](https://github.com/alpa-projects/alpa/actions/workflows/ci.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/ci.yml)
+[![Build Jaxlib](https://github.com/alpa-projects/alpa/actions/workflows/build_jaxlib.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/build_jaxlib.yml)
 
 Alpa is a system for training large-scale neural networks.
 Scaling neural networks to hundreds of billions of parameters has enabled dramatic breakthroughs such as GPT-3, but training these large-scale neural networks requires complicated distributed training techniques.
@@ -45,6 +45,7 @@ Check out the [Alpa Documentation](https://alpa-projects.github.io) site for ins
 ## More Information
 - [Alpa paper](https://arxiv.org/pdf/2201.12023.pdf) (OSDI'22)
 - [Google AI Blog](https://ai.googleblog.com/2022/05/alpa-automated-model-parallel-deep.html)
+- [Alpa talk slides](https://docs.google.com/presentation/d/1CQ4S1ff8yURk9XmL5lpQOoMMlsjw4m0zPS6zYDcyp7Y/edit?usp=sharing)
 
 ## Getting Involved
 - Please read the [contributor guide](https://alpa-projects.github.io/developer/developer_guide.html) if you are interested in contributing to Alpa. 

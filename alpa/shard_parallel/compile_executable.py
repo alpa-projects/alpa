@@ -112,13 +112,14 @@ def shard_parallel_internal(
     flop_count = xe.hlo_module_count_flop_dot_conv_only(hlo_module)
 
     # Compile a XLA executable
-    hlo_module, strategy_config = run_auto_sharding_pass(
-        hlo_module, logical_mesh_choices[0], "single", 1, as_option)
+    hlo_module, stage_plan = run_auto_sharding_pass(hlo_module,
+                                                    logical_mesh_choices[0],
+                                                    "single", 1, as_option)
 
     # Compile a mesh executable
     return NormalMeshDriverExecutable(physical_mesh,
                                       hlo_module,
-                                      strategy_config,
+                                      stage_plan,
                                       avals,
                                       out_avals,
                                       donated_invars,
@@ -158,7 +159,7 @@ def shard_parallel_internal_gradient_accumulation(
     flop_count *= num_micro_batches
 
     # pylint: disable=unbalanced-tuple-unpacking
-    hlo_stage_names, hlo_stages, strategy_config = run_auto_sharding_pass(
+    hlo_stage_names, hlo_stages, stage_plan = run_auto_sharding_pass(
         hlo_module, logical_mesh_choices[0], "stages", num_micro_batches,
         as_option)
     assert len(hlo_stages) == 2
@@ -193,7 +194,7 @@ def shard_parallel_internal_gradient_accumulation(
     return GradAccMeshDriverExecutable(physical_mesh,
                                        accumulate_grad,
                                        apply_grad,
-                                       strategy_config,
+                                       stage_plan,
                                        in_avals,
                                        out_avals,
                                        grad_avals,

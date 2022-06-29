@@ -31,6 +31,7 @@ def send_tile(worker, uuid: int, device_id: int, offset: Sequence[slice],
 
     Args:
         uuid: the uuid of the xla buffers.
+        device_id: the device where the buffer is sent.
         offset: the slice to be sent in the buffer.
         dst_rank: destination rank to send.
         dst_gpu_idx: the gpu index on the destination rank.

@@ -117,15 +117,14 @@ def test_resharding(var,
     for worker in src_mesh.workers:
         exec_uuid = next_mesh_executable_uuid()
         worker.put_executable.remote(exec_uuid, PipeshardMeshWorkerExecuable,
-                                     instruction_lists[worker],
-                                     [src_uuid], [], [], [], [],
+                                     instruction_lists[worker], [src_uuid], [],
+                                     [], [], [],
                                      [False] * src_mesh.num_devices_per_host)
         exec_uuids[worker] = exec_uuid
     for worker in dst_mesh.workers:
         exec_uuid = next_mesh_executable_uuid()
         worker.put_executable.remote(exec_uuid, PipeshardMeshWorkerExecuable,
-                                     instruction_lists[worker], [],
-                                     [dst_uuid],
+                                     instruction_lists[worker], [], [dst_uuid],
                                      executable_config_lists[worker], [], [],
                                      [False] * dst_mesh.num_devices_per_host)
         exec_uuids[worker] = exec_uuid

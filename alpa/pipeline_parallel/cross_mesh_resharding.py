@@ -539,8 +539,8 @@ class SymbolicReshardingTask(ReshardingTask):
                     # Sender's task
                     sender_worker = (self.collective_group.
                                      device_str_to_mesh_worker_map[sender])
-                    src_device_id = self.collective_group.device_str_to_device_id_map[
-                        sender]
+                    src_device_id = (self.collective_group.
+                                     device_str_to_device_id_map[sender])
                     self._sender_tasks[sender_worker].append(
                         ReshardingSendSpec(
                             src_device_id,

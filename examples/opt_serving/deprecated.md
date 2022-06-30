@@ -1,4 +1,5 @@
-# Serving OPT-175B using Alpa
+Serving OPT-175B using Alpa
+---------------------------
 
 This tutorial shows how to setup a serving system to serve the largest available pretrained language model OPT-175B.
 
@@ -12,6 +13,7 @@ Specifically, Alpa provides:
 - A web frontend to collect and batch inference requests from users.
 
 **Note**: the pre-trained OPT model weights can be obtained from [Metaseq](https://github.com/facebookresearch/metaseq), subject to their license.
+
 **Note**: You will need at least 350GB memory to to serve the OPT-175B model. For example, you can use 4 x AWS p3.16xlarge instance,
 which provide 4 instance x 8 (GPU/instance) x 16 (GB/GPU) = 512 GB memory.
 You can also follow this guide to setup a serving system to serve smaller versions of OPT, such as OPT-66B, OPT-30B, etc. 
@@ -61,14 +63,42 @@ cd examples/opt_serving && bash build.sh
 ```
 
 ## Get OPT Weights
-There are two ways you can obtain the pretrained OPT weights.
+There are two ways you can obtain the pretrained OPT weights: proprocessing the weights by yourself, 
+or downloading a copy of preprocessed weights from the Alpa team. 
 
-1. You can download the original OPT weights released by [Metaseq](https://github.com/facebookresearch/metaseq/tree/main/projects/OPT), 
-then use our script [convert_to_numpy_weight.py](scripts/convert_to_numpy_weights.py) to convert it into Alpa-compatible formats. 
+### Preprocess weights into numpy formats by yourself
 
-2. We provide links to download the preprocessed 125M and 2.7B model below. For other sizes of OPT, please join [Alpa slack](https://forms.gle/YEZTCrtZD6EAVNBQ7) to request a copy from the Alpa developer team. 
+You can download the original OPT weights released by [Metaseq](https://github.com/facebookresearch/metaseq/tree/main/projects/OPT) and 
+ use [our scripts](scripts) to convert it into Alpa-compatible formats.
+
+Below, we provide detailed instructions on how to convert the original OPT-175B weights into Alpa-compatible formats. 
+You can follow the same procedures to obtain the Alpa-compatible weights for other sizes of models.
+
+#### Download and verify weights
+First, download Metaseq's original 992 shards, [verify the MD5](https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/assets/opt175b_md5sum_shards.csv) of the shards, 
+and put the original weight shards under a folder `PATH_TO_992_SHARDS/`.
+
+#### Step 1: Consolidate the weights from 992 shards into one single checkpoint
+Use the script [step_1_consolidate_992_shards.py](scripts/step_1_consolidate_992_shards.py) to consolidate the 992 shards into one singleton checkpoint.
+```shell
+
+```
+
+**Note**: This steps requires your  
+
+#### Step 2: Obtain the metadata of the model
+
+
+### Step 3: convert the model into numpy formats
+
+### Download Alpa-compatible weights.
+We provide links to download the preprocessed 125M, 2.7B, 30B model weights below. 
    - [OPT-125M weights](https://drive.google.com/file/d/1Ps7DFD80wNO7u2t39YCYcBX-9XwypGzl/view?usp=sharing)
    - [OPT-2.7B weights](https://drive.google.com/file/d/1ayIaKRhxF9osZWgcFG-3vSkjcepSWdQd/view?usp=sharing) 
+   - [OPT-30B weights](https://drive.google.com/file/d/1_MBcgwTqHFboV0JkGWR03AOHusrxcHlu/view?usp=sharing)
+   
+   Due to Meta's license of the OPT-175B, we are not able to  provide public links for downloading the OPT-175B weights. 
+   For other sizes of weights, please join [Alpa slack](https://forms.gle/YEZTCrtZD6EAVNBQ7) to request a copy from the Alpa developer team. 
 
 
 ## Run and Benchmark Generation in the Command Line

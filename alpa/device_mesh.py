@@ -27,7 +27,7 @@ import pickle
 import shutil
 import threading
 import time
-from typing import Any, Callable, List, Union, Sequence, Tuple, Optional
+from typing import Any, List, Union, Sequence, Tuple, Optional
 
 import jax
 from jax import core, xla, device_put
@@ -1327,7 +1327,13 @@ def next_array_uuids(number=1):
 
 
 class RemoteArrayRef:
-    """A reference to all device buffers of a logical array"""
+    """
+    A reference to all device buffers of a logical array.
+
+    In Alpa, each pipeshard stage runs in SPMD(single program, multiple device).
+    Hence, buffers of the same logical array are allocated, used and freed
+    together, and thus we use one reference for all these buffers.
+    """
 
     def __init__(self, device_mesh: PhysicalDeviceMesh, uuid: int = None):
         self.device_mesh = device_mesh
@@ -1366,7 +1372,7 @@ class DistributedArray:
     End users can interact with this array as if they are working with
     a normal numpy array.
 
-    Internally, it stores pointers (uuid) of remote buffers.
+    Internally, it stores a pointer to all remote buffers.
     The buffers are stored distributedly on remote workers' device memeory.
     When users require the value of the array. These buffers will be gathered
     to the dirver.

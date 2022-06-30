@@ -95,6 +95,10 @@ Convert weights into Alpa formats by yourself
 ---------------------------------------------
 We provide detailed instructions below on how to convert the original OPT-175B weights into Alpa-compatible formats. You can follow the same procedures to get Alpa-compatible weights for other model sizes.
 
+  .. note::
+
+    The procedures below for converting OPT-175B weights will take about 1 hour.
+
 1. Download and verify the original weights
     First, download Metaseq's original OPT-175B weights in 992 shards, verify the `MD5 of each shard <https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/assets/opt175b_md5sum_shards.csv>`_ , and put the shards under a folder, say, ``PATH_TO_992_SHARDS/``.
 
@@ -131,11 +135,7 @@ We provide detailed instructions below on how to convert the original OPT-175B w
     
   .. note::
   
-    Similarly, the above script also require 350GB free disk space to write the numpy-formatted weights.
-
-
-4. Verify the output weights
-    Verify the MD5 of your converted weights to ensure there are no errors during the conversion.
+    The above script also require 350GB free disk space to write the numpy-formatted weights.
     
     
 Download Alpa-compatible weights
@@ -204,11 +204,11 @@ Then open ``https://[IP-ADDRESS]:10001`` in your browser to try out the model!
 Code structure
 ==============
 
-* `examples/opt_serving/benchmark <benchmark>`_: Benchmark scripts for generation in the command line.
-* `examples/opt_serving/dataset <dataset>`_: Data loaders for serving. 
-* `examples/opt_serving/service <service>`_: Model serving web server.
-* `examples/opt_serving/generator.py <generator.py>`_: Backend for web server.
-* `examples/opt_serving/interactive_hosted.py <interactive_hosted.py>`_: Web server entry point.
+* `examples/opt_serving/benchmark <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/benchmark>`_: Benchmark scripts for generation in the command line.
+* `examples/opt_serving/dataset <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/dataset>`_: Data loaders for serving.
+* `examples/opt_serving/service <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/service>`_: Model serving web server.
+* `examples/opt_serving/generator.py <https://github.com/alpa-projects/alpa/blob/main/examples/opt_serving/generator.py>`_: Backend for web server.
+* `examples/opt_serving/interactive_hosted.py <https://github.com/alpa-projects/alpa/blob/main/examples/opt_serving/interactive_hosted.py>`_: Web server entry point.
 
 License
 =======

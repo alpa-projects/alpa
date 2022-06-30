@@ -16,7 +16,7 @@ class MemoryLeakTest(unittest.TestCase):
 
     def setUp(self):
         init()
-        global_config.delete_remote_buffers_threshold = 0
+        global_config.delete_remote_arrays_threshold = 0
 
     def tearDown(self):
         shutdown()

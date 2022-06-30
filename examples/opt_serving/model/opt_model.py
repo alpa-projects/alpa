@@ -759,11 +759,12 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
                 continue
 
             assert shapes[i][j] == loaded_array.shape
+            uuid = uuids[i][j]
+            datas = []
             for k in range(len(self.local_devices)):
                 idx = self.host_id * len(self.local_devices) + k
-                uuid = uuids[i][j][idx]
-                data = loaded_array[indices[i][j][idx]]
-                self.put_buffer(uuid, k, data)
+                datas.append(loaded_array[indices[i][j][idx]])
+            self.put_buffers(uuid, datas)
 
     load_param("params.transformers.embeddings.word_embeddings.embedding",
                load_array("decoder.embed_tokens.weight"))
@@ -872,7 +873,7 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
         if len(info.mesh_ids) == 1:
             mesh, spec = mesh_group[info.mesh_ids[0]], info.sharding_specs[0]
             indices = pxla.spec_to_indices(aval.shape, spec)
-            ary_refs, ary_uuid = create_remote_array_refs(1)
+            ary_refs, ary_uuid = create_remote_array_refs(mesh)
             flat_shapes.append([aval.shape])
             flat_uuids.append([ary_uuid[0]])
             flat_indices.append([indices])
@@ -889,7 +890,7 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
             for mesh_id, spec in zip(info.mesh_ids, info.sharding_specs):
                 mesh = mesh_group[mesh_id]
                 indices = pxla.spec_to_indices(aval.shape, spec)
-                ary_refs, ary_uuid = create_remote_array_refs(1)
+                ary_refs, ary_uuid = create_remote_array_refs(mesh)
                 array = DistributedArray(mesh, aval, spec, ary_refs[0], indices)
                 tmp_shapes.append(aval.shape)
                 tmp_uuids.append(ary_uuid[0])

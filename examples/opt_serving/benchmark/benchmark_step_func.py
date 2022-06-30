@@ -26,7 +26,7 @@ def run_benchmark(args):
 
     alpa.global_config.shard_parallel_sync_for_timer = True
     alpa.global_config.pipeline_parallel_sync_for_timer = True
-    alpa.global_config.delete_remote_buffers_threshold = 700
+    alpa.global_config.delete_remote_arrays_threshold = 100
 
     batch_size = 1
     seq_len = 16

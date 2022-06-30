@@ -54,12 +54,23 @@ def adam(lr=1e-4):
             optim_state["step"] = step + 1
             return params, optim_state
 
-        optim_state = copy.deepcopy(params)
+        # optim_state = copy.deepcopy(params)
+        optim_state = {
+            "exp_avgs": {k: torch.empty(v.shape, device="meta") for k, v in params.items()},
+            "exp_avg_sqs": {k: torch.empty(v.shape, device="meta") for k, v in params.items()},
+            "step": torch.empty(1, device="meta"),
+        }
 
+        # def optim_state_init_func(optim_state):
+        #     new_state = {}
+        #     for k, v in optim_state.items():
+        #         new_state[k] = torch.full_like(v, 0.0)
+        #     return new_state
         def optim_state_init_func(optim_state):
             new_state = {}
-            for k, v in optim_state.items():
-                new_state[k] = torch.full_like(v, 0.0)
+            new_state["exp_avgs"] = {k: torch.zeros_like(v) for k, v in optim_state["exp_avgs"].items()}
+            new_state["exp_avg_sqs"] = {k: torch.zeros_like(v) for k, v in optim_state["exp_avg_sqs"].items()}
+            new_state["step"] = torch.full_like(optim_state["step"], 1)
             return new_state
 
         return optim_func, optim_state_init_func, optim_state

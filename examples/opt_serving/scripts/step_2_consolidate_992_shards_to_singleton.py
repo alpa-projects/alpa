@@ -15,7 +15,6 @@ import torch
 from examples.opt_serving.scripts.utils import load_and_pop_last_optimizer_state
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 
 def _unpad(shard: torch.Tensor, pad: int) -> torch.Tensor:
@@ -173,7 +172,7 @@ def consolidate_fsdp_shards(
             #    parts=num_parts,
             #    no_stitch_megatron=no_stitch_megatron,
             #)
-            logger.info("- Part 1: consolidate Zero-3 shards.")
+            print("- Part 1: consolidate Zero-3 shards.")
             consolidated_weights = consolidate_model_parallel_part1(
                 metadata,
                 names,
@@ -185,18 +184,18 @@ def consolidate_fsdp_shards(
             del weights, metadata
             gc.collect()
             if not no_stitch_megatron:
-                logger.info("- Part 2: consolidate model-parallel parts.")
+                print("- Part 2: consolidate model-parallel parts.")
                 consolidated_weights = consolidate_model_parallel_part2(
                     consolidated_weights)
         else:
-            logger.info("FSDP.consolidate_shard_weights")
+            print("FSDP.consolidate_shard_weights")
             consolidated_weights = consolidate_shard_weights(
                 shard_weights=weights, shard_metadata=metadata, strict=strict
             )
         #del weights, metadata
         #gc.collect()
         done_consolidate = time.time()
-        logger.info(f"Done consolidating after {done_consolidate-t0//60} minutes")
+        print(f"Done consolidating after {done_consolidate-t0//60} minutes")
     else:
         consolidated_weights = weights[0]
     if new_arch_name is not None:
@@ -212,9 +211,9 @@ def consolidate_fsdp_shards(
                 args=ckpt.get("args"),
             )
             save_path = f"{prefix}.pt"
-            logger.info(f"- Saving to {save_path} ...")
+            print(f"- Saving to {save_path} ...")
             torch.save(ckpt_consolidated, save_path)
-            logger.info(f"Done saving after {(time.time() - t0) // 60} minutes")
+            print(f"Done saving after {(time.time() - t0) // 60} minutes")
             return save_path
 
         if no_stitch_megatron:
@@ -235,9 +234,9 @@ def consolidate_fsdp_shards(
         optimizer_history=ckpt["optimizer_history"],
         args=ckpt["args"],
     )
-    logger.info("saving..")
+    print("saving..")
     torch.save(ckpt_shared, f"{save_prefix}-shared.pt")
-    logger.info(f"Done saving. Total time: {time.time()-t0//60} minutes,  ")
+    print(f"Done saving. Total time: {time.time()-t0//60} minutes,  ")
     # Process experts
     for src, dst in tqdm(
         list(zip(expert_paths, expert_dest_paths)), desc="expert files"
@@ -274,7 +273,7 @@ def consolidate_model_parallel(
                 metadata_parts[p].append(metadata[i])
     all_parts_consolidated = defaultdict(list)
     for k, v in tqdm(model_parts.items()):
-        logger.info(f"Processing part: {k}, with {len(v)} shards...")
+        print(f"Processing part: {k}, with {len(v)} shards...")
         part_weights = consolidate_shard_weights(
             shard_weights=v, shard_metadata=metadata_parts[k], strict=strict
         )
@@ -297,7 +296,7 @@ def consolidate_model_parallel_part1(
                 metadata_parts[p].append(metadata[i])
     all_parts_consolidated = defaultdict(list)
     for k, v in tqdm(model_parts.items()):
-        logger.info(f"Consolidate shards associated with part: {k}, with {len(v)} shards...")
+        print(f"Consolidate shards associated with part: {k}, with {len(v)} shards...")
         part_weights = consolidate_shard_weights(
             shard_weights=v, shard_metadata=metadata_parts[k], strict=strict
         )
@@ -387,7 +386,7 @@ def glue_megatron_parts(model_parts):
                 logger.info(f"max discrepancy {key}: {err}")
 
     for key in model_parts[0]:
-        logger.info(f"Glue the key {key}...")
+        print(f"Glue the key {key}...")
         if "qkv" in key:
             # Bias of CP gets concatenated
             if key.endswith("bias"):
@@ -459,9 +458,9 @@ def glue_megatron_parts(model_parts):
     # Consolidate ffn_layernorm.lns.weight.{part_id} -> ffn_layernorm.weight
     handle_legacy_ln_(glued_model, len(model_parts))
     assert "decoder.layers.0.ffn_layernorm.lns.0.weight" not in glued_model
-    logger.info("- Done with consolidating model parallelism parts. See a summary below")
+    print("- Done with consolidating model parallelism parts. See a summary below:")
     for key in glued_model:
-        logger.info(f"key: {key}, shape: {glued_model[key].shape}")
+        print(f"    key: {key}, shape: {glued_model[key].shape}")
     return glued_model
 
 

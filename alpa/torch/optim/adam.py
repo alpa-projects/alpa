@@ -33,7 +33,8 @@ def adam(lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0):
             beta1, beta2 = betas
             beta1 = torch.tensor(beta1)
             beta2 = torch.tensor(beta2)
-            step = optim_state["step"]
+            # step = optim_state["step"]
+            step = 2
             for k in params:
                 param = params[k]
                 grad = params_grad[k]
@@ -53,14 +54,14 @@ def adam(lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0):
                 params[k] = param
                 optim_state["exp_avgs"][k] = exp_avg
                 optim_state["exp_avg_sqs"][k] = exp_avg_sq
-            optim_state["step"] = step + 1
+            # optim_state["step"] = step + 1
             return params, optim_state
 
         # optim_state = copy.deepcopy(params)
         optim_state = {
             "exp_avgs": {k: torch.empty(v.shape, device="meta") for k, v in params.items()},
             "exp_avg_sqs": {k: torch.empty(v.shape, device="meta") for k, v in params.items()},
-            "step": torch.empty(1, device="meta"),
+            # "step": torch.empty(1, device="meta"),
         }
 
         # def optim_state_init_func(optim_state):
@@ -72,7 +73,7 @@ def adam(lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0):
             new_state = {}
             new_state["exp_avgs"] = {k: torch.zeros_like(v) for k, v in optim_state["exp_avgs"].items()}
             new_state["exp_avg_sqs"] = {k: torch.zeros_like(v) for k, v in optim_state["exp_avg_sqs"].items()}
-            new_state["step"] = torch.full_like(optim_state["step"], 1)
+            # new_state["step"] = torch.full_like(optim_state["step"], 1)
             return new_state
 
         return optim_func, optim_state_init_func, optim_state

@@ -31,9 +31,11 @@ def adam(lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0):
         #     return params, optim_state
         def optim_func(params, optim_state, params_grad):
             beta1, beta2 = betas
-            beta1 = torch.tensor(beta1)
-            beta2 = torch.tensor(beta2)
+            # beta1 = torch.tensor(beta1)
+            # beta2 = torch.tensor(beta2)
             # step = optim_state["step"]
+            beta1 = 0.9
+            beta2 = 0.999
             step = 2
             for k in params:
                 param = params[k]
@@ -42,13 +44,14 @@ def adam(lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0):
                 exp_avg_sq = optim_state["exp_avg_sqs"][k]
                 bias_correction1 = 1 - beta1 ** step
                 bias_correction2 = 1 - beta2 ** step
-                if weight_decay != 0:
-                    grad = grad + weight_decay * param
+                # if weight_decay != 0:
+                #     grad = grad + weight_decay * param
                 # Decay the first and second moment running average coefficient
                 exp_avg = exp_avg * beta1 + (1 - beta1) * grad
                 exp_avg_sq = exp_avg_sq * beta2 + (1 - beta2) * grad * grad.conj()
-                bias_correction2_sqrt = torch.sqrt(torch.tensor(bias_correction2))
-                denom = (torch.sqrt(exp_avg_sq) / bias_correction2_sqrt) + torch.tensor(eps)
+                # bias_correction2_sqrt = torch.sqrt(torch.tensor(bias_correction2))
+                bias_correction2_sqrt = math.sqrt(bias_correction2)
+                denom = (torch.sqrt(exp_avg_sq) / bias_correction2_sqrt) + eps
                 step_size = lr / bias_correction1
                 param = param + (-step_size * exp_avg / denom)
                 params[k] = param

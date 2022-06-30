@@ -17,9 +17,9 @@ run_experiment () {
   sleep 0.1 # for ctrl+c to work
 }
 
-#run_experiment 1 1
+run_experiment 1 1
 #run_experiment 1 2
-run_experiment 1 4
+#run_experiment 1 4
 #run_experiment 1 8
 # run_experiment 2 1
 # run_experiment 2 2

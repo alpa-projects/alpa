@@ -5,8 +5,7 @@ import numpy as np
 import ray
 
 from alpa import init
-from alpa.device_mesh import get_global_virtual_physical_mesh, ReshardingAllGatherSpec
-from alpa.mesh_executable import next_remote_buffer_uuid
+from alpa.device_mesh import get_global_virtual_physical_mesh, ReshardingAllGatherSpec, next_array_uuids
 from alpa.global_env import global_config
 
 
@@ -29,14 +28,14 @@ class XLANCCLTest(unittest.TestCase):
         device_ids = np.arange(mesh.num_devices_per_host)
 
         # Put buffers
-        uuids = next_remote_buffer_uuid(mesh_shape[1])
+        ary_uuid = next_array_uuids(1)[0]
         shard_len = size[0] // mesh.num_devices_per_host
         shards = []
         for i in range(mesh.num_devices_per_host):
             data = np.zeros(size, dtype=int)
             data[i * shard_len:(i + 1) * shard_len, :] = i
             shards.append(data)
-        ray.get(worker.put_buffers.remote(uuids, device_ids, shards, 1, 0))
+        ray.get(worker.put_buffers.remote(ary_uuid, shards, 1, 0))
 
         # Put allgather task
         output_slice = [slice(0, size[0], None), slice(0, size[1], None)]
@@ -52,8 +51,8 @@ class XLANCCLTest(unittest.TestCase):
                                             output_slice),)))
 
         # Run allgather task
-        ray.get(worker.run_allgather_task.remote(0, uuids))
-        refs = ray.get(worker.get_buffers.remote(uuids))
+        ray.get(worker.run_allgather_task.remote(0, ary_uuid))
+        refs = ray.get(worker.get_buffers.remote(ary_uuid))
         for i in range(4):
             for j in range(4):
                 assert refs[i][j * shard_len, 0] == j

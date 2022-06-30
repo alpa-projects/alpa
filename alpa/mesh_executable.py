@@ -22,7 +22,8 @@ import numpy as np
 import ray
 
 from alpa.device_mesh import (LocalPhysicalDeviceMesh,
-                              DistributedPhysicalDeviceMesh)
+                              DistributedPhysicalDeviceMesh, RemoteArrayRef,
+                              next_array_uuids)
 from alpa.global_env import global_config
 from alpa.parallel_plan import PlacementSpec, StagePlan
 from alpa.shard_parallel.auto_sharding import (get_input_output_sharding_specs,
@@ -124,76 +125,11 @@ class MeshWorkerExecutable(ABC):
         raise NotImplementedError()
 
 
-class RemoteBufferRef:
-    """A reference to a remote device buffer."""
-
-    def __init__(self,
-                 device_mesh,
-                 host_id: int,
-                 device_id: int,
-                 uuid: int = None):
-        self.device_mesh = device_mesh
-        self.host_id = host_id
-        self.device_id = device_id
-        self.uuid = (uuid
-                     if uuid is not None else next_remote_buffer_uuid().item())
-        self.is_deleted_on_workers = False
-
-    def set_deleted_on_workers(self):
-        """
-        Set the buffer as deleted on workers.
-
-        For some buffers (e.g., donated buffers), if we know the workers has
-        already deleted them, then we do not need to do the remote call
-        "delete_remote_buffers" again.
-        """
-        self.is_deleted_on_workers = True
-
-    def __repr__(self):
-        return (f"RemoteBufferRef(uuid = {self.uuid}, "
-                f"loc = ({self.host_id}, {self.device_id}))")
-
-    def __del__(self):
-        if not self.is_deleted_on_workers:
-            self.device_mesh.delete_remote_buffers((self,))
-
-
 def next_mesh_executable_uuid():
     """Return the next uuid of a mesh executable."""
     global mesh_executable_counter
     mesh_executable_counter = (mesh_executable_counter + 1) % (1 << 60)
     return mesh_executable_counter
-
-
-def next_remote_buffer_uuid(number=1):
-    """Return the next uuid of a remote buffer."""
-    global remote_buffer_counter
-    ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
-    remote_buffer_counter = (remote_buffer_counter + number) % (1 << 60)
-    return ret
-
-
-def create_remote_buffer_refs(device_mesh,
-                              num_batches=1,
-                              host_indices=None,
-                              device_indices=None):
-    """Create remote buffer references for an distribued array on a device
-    mesh. """
-    if host_indices is None:
-        host_indices = range(device_mesh.num_hosts)
-    if device_indices is None:
-        device_indices = range(device_mesh.num_devices_per_host)
-    size = len(host_indices) * len(device_indices) * num_batches
-    uuids = next_remote_buffer_uuid(size)
-    uuid_iter = iter(uuids)
-    refs = []
-    for host_id in host_indices:
-        for device_id in device_indices:
-            for _ in range(num_batches):
-                refs.append(
-                    RemoteBufferRef(device_mesh, host_id, device_id,
-                                    next(uuid_iter)))
-    return refs, uuids
 
 
 def get_execution_timer_name(exec_uuid: int):
@@ -218,16 +154,6 @@ def get_sync_func_worker(worker):
         worker.local_devices[0].synchronize_all_activity()
 
     return sync_func_worker
-
-
-def get_uuid_np_array(array: Sequence[Sequence[int]]):
-    """Convert a 2d array of RemoteBufferRef to a np array of UUID (int64)."""
-    shape = (len(array), len(array[0]) if len(array) > 0 else 0)
-    ret = np.empty(shape, dtype=np.int64)
-    for i in range(shape[0]):
-        for j in range(shape[1]):
-            ret[i, j] = array[i][j].uuid
-    return ret
 
 
 class NormalMeshDriverExecutable(MeshDriverExecutable):
@@ -311,7 +237,6 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         """Launch the executable on the driver."""
         physical_mesh = self.physical_mesh
         num_hosts = physical_mesh.num_hosts
-        num_devices_per_host = physical_mesh.num_devices_per_host
         num_outs = len(self.out_avals)
 
         timers(self.shard_args_timer_name).start()
@@ -322,15 +247,11 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         timers(self.shard_args_timer_name).stop()
 
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
-            # Shape: (num_hosts, num_args, num_devices_per_host)
-            input_uuids = (get_uuid_np_array(input_bufs).reshape(
-                (len(args), num_hosts,
-                 num_devices_per_host)).transpose([1, 0, 2]))
+            # Shape: (num_args,)
+            input_uuids = np.array([ref.uuid for ref in input_bufs])
 
-            # Shape: (num_hosts, num_outs, num_devices_per_host)
-            output_uuids = (next_remote_buffer_uuid(
-                num_hosts * num_outs * num_devices_per_host).reshape(
-                    (num_hosts, num_outs, num_devices_per_host)))
+            # Shape: (num_outs,)
+            output_uuids = next_array_uuids(num_outs)
 
             if "sync_before" not in kwargs:
                 kwargs["sync_before"] = kwargs["sync_after"] = (
@@ -339,28 +260,17 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             # Execute the SPMD binary
             for i in range(num_hosts):
                 physical_mesh.workers[i].run_executable.remote(
-                    self.exec_uuid, input_uuids[i], output_uuids[i], **kwargs)
-
-            # Shape: (num_outs, num_hosts, num_devices_per_host)
-            output_uuids = output_uuids.transpose([1, 0, 2])
+                    self.exec_uuid, input_uuids, output_uuids, **kwargs)
 
             # Gather output buffers
             # Shape: (num_outs, num_devices)
-            output_bufs = np.empty((num_outs, physical_mesh.num_devices),
-                                   dtype=object)
-            for i in range(len(output_bufs)):
-                for j in range(len(output_bufs[i])):
-                    host_id = j // num_devices_per_host
-                    device_id = j % num_devices_per_host
-                    output_bufs[i][j] = RemoteBufferRef(
-                        physical_mesh, host_id, device_id,
-                        output_uuids[i][host_id][device_id])
+            output_bufs = np.array(
+                [RemoteArrayRef(physical_mesh, uuid) for uuid in output_uuids])
 
             # Mark donated input buffers as already deleted on workers.
-            for bufs, is_donated in zip(input_bufs, self.donated_invars):
+            for ary_ref, is_donated in zip(input_bufs, self.donated_invars):
                 if is_donated:
-                    for buf in bufs:
-                        buf.set_deleted_on_workers()
+                    ary_ref.set_deleted_on_workers()
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             sync_func = (self.sync_func if
@@ -459,23 +369,11 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             f.write(self.get_hlo_text())
 
 
-def get_buffers(buffer_dict, uuids):
-    """Get buffers by uuids from the local buffer dictionary."""
-    return [buffer_dict[uuid] for uuid in uuids]
-
-
-def set_buffers(buffer_dict, uuids, buffers):
-    """Store buffers to the local buffer dictionary."""
-    for uuid, buf in zip(uuids, buffers):
-        buffer_dict[uuid] = buf
-
-
 def delete_donated_buffers(buffer_dict, uuids, donated_invars):
     """Delete the donated buffers from the local buffer dictionary."""
-    for i in range(len(uuids)):
-        if donated_invars[i]:
-            for j in range(len(uuids[i])):
-                del buffer_dict[uuids[i][j]]
+    for uuid, is_donated in zip(uuids, donated_invars):
+        if is_donated:
+            del buffer_dict[uuid]
 
 
 class NormalMeshWorkerExecutable(MeshWorkerExecutable):
@@ -495,14 +393,15 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
         self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_sync_func_worker(worker)
 
-    def execute_on_worker(self, input_uuids: Sequence[Sequence[int]],
-                          output_uuids: Sequence[Sequence[int]],
-                          sync_before: bool, sync_after: bool):
+    def execute_on_worker(self, input_uuids: Sequence[int],
+                          output_uuids: Sequence[int], sync_before: bool,
+                          sync_after: bool):
         """Run the executable on the worker."""
         buffer_dict = self.worker.buffers
 
         # Get input buffers from uuids
-        input_bufs = [get_buffers(buffer_dict, x) for x in input_uuids]
+        # Sequence[Sequence[DeviceBuffer]], shape(num_args, num_devices)
+        input_bufs = [buffer_dict[x] for x in input_uuids]
 
         # Execute the executable
         timers(self.timer_name).start(self.sync_func if sync_before else None)
@@ -515,7 +414,7 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
 
         # Store output buffers
         for i in range(len(output_uuids)):
-            set_buffers(buffer_dict, output_uuids[i], output_bufs[i])
+            buffer_dict[output_uuids[i]] = output_bufs[i]
 
         # Delete donated input buffers
         delete_donated_buffers(buffer_dict, input_uuids, self.donated_invars)
@@ -715,7 +614,6 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         num_grads = len(grad_avals)
         physical_mesh = self.physical_mesh
         num_hosts = physical_mesh.num_hosts
-        num_devices_per_host = physical_mesh.num_devices_per_host
         num_outs = len(self.out_avals)
 
         timers(self.shard_args_timer_name).start()
@@ -732,57 +630,39 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         timers(self.shard_args_timer_name).stop()
 
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
-            # Shape: (num_hosts, num_args, num_devices_per_host)
-            first_batch_uuids = (get_uuid_np_array(first_batch_bufs).reshape(
-                (len(first_batch_bufs), num_hosts,
-                 num_devices_per_host)).transpose([1, 0, 2]))
+            # Shape: (num_args,)
+            first_batch_uuids = np.array([ref.uuid for ref in first_batch_bufs])
 
             if next_batches_bufs:
-                next_batches_uuids = (
-                    get_uuid_np_array(next_batches_bufs).reshape(
-                        (len(next_batches_bufs), num_hosts,
-                         num_devices_per_host)).transpose([1, 0, 2]))
+                next_batches_uuids = np.array(
+                    [ref.uuid for ref in next_batches_bufs])
             else:
                 next_batches_uuids = (None,) * num_hosts
 
-            # Shape: (num_hosts, num_outs, num_devices_per_host)
-            output_uuids = (next_remote_buffer_uuid(
-                num_hosts * num_outs * num_devices_per_host).reshape(
-                    (num_hosts, num_outs, num_devices_per_host)))
+            # Shape: (num_outs,)
+            output_uuids = next_array_uuids(num_outs)
 
             # Execute SPMD binary
             for i in range(num_hosts):
                 physical_mesh.workers[i].run_executable.remote(
-                    self.exec_uuid, first_batch_uuids[i], next_batches_uuids[i],
-                    output_uuids[i],
-                    global_config.shard_parallel_sync_for_timer,
+                    self.exec_uuid, first_batch_uuids, next_batches_uuids,
+                    output_uuids, global_config.shard_parallel_sync_for_timer,
                     global_config.shard_parallel_sync_for_timer)
-
-            # Shape: (num_outs, num_hosts, num_devices_per_host)
-            output_uuids = output_uuids.transpose([1, 0, 2])
 
             # Gather output buffers
             # Shape: (num_outs, num_devices)
-            output_bufs = np.empty((num_outs, physical_mesh.num_devices),
-                                   dtype=object)
-            for i in range(len(output_bufs)):
-                for j in range(len(output_bufs[i])):
-                    host_id = j // num_devices_per_host
-                    device_id = j % num_devices_per_host
-                    output_bufs[i][j] = RemoteBufferRef(
-                        physical_mesh, host_id, device_id,
-                        output_uuids[i][host_id][device_id])
+            output_bufs = np.array(
+                [RemoteArrayRef(physical_mesh, uuid) for uuid in output_uuids])
 
             # Mark donated input buffers as already deleted on workers.
-            for bufs, is_donated in zip(first_batch_bufs, self.donated_invars):
+            for ary_ref, is_donated in zip(first_batch_bufs,
+                                           self.donated_invars):
                 if is_donated:
-                    for buf in bufs:
-                        buf.set_deleted_on_workers()
+                    ary_ref.set_deleted_on_workers()
 
             # Mark micro batch buffers as already deleted on workers.
-            for bufs in next_batches_bufs:
-                for buf in bufs:
-                    buf.set_deleted_on_workers()
+            for ary_ref in next_batches_bufs:
+                ary_ref.set_deleted_on_workers()
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             sync_func = (self.sync_func if
@@ -915,16 +795,16 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
         self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_sync_func_worker(worker)
 
-    def execute_on_worker(self, first_batch_uuids: Sequence[Sequence[int]],
-                          next_batches_uuids: Sequence[Sequence[int]],
-                          output_uuids: Sequence[Sequence[int]],
-                          sync_before: bool, sync_after: bool):
+    def execute_on_worker(self, first_batch_uuids: Sequence[int],
+                          next_batches_uuids: Sequence[int],
+                          output_uuids: Sequence[int], sync_before: bool,
+                          sync_after: bool):
         """Run the executable on the worker."""
         buffer_dict = self.buffer_dict
         num_micro_batches = self.num_micro_batches
 
         tmp_input_bufs = [
-            get_buffers(buffer_dict, first_batch_uuids[i])
+            buffer_dict[first_batch_uuids[i]]
             for i in self.accumulate_grad_invar_indices
         ]
 
@@ -941,10 +821,8 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
                 # Feed in the data of the next batch
                 tmp_input_bufs[-self.num_grads:] = grad_bufs
                 for j, idx in enumerate(self.accumulate_grad_batch_arg_indices):
-                    tmp_input_bufs[idx] = get_buffers(
-                        buffer_dict,
-                        next_batches_uuids[j * (num_micro_batches - 1) +
-                                           (i - 1)])
+                    tmp_input_bufs[idx] = buffer_dict[next_batches_uuids[
+                        j * (num_micro_batches - 1) + (i - 1)]]
             if i == num_micro_batches - 1:
                 os.environ[self.skip_allreduce_env_name] = ""
             grad_bufs = self.accumulate_grad.execute_sharded_on_local_devices(
@@ -952,7 +830,7 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
 
         # Call apply_grad
         tmp_input_bufs = [
-            get_buffers(buffer_dict, first_batch_uuids[i])
+            buffer_dict[first_batch_uuids[i]]
             for i in self.apply_grad_invar_indices
         ] + grad_bufs
         output_bufs = self.apply_grad.execute_sharded_on_local_devices(
@@ -961,7 +839,7 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
 
         # Store output buffers
         for i in range(len(output_uuids)):
-            set_buffers(buffer_dict, output_uuids[i], output_bufs[i])
+            buffer_dict[output_uuids[i]] = output_bufs[i]
 
         # Delete donated input buffers
         delete_donated_buffers(buffer_dict, first_batch_uuids,
@@ -970,8 +848,7 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
         # Delete micro batch buffers
         if next_batches_uuids is not None:
             for i in range(len(next_batches_uuids)):
-                for j in range(len(next_batches_uuids[i])):
-                    del buffer_dict[next_batches_uuids[i][j]]
+                del buffer_dict[next_batches_uuids[i]]
 
     def get_hlo_text(self):
         return (self.accumulate_grad.hlo_modules()[0].to_string() +
@@ -1062,10 +939,9 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
                                         "XLA_SKIP_NCCL_COLLECTIVE_IDS")
 
     # pylint: disable=arguments-differ
-    def execute_on_worker(self, input_uuids: Sequence[Sequence[int]],
-                          output_uuids: Sequence[Sequence[int]],
-                          sync_before: bool, sync_after: bool,
-                          skip_grad_sync: bool):
+    def execute_on_worker(self, input_uuids: Sequence[int],
+                          output_uuids: Sequence[int], sync_before: bool,
+                          sync_after: bool, skip_grad_sync: bool):
         """Run the executable on the worker."""
         os.environ[self.skip_allreduce_env_name] = (self.grad_sync_channel_ids
                                                     if skip_grad_sync else "")
@@ -1118,31 +994,19 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
         physical_mesh = self.physical_mesh
         num_hosts = physical_mesh.num_hosts
         num_outs = len(self.out_avals)
-        num_devices_per_host = physical_mesh.num_devices_per_host
 
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             # Get output uuids
-            output_uuids = (next_remote_buffer_uuid(
-                num_hosts * num_outs * num_devices_per_host).reshape(
-                    (num_hosts, num_outs, num_devices_per_host)))
+            output_uuids = next_array_uuids(num_outs)
 
             # Execute SPMD binary
             for i in range(num_hosts):
                 physical_mesh.workers[i].run_executable.remote(
-                    self.exec_uuid, [], output_uuids[i])
-
-            output_uuids = output_uuids.transpose([1, 0, 2])
+                    self.exec_uuid, [], output_uuids)
 
             # Gather outputs
-            output_bufs = np.empty((num_outs, physical_mesh.num_devices),
-                                   dtype=object)
-            for i in range(len(output_bufs)):
-                for j in range(len(output_bufs[i])):
-                    host_id = j // num_devices_per_host
-                    device_id = j % num_devices_per_host
-                    output_bufs[i][j] = RemoteBufferRef(
-                        physical_mesh, host_id, device_id,
-                        output_uuids[i][host_id][device_id])
+            output_bufs = np.array(
+                [RemoteArrayRef(physical_mesh, uuid) for uuid in output_uuids])
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             timers(self.exec_timer_name).start(self.sync_func)
@@ -1167,9 +1031,9 @@ class AllocZeroBufferWorkerExecutable(MeshWorkerExecutable):
         self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_sync_func_worker(worker)
 
-    def execute_on_worker(self, input_uuids: Sequence[Sequence[int]],
-                          output_uuids: Sequence[Sequence[int]],
-                          sync_before: bool, sync_after: bool):
+    def execute_on_worker(self, input_uuids: Sequence[int],
+                          output_uuids: Sequence[int], sync_before: bool,
+                          sync_after: bool):
         """Run the executable on the worker."""
         # pylint: disable=unused-argument
         buffer_dict = self.worker.buffers
@@ -1180,7 +1044,7 @@ class AllocZeroBufferWorkerExecutable(MeshWorkerExecutable):
             self.allocate_zero_buffers.execute_sharded_on_local_devices([]))
         timers(self.timer_name).stop(self.sync_func if sync_after else None)
         for i in range(len(output_uuids)):
-            set_buffers(buffer_dict, output_uuids[i], output_bufs[i])
+            buffer_dict[output_uuids[i]] = output_bufs[i]
 
     def __del__(self):
         self.allocate_zero_buffers.delete()
@@ -1201,15 +1065,15 @@ class MemzeroWorkerExecutable(MeshWorkerExecutable):
         self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_sync_func_worker(worker)
 
-    def execute_on_worker(self, input_uuids: Sequence[Sequence[int]],
-                          output_uuids: Sequence[Sequence[int]],
-                          sync_before: bool, sync_after: bool):
+    def execute_on_worker(self, input_uuids: Sequence[int],
+                          output_uuids: Sequence[int], sync_before: bool,
+                          sync_after: bool):
         """Run the executable on the worker."""
         # pylint: disable=unused-argument
         buffer_dict = self.worker.buffers
 
         # Get input
-        input_bufs = [get_buffers(buffer_dict, x) for x in input_uuids]
+        input_bufs = [buffer_dict[x] for x in input_uuids]
 
         # Execute
         timers(self.timer_name).start(self.sync_func if sync_before else None)
@@ -1241,14 +1105,14 @@ class ConcatMeshWorkerExecutable(MeshWorkerExecutable):
         self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_sync_func_worker(worker)
 
-    def execute_on_worker(self, input_uuids: Sequence[Sequence[int]],
-                          output_uuids: Sequence[Sequence[int]],
-                          sync_before: bool, sync_after: bool):
+    def execute_on_worker(self, input_uuids: Sequence[int],
+                          output_uuids: Sequence[int], sync_before: bool,
+                          sync_after: bool):
         """Run the executable on the worker."""
         buffer_dict = self.worker.buffers
 
         # Get input
-        input_bufs = [get_buffers(buffer_dict, x) for x in input_uuids]
+        input_bufs = [buffer_dict[x] for x in input_uuids]
 
         # Execute
         timers(self.timer_name).start(self.sync_func if sync_before else None)
@@ -1256,7 +1120,7 @@ class ConcatMeshWorkerExecutable(MeshWorkerExecutable):
         timers(self.timer_name).stop(self.sync_func if sync_after else None)
 
         for i in range(len(output_uuids)):
-            set_buffers(buffer_dict, output_uuids[i], output_bufs[i])
+            buffer_dict[output_uuids[i]] = output_bufs[i]
 
     def __del__(self):
         self.concat.delete()

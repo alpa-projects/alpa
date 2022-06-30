@@ -20,7 +20,6 @@ time.
 from abc import ABC, abstractmethod
 from collections import defaultdict, namedtuple
 from collections.abc import Iterable
-from itertools import chain
 import logging
 from operator import attrgetter
 import os
@@ -64,8 +63,10 @@ else:
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-ReshardingTileSpec = namedtuple("ReshardingSendSpec",
+ReshardingTileSpec = namedtuple("ReshardingTileSpec",
                                 ["offset", "rank", "gpu_idx"])
+ReshardingSendSpec = namedtuple("ReshardingSendSpec",
+                                ["device_id", "tile_spec"])
 ReshardingSendTask = namedtuple("ReshardingSendTask",
                                 ["tile_specs", "group_name"])
 ReshardingRecvSpec = namedtuple("ReshardingRecvSpec",
@@ -84,6 +85,9 @@ ReshardingBroadcastTask = namedtuple("ReshardingBroadcastTask",
                                      ["broadcast_specs", "group_name"])
 
 
+########################################
+# Ray Workers
+########################################
 class DaemonMoveWorker:
     """
         A ray actor that moves local checkpoint into the shared
@@ -127,8 +131,9 @@ class MeshHostWorker:
         # Monkey patch the backend
         set_override_backend(self.backend)
         self.local_devices = self.backend.local_devices()
+        self.num_devices = len(self.local_devices)
 
-        self.buffers = {}  # Dict[uuid -> DeviceArray]
+        self.buffers = {}  # Dict[uuid -> Sequence[DeviceArray]]
         self.executables = {}  # Dict[uud -> MeshWorkerExecutable]
 
         self.send_tasks = {}  # Dict[uuid -> ReshardingSendTask]
@@ -154,60 +159,74 @@ class MeshHostWorker:
         self.launched = True
 
     ##### Buffer Related Functions #####
-    def put_buffer(self, uuid: int, device_id: int, data: np.ndarray):
-        assert uuid not in self.buffers
-        if data.dtype == np.int64:
-            data = data.astype(np.int32)
-        self.buffers[uuid] = (self.backend.buffer_from_pyval(
-            data, self.local_devices[device_id]))
-
     def put_buffers(self,
-                    uuids: Sequence[int],
-                    device_ids: Sequence[int],
+                    uuids: Union[int, Sequence[int]],
                     datas: Sequence[np.ndarray],
                     num_batch=1,
                     batch_dim=0):
+        assert len(datas) == self.num_devices
+        if not isinstance(uuids, Iterable):
+            uuids = [uuids]
+        assert len(uuids) == num_batch
         if num_batch > 1:
-            device_ids = list(chain(*[[x] * num_batch for x in device_ids]))
             split_datas = []
             for data in datas:
                 split_buffers = np.split(data, num_batch, batch_dim)
                 split_datas.extend(split_buffers)
             datas = split_datas
-        for uuid, device_id, data in zip(uuids, device_ids, datas):
+        arys = [([None] * self.num_devices) for _ in range(num_batch)]
+        for i, data in enumerate(datas):
             if data.dtype == np.int64:
                 data = data.astype(np.int32)
-            self.buffers[uuid] = (self.backend.buffer_from_pyval(
+            device_id, batch_id = divmod(i, num_batch)
+            arys[batch_id][device_id] = (self.backend.buffer_from_pyval(
                 data, self.local_devices[device_id]))
+        for uuid, ary in zip(uuids, arys):
+            self.buffers[uuid] = ary
 
-    def put_non_zero_buffer(self,
-                            uuid: int,
-                            device_id: int,
-                            shape: Sequence[int],
-                            dtype=np.float32):
-        if dtype == np.int64:
-            dtype = np.int32
-        self.buffers[uuid] = (self.backend.buffer_from_pyval(
-            np.full(shape, 1e-8, dtype), self.local_devices[device_id]))
-
-    def shard_and_put_non_zero_buffer(self, uuids: Sequence[int],
+    def shard_and_put_non_zero_buffer(self, uuids: Union[Sequence[int], int],
                                       shape: Sequence[int], dtype: np.dtype,
                                       indices: Sequence, num_batch: int):
-        assert len(uuids) == len(indices) == len(self.local_devices) * num_batch
-        for i in range(len(self.local_devices)):
+        if isinstance(uuids, int):
+            uuids = [uuids]
+        assert len(uuids) == num_batch
+        assert len(indices) == self.num_devices * num_batch
+        arys = [([None] * self.num_devices) for _ in range(num_batch)]
+        for device_id in range(self.num_devices):
             for b in range(num_batch):
                 shard_shape = []
-                idx = i * num_batch + b
+                idx = device_id * num_batch + b
                 for j, s in enumerate(indices[idx]):
                     filled_slice = s.indices(shape[j])
                     dim_size = len(range(*filled_slice))
                     shard_shape.append(dim_size)
-                self.put_non_zero_buffer(uuids[idx], i, shard_shape, dtype)
+                arys[b][device_id] = (self.backend.buffer_from_pyval(
+                    np.full(shard_shape, 1e-8, dtype),
+                    self.local_devices[device_id]))
+        for uuid, ary in zip(uuids, arys):
+            self.buffers[uuid] = ary
 
-    def get_buffers(self, uuids: Union[Sequence[int], int]):
-        if isinstance(uuids, Iterable):
-            return [self.buffers[uuid] for uuid in uuids]
-        return self.buffers[uuids]
+    def _get_buffers_with_local_ids(self, uuid: int, device_ids: Sequence[int]):
+        bufs = self.buffers[uuid]
+        if device_ids is None:
+            return bufs
+        elif not isinstance(device_ids, Iterable):
+            return bufs[device_ids]
+        return [bufs[device_id] for device_id in device_ids]
+
+    def get_buffers(self,
+                    uuids: Union[Sequence[int], int],
+                    device_indices: Sequence[int] = None):
+        if not isinstance(uuids, Iterable):
+            return self._get_buffers_with_local_ids(uuids, device_indices)
+        if device_indices is not None:
+            assert len(uuids) == len(device_indices)
+        else:
+            device_indices = [None] * len(uuids)
+        return [
+            self._get_buffers_with_local_ids(uuid, local_ids)
+            for uuid, local_ids in zip(uuids, device_indices)
+        ]
 
     def delete_buffers(self, uuids: Union[Sequence[int], int]):
         if isinstance(uuids, Iterable):
@@ -217,11 +236,15 @@ class MeshHostWorker:
             del self.buffers[uuids]
 
     def block_until_ready_buffers(self, uuids: Union[Sequence[int], int]):
+        # We have to block all buffers to avoid the last operation is
+        # cross-mesh resharding(not SPMD)
         if isinstance(uuids, Iterable):
             for uuid in uuids:
-                self.buffers[uuid].block_until_ready()
+                for buf in self.buffers[uuid]:
+                    buf.block_until_ready()
         else:
-            self.buffers[uuids].block_until_ready()
+            for buf in self.buffers[uuids]:
+                buf.block_until_ready()
 
     def get_memory_allocated(self):
         self.sync()
@@ -269,18 +292,19 @@ class MeshHostWorker:
     def sync_move_worker(self):
         ray.get(self.move_worker.sync.remote())
 
-    def save_buffers(self, ckpt_dir: str, local_cache_dir: Union[str, None],
-                     uuids: Sequence[int], shard_indices: Sequence[Index],
-                     global_shape: Sequence[int]):
-        assert len(uuids) > 0
-        for uuid in uuids:
-            assert uuid in self.buffers
+    def save_array(self, ckpt_dir: str, local_cache_dir: Union[str, None],
+                   uuid: int, device_ids: Sequence[int],
+                   shard_indices: Sequence[Index], global_shape: Sequence[int]):
+        assert uuid in self.buffers
+        array_buffers = self.buffers[uuid]
 
-        shard_names = [f"shard_{self.host_id}.{i}" for i in range(len(uuids))]
+        shard_names = [
+            f"shard_{self.host_id}.{i}" for i in range(len(device_ids))
+        ]
 
         metadata = {
             "global_shape": global_shape,
-            "dtype": self.buffers[uuids[0]].dtype,
+            "dtype": self.buffers[uuid][0].dtype,
             "shard_names": shard_names,
             "shard_indices": shard_indices,
         }
@@ -293,9 +317,9 @@ class MeshHostWorker:
         else:
             save_dir = ckpt_dir
 
-        for shard_name, uuid in zip(shard_names, uuids):
+        for shard_name, device_id in zip(shard_names, device_ids):
             with open(os.path.join(save_dir, shard_name), "wb") as datafile:
-                np.save(datafile, self.buffers[uuid])
+                np.save(datafile, array_buffers[device_id])
 
         with open(os.path.join(save_dir, f"metadata_{self.host_id}"),
                   "wb") as metafile:
@@ -305,18 +329,22 @@ class MeshHostWorker:
         if local_cache_dir is not None:
             self.move_worker.move.remote(local_cache_dir, ckpt_dir)
 
-    def load_buffers(self, ckpt_dir: str, uuids: Sequence[int],
-                     shard_indices: Sequence[Index], device_ids: Sequence[int]):
-        assert len(uuids) > 0
+    def load_array(self, ckpt_dir: str, uuid: Sequence[int],
+                   device_ids: Sequence[int], shard_indices: Sequence[Index]):
         metadatas = list(
             filter(lambda fname: fname.startswith("metadata"),
                    os.listdir(ckpt_dir)))
         # pylint: disable=import-outside-toplevel
         from alpa.serialization import load_sharded_array
         entire_arr = load_sharded_array(ckpt_dir, metadatas)
-        for index, uuid, device_id in zip(shard_indices, uuids, device_ids):
+        array_buffers = [None] * self.num_devices
+        for index, device_id in zip(shard_indices, device_ids):
             data = entire_arr[index]
-            self.put_buffer(uuid, device_id, data)
+            if data.dtype == np.int64:
+                data = data.astype(np.int32)
+            array_buffers[device_id] = (self.backend.buffer_from_pyval(
+                data, self.local_devices[device_id]))
+        self.buffers[uuid] = array_buffers
 
     ##### Data loader Related Functions #####
     def put_data_loader(self, uuid: int, *args):
@@ -379,30 +407,37 @@ class MeshHostWorker:
         self.recv_tasks[uuid] = ReshardingRecvTask(recv_specs=tasks,
                                                    group_name=group_name)
 
-    def run_resharding_send_task(self, uuid, buf_uuids):
+    def run_resharding_send_task(self, uuid, ary_uuid):
         task: ReshardingSendTask = self.send_tasks[uuid]
-        for send_tile_spec, buf_uuid in zip(task.tile_specs, buf_uuids):
-            send_tile_spec: ReshardingTileSpec
-            self.send_tile(buf_uuid, send_tile_spec.offset, send_tile_spec.rank,
-                           send_tile_spec.gpu_idx, task.group_name)
+        for send_tile_spec in task.tile_specs:
+            send_tile_spec: ReshardingSendSpec
+            self.send_tile(ary_uuid, send_tile_spec.device_id,
+                           send_tile_spec.tile_spec.offset,
+                           send_tile_spec.tile_spec.rank,
+                           send_tile_spec.tile_spec.gpu_idx, task.group_name)
 
-    def run_resharding_recv_task(self, uuid, buf_uuids, set_empty_buffer=True):
+    def run_resharding_recv_task(self, uuid, ary_uuid, set_empty_buffer=True):
         task: ReshardingRecvTask = self.recv_tasks[uuid]
-        for recv_spec, buf_uuid in zip(task.recv_specs, buf_uuids):
+        if set_empty_buffer and ary_uuid not in self.buffers:
+            self.buffers[ary_uuid] = [None] * self.num_devices
+        buffers = self.buffers[ary_uuid]
+        for recv_spec in task.recv_specs:
             recv_spec: ReshardingRecvSpec
+            device_id = recv_spec.device_id
             if set_empty_buffer:
-                self.put_non_zero_buffer(buf_uuid, recv_spec.device_id,
-                                         recv_spec.shape, recv_spec.dtype)
+                buffers[device_id] = self.backend.buffer_from_pyval(
+                    np.full(recv_spec.shape, 1e-8, recv_spec.dtype),
+                    self.local_devices[device_id])
             for recv_tile_spec in recv_spec.tile_specs:
                 recv_tile_spec: ReshardingTileSpec
-                self.recv_tile(buf_uuid, recv_spec.device_id,
-                               recv_tile_spec.offset, recv_tile_spec.rank,
-                               recv_tile_spec.gpu_idx, task.group_name)
+                self.recv_tile(ary_uuid, device_id, recv_tile_spec.offset,
+                               recv_tile_spec.rank, recv_tile_spec.gpu_idx,
+                               task.group_name)
 
-    def send_tile(self, uuid: int, offset: Sequence[slice], dst_rank: int,
-                  dst_gpu_idx: int, group_name: str):
+    def send_tile(self, uuid: int, device_id: int, offset: Sequence[slice],
+                  dst_rank: int, dst_gpu_idx: int, group_name: str):
         if global_config.pipeline_use_signal_send_recv:
-            signal = self.signal_buffers[uuid % len(self.local_devices)]
+            signal = self.signal_buffers[device_id]
             col.send_multigpu(signal,
                               dst_rank,
                               dst_gpu_idx,
@@ -410,7 +445,7 @@ class MeshHostWorker:
                               start_pos=0,
                               n_elements=1)
         else:
-            worker_nccl_util.send_tile(self, uuid, offset, dst_rank,
+            worker_nccl_util.send_tile(self, uuid, device_id, offset, dst_rank,
                                        dst_gpu_idx, group_name)
 
     def recv_tile(self, uuid: int, device_id: int,
@@ -420,7 +455,7 @@ class MeshHostWorker:
             raise RuntimeError("Buffer has not been created.")
 
         if global_config.pipeline_use_signal_send_recv:
-            signal = self.signal_buffers[uuid % len(self.local_devices)]
+            signal = self.signal_buffers[device_id]
             col.recv_multigpu(signal,
                               src_rank,
                               src_gpu_idx,
@@ -442,11 +477,11 @@ class MeshHostWorker:
                     worker_nccl_util.init_local_comm(list(device_ids)))
         self.allgather_tasks[uuid] = all_gather_task
 
-    def run_allgather_task(self, uuid, buffer_uuids):
+    def run_allgather_task(self, uuid, ary_uuid):
         task: ReshardingAllGatherTask = self.allgather_tasks[uuid]
         allgather_specs = task.allgather_specs
         for allgather_spec in allgather_specs:
-            worker_nccl_util.allgather(self, buffer_uuids,
+            worker_nccl_util.allgather(self, ary_uuid,
                                        allgather_spec.device_ids,
                                        allgather_spec.tensor_slices,
                                        allgather_spec.output_slice)
@@ -457,29 +492,28 @@ class MeshHostWorker:
 
     def run_resharding_broadcast_task(self,
                                       uuid,
-                                      buffer_uuids,
+                                      ary_uuid,
                                       set_empty_buffer=True):
         task: ReshardingBroadcastTask = self.broadcast_tasks[uuid]
         broadcast_specs = task.broadcast_specs
+        if set_empty_buffer and ary_uuid not in self.buffers:
+            picked_spec = list(broadcast_specs.values())[0]
+            shape = picked_spec.recv_tile_shape
+            dtype = picked_spec.dtype
+            self.buffers[ary_uuid] = [
+                self.backend.buffer_from_pyval(np.full(shape, 1e-8, dtype),
+                                               self.local_devices[device_id])
+                for device_id in range(self.num_devices)
+            ]
         for group_idx in broadcast_specs:
             broadcast_spec: ReshardingBroadcastSpec = broadcast_specs[group_idx]
-            if set_empty_buffer:
-                for device_id, global_rank in zip(
-                        broadcast_spec.devices_ids,
-                        broadcast_spec.devices_global_rank):
-                    if global_rank == 0:
-                        continue
-                    buf_uuid = buffer_uuids[device_id]
-                    if buf_uuid not in self.buffers:
-                        self.put_non_zero_buffer(buf_uuid, device_id,
-                                                 broadcast_spec.recv_tile_shape,
-                                                 broadcast_spec.dtype)
 
-            worker_nccl_util.broadcast(
-                self, buffer_uuids, broadcast_spec.comm_key,
-                broadcast_spec.world_size, broadcast_spec.devices_ids,
-                broadcast_spec.devices_global_rank,
-                broadcast_spec.tensor_slices, task.group_name)
+            worker_nccl_util.broadcast(self, ary_uuid, broadcast_spec.comm_key,
+                                       broadcast_spec.world_size,
+                                       broadcast_spec.devices_ids,
+                                       broadcast_spec.devices_global_rank,
+                                       broadcast_spec.tensor_slices,
+                                       task.group_name)
 
     ##### Profiling and Debugging Related Functions #####
     def profile_hlo_ops(self, op_infos: Sequence[Any], cache_filename: str,
@@ -561,6 +595,9 @@ class MeshHostWorker:
         self.move_worker = None
 
 
+########################################
+# DeviceMeshs
+########################################
 class PhysicalDeviceMesh(ABC):
     """The base class of physical device mesh.
 
@@ -1008,53 +1045,93 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             parent=self,
             devices=self.devices)
 
+    def _split_ids_to_host(self, host_local_ids: Sequence[Tuple[int, int]]):
+        if host_local_ids is None:
+            full_local_id = [
+                range(self.num_devices_per_host) for _ in range(self.num_hosts)
+            ]
+            full_id_local_idx = [(i, j)
+                                 for i in range(self.num_hosts)
+                                 for j in range(self.num_devices_per_host)]
+            return tuple(full_local_id), full_id_local_idx
+        per_host_id = [[] for _ in range(self.num_hosts)]
+        host_id_local_idx = []
+        for id_pair in host_local_ids:
+            host_id, device_id = id_pair
+            host_id_local_idx.append((host_id, len(per_host_id[host_id])))
+            per_host_id[host_id].append(device_id)
+        return per_host_id, host_id_local_idx
+
     ##### Buffer Related Functions #####
-    def get_remote_buffers(self,
-                           buf_refs: List["RemoteBufferRef"],
-                           batching=False):
+    def get_remote_buffers(
+            self,
+            ary_refs: Union[List["RemoteArrayRef"], "RemoteArrayRef"],
+            host_local_ids: Sequence[Sequence[Tuple[int, int]]] = None,
+            batching=False):
         """Get values of remote buffers."""
+
+        return_list = True
+        if not isinstance(ary_refs, Iterable):
+            return_list = False
+            ary_refs = [ary_refs]
+        if host_local_ids is None:
+            host_local_ids = [None] * len(ary_refs)
+        elif not isinstance(host_local_ids, Iterable):
+            assert not return_list
+            host_local_ids = [host_local_ids]
 
         if batching:
             # Batch the remote calls by host ids
-            group_by_host_id = [[] for _ in range(self.num_hosts)]
-            for buf_ref in buf_refs:
-                group_by_host_id[buf_ref.host_id].append(buf_ref.uuid)
+            ary_ids = np.array([ref.uuid for ref in ary_refs])
+            per_host_ids = np.empty((self.num_hosts, len(ary_ids)),
+                                    dtype=object)
+            host_id_local_indices = []
+            for arg_id, id_pairs in enumerate(host_local_ids):
+                tmp_ids, tmp_indices = self._split_ids_to_host(id_pairs)
+                host_id_local_indices.append(tmp_indices)
+                for host_id, tmp_per_host in enumerate(tmp_ids):
+                    per_host_ids[host_id][arg_id] = np.array(tmp_per_host)
 
+            # [host_id-> (buf_idx-> (local_device_id->device_buffer))]
             obj_refs = []
             for host_id in range(self.num_hosts):
                 obj_refs.append(self.workers[host_id].get_buffers.remote(
-                    group_by_host_id[host_id]))
-
-            host_results = ray.get(obj_refs)
-
+                    ary_ids, per_host_ids[host_id]))
+            per_host_results = ray.get(obj_refs)
+            # [buf_id -> (flatten_id -> device_buffer)]
             ret = []
-            host_cts = [0 for _ in range(self.num_hosts)]
-            for buf_ref in buf_refs:
-                ret.append(
-                    host_results[buf_ref.host_id][host_cts[buf_ref.host_id]])
-                host_cts[buf_ref.host_id] += 1
-
-            return ret
+            for ref_idx, id_pairs in enumerate(host_id_local_indices):
+                buffers = []
+                for id_pair in id_pairs:
+                    host_id, local_idx = id_pair
+                    buffers.append(
+                        per_host_results[host_id][ref_idx][local_idx])
+                ret.append(buffers)
         else:
             obj_refs = []
-            for buf_ref in buf_refs:
-                obj_refs.append(
-                    self.workers[buf_ref.host_id].get_buffers.remote(
-                        buf_ref.uuid))
-            return ray.get(obj_refs)
+            for ary_ref, id_pairs in zip(ary_refs, host_local_ids):
+                ary_obj_refs = []
+                for id_pair in id_pairs:
+                    host_id, local_id = id_pair
+                    ary_obj_refs.append(
+                        self.workers[host_id].get_buffers.remote(
+                            ary_ref.uuid, local_id))
+                obj_refs.append(ary_obj_refs)
+            ret = [ray.get(refs) for refs in obj_refs]
+        return ret if return_list else ret[0]
 
-    def delete_remote_buffers(self, buf_refs: List["RemoteBufferRef"]):
+    def delete_remote_buffers(self, ary_refs: List["RemoteArrayRef"]):
         """Delete remote buffers."""
         if (self.workers is None or not ray or not ray.worker or
                 not ray.is_initialized()):
             return
 
         # Put delete requests into per-host buffers
-        for buf_ref in buf_refs:
-            self.to_delete_remote_buffers[buf_ref.host_id].append(buf_ref.uuid)
-            self.to_delete_remote_buffers_ct = max(
-                self.to_delete_remote_buffers_ct,
-                len(self.to_delete_remote_buffers[buf_ref.host_id]))
+        for ary_ref in ary_refs:
+            for to_delete_list in self.to_delete_remote_buffers:
+                to_delete_list.append(ary_ref.uuid)
+            self.to_delete_remote_buffers_ct += (len(ary_refs) *
+                                                 self.num_devices_per_host)
 
         # Execute the delete requests if there are enough requests
         if (self.to_delete_remote_buffers_ct >
@@ -1066,13 +1143,12 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             self.to_delete_remote_buffers_ct = 0
 
     def block_until_ready_remote_buffers(self,
-                                         buf_refs: List["RemoteBufferRef"]):
+                                         ary_refs: List["RemoteArrayRef"]):
         """Block until the remote buffers are ready."""
         tasks = []
-        for buf_ref in buf_refs:
-            tasks.append(
-                self.workers[buf_ref.host_id].block_until_ready_buffers.remote(
-                    buf_ref.uuid))
+        ary_uuids = np.array([ref.uuid for ref in ary_refs])
+        for worker in self.workers:
+            tasks.append(worker.block_until_ready_buffers.remote(ary_uuids))
         ray.get(tasks)
 
     ##### Executable Related Functions #####
@@ -1094,34 +1170,28 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 if (isinstance(arg, DistributedArray) and
                         arg.skip_shard_args_check is True):
                     assert num_micro_batches == 1
-                    ret_bufs.append([arg.remote_buffers])
+                    ret_bufs.append([arg.remote_ref])
                 else:
                     slow_path = True
                     if not isinstance(arg, ShapedArray):
                         arg = np.asarray(arg)
-                    bufs = _shard_array(arg, self, indices, num_micro_batches)
-                    bufs = np.array(bufs).reshape(
-                        (self.num_hosts, self.num_devices_per_host,
-                         num_micro_batches))
-                    bufs = bufs.transpose([2, 0, 1]).reshape(
-                        (num_micro_batches,
-                         self.num_hosts * self.num_devices_per_host))
-                    ret_bufs.append(bufs)
+                    refs = _shard_array(arg, self, indices, num_micro_batches)
+                    ret_bufs.append(refs)
             else:
                 if (isinstance(arg, DistributedArray) and
                         arg.device_mesh == self and arg.indices == indices):
                     # Fast path for DistributedArray
-                    ret_bufs.append(arg.remote_buffers)
+                    ret_bufs.append(arg.remote_ref)
                 elif isinstance(arg, ReplicatedDistributedArray):
                     replica = arg.get_replica_on_mesh(self)
                     assert replica.indices == indices
-                    ret_bufs.append(replica.remote_buffers)
+                    ret_bufs.append(replica.remote_ref)
                 else:  # Slow path
                     slow_path = True
                     if type(arg) not in [ShapedArray, ShapeDtypeStruct]:
                         arg = xla.canonicalize_dtype(arg)
-                    bufs = shard_arg_handlers[type(arg)](arg, self, indices)
-                    ret_bufs.append(bufs)
+                    ref = shard_arg_handlers[type(arg)](arg, self, indices)[0]
+                    ret_bufs.append(ref)
                     if donated and hasattr(arg, "delete"):
                         # shard_arg_handler always creates new buffers,
                         # so we can delete the old buffers
@@ -1146,9 +1216,9 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                              args: Sequence[np.array]):
         arrays = []
         for i in range(len(avals)):
-            buffers = _shard_array(args[i], self, shard_indices[i])
+            remote_ref = _shard_array(args[i], self, shard_indices[i])[0]
             arrays.append(
-                DistributedArray(self, avals[i], sharding_specs[i], buffers,
+                DistributedArray(self, avals[i], sharding_specs[i], remote_ref,
                                  shard_indices[i]))
         return arrays
 
@@ -1159,13 +1229,13 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             for aval, spec in zip(avals, sharding_specs)
         ]
 
-        def outs_handler(bufs):
+        def outs_handler(refs):
             ret = []
             for i, aval in enumerate(avals):
                 dis_array = DistributedArray(device_mesh=self,
                                              aval=aval,
                                              sharding_spec=sharding_specs[i],
-                                             remote_buffers=bufs[i],
+                                             remote_ref=refs[i],
                                              indices=indices[i])
                 ret.append(dis_array)
             return ret
@@ -1242,13 +1312,67 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.launched = False
 
 
+########################################
+# Distributed Array and Buffers
+########################################
+remote_buffer_counter = 0
+
+
+def next_array_uuids(number=1):
+    """Return the next uuid of a remote buffer."""
+    global remote_buffer_counter
+    ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
+    remote_buffer_counter = (remote_buffer_counter + number) % (1 << 60)
+    return ret
+
+
+class RemoteArrayRef:
+    """
+    A reference to all device buffers of a logical array.
+
+    In Alpa, each pipeshard stage runs in SPMD(single program, multiple device).
+    Hence, buffers of the same logical array are allocated, used and freed
+    together, and thus we use one reference for all these buffers.
+    """
+
+    def __init__(self, device_mesh: PhysicalDeviceMesh, uuid: int = None):
+        self.device_mesh = device_mesh
+        self.uuid = (uuid if uuid is not None else next_array_uuids()[0])
+        self.is_deleted_on_workers = False
+        logger.debug(f"RemoteBufferRef uuid: {self.uuid} created on mesh "
+                     f"with devices {self.device_mesh.device_strs}.")
+
+    def set_deleted_on_workers(self):
+        """
+        Set the array as deleted on workers.
+        For some arrays (e.g., donated tensor), if we know the workers has
+        already deleted them, then we do not need to do the remote call
+        "delete_remote_buffers" again.
+        """
+        self.is_deleted_on_workers = True
+
+    def __repr__(self):
+        return (f"RemoteBufferRef(uuid = {self.uuid}, "
+                f"loc = Mesh ({self.device_mesh.mesh_id}))")
+
+    def __del__(self):
+        if not self.is_deleted_on_workers:
+            self.device_mesh.delete_remote_buffers((self,))
+
+
+def create_remote_array_refs(device_mesh, num=1):
+    ary_uuids = next_array_uuids(num)
+    ary_refs = [RemoteArrayRef(device_mesh, uuid) for uuid in ary_uuids]
+    return ary_refs, ary_uuids
+
+
 class DistributedArray:
     """A distributed array on a PhysicalDeviceMesh.
 
     End users can interact with this array as if they are working with
     a normal numpy array.
 
-    Internally, it stores pointers (uuid) of remote buffers.
+    Internally, it stores a pointer to all remote buffers.
     The buffers are stored distributedly on remote workers' device memeory.
     When users require the value of the array. These buffers will be gathered
     to the dirver.
@@ -1258,12 +1382,12 @@ class DistributedArray:
                  device_mesh: PhysicalDeviceMesh,
                  aval: ShapedArray,
                  sharding_spec: ShardingSpec,
-                 remote_buffers: Sequence["RemoteBufferRef"],
+                 remote_ref: RemoteArrayRef,
                  indices: Optional[Sequence[Index]] = None):
         self.device_mesh = device_mesh
         self.aval = aval
         self.sharding_spec = sharding_spec
-        self.remote_buffers = remote_buffers
+        self.remote_ref = remote_ref
 
         if indices is None:
             indices = pxla.spec_to_indices(self.aval.shape, self.sharding_spec)
@@ -1272,18 +1396,17 @@ class DistributedArray:
         self.shape = self.aval.shape
         self.dtype = self.aval.dtype
         self._npy_value = None
-        self._one_replica_buffer_indices = None
+        self._one_replica_host_local_ids = None
+        self._one_replica_buffer_ids = None
         self._fetched_np_buffers = None
         self.skip_shard_args_check = False
 
     def block_until_ready(self):
         """Block until all remote buffers of this array are ready."""
-        self.device_mesh.block_until_ready_remote_buffers(self.remote_buffers)
+        self.device_mesh.block_until_ready_remote_buffers(self.uuid)
 
     def delete(self):
-        for buf in self.remote_buffers:
-            del buf
-        self.remote_buffers = None
+        self.remote_ref = None
         self._npy_value = None
 
     def flush(self):
@@ -1304,26 +1427,25 @@ class DistributedArray:
                 in the background.
 
         """
-        one_replica_buffers = [
-            self.remote_buffers[i] for i in self.one_replica_buffer_indices
-        ]
         one_replica_indices = [
-            self.indices[i] for i in self.one_replica_buffer_indices
+            self.indices[i] for i in self.one_replica_buffer_ids
         ]
-        buf_refs_per_host = {}
+        device_ids_per_host = {}
         indices_per_host = {}
-        for buf_ref, indice in zip(one_replica_buffers, one_replica_indices):
-            if buf_refs_per_host.get(buf_ref.host_id) is None:
-                buf_refs_per_host[buf_ref.host_id] = [buf_ref.uuid]
-                indices_per_host[buf_ref.host_id] = [indice]
+        for buf_id, indice in zip(self.one_replica_host_local_ids,
+                                  one_replica_indices):
+            host_id, device_id = buf_id
+            if indices_per_host.get(host_id) is None:
+                indices_per_host[host_id] = [indice]
+                device_ids_per_host[host_id] = [device_id]
             else:
-                buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
-                indices_per_host[buf_ref.host_id].append(indice)
-        for host_id, uuids in buf_refs_per_host.items():
-            if len(uuids) > 0:
-                self.device_mesh.workers[host_id].save_buffers.remote(
-                    ckpt_dir, local_cache_dir, uuids, indices_per_host[host_id],
-                    self.shape)
+                indices_per_host[host_id].append(indice)
+                device_ids_per_host[host_id].append(device_id)
+        for host_id, indices in indices_per_host.items():
+            if len(indices) > 0:
+                self.device_mesh.workers[host_id].save_array.remote(
+                    ckpt_dir, local_cache_dir, self.remote_ref.uuid,
+                    np.array(device_ids_per_host[host_id]), indices, self.shape)
 
     @classmethod
     def load(cls, path: str, aval: ShapedArray, device_mesh: PhysicalDeviceMesh,
@@ -1333,56 +1455,66 @@ class DistributedArray:
             return a new DistributedArray
         """
         # pylint: disable=import-outside-toplevel
-        from alpa.mesh_executable import create_remote_buffer_refs
-        buf_refs, _ = create_remote_buffer_refs(device_mesh, 1)
+        ary_ref = RemoteArrayRef(device_mesh)
         indices = pxla.spec_to_indices(aval.shape, sharding_spec)
 
-        buf_refs_per_host = {}
         indices_per_host = {}
         device_ids_per_host = {}
-        for buf_ref, indice in zip(buf_refs, indices):
-            if buf_refs_per_host.get(buf_ref.host_id) is None:
-                buf_refs_per_host[buf_ref.host_id] = [buf_ref.uuid]
-                indices_per_host[buf_ref.host_id] = [indice]
-                device_ids_per_host[buf_ref.host_id] = [buf_ref.device_id]
+        for buf_idx, indice in enumerate(indices):
+            host_id, device_id = divmod(buf_idx,
+                                        device_mesh.num_devices_per_host)
+            if indices_per_host.get(host_id) is None:
+                indices_per_host[host_id] = [indice]
+                device_ids_per_host[host_id] = [device_id]
             else:
-                buf_refs_per_host[buf_ref.host_id].append(buf_ref.uuid)
-                indices_per_host[buf_ref.host_id].append(indice)
-                device_ids_per_host[buf_ref.host_id].append(buf_ref.device_id)
-        for host_id, uuids in buf_refs_per_host.items():
-            if len(uuids) > 0:
-                device_mesh.workers[host_id].load_buffers.remote(
-                    path, uuids, indices_per_host[host_id],
-                    device_ids_per_host[host_id])
-        return DistributedArray(device_mesh, aval, sharding_spec, buf_refs,
+                indices_per_host[host_id].append(indice)
+                device_ids_per_host[host_id].append(device_id)
+        for host_id, worker in enumerate(device_mesh.workers):
+            worker.load_array.remote(path, ary_ref.uuid,
+                                     device_ids_per_host[host_id],
+                                     indices_per_host[host_id])
+        return DistributedArray(device_mesh, aval, sharding_spec, ary_ref,
                                 indices)
 
+    def _compute_one_replica_ids(self):
+        one_replica_indices = []
+        one_replica_host_local_ids = []
+        seen_index_hashes = set()
+        for i, index in enumerate(self.indices):
+            hashed_index = _hashable_index(index)
+            if hashed_index not in seen_index_hashes:
+                one_replica_indices.append(i)
+                one_replica_host_local_ids.append(
+                    divmod(i, self.device_mesh.num_devices_per_host))
+                seen_index_hashes.add(hashed_index)
+        self._one_replica_buffer_ids = one_replica_indices
+        self._one_replica_host_local_ids = one_replica_host_local_ids
+
+    # TODO(yonghao): to make ._value faster(in reorder buffer), cache different
+    # buffers with the same mesh shape and sharding spec.
     @property
-    def one_replica_buffer_indices(self):
+    def one_replica_buffer_ids(self):
         """Indices of buffers containing one complete copy of the array data."""
-        if self._one_replica_buffer_indices is None:
-            one_replica_indices = []
-            seen_index_hashes = set()
-            for i, index in enumerate(self.indices):
-                hashed_index = _hashable_index(index)
-                if hashed_index not in seen_index_hashes:
-                    one_replica_indices.append(i)
-                    seen_index_hashes.add(hashed_index)
-            self._one_replica_buffer_indices = one_replica_indices
-        return self._one_replica_buffer_indices
+        if self._one_replica_buffer_ids is None:
+            self._compute_one_replica_ids()
+        return self._one_replica_buffer_ids
+
+    @property
+    def one_replica_host_local_ids(self):
+        if self._one_replica_host_local_ids is None:
+            self._compute_one_replica_ids()
+        return self._one_replica_host_local_ids
 
     @property
     def _value(self):
         if self._npy_value is None:
             npy_value = np.empty(self.aval.shape, self.aval.dtype)
             if not self._fetched_np_buffers:
-                fetched_np_buffers = self.device_mesh.get_remote_buffers([
-                    self.remote_buffers[i]
-                    for i in self.one_replica_buffer_indices
-                ])
+                fetched_np_buffers = self.device_mesh.get_remote_buffers(
+                    (self.remote_ref,), (self.one_replica_host_local_ids,))[0]
             else:
                 fetched_np_buffers = self._fetched_np_buffers
-            for ct, i in enumerate(self.one_replica_buffer_indices):
+            for ct, i in enumerate(self.one_replica_buffer_ids):
                 npy_value[self.indices[i]] = fetched_np_buffers[ct]
             self._npy_value = npy_value
         return self._npy_value
@@ -1401,25 +1533,29 @@ class DistributedArray:
         return (f"DistributedArray(sharding_spec={self.sharding_spec}, "
                 f"value={self._value})")
 
+    def __del__(self):
+        self.delete()
 
-def fetch(distributed_arrays: Any):
+
+def fetch(distributed_arrays: Sequence[DistributedArray]):
     """Fetch a pytree of DistributedArray in a batch."""
     buf_refs = []
     device_mesh = distributed_arrays[0].device_mesh
 
+    device_indices = []
     for array in tree_leaves(distributed_arrays):
+        array: DistributedArray
         assert array.device_mesh == device_mesh, (
             "Only support fetching from the same mesh.")
-        for index in array.one_replica_buffer_indices:
-            buf_refs.append(array.remote_buffers[index])
+        buf_refs.append(array.remote_ref)
+        device_indices.append(array.one_replica_buffer_ids)
 
-    np_arrays = device_mesh.get_remote_buffers(buf_refs, batching=True)
+    np_arrays = device_mesh.get_remote_buffers(buf_refs,
+                                               device_indices,
+                                               batching=True)
 
-    pt = 0
-    for array in distributed_arrays:
-        length = len(array.one_replica_buffer_indices)
-        array._fetched_np_buffers = np_arrays[pt:pt + length]
-        pt += length
+    for array, np_value in zip(distributed_arrays, np_arrays):
+        array._fetched_np_buffers = np_value  # pylint: disable=protected-access
 
 
 core.pytype_aval_mappings[DistributedArray] = attrgetter("aval")
@@ -1485,6 +1621,9 @@ xla.pytype_aval_mappings[ReplicatedDistributedArray] = attrgetter("aval")
 xla.canonicalize_dtype_handlers[ReplicatedDistributedArray] = lambda x: x
 
 
+########################################
+##### Physical Mesh Group #####
+########################################
 class VirtualPhysicalMesh:
     """
     A virtual physical mesh used for pipeline parallel compilation.
@@ -1819,6 +1958,9 @@ class PhysicalDeviceMeshGroup:
             cg.instantiate()
 
 
+########################################
+# Device Cluster
+########################################
 class DeviceCluster:
     """
     A ray cluster with GPU devices.
@@ -2011,31 +2153,23 @@ def set_seed(seed: int):
 # Register ShardArg Handler
 ########################################
 def _device_mesh_put(device_mesh, shards, num_batch, batch_dim):
-    # pylint: disable=import-outside-toplevel
-    from alpa.mesh_executable import create_remote_buffer_refs
-    buf_refs, buf_uuids = create_remote_buffer_refs(device_mesh, num_batch)
-    device_ids = np.arange(device_mesh.num_devices_per_host)
-    uuid_step = device_mesh.num_devices_per_host * num_batch
+    ary_refs, ary_uuids = create_remote_array_refs(device_mesh, num_batch)
     shard_step = device_mesh.num_devices_per_host
     for host_id in range(device_mesh.num_hosts):
         device_mesh.workers[host_id].put_buffers.remote(
-            buf_uuids[host_id * uuid_step:(host_id + 1) * uuid_step],
-            device_ids, shards[host_id * shard_step:(host_id + 1) * shard_step],
+            ary_uuids, shards[host_id * shard_step:(host_id + 1) * shard_step],
             num_batch, batch_dim)
-    return buf_refs
+    return ary_refs
 
 
 def _device_mesh_put_dummy(array, device_mesh, indices, num_batch):
-    # pylint: disable=import-outside-toplevel
-    from alpa.mesh_executable import create_remote_buffer_refs
-    buf_refs, buf_uuids = create_remote_buffer_refs(device_mesh, num_batch)
+    ary_refs, ary_uuids = create_remote_array_refs(device_mesh, num_batch)
     step = device_mesh.num_devices_per_host * num_batch
     for host_id in range(device_mesh.num_hosts):
         device_mesh.workers[host_id].shard_and_put_non_zero_buffer.remote(
-            buf_uuids[host_id * step:(host_id + 1) * step], array.shape,
-            array.dtype, indices[host_id * step:(host_id + 1) * step],
-            num_batch)
-    return buf_refs
+            ary_uuids, array.shape, array.dtype,
+            indices[host_id * step:(host_id + 1) * step], num_batch)
+    return ary_refs
 
 
 def _shard_abstract_array(array,

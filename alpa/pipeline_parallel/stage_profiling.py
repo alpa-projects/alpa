@@ -753,10 +753,10 @@ def profile_layer_communication_cost(
             # create distributed array as dummy inputs
             input_indices = pxla.spec_to_indices(invar.aval.shape,
                                                  out_sharding_spec)
-            remote_buffers = _shard_device_array(jnp.zeros_like(invar.aval),
-                                                 src_phy_mesh, input_indices)
+            remote_ref = _shard_device_array(jnp.zeros_like(invar.aval),
+                                             src_phy_mesh, input_indices)
             DistributedArray(src_phy_mesh, invar.aval, in_sharding_spec,
-                             remote_buffers, input_indices)
+                             remote_ref, input_indices)
             if global_config.resharding_mode == "send_recv":
                 task = SymbolicReshardingTask(task_spec, collective_group,
                                               collective_group.src_mesh,

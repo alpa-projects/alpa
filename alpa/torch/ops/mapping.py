@@ -55,7 +55,6 @@ def init_buffer(
     init_func_kwargs,
     local_rng_seed,
     worker,
-    uuid: int,
     device_id: int,
     shape: Sequence[int],
     dtype: np.dtype,
@@ -67,8 +66,8 @@ def init_buffer(
     init_func_kwargs["shape"] = shape
     init_func_kwargs["dtype"] = numpy_to_torch_dtype_dict[dtype]
 
-    worker.buffers[uuid] = worker.backend.buffer_from_pyval(
-        init_func(**init_func_kwargs), worker.local_devices[device_id])
+    return worker.backend.buffer_from_pyval(init_func(**init_func_kwargs),
+                                            worker.local_devices[device_id])
 
 
 def torch_abs(x):

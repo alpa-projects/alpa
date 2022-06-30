@@ -30,12 +30,10 @@ class DistSaveLoadTest(unittest.TestCase):
     def check_dist_array_eq(self, x, y):
         if isinstance(x, DistributedArray):
             x = np.array(
-                x.device_mesh.get_remote_buffers(x.remote_buffers,
-                                                 batching=True))
+                x.device_mesh.get_remote_buffers(x.remote_ref, batching=True))
         if isinstance(y, DistributedArray):
             y = np.array(
-                y.device_mesh.get_remote_buffers(y.remote_buffers,
-                                                 batching=True))
+                y.device_mesh.get_remote_buffers(y.remote_ref, batching=True))
         assert_allclose(x, y)
 
     def _get_efs_mount_point(self):

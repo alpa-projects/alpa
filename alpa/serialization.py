@@ -52,7 +52,7 @@ def _save_unsharded_array(ckpt_dir, arr):
 
 def load_sharded_array(ckpt_dir, metadatas):
     """
-        Used by MeshHostWorker.load_buffers to first load the entire shared
+        Used by MeshHostWorker.load_tensor to first load the entire shared
         array from disk.
     """
     assert len(metadatas) > 0

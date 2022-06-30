@@ -103,7 +103,7 @@ We provide detailed instructions below on how to convert the original OPT-175B w
 
   .. code:: shell
   
-    python step_2_consolidate_992_shards_to_singleton.py --read-prefix PATH_TO_992_SHARDS/checkpoint_last --save_prefix PATH_TO_SAVE_CHECKPOINT
+    python step_2_consolidate_992_shards_to_singleton.py --read-prefix [PATH_TO_992_SHARDS]/checkpoint_last --save-prefix [PATH_TO_SAVE_CHECKPOINT]
   
   The consolidated checkpoint will be saved at ``PATH_TO_SAVE_CHECKPOINT`` as specified in the command.
   

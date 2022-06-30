@@ -9,14 +9,13 @@ import time
 from collections import defaultdict, OrderedDict
 from glob import glob
 from pathlib import Path
-
-import torch
 from tqdm import tqdm
 
-from omegaconf.dictconfig import DictConfig
-from .utils import torch_load_cpu, recursively_cast_dictconfigs, load_and_pop_last_optimizer_state
+import torch
+from examples.opt_serving.scripts.utils import load_and_pop_last_optimizer_state
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 def _unpad(shard: torch.Tensor, pad: int) -> torch.Tensor:
@@ -166,7 +165,6 @@ def consolidate_fsdp_shards(
     if do_consolidate:
         num_parts = find_num_parts(names)
         if num_parts:
-            logger.info("consolidate_model_parallel")
             #consolidated_weights = consolidate_model_parallel(
             #    metadata,
             #    names,
@@ -175,7 +173,7 @@ def consolidate_fsdp_shards(
             #    parts=num_parts,
             #    no_stitch_megatron=no_stitch_megatron,
             #)
-            print("Part 1: --- ")
+            logger.info("- Part 1: consolidate Zero-3 shards.")
             consolidated_weights = consolidate_model_parallel_part1(
                 metadata,
                 names,
@@ -187,7 +185,7 @@ def consolidate_fsdp_shards(
             del weights, metadata
             gc.collect()
             if not no_stitch_megatron:
-                print("Part 2: --- ")
+                logger.info("- Part 2: consolidate model-parallel parts.")
                 consolidated_weights = consolidate_model_parallel_part2(
                     consolidated_weights)
         else:
@@ -199,13 +197,11 @@ def consolidate_fsdp_shards(
         #gc.collect()
         done_consolidate = time.time()
         logger.info(f"Done consolidating after {done_consolidate-t0//60} minutes")
-        exit(0)
     else:
         consolidated_weights = weights[0]
     if new_arch_name is not None:
         ckpt["cfg"]["model"]._name = new_arch_name
     if dense:
-        logger.info("dense")
 
         def save_checkpoint(weights_to_save, prefix):
             ckpt_consolidated = dict(
@@ -216,9 +212,9 @@ def consolidate_fsdp_shards(
                 args=ckpt.get("args"),
             )
             save_path = f"{prefix}.pt"
-            logger.info(f"Saving to {save_path} ...")
+            logger.info(f"- Saving to {save_path} ...")
             torch.save(ckpt_consolidated, save_path)
-            logger.info(f"Done after {time.time()-t0//60} minutes")
+            logger.info(f"Done saving after {(time.time() - t0) // 60} minutes")
             return save_path
 
         if no_stitch_megatron:
@@ -278,7 +274,7 @@ def consolidate_model_parallel(
                 metadata_parts[p].append(metadata[i])
     all_parts_consolidated = defaultdict(list)
     for k, v in tqdm(model_parts.items()):
-        print(f"Processing part: {k}, with {len(v)} shards...")
+        logger.info(f"Processing part: {k}, with {len(v)} shards...")
         part_weights = consolidate_shard_weights(
             shard_weights=v, shard_metadata=metadata_parts[k], strict=strict
         )
@@ -288,13 +284,12 @@ def consolidate_model_parallel(
     model = glue_megatron_parts(all_parts_consolidated)
     return model
 
+
 def consolidate_model_parallel_part1(
     metadata, names, strict, weights, parts=2, no_stitch_megatron=False
 ):
     model_parts = defaultdict(list)
     metadata_parts = defaultdict(list)
-    print(names)
-    print(parts)
     for i, n in enumerate(names):
         for p in range(parts):
             if f"part-{p}" in n:
@@ -302,12 +297,13 @@ def consolidate_model_parallel_part1(
                 metadata_parts[p].append(metadata[i])
     all_parts_consolidated = defaultdict(list)
     for k, v in tqdm(model_parts.items()):
-        print(f"Processing part: {k}, with {len(v)} shards...")
+        logger.info(f"Consolidate shards associated with part: {k}, with {len(v)} shards...")
         part_weights = consolidate_shard_weights(
             shard_weights=v, shard_metadata=metadata_parts[k], strict=strict
         )
         all_parts_consolidated[k] = part_weights
     return all_parts_consolidated
+
 
 def consolidate_model_parallel_part2(all_parts_consolidated):
     model = glue_megatron_parts(all_parts_consolidated)
@@ -391,7 +387,7 @@ def glue_megatron_parts(model_parts):
                 logger.info(f"max discrepancy {key}: {err}")
 
     for key in model_parts[0]:
-        print(f"Glue the key {key}...")
+        logger.info(f"Glue the key {key}...")
         if "qkv" in key:
             # Bias of CP gets concatenated
             if key.endswith("bias"):
@@ -463,8 +459,9 @@ def glue_megatron_parts(model_parts):
     # Consolidate ffn_layernorm.lns.weight.{part_id} -> ffn_layernorm.weight
     handle_legacy_ln_(glued_model, len(model_parts))
     assert "decoder.layers.0.ffn_layernorm.lns.0.weight" not in glued_model
+    logger.info("- Done with consolidating model parallelism parts. See a summary below")
     for key in glued_model:
-        print("key: {key}, shape: {glued_model[key].shape}")
+        logger.info(f"key: {key}, shape: {glued_model[key].shape}")
     return glued_model
 
 
@@ -488,4 +485,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     consolidate_fsdp_shards(args.read_prefix,
                             save_prefix=args.save_prefix,
-                            new_arch_name=args.next_arch_name)
+                            new_arch_name=args.new_arch_name)

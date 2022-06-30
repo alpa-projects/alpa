@@ -1,3 +1,7 @@
+import torch
+from omegaconf.dictconfig import DictConfig
+
+
 def recursively_cast_dictconfigs(cfg):
     if isinstance(cfg, DictConfig):
         return {k2: recursively_cast_dictconfigs(v2) for k2, v2 in cfg.items()}

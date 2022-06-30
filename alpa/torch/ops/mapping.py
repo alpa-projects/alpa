@@ -313,6 +313,10 @@ def torch_t(x):
     return jnp.transpose(x)
 
 
+def torch_tensor(x, dtype=None):
+    return jnp.array(x, dtype=dtype)
+
+
 def torch_transpose(x, dim0, dim1):
     return jnp.swapaxes(x, dim0, dim1)
 

@@ -247,10 +247,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         timers(self.shard_args_timer_name).stop()
 
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
-            # Shape: (num_args,)
             input_uuids = np.array([ref.uuid for ref in input_bufs])
-
-            # Shape: (num_outs,)
             output_uuids = next_array_uuids(num_outs)
 
             if "sync_before" not in kwargs:
@@ -263,7 +260,6 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                     self.exec_uuid, input_uuids, output_uuids, **kwargs)
 
             # Gather output buffers
-            # Shape: (num_outs, num_devices)
             output_bufs = np.array(
                 [RemoteArrayRef(physical_mesh, uuid) for uuid in output_uuids])
 
@@ -630,7 +626,6 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         timers(self.shard_args_timer_name).stop()
 
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
-            # Shape: (num_args,)
             first_batch_uuids = np.array([ref.uuid for ref in first_batch_bufs])
 
             if next_batches_bufs:
@@ -639,7 +634,6 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             else:
                 next_batches_uuids = (None,) * num_hosts
 
-            # Shape: (num_outs,)
             output_uuids = next_array_uuids(num_outs)
 
             # Execute SPMD binary
@@ -650,7 +644,6 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                     global_config.shard_parallel_sync_for_timer)
 
             # Gather output buffers
-            # Shape: (num_outs, num_devices)
             output_bufs = np.array(
                 [RemoteArrayRef(physical_mesh, uuid) for uuid in output_uuids])
 

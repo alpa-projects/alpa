@@ -954,8 +954,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 [device_id_to_str(ip, j) for j in devices[i]])
         self._launch_xla_servers()
 
-        self.to_delete_remote_buffers = [[] for _ in range(self.num_hosts)]
-        self.to_delete_remote_buffers_ct = 0
+        self.to_delete_remote_refs = []
+        self.to_delete_remote_ref_ct = 0
 
     def _launch_xla_servers(self):
         # Launch distributed xla runtime
@@ -1126,21 +1126,20 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 not ray.is_initialized()):
             return
 
-        # Put delete requests into per-host buffers
+        # Put delete requests into a buffer
         for ary_ref in ary_refs:
-            for to_delete_list in self.to_delete_remote_buffers:
-                to_delete_list.append(ary_ref.uuid)
-            self.to_delete_remote_buffers_ct += (len(ary_refs) *
-                                                 self.num_devices_per_host)
+            self.to_delete_remote_refs.append(ary_ref.uuid)
+        self.to_delete_remote_ref_ct += len(ary_refs)
 
         # Execute the delete requests if there are enough requests
-        if (self.to_delete_remote_buffers_ct >
-                global_config.delete_remote_buffers_threshold):
+        if (self.to_delete_remote_ref_ct >
+                global_config.delete_remote_arrays_threshold):
+            to_delete_remote_refs = np.array(self.to_delete_remote_refs)
             for host_id in range(self.num_hosts):
                 self.workers[host_id].delete_buffers.remote(
-                    np.array(self.to_delete_remote_buffers[host_id]))
-                self.to_delete_remote_buffers[host_id] = []
-            self.to_delete_remote_buffers_ct = 0
+                    to_delete_remote_refs)
+                self.to_delete_remote_refs = []
+            self.to_delete_remote_ref_ct = 0
 
     def block_until_ready_remote_buffers(self,
                                          ary_refs: List["RemoteArrayRef"]):
@@ -1339,8 +1338,6 @@ class RemoteArrayRef:
         self.device_mesh = device_mesh
         self.uuid = (uuid if uuid is not None else next_array_uuids()[0])
         self.is_deleted_on_workers = False
-        logger.debug(f"RemoteBufferRef uuid: {self.uuid} created on mesh "
-                     f"with devices {self.device_mesh.device_strs}.")
 
     def set_deleted_on_workers(self):
         """

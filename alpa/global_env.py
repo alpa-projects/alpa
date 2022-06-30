@@ -12,7 +12,7 @@ class GlobalConfig:
             os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", 0.9))
         self.xla_gpu_autotune_level = 4
         # The threshold to tigger a batched deletion on workers.
-        self.delete_remote_buffers_threshold = 200
+        self.delete_remote_arrays_threshold = 50
         # Whether to use AWS EFA network interface
         self.use_aws_efa = os.environ.get("ALPA_USE_AWS_EFA",
                                           "").lower() in ["true", "1"]

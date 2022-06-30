@@ -31,6 +31,8 @@ def adam(lr=1e-4):
         #     return params, optim_state
         def optim_func(params, optim_state, params_grad):
             beta1, beta2 = betas
+            beta1 = torch.tensor(beta1)
+            beta2 = torch.tensor(beta2)
             step = optim_state["step"]
             for k in params:
                 param = params[k]

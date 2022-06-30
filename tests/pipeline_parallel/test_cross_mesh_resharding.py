@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from alpa import init
-from alpa.device_mesh import (DistributedArray, create_remote_tensor_refs,
+from alpa.device_mesh import (DistributedArray, create_remote_array_refs,
                               get_global_virtual_physical_mesh)
 from alpa.mesh_executable import next_mesh_executable_uuid
 from alpa.global_env import global_config
@@ -138,7 +138,7 @@ def test_resharding(var,
                                              None, [test_array])
     input_refs = np.array(input_refs)
     input_uuids = [ref.uuid for ref in input_refs]
-    output_refs, output_uuids = create_remote_tensor_refs(dst_mesh)
+    output_refs, output_uuids = create_remote_array_refs(dst_mesh)
 
     # Run executables
     # for _ in range(3):

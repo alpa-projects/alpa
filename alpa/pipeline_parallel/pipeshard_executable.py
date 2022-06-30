@@ -8,7 +8,7 @@ from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 import numpy as np
 import ray.exceptions
 
-from alpa.device_mesh import MeshHostWorker, RemoteTensorRef, next_tensor_uuids
+from alpa.device_mesh import MeshHostWorker, RemoteArrayRef, next_array_uuids
 from alpa.global_env import global_config
 from alpa.device_mesh import PhysicalDeviceMeshGroup
 from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
@@ -159,7 +159,7 @@ class PipeshardDriverExecutable:
 
             # Convert bufs to uuids
             input_uuids = [ref.uuid for ref in input_bufs[mesh_idx]]
-            output_uuids[mesh_idx] = next_tensor_uuids(num_outs[mesh_idx])
+            output_uuids[mesh_idx] = next_array_uuids(num_outs[mesh_idx])
 
             # Execute
             for worker in physical_mesh.workers:
@@ -182,7 +182,7 @@ class PipeshardDriverExecutable:
             output_bufs[mesh_idx] = np.empty((num_outs[mesh_idx],),
                                              dtype=object)
             for i in range(num_outs[mesh_idx]):
-                output_bufs[mesh_idx][i] = RemoteTensorRef(
+                output_bufs[mesh_idx][i] = RemoteArrayRef(
                     physical_mesh, output_uuid[i])
 
         # Check if there is OOM

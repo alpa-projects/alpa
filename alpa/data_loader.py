@@ -8,7 +8,7 @@ import numpy as np
 import ray
 
 from alpa.device_mesh import (LocalPhysicalDeviceMesh, DistributedArray,
-                              create_remote_tensor_refs)
+                              create_remote_array_refs)
 
 
 class DataLoader:
@@ -128,11 +128,11 @@ class MeshDriverDataLoader:
         self.output_uuids = []
         self.output_arrays = []
         for i in range(len(avals)):
-            tensor_ref, tensor_uuid = create_remote_tensor_refs(physical_mesh)
-            self.output_uuids.append(tensor_uuid[0])
+            ary_ref, ary_uuid = create_remote_array_refs(physical_mesh)
+            self.output_uuids.append(ary_uuid[0])
             self.output_arrays.append(
                 DistributedArray(physical_mesh, avals[i], sharding_specs[i],
-                                 tensor_ref[0]))
+                                 ary_ref[0]))
 
         # Create worker part data loaders
         self.worker_data_loaders = []

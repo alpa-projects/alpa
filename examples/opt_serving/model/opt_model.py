@@ -7,8 +7,8 @@ import os
 from typing import Callable, Optional, Tuple, Dict
 
 import alpa
-from alpa.device_mesh import DistributedArray, ReplicatedDistributedArray, MeshHostWorker
-from alpa.mesh_executable import create_remote_buffer_refs
+from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
+                              MeshHostWorker, create_remote_array_refs)
 from alpa.model.model_util import ModelOutput
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 import flax.linen as nn
@@ -872,13 +872,13 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
         if len(info.mesh_ids) == 1:
             mesh, spec = mesh_group[info.mesh_ids[0]], info.sharding_specs[0]
             indices = pxla.spec_to_indices(aval.shape, spec)
-            buf_refs, buf_uuids = create_remote_buffer_refs(mesh, 1)
+            ary_refs, ary_uuid = create_remote_array_refs(1)
             flat_shapes.append([aval.shape])
-            flat_uuids.append([buf_uuids])
+            flat_uuids.append([ary_uuid[0]])
             flat_indices.append([indices])
             flat_mesh_ids.append([mesh.mesh_id])
             flat_arrays.append(
-                DistributedArray(mesh, aval, spec, buf_refs, indices))
+                DistributedArray(mesh, aval, spec, ary_refs[0], indices))
         else:
             tmp_shapes = []
             tmp_uuids = []
@@ -889,10 +889,10 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
             for mesh_id, spec in zip(info.mesh_ids, info.sharding_specs):
                 mesh = mesh_group[mesh_id]
                 indices = pxla.spec_to_indices(aval.shape, spec)
-                buf_refs, buf_uuids = create_remote_buffer_refs(mesh, 1)
-                array = DistributedArray(mesh, aval, spec, buf_refs, indices)
+                ary_refs, ary_uuid = create_remote_array_refs(1)
+                array = DistributedArray(mesh, aval, spec, ary_refs[0], indices)
                 tmp_shapes.append(aval.shape)
-                tmp_uuids.append(buf_uuids)
+                tmp_uuids.append(ary_uuid[0])
                 tmp_indices.append(indices)
                 tmp_mesh_ids.append(mesh.mesh_id)
                 tmp_meshes.append(mesh)

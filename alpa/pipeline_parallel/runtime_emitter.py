@@ -167,7 +167,7 @@ class PipelineInstEmitterHelper:
             v for v, b in zip(global_invars, is_batch) if b)
         self.grad_dummy_invars = grad_dummy_invars
         self.schedule = schedule
-        # Dict[var_key -> Dict[mesh_idx -> tensor_uuid]]
+        # Dict[var_key -> Dict[mesh_idx -> array_uuid]]
         # The shape of the numpy array is [num_hosts, num_devices_per_host]
         self.env = {}
 

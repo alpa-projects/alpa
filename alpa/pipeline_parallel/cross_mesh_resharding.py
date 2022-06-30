@@ -9,7 +9,7 @@ from jax.interpreters import pxla
 import ray
 
 import alpa.collective as col
-from alpa.device_mesh import (DistributedArray, RemoteTensorRef,
+from alpa.device_mesh import (DistributedArray, RemoteArrayRef,
                               ReshardingAllGatherSpec, ReshardingRecvSpec,
                               ReshardingSendSpec, ReshardingTileSpec,
                               ReshardingBroadcastSpec, _device_mesh_put_dummy)
@@ -629,7 +629,7 @@ class SymbolicReshardingTask(ReshardingTask):
     def do_prepared(self, src_array, profiling=False):
         """Execute a task which has been put in the remote workers."""
 
-        result_ref = RemoteTensorRef(self.dst_mesh)
+        result_ref = RemoteArrayRef(self.dst_mesh)
 
         results = []
         if profiling:

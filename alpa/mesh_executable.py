@@ -22,8 +22,8 @@ import numpy as np
 import ray
 
 from alpa.device_mesh import (LocalPhysicalDeviceMesh,
-                              DistributedPhysicalDeviceMesh, RemoteTensorRef,
-                              next_tensor_uuids)
+                              DistributedPhysicalDeviceMesh, RemoteArrayRef,
+                              next_array_uuids)
 from alpa.global_env import global_config
 from alpa.parallel_plan import PlacementSpec, StagePlan
 from alpa.shard_parallel.auto_sharding import (get_input_output_sharding_specs,
@@ -251,7 +251,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             input_uuids = [ref.uuid for ref in input_bufs]
 
             # Shape: (num_outs,)
-            output_uuids = next_tensor_uuids(num_outs)
+            output_uuids = next_array_uuids(num_outs)
 
             if "sync_before" not in kwargs:
                 kwargs["sync_before"] = kwargs["sync_after"] = (
@@ -265,12 +265,12 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             # Gather output buffers
             # Shape: (num_outs, num_devices)
             output_bufs = np.array(
-                [RemoteTensorRef(physical_mesh, uuid) for uuid in output_uuids])
+                [RemoteArrayRef(physical_mesh, uuid) for uuid in output_uuids])
 
             # Mark donated input buffers as already deleted on workers.
-            for tensor_ref, is_donated in zip(input_bufs, self.donated_invars):
+            for ary_ref, is_donated in zip(input_bufs, self.donated_invars):
                 if is_donated:
-                    tensor_ref.set_deleted_on_workers()
+                    ary_ref.set_deleted_on_workers()
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             sync_func = (self.sync_func if
@@ -639,7 +639,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                 next_batches_uuids = (None,) * num_hosts
 
             # Shape: (num_outs,)
-            output_uuids = next_tensor_uuids(num_outs)
+            output_uuids = next_array_uuids(num_outs)
 
             # Execute SPMD binary
             for i in range(num_hosts):
@@ -651,17 +651,17 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             # Gather output buffers
             # Shape: (num_outs, num_devices)
             output_bufs = np.array(
-                [RemoteTensorRef(physical_mesh, uuid) for uuid in output_uuids])
+                [RemoteArrayRef(physical_mesh, uuid) for uuid in output_uuids])
 
             # Mark donated input buffers as already deleted on workers.
-            for tensor_ref, is_donated in zip(first_batch_bufs,
-                                              self.donated_invars):
+            for ary_ref, is_donated in zip(first_batch_bufs,
+                                           self.donated_invars):
                 if is_donated:
-                    tensor_ref.set_deleted_on_workers()
+                    ary_ref.set_deleted_on_workers()
 
             # Mark micro batch buffers as already deleted on workers.
-            for tensor_ref in next_batches_bufs:
-                tensor_ref.set_deleted_on_workers()
+            for ary_ref in next_batches_bufs:
+                ary_ref.set_deleted_on_workers()
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             sync_func = (self.sync_func if
@@ -996,7 +996,7 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
 
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             # Get output uuids
-            output_uuids = next_tensor_uuids(num_outs)
+            output_uuids = next_array_uuids(num_outs)
 
             # Execute SPMD binary
             for i in range(num_hosts):
@@ -1005,7 +1005,7 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
 
             # Gather outputs
             output_bufs = np.array(
-                [RemoteTensorRef(physical_mesh, uuid) for uuid in output_uuids])
+                [RemoteArrayRef(physical_mesh, uuid) for uuid in output_uuids])
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             timers(self.exec_timer_name).start(self.sync_func)

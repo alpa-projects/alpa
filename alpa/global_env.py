@@ -7,11 +7,13 @@ class GlobalConfig:
 
     def __init__(self):
         ########## Options of device mesh ##########
+        # See https://jax.readthedocs.io/en/latest/gpu_memory_allocation.html
         self.xla_client_mem_fraction = float(
             os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", 0.9))
         self.xla_gpu_autotune_level = 4
+        # The threshold to tigger a batched deletion on workers.
         self.delete_remote_buffers_threshold = 200
-        # use AWS EFA network interface
+        # Whether to use AWS EFA network interface
         self.use_aws_efa = os.environ.get("ALPA_USE_AWS_EFA",
                                           "").lower() in ["true", "1"]
         # Random seed used for compilation
@@ -20,6 +22,8 @@ class GlobalConfig:
         self.runtime_random_seed = 42
 
         ########## Options of shard_parallel ##########
+        # Whether to sync before and after the executable for accurate internal
+        # timer
         self.shard_parallel_sync_for_timer = False
 
         ########## Options of pipeline_parallel ##########
@@ -46,7 +50,10 @@ class GlobalConfig:
         # Whether to use distributed compilation in pipeline parallel for
         # each stage. Disabling it helps debug.
         self.pipeline_distributed_compile = True
+        # Whether to use single-byte signal tensor for send/recv.
+        # This is a debug option.
         self.pipeline_use_signal_send_recv = False
+        # Whether to use the scatter-gater/local-all-gather optimization.
         self.use_scatter_gather = True
         self.eagerly_create_communicators = True
         self.use_memzero_for_gradient_accumulation = False
@@ -71,10 +78,6 @@ class GlobalConfig:
 
         ########## Options of logging ##########
         self.print_compilation_time = False
-
-        ########## Options of ray namespace ##########
-        self.default_ray_namespace_prefix = "alpa-train"
-        self.unittest_ray_namespace_prefix = "alpa-unittest"
 
 
 global_config = GlobalConfig()

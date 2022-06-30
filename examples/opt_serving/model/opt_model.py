@@ -595,7 +595,7 @@ def load_params_np(params, path, config, dummy=False):
                         param_dict[key].shape, param_dict[key].dtype)
                 else:
                     assert param_dict[key].shape == loaded_array.shape
-                    assert param_dict[key].dtype == loaded_array.dtype
+                    #assert param_dict[key].dtype == loaded_array.dtype
                     param_dict[key] = loaded_array
             else:
                 param_dict = param_dict[key]
@@ -689,11 +689,15 @@ def get_pipeshard_executable(config,
     # Parallelize
     method = alpa.PipeshardParallel(num_micro_batches=num_micro_batches,
                                     pipeline_schedule="inference")
+    layer_construction = alpa.manual_layer_construction
+
+    #method = alpa.ShardParallel()
+    #layer_construction = lambda x: x
 
     if autoregressive:
 
         @alpa.parallelize(batch_argnums=(1,), method=method)
-        @alpa.manual_layer_construction
+        @layer_construction
         def inference_step_with_cache(params, batch):
             output = model.apply(
                 params,
@@ -714,7 +718,7 @@ def get_pipeshard_executable(config,
     else:
 
         @alpa.parallelize(batch_argnums=(1,), method=method)
-        @alpa.manual_layer_construction
+        @layer_construction
         def inference_step(params, batch):
             output = model.apply(
                 params,
@@ -829,7 +833,12 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
         params_info, _ = executable.get_input_placement_specs()
         flat_args, in_tree = tree_flatten(params_aval)
         flat_info = tree_leaves(params_info)
-        ret = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
+        if hasattr(executable, "mesh_group"):
+            ret = executable.mesh_group.shard_args_to_arrays(
+                flat_info, flat_args)
+        else:
+            ret = executable.physical_mesh.shard_args_to_arrays_ps(
+                flat_info, flat_args)
         alpa.global_config.use_dummy_value_for_benchmarking = False
         return ret
 
@@ -906,12 +915,15 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
 
 
 def init_cache_dis_array(executable, config, batch_size, dummy=False):
-    alpa.global_config.use_dummy_value_for_benchmarking = dummy
     cache = init_cache_np(config, batch_size)
+    alpa.global_config.use_dummy_value_for_benchmarking = dummy
     _, batch_info = executable.get_input_placement_specs()
-    cache_info = batch_info["cache"]
     flat_args, in_tree = tree_flatten(cache)
-    flat_info = tree_leaves(cache_info)
-    ret = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
+    flat_info = tree_leaves(batch_info["cache"])
+    if hasattr(executable, "mesh_group"):
+        ret = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
+    else:
+        ret = executable.physical_mesh.shard_args_to_arrays_ps(
+            flat_info, flat_args)
     alpa.global_config.use_dummy_value_for_benchmarking = False
     return ret

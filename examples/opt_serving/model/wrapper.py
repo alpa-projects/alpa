@@ -164,9 +164,9 @@ def get_hf_opt_model(model_name, device):
                                 executable, transformer_config)
 
 
-def get_model(model_name,
-              device,
-              path,
+def get_model(model_name: str,
+              device: str,
+              path: str,
               autoregressive=True,
               dtype=jnp.float16,
               dummy=False,
@@ -218,13 +218,15 @@ def get_model(model_name,
             support_output_attentions=support_output_attentions,
             support_output_hidden_states=support_output_hidden_states)
 
-        # Load params
+        # load params
         params = load_params_np(params_aval, path, config, dummy)
-        params = jax.tree_map(jnp.array, params)
-        init_cache = init_cache_np(config, 1)
+        init_cache = init_cache_np(config, batch_size=1)
+        params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
     else:
         assert "alpa/opt" in model_name
-        print(f"Load model {model_name} ... (This can take several minutes for very large models)")
+        print(
+            f"Load model {model_name} ... (This can take several minutes for very large models)"
+        )
 
         alpa.init()
         num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
@@ -245,7 +247,7 @@ def get_model(model_name,
             support_output_hidden_states=support_output_hidden_states,
             autoregressive=autoregressive)
 
-        # Load params
+        # load params
         params = load_params_dis_array(path, executable, params_aval, config,
                                        dummy)
         if autoregressive:
@@ -276,7 +278,6 @@ def get_model(model_name,
         position_ids_step = np.full_like(input_ids_step,
                                          step_ct + config.pad + 1)
 
-        # tic = time.time()
         output = executable(
             params, {
                 "input_ids": input_ids_step,
@@ -284,7 +285,6 @@ def get_model(model_name,
                 "cache": past_key_values,
             })
         set_skip_shard_args_check(output.attention_cache)
-        # executable.sync()
 
         logits_step = torch.from_numpy(np.array(output.logits)).to(device)
 
@@ -298,6 +298,11 @@ def get_model(model_name,
 
 
 def set_skip_shard_args_check(attention_cache):
+    """
+    Skip the check in DistributedPhysicalDeviceMesh::shard_args for
+    attention cache. We need this hack because attention_cache is
+    a batch var but alpa doesn't implement a fast path for batch vars.
+    """
     if isinstance(attention_cache[0], alpa.device_mesh.DistributedArray):
         for x in attention_cache:
             x.skip_shard_args_check = True

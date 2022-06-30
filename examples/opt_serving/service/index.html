@@ -15,7 +15,7 @@
     <script type="text/javascript">
     // these constants are only used for providing user expectations.
     var OVERHEAD = 1;
-    var PER_TOKEN = 0.4;
+    var PER_TOKEN = 0.2;
 
     // examples for the user
     var EXAMPLES = {
@@ -239,7 +239,7 @@ label {
 <form method="POST" action="/generate" id="generate-form">
     <div class="mb-3">
         <label for="textbox" class="form-label"></label>
-        <textarea class="form-control" style="font-size: 20px;" name="prompt" rows="8" id="textbox" placeholder="My name is Alpa and I am an ML expert specializing"></textarea>
+        <textarea class="form-control" style="font-size: 20px;" name="prompt" rows="8" id="textbox" placeholder="Type the prompts here"></textarea>
     </div>
 
     <!--<button type="button" class="btn btn-secondary wrapper" data-toggle="tooltip" data-placement="bottom" title="Tooltip on right">-->
@@ -294,14 +294,13 @@ label {
 </div>
     <div class="text-center">
         <span class="mx-1" style="font-size: 18px">Like the result? </span>
-          <a href="https://twitter.com/intent/tweet?text=Prompting%20OPT-175B%20with%20Alpa%20is%20fun!%20Try%20it%20yourself%20(unlimited)%20at%20http%3A%2F%2Fopt.alpa.ai%2F!%20%23alpa" target="_blank" class="btn btn-block btn-social btn-twitter"><span class="fa-brands fa-twitter"></span>Tweet it! #alpa</a>
-          <a class="btn btn-block btn-social btn-tumblr" onclick="takeshot()"><span class="fa-solid fa-camera"></span>Screenshot</a>
-          <a href="https://github.com/alpa-projects/alpa/stargazers" target="_blank" class="btn btn-block btn-social btn-github"><span class="fa-brands fa-github"></span>Star Alpa on GitHub</a>
+          <a href="https://twitter.com/intent/tweet?text=Prompting%20OPT-175B%20with%20Alpa%20is%20fun!%20Try%20it%20yourself%20(unlimited)%20at%20http%3A%2F%2Fopt.alpa.ai%2F!%20%23alpa" target="_blank" class="btn btn-block btn-twitter"><i class="fa-brands fa-twitter"></i> Tweet it! #alpa</a>
+          <a class="btn btn-block btn-tumblr" onclick="takeshot()"><i class="fa-solid fa-camera"></i> Screenshot</a>
+          <a href="https://github.com/alpa-projects/alpa/stargazers" target="_blank" class="btn btn-block btn-github"><i class="fa-brands fa-github"></i> Star on GitHub</a>
     </div>
     <div id="output2"></div>
 </div>
 </div>
-
 
 <div class="container bg-white py-3" id="faq">
     <h1 class="display-6 py-3 fw">Frequently Asked Questions</h1>
@@ -331,7 +330,7 @@ label {
           <div class="accordion-body">
               OPT-175B is a GPT-3 equivalent model trained by Meta and made publicly available in the <a href="https://github.com/facebookresearch/metaseq/tree/main/metaseq" target="_blank">MetaSeq project</a>.
               It is by far the largest pretrained language model available in open source, with 175 billion parameters. For detailed performance of OPT-175B,
-              check the <a href="https://arxiv.org/pdf/2205.01068v4.pdf" target="_blank">OPT paper</a>.
+              check the <a href="https://arxiv.org/pdf/2205.01068.pdf" target="_blank">OPT paper</a>.
           </div>
         </div>
       </div>
@@ -339,24 +338,39 @@ label {
       <div class="accordion-item">
         <h2 class="accordion-header" id="panelsStayOpen-headingThree">
           <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#panelsStayOpen-collapseThree" aria-expanded="false" aria-controls="panelsStayOpen-collapseThree">
-            Why should I choose Alpa over Metatron-LM or DeepSpeed?
+            Any tips for better generation?
           </button>
         </h2>
         <div id="panelsStayOpen-collapseThree" class="accordion-collapse collapse" aria-labelledby="panelsStayOpen-headingThree">
           <div class="accordion-body">
-            Because Alpa is more scalable, performance, and cost-effective.
+              You can start with the provided examples. Avoid spaces at the end of your query. New lines are great though.
+              More examples can be found in the appendix of the <a href="https://arxiv.org/pdf/2205.01068.pdf" target="_blank">OPT paper</a>.
+              <b>WARNING</b>: This model will generate many offensive things. Due to this being an alpha
+              demo, no safety measures are in place.
           </div>
         </div>
       </div>
 
-
       <div class="accordion-item">
         <h2 class="accordion-header" id="panelsStayOpen-headingFour">
           <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#panelsStayOpen-collapseFour" aria-expanded="false" aria-controls="panelsStayOpen-collapseFour">
-            How many GPUs are needed to run the serving service for OPT-175B or GPT-3?
+            Why should I choose Alpa over Metatron-LM or DeepSpeed?
           </button>
         </h2>
         <div id="panelsStayOpen-collapseFour" class="accordion-collapse collapse" aria-labelledby="panelsStayOpen-headingFour">
+          <div class="accordion-body">
+            Because Alpa is more automatic, scalable, and cost-effective.
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion-item">
+        <h2 class="accordion-header" id="panelsStayOpen-headingFive">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#panelsStayOpen-collapseFive" aria-expanded="false" aria-controls="panelsStayOpen-collapseFive">
+            How many GPUs are needed to run the serving service for OPT-175B or GPT-3?
+          </button>
+        </h2>
+        <div id="panelsStayOpen-collapseFive" class="accordion-collapse collapse" aria-labelledby="panelsStayOpen-headingFive">
           <div class="accordion-body">
             It depends on which types of GPUs used. A hard constraint now is that the total GPU memory in the cluster needs to be greater than 350GB in order to successfully run the model inference.
               Many existing training or serving systems usually rely on using the latest generations of GPUs with the largest memory capacity, such as 80GB A100. In contrast, Alpa, due to its more powerful
@@ -368,12 +382,12 @@ label {
       </div>
 
       <div class="accordion-item">
-        <h2 class="accordion-header" id="panelsStayOpen-headingFive">
-          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#panelsStayOpen-collapseFive" aria-expanded="false" aria-controls="panelsStayOpen-collapseFive">
+        <h2 class="accordion-header" id="panelsStayOpen-headingSix">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#panelsStayOpen-collapseSix" aria-expanded="false" aria-controls="panelsStayOpen-collapseSix">
             How do you keep it free?
           </button>
         </h2>
-        <div id="panelsStayOpen-collapseFive" class="accordion-collapse collapse" aria-labelledby="panelsStayOpen-headingFive">
+        <div id="panelsStayOpen-collapseSix" class="accordion-collapse collapse" aria-labelledby="panelsStayOpen-headingSix">
           <div class="accordion-body">
             Alpa does not require the latest generation GPUs (such as 80GB A100 to do the work), hence reduces the machine cost.
               With that, we leverage older generations of hardware provided by our sponsors: <a href="https://mbzuai.ac.ae/" target="_blank">MBZUAI</a>
@@ -415,7 +429,7 @@ label {
           <a href="#home" class="mb-3 me-2 mb-md-0 text-muted text-decoration-none lh-1">
             <img alt="alpa logo" class="bi me-2" width="40" src="https://raw.githubusercontent.com/alpa-projects/alpa/hao-webserver/examples/opt_serving/service/alpa-logo.svg">
           </a>
-          <span class="mb-3 mb-md-0 text-muted">&copy; 2022 Alpa authors.</span>
+          <span class="mb-3 mb-md-0 text-muted">&copy; 2022 Alpa Developers.</span>
         </div>
 
         <ul class="nav col-md-4 justify-content-end">

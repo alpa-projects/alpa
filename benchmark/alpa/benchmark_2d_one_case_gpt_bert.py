@@ -182,7 +182,7 @@ def benchmark_gpt_bert_internal(physical_mesh, model_type, benchmark_case,
             state = train_step(state, batch, rngkey)
             physical_mesh.sync_workers()
 
-        latencies = executable.get_execution_time_costs(warmup=warmup)
+        latencies = executable.get_execution_time_costs()[warmup:]
 
         # Benchmark latency with driver overhead
         if False:

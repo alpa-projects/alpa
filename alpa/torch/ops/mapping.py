@@ -541,6 +541,7 @@ op_patch_list = [
     (torch, "sub", torch_sub),
     (torch, "sum", torch_sum),
     (torch, "t", torch_t),
+    (torch, "tensor", torch_tensor),
     (torch, "transpose", torch_transpose),
     (torch, "unbind", torch_unbind),
     (torch, "view", torch_view),

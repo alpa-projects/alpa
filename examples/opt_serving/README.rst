@@ -99,7 +99,7 @@ We provide detailed instructions below on how to convert the original OPT-175B w
     First, download Metaseq's original OPT-175B weights in 992 shards, verify the `MD5 of each shard <https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/assets/opt175b_md5sum_shards.csv>`_ , and put the shards under a folder, say, ``PATH_TO_992_SHARDS/``.
 
 2. Consolidate the weights from 992 shards into one single checkpoint
-    Use the script `step_2_consolidate_992_shards_to_singleton.py <https://github.com/alpa-projects/alpa/blob/hao-add-weight-script/examples/opt_serving/scripts/step_2_consolidate_992_shards_to_singleton.py>`_ as:
+    Use the script `step_2_consolidate_992_shards_to_singleton.py <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/scripts/step_2_consolidate_992_shards_to_singleton.py>`_ as:
 
   .. code:: shell
   
@@ -119,7 +119,7 @@ We provide detailed instructions below on how to convert the original OPT-175B w
   
 
 3. Convert the single checkpoint into Alpa-compatible formats
-    Alpa ingests weights simply from numpy formats. Use the script `step_3_convert_to_numpy_weights.py <https://github.com/alpa-projects/alpa/blob/hao-add-weight-script/examples/opt_serving/scripts/step_3_convert_to_numpy_weights.py>`_ to convert the
+    Alpa ingests weights simply from numpy formats. Use the script `step_3_convert_to_numpy_weights.py <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/scripts/step_3_convert_to_numpy_weights.py>`_ to convert the
     single checkpoint into numpy formats:
     
     .. code:: shell

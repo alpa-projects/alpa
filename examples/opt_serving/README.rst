@@ -21,7 +21,7 @@ In this example, we use Alpa to serve the open-source OPT model, supporting all 
 
 * A distributed backend to perform efficient model-parallel inference for the large OPT models.
 
-* An web frontend to collect and batch inference requests from users.
+* A web frontend to collect and batch inference requests from users.
 
 .. note::
 
@@ -29,7 +29,7 @@ In this example, we use Alpa to serve the open-source OPT model, supporting all 
 
 .. note:: 
 
-  You will need at least 350GB memory on your entire cluster to to serve the OPT-175B model.
+  You will need at least 350GB GPU memory on your entire cluster to to serve the OPT-175B model.
   For example, you can use 4 x AWS p3.16xlarge instances, which provide 4 (instance) x 8 (GPU/instance) x 16 (GB/GPU) = 512 GB memory.
     
   You can also follow this guide to setup a serving system to serve smaller versions of OPT, such as OPT-66B, OPT-30B, etc.
@@ -67,6 +67,8 @@ Use huggingface/transformers interface and Alpa backend for distributed inferenc
 Requirements
 ============
 1. Install Alpa following the `installation guide <https://alpa-projects.github.io/install.html>`_.
+   You can either install by python wheel or build from source, but you always need to clone
+   the [Alpa repo](https://github.com/alpa-projects/alpa) to fetch the code for examples below.
 
 2. Install additional requirements for serving:
 
@@ -153,6 +155,9 @@ please join `Alpa slack <https://forms.gle/YEZTCrtZD6EAVNBQ7>`_ to request a cop
 
 Run and Benchmark Generation in the Command Line
 ================================================
+
+The code of this tutorial is under [examples/opt_serving](https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving).
+Add the root directory of Alpa repo to the environment variable ``PYTHONPATH`` if you install Alpa by wheel (Not required if you install Alpa from source).
 
 Run generation using the 125M model with PyTorch/HuggingFace backend:
 

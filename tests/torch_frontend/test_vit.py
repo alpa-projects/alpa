@@ -236,13 +236,18 @@ params = {
     "c_stem_dims": [],
 }
 
-# # ViT-L model
-# arch_params = {
-#     "n_layers": 24,
-#     "n_heads": 16,
-#     "hidden_d": 1024,
-#     "mlp_d": 4096,
-# }
+# ViT-L model
+arch_params = {
+    "n_layers": 24,
+    "n_heads": 16,
+    "hidden_d": 1024,
+    "mlp_d": 4096,
+}
+parallel_config = {
+    "global_batch_size": 16,  # 512
+    "num_micro_batches": 16,  # 128,
+    "num_auto_layers": 16,
+}
 
 # # ViT-H model
 # arch_params = {
@@ -252,18 +257,18 @@ params = {
 #     "mlp_d": 5120,
 # }
 
-# ViT-10B model
-arch_params = {
-    "n_layers": 32,
-    "n_heads": 32,
-    "hidden_d": 5120,
-    "mlp_d": 20480,
-}
-parallel_config = {
-    "global_batch_size": 512,  # 512
-    "num_micro_batches": 256,  # 128,
-    "num_auto_layers": 16,
-}
+# # ViT-10B model
+# arch_params = {
+#     "n_layers": 32,
+#     "n_heads": 32,
+#     "hidden_d": 5120,
+#     "mlp_d": 20480,
+# }
+# parallel_config = {
+#     "global_batch_size": 512,  # 512
+#     "num_micro_batches": 256,  # 128,
+#     "num_auto_layers": 16,
+# }
 
 # # ViT-25B model
 # arch_params = {

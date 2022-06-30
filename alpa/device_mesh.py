@@ -1082,14 +1082,15 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
         if batching:
             # Batch the remote calls by host ids
-            ary_ids = [ref.uuid for ref in ary_refs]
-            per_host_ids = [[] for _ in range(self.num_hosts)]
+            ary_ids = np.array([ref.uuid for ref in ary_refs])
+            per_host_ids = np.empty((self.num_hosts, len(ary_ids)),
+                                    dtype=object)
             host_id_local_indices = []
-            for id_pairs in host_local_ids:
+            for arg_id, id_pairs in enumerate(host_local_ids):
                 tmp_ids, tmp_indices = self._split_ids_to_host(id_pairs)
                 host_id_local_indices.append(tmp_indices)
                 for host_id, tmp_per_host in enumerate(tmp_ids):
-                    per_host_ids[host_id].append(tmp_per_host)
+                    per_host_ids[host_id][arg_id] = np.array(tmp_per_host)
 
             # [host_id-> (buf_idx-> (local_device_id->device_buffer))]
             obj_refs = []
@@ -1145,7 +1146,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                                          ary_refs: List["RemoteArrayRef"]):
         """Block until the remote buffers are ready."""
         tasks = []
-        ary_uuids = [ref.uuid for ref in ary_refs]
+        ary_uuids = np.array([ref.uuid for ref in ary_refs])
         for worker in self.workers:
             tasks.append(worker.block_until_ready_buffers.remote(ary_uuids))
         ray.get(tasks)
@@ -1438,7 +1439,7 @@ class DistributedArray:
             if len(indices) > 0:
                 self.device_mesh.workers[host_id].save_array.remote(
                     ckpt_dir, local_cache_dir, self.remote_ref.uuid,
-                    device_ids_per_host[host_id], indices, self.shape)
+                    np.array(device_ids_per_host[host_id]), indices, self.shape)
 
     @classmethod
     def load(cls, path: str, aval: ShapedArray, device_mesh: PhysicalDeviceMesh,

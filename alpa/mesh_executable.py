@@ -248,7 +248,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
 
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             # Shape: (num_args,)
-            input_uuids = [ref.uuid for ref in input_bufs]
+            input_uuids = np.array([ref.uuid for ref in input_bufs])
 
             # Shape: (num_outs,)
             output_uuids = next_array_uuids(num_outs)
@@ -631,10 +631,11 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
 
         if isinstance(physical_mesh, DistributedPhysicalDeviceMesh):
             # Shape: (num_args,)
-            first_batch_uuids = [ref.uuid for ref in first_batch_bufs]
+            first_batch_uuids = np.array([ref.uuid for ref in first_batch_bufs])
 
             if next_batches_bufs:
-                next_batches_uuids = [ref.uuid for ref in next_batches_bufs]
+                next_batches_uuids = np.array(
+                    [ref.uuid for ref in next_batches_bufs])
             else:
                 next_batches_uuids = (None,) * num_hosts
 

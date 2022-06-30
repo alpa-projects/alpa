@@ -158,7 +158,7 @@ class PipeshardDriverExecutable:
             input_bufs[mesh_idx] = flatten_bufs
 
             # Convert bufs to uuids
-            input_uuids = [ref.uuid for ref in input_bufs[mesh_idx]]
+            input_uuids = np.array([ref.uuid for ref in input_bufs[mesh_idx]])
             output_uuids[mesh_idx] = next_array_uuids(num_outs[mesh_idx])
 
             # Execute

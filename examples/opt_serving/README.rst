@@ -94,7 +94,8 @@ There are two ways to obtain Alpa-compatible OPT weights: converting the weights
 
 Convert weights into Alpa formats by yourself
 ---------------------------------------------
-We provide detailed instructions below on how to convert the original OPT-175B weights into Alpa-compatible formats. You can follow the same procedures to get Alpa-compatible weights for other model sizes.
+We provide detailed instructions below on how to convert the original OPT-175B weights into Alpa-compatible formats.
+For processing other sizes of OPT (125M - 66B), you can skip Step 1 and start from :ref:`the latter part of Step 2<download-singleton>`.
 
   .. note::
 
@@ -121,6 +122,20 @@ We provide detailed instructions below on how to convert the original OPT-175B w
   .. note::
 
     The above script will save the model weights as a single consolidated checkpoint at ``PATH_TO_SAVE_CHECKPOINT``, hence will require at least 350GB disk space available.
+
+.. _download-singleton:
+
+  .. note::
+    If you use Alpa to target smaller versions of OPT (125M, 350M, 1.3B, 2.7B, 6.7B, 13B, 30B), you can skip the above procedures
+    and download the consolidated singleton checkpoint using the links below, then proceed to the next step.
+
+      * `OPT-125M <https://huggingface.co/patrickvonplaten/opt_metaseq_125m/blob/main/model/restored.pt>`_
+      * `OPT-350M <https://dl.fbaipublicfiles.com/opt/v1_20220502/350m/reshard.pt>`_
+      * `OPT-1.3B <https://huggingface.co/patrickvonplaten/opt_metaseq_1300m/blob/main/model/restored.pt>`_
+      * `OPT-2.7B <https://huggingface.co/patrickvonplaten/opt_metaseq_2700m/blob/main/model/restored.pt>`_
+      * `OPT-6.7B <https://huggingface.co/patrickvonplaten/opt_metaseq_6700m/blob/main/model/restored.pt>`_
+      * `OPT-13B <https://huggingface.co/patrickvonplaten/opt_metaseq_13000m/blob/main/model/restored.pt>`_
+      * `OPT-30B <https://huggingface.co/patrickvonplaten/opt_metaseq_30000m/blob/main/model/restored.pt>`_
 
 
 3. Convert the single checkpoint into Alpa-compatible formats

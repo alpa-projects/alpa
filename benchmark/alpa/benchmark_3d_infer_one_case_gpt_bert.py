@@ -75,7 +75,6 @@ def benchmark_gpt_bert_internal(model_type,
     (_, no_embedding, batch_size, seq_len, hidden_size, num_layers, num_heads,
      vocab_size, num_micro_batches, parallel_mode,
      parallel_args) = benchmark_case
-    no_embedding = True
     dtype = jnp.float16
     tie_word_embeddings = False
 

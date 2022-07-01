@@ -146,9 +146,10 @@ class DistSaveLoadTest(unittest.TestCase):
             save_checkpoint(ckpt_dir, jax_state, 1)
 
             # Compile
-            method = PipeshardParallel(num_micro_batches=2)
-            serial_train_step = get_mlp_train_step(None, None, None, False)
-            parallel_train_step = get_mlp_train_step(method, True, False, False)
+            method = PipeshardParallel(num_micro_batches=2,
+                                       layer_option="manual")
+            serial_train_step = get_mlp_train_step(None, False)
+            parallel_train_step = get_mlp_train_step(method, False)
             executable = parallel_train_step.get_executable(jax_state, batch)
 
             # Restore checkpoint
@@ -181,9 +182,9 @@ class DistSaveLoadTest(unittest.TestCase):
         state = create_train_state(rngkey, model, [x])
 
         # Compile
-        method = PipeshardParallel(num_micro_batches=2)
-        serial_train_step = get_mlp_train_step(None, None, None, False)
-        parallel_train_step = get_mlp_train_step(method, True, False, False)
+        method = PipeshardParallel(num_micro_batches=2, layer_option="manual")
+        serial_train_step = get_mlp_train_step(None, False)
+        parallel_train_step = get_mlp_train_step(method, False)
         executable = parallel_train_step.get_executable(state, batch)
 
         # Run before save
@@ -233,7 +234,8 @@ class DistSaveLoadTest(unittest.TestCase):
                                                  intermediate_size=hidden_size *
                                                  4,
                                                  num_attention_heads=num_heads,
-                                                 num_hidden_layers=n_layers))
+                                                 num_hidden_layers=n_layers),
+                               manual_pipeline_layer=True)
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x, attention_mask)
         tx = optax.sgd(learning_rate=1e-2)
@@ -243,11 +245,9 @@ class DistSaveLoadTest(unittest.TestCase):
                                   dynamic_scale=None)
 
         # Compile
-        method = PipeshardParallel(num_micro_batches=2)
-        serial_train_step = get_bert_layer_train_step(None, None, None,
-                                                      n_layers, False)
-        parallel_train_step = get_bert_layer_train_step(method, True, False,
-                                                        n_layers, False)
+        method = PipeshardParallel(num_micro_batches=2, layer_option="manual")
+        serial_train_step = get_bert_layer_train_step(None, False)
+        parallel_train_step = get_bert_layer_train_step(method, False)
         executable = parallel_train_step.get_executable(state, batch)
 
         # Run before save

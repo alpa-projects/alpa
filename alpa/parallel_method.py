@@ -161,7 +161,11 @@ class PipeshardParallel(ParallelMethod):
         pipeline_schedule: The pipieline schedules.
           Possible choices: {"1f1b", "gpipe", "inference"}
         layer_option: Options of grouping basic operators to layers.
+          Possible choices are {"manual", alpa.AutoLayerOption,
+                                 alpa.ManualLayerOption}
         stage_option: Options of grouping layers into pipeline stages.
+          Possible choices are {"uniform", "auto", alpa.AutoStageOption,,
+                                 alpa.ManualStageOption}
     """
 
     def __init__(

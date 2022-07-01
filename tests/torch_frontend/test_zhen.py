@@ -354,13 +354,13 @@ class ZHENLayer(nn.Module):
             else:
                 assert 0, f"unknown module: {token_mixer}"
 
-        output = torch.cat(output, dim=1).view(B, self.emb_dim, -1)
+        output = torch.cat(output, dim=1).view(B, -1, self.emb_dim)
         output_embs = torch.nn.functional.layer_norm(
             output,
             output.size()[2:],
             weight=self.layer_norm_w,
             bias=self.layer_norm_b,
-        )
+        ).permute(0, 2, 1)
         return output_embs, input_feature
 
 
@@ -422,7 +422,7 @@ class ZHENCollection(nn.Module):
         for layer in self.layers:
             input, skip_connection = layer(skip_connection, input)
 
-        output = input.view(input.shape[0], -1)
+        output = input.reshape(input.shape[0], -1)
         return output
 
     def get_dense_params(self) -> List[nn.Parameter]:
@@ -444,11 +444,11 @@ class TorchZHENTest(unittest.TestCase):
         alpa.set_seed(123)
 
     def test_zhen_homogeneous(self):
-        B = 64  # 59  # made multiples of 8
-        F = 48  # 37  # made multiples of 8
+        B = 64  # made multiples of 8
+        F = 48  # made multiples of 8
         D = 64
         LAYERS = 5
-        OUTPUT_PER_ENSEMBLE = 48  # 50  # made multiples of 8
+        OUTPUT_PER_ENSEMBLE = 48  # made multiples of 8
         TOKENS = [
             TokenMixer.ATTENTION, TokenMixer.LINEAR, TokenMixer.ATTENTION,
             TokenMixer.CONVOLUTION, TokenMixer.DOT
@@ -490,10 +490,10 @@ class TorchZHENTest(unittest.TestCase):
         pt_module_gen = lambda: ZHENCollection(len(TOKENS), D, TOKENS, F,
                                                OUTPUT_PER_ENSEMBLE)
 
-        dataloader = [
-            (torch.empty(B, D, F), torch.empty(B, 6144)),
-            (torch.empty(B, D, F), torch.empty(B, 6144)),
-        ]
+        dataloader = [(torch.empty(
+            B, D, F), torch.empty(B,
+                                  D * len(TOKENS[-1]) * OUTPUT_PER_ENSEMBLE))
+                     ] * 2
         loss_func = lambda *args, **kwargs: torch.nn.functional.mse_loss(
             *args, **kwargs)
         optim_gen = torchoptim.adam(lr=1e-3)

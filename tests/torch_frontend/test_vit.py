@@ -236,18 +236,18 @@ params = {
     "c_stem_dims": [],
 }
 
-# ViT-L model
-arch_params = {
-    "n_layers": 24,
-    "n_heads": 16,
-    "hidden_d": 1024,
-    "mlp_d": 4096,
-}
-parallel_config = {
-    "global_batch_size": 128,  # 512
-    "num_micro_batches": 128,  # 128,
-    "num_auto_layers": 16,
-}
+# # ViT-L model
+# arch_params = {
+#     "n_layers": 24,
+#     "n_heads": 16,
+#     "hidden_d": 1024,
+#     "mlp_d": 4096,
+# }
+# parallel_config = {
+#     "global_batch_size": 128,  # 512
+#     "num_micro_batches": 128,  # 128,
+#     "num_auto_layers": 16,
+# }
 
 # # ViT-H model
 # arch_params = {
@@ -278,18 +278,18 @@ parallel_config = {
 #     "mlp_d": 30720,
 # }
 
-# # ViT-120B model
-# arch_params = {
-#     "n_layers": 96,
-#     "n_heads": 80,
-#     "hidden_d": 10240,
-#     "mlp_d": 40960,
-# }
-# parallel_config = {
-#     "global_batch_size": 32,  # 512
-#     "num_micro_batches": 32,  # 512,
-#     "num_auto_layers": 64,
-# }
+# ViT-120B model
+arch_params = {
+    "n_layers": 96,
+    "n_heads": 80,
+    "hidden_d": 10240,
+    "mlp_d": 40960,
+}
+parallel_config = {
+    "global_batch_size": 32,  # 512
+    "num_micro_batches": 32,  # 512,
+    "num_auto_layers": 64,
+}
 
 """
 32: get_solution_case("15B", num_micro_batches=128,

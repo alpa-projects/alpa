@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from alpa import (init, shutdown, PipeshardParallel, parallelize,
-                  mark_pipeline_boundary, manual_layer_construction)
+                  mark_pipeline_boundary)
 from alpa.model.bert_model import BertConfig, FlaxBertLayerCollection
 from alpa.testing import (MLPModel, create_train_state,
                           get_bert_layer_collection_inference_step,
@@ -23,7 +23,8 @@ class PipelineInferenceTest(unittest.TestCase):
 
     def run_mlp_inference(self, manual_pipeline_layer):
         method = PipeshardParallel(num_micro_batches=4,
-                                   pipeline_schedule="inference")
+                                   pipeline_schedule="inference",
+                                   layer_option="manual")
 
         # Init model and optimizer
         batch_size = 64
@@ -40,9 +41,8 @@ class PipelineInferenceTest(unittest.TestCase):
         state = create_train_state(rngkey, model, [x])
 
         # Compile
-        serial_inference_step = get_mlp_inference_step(None, None)
-        parallel_inference_step = get_mlp_inference_step(
-            method, manual_pipeline_layer)
+        serial_inference_step = get_mlp_inference_step(None)
+        parallel_inference_step = get_mlp_inference_step(method)
         executable = parallel_inference_step.get_executable(state, batch)
 
         # Run correctnesss test
@@ -55,7 +55,8 @@ class PipelineInferenceTest(unittest.TestCase):
 
     def run_bert_layer_collection_inference(self, manual_pipeline_layer):
         method = PipeshardParallel(num_micro_batches=4,
-                                   pipeline_schedule="inference")
+                                   pipeline_schedule="inference",
+                                   layer_option="manual")
 
         # Init model and optimizer
         batch_size = 16
@@ -81,10 +82,9 @@ class PipelineInferenceTest(unittest.TestCase):
         state = create_train_state(rngkey, model, [x, attention_mask])
 
         # Compile
-        serial_inference_step = get_bert_layer_collection_inference_step(
-            None, None, n_layers)
+        serial_inference_step = get_bert_layer_collection_inference_step(None)
         parallel_inference_step = get_bert_layer_collection_inference_step(
-            method, manual_pipeline_layer, n_layers)
+            method)
         executable = parallel_inference_step.get_executable(state, batch)
 
         # Run correctnesss test
@@ -103,10 +103,10 @@ class PipelineInferenceTest(unittest.TestCase):
 
     def test_output(self):
         method = PipeshardParallel(num_micro_batches=1,
-                                   pipeline_schedule="inference")
+                                   pipeline_schedule="inference",
+                                   layer_option="manual")
 
         @parallelize(method=method)
-        @manual_layer_construction
         def func():
             a = jnp.ones(32)
             mark_pipeline_boundary()

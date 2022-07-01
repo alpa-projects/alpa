@@ -1,9 +1,13 @@
-"""Core implementations for stage construction algorithms."""
+"""
+Core implementations for stage construction algorithms.
+The algorithm groups layers into pipeline stages.
+"""
 from collections import namedtuple
+from dataclasses import dataclass
 from datetime import datetime
 import logging
 from time import time
-from typing import Sequence, List, Tuple, Dict, Union
+from typing import Sequence, List, Tuple, Dict, Union, Optional
 
 from jax.core import Var
 import numpy as np
@@ -25,16 +29,39 @@ from alpa.util import OrderedSet, maybe_numba_jit
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# Options for stage construction
-AutoStageOption = namedtuple("AutoStageOption", [
-    "submesh_physical_shape_space", "submesh_logical_shape_space",
-    "stage_imbalance_tolerance", "use_hlo_cost_model",
-    "profiling_database_filename", "cached_compute_cost"
-])
-ManualStageOption = namedtuple("ManualStageOption", [
-    "forward_stage_layer_ids", "submesh_physical_shapes",
-    "submesh_logical_shapes", "submesh_autosharding_option_dicts"
-])
+
+@dataclass
+class AutoStageOption:
+    """Options of auto stage construction algorithm."""
+    # The search space of the physical submesh shapes.
+    # Possible choices: {"power_of_two", "small_power_of_two", "all"}.
+    submesh_physical_shape_space: str = "power_of_two"
+    # The search space of the logical mesh shapes.
+    # Possible choices: {"default", "single_node_model_parallel", "all"}.
+    submesh_logical_shape_space: str = "single_node_model_parallel"
+    # The tolerance of imbalance in the auto-stage construction.
+    stage_imbalance_tolerance: float = np.inf
+    # The tolerance of imbalance in the auto-stage construction.
+    use_hlo_cost_model: bool = False
+    # The filename of profiling result database.
+    profiling_database_filename: Optional[str] = None
+    # The file name of the cached compute cost.
+    cached_compute_cost: Optional[str] = None
+
+
+@dataclass
+class ManualStageOption:
+    """Options of manual stage assignment."""
+    # Layer IDs of each forward stage.
+    forward_stage_layer_ids: Sequence[Sequence[int]]
+    # The physical shapes of submeshes of each stage.
+    submesh_physical_shapes: Sequence[Sequence[int]]
+    # The logical shapes of submeshes of each stage.
+    submesh_logical_shapes: Sequence[Sequence[int]]
+    # The auto-sharding options of each stage.
+    submesh_autosharding_option_dicts: Sequence[dict]
+
+
 UniformStageOption = namedtuple("UniformStageOption", [])
 
 StageOption = Union[AutoStageOption, ManualStageOption, UniformStageOption]

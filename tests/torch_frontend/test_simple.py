@@ -69,7 +69,9 @@ class TorchSimpleTest(unittest.TestCase):
         optim_gen = torchoptim.adam(lr=1e-3)
         num_micro_batches = 2
         parallel_method = alpa.PipeshardParallel(
-            stage_mode="auto", num_micro_batches=num_micro_batches)
+            num_micro_batches=num_micro_batches,
+            layer_option=alpa.AutoLayerOption(layer_num=2),
+            stage_option="auto")
 
         train_torch_module(pt_module_gen, weight_init_func, dataloader,
                            loss_func, optim_gen, parallel_method)

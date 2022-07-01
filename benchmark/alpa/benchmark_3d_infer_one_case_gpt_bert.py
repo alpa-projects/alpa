@@ -7,9 +7,8 @@ import optax
 import time
 
 from alpa import (parallelize, global_config, get_global_cluster,
-                  set_global_virtual_physical_mesh, PipeshardParallel,
-                  ManualPipeshardParallel, AutoShardingOption,
-                  manual_layer_construction)
+                  set_global_virtual_physical_mesh, AutoShardingOption,
+                  PipeshardParallel, ManualStageOption)
 from alpa.model.bert_model import BertConfig, FlaxBertLayerCollection
 from alpa.model.model_util import TrainState
 from alpa.model.gpt_model import FlaxGPTForLMModule
@@ -58,9 +57,9 @@ def get_infer_step(parallel_method, model, no_embedding):
         return loss
 
     if no_embedding:
-        infer_step = manual_layer_construction(infer_step_without_embedding)
+        infer_step = infer_step_without_embedding
     else:
-        infer_step = manual_layer_construction(infer_step_with_embedding)
+        infer_step = infer_step_with_embedding
     return parallelize(infer_step, method=parallel_method, donate_argnums=())
 
 
@@ -91,12 +90,13 @@ def benchmark_gpt_bert_internal(model_type,
         add_manual_remat = False
         num_manual_pipeline_stages = num_auto_layers
         add_manual_layer_marker = True
-        method = ManualPipeshardParallel(
-            *manual_stage_option,
+        method = PipeshardParallel(
             num_micro_batches=num_micro_batches,
             default_auto_sharding_option=AutoShardingOption(
                 prefer_reduce_scatter=prefer_reduce_scatter),
-            pipeline_schedule="inference")
+            pipeline_schedule="inference",
+            layer_option="manual",
+            stage_option=ManualStageOption(*manual_stage_option))
     else:
         raise ValueError(f"Invalid mode: {parallel_mode}")
 
@@ -206,7 +206,7 @@ def benchmark_gpt_bert_internal(model_type,
         executable.sync()
     e2e_latency = (time.time() - tic) / niter
 
-    overall_latency = np.mean(executable.get_execution_time_costs(warmup=1))
+    overall_latency = np.mean(executable.get_execution_time_costs())
 
     max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
 

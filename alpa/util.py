@@ -115,6 +115,23 @@ def update_jax_platform(platform):
     xb.get_backend.cache_clear()
 
 
+class GradFuncTransformContext:
+    """
+    A context to hold transformations applied to the forward function
+    before calling alpa.grad or alpa.value_and_grad.
+    """
+    transforms = []
+
+    def __init__(self, transform):
+        self.transform = transform
+
+    def __enter__(self):
+        GradFuncTransformContext.transforms.append(self.transform)
+
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        GradFuncTransformContext.transforms.pop()
+
+
 ########################################
 ##### Data Structure Utilities
 ########################################
@@ -594,8 +611,7 @@ class XlaPassContext:
         self.value_dict = value_dict
 
     def __enter__(self):
-        assert XlaPassContext.current is None, (
-            "Do not support recurrent context")
+        assert XlaPassContext.current is None, ("Do not support nested context")
         XlaPassContext.current = self
         xe.set_pass_context(self.value_dict)
 

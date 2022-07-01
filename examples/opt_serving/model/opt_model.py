@@ -688,16 +688,13 @@ def get_pipeshard_executable(config,
 
     # Parallelize
     method = alpa.PipeshardParallel(num_micro_batches=num_micro_batches,
-                                    pipeline_schedule="inference")
-    layer_construction = alpa.manual_layer_construction
-
+                                    pipeline_schedule="inference",
+                                    layer_option="manual")
     #method = alpa.ShardParallel()
-    #layer_construction = lambda x: x
 
     if autoregressive:
 
         @alpa.parallelize(batch_argnums=(1,), method=method)
-        @layer_construction
         def inference_step_with_cache(params, batch):
             output = model.apply(
                 params,
@@ -718,7 +715,6 @@ def get_pipeshard_executable(config,
     else:
 
         @alpa.parallelize(batch_argnums=(1,), method=method)
-        @layer_construction
         def inference_step(params, batch):
             output = model.apply(
                 params,

@@ -33,9 +33,9 @@ To make sure Alpa can perform auto-parallelization correctly, we can start with 
 
    Try to combine pipeline parallelism and shard parallelism. 
 
-   1. Layer construction. You can use the automatic layer construction by using ``@automatic_layer_construction``.
+   1. Layer construction. You can use the automatic layer construction by using ``layer_option=AutoLayerOption(layer_num=...)``.
       You can try a few choices of the ``layer_num`` argument and see the performance. The best choice of this value depends on the number of nodes in your cluster and the number of repetitive blocks in your model.
-      You can also do layer construction manually by using ``@manual_layer_construction`` and ``mark_pipeline_boundary``
+      You can also do layer construction manually by using ``layer_option="manual"`` and ``mark_pipeline_boundary``
    2. Number of micro batches. The ``num_micro_batches`` also affects the performance a lot. You can fix a large global batch size and try a few choices of ``num_micro_batches``.
 
 Reducing Runtime Overhead

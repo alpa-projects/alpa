@@ -6,10 +6,10 @@ import jax.numpy as jnp
 import optax
 import ray
 
-from alpa import (init, parallelize, manual_layer_construction,
-                  PipeshardParallel)
-from alpa.parallel_method import LocalPipelineParallel
+from alpa import init, parallelize, PipeshardParallel
 from alpa.model.model_util import TrainState
+from alpa.parallel_method import LocalPipelineParallel
+from alpa.pipeline_parallel.layer_construction import manual_layer_construction
 from alpa.testing import MLPModel, assert_allclose
 
 
@@ -29,6 +29,8 @@ class PipelineMLPTest(unittest.TestCase):
                 loss = jnp.mean((out - y)**2)
                 return loss
 
+            # Note, we can only use jax.grad in this testcase.
+            # TODO: Fix https://github.com/alpa-projects/alpa/issues/560
             grads = jax.grad(loss_func)(state.params, batch["x"], batch["y"])
             return grads
 

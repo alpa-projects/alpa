@@ -6,8 +6,8 @@ import jax
 import jax.numpy as jnp
 import optax
 
-from alpa import (init, parallelize, mark_pipeline_boundary,
-                  manual_layer_construction, grad, PipeshardParallel)
+from alpa import (init, parallelize, mark_pipeline_boundary, grad,
+                  PipeshardParallel)
 from alpa.model.model_util import TrainState
 from alpa.testing import assert_allclose
 
@@ -45,7 +45,6 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
                                 axis=-1).sum()
                 return loss
 
-            loss_func = manual_layer_construction(loss_func)
             grads = grad(loss_func)(state.params)
             return state.apply_gradients(grads=grads)
 
@@ -70,7 +69,7 @@ class PipelineTiedEmbeddingTest(unittest.TestCase):
         assert_allclose(actual_new_state.params, expected_new_state.params)
 
     def test_tied_embedding_pipeshard_parallel(self):
-        method = PipeshardParallel(num_micro_batches=2)
+        method = PipeshardParallel(num_micro_batches=2, layer_option="manual")
         self.train_tied_embedding(method)
 
 

@@ -6,11 +6,11 @@ import jax.numpy as jnp
 import optax
 import ray
 
-from alpa import (init, parallelize, manual_layer_construction,
-                  PipeshardParallel)
-from alpa.parallel_method import LocalPipelineParallel
+from alpa import init, parallelize, PipeshardParallel
 from alpa.model.model_util import TrainState
 from alpa.model.bert_model import BertConfig
+from alpa.parallel_method import LocalPipelineParallel
+from alpa.pipeline_parallel.layer_construction import manual_layer_construction
 from alpa.testing import BertLayerModel, assert_allclose
 
 

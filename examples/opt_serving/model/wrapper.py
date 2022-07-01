@@ -1,3 +1,4 @@
+from functools import partial
 import os
 from typing import Sequence, Any
 
@@ -5,6 +6,8 @@ import alpa
 import jax
 from jax import xla
 from jax import ShapeDtypeStruct, ShapedArray
+from jax._src.lib import xla_client as xc
+from jax.core import Primitive
 from jax.interpreters import pxla
 from jax.interpreters.pxla import NoSharding, Replicated, ShardingSpec
 import jax.numpy as jnp
@@ -17,6 +20,21 @@ from examples.opt_serving.model.opt_model import (
     get_opt_config, get_pipeshard_executable, load_params_dis_array,
     init_cache_dis_array, load_params_np, init_cache_np, get_jax_executable)
 from examples.opt_serving.model.opt_utils import TransformerModelConfig
+
+
+index_select_p = Primitive("index-select")
+def jax_index_select(input, index, dim=0):
+    return index_select_p.bind(input, index, dim=dim)
+
+def _index_select_eval(input, index, dim):
+    return input
+
+def _index_select_translation(c, input, index, dim):
+    return xc.ops.IndexSelect(input, index, dim)
+
+index_select_p.def_abstract_eval(_index_select_eval)
+index_select_p.def_impl(partial(xla.apply_primitive, index_select_p))
+xla.translations[index_select_p] = _index_select_translation
 
 
 @dataclass
@@ -107,7 +125,6 @@ class WrappedInferenceFunc(GenerationMixin):
     def _reorder_cache(self, past, beam_idx):
         # Current beam_idx is a torch tensor from beam scorer. To speedup,
         # we need to have alpa's own beam scorer
-        to_device = lambda x: beam_idx.to(x.device)
         cache = {}
         cpu_idx = beam_idx.to("cpu").numpy()
         if type(cpu_idx) not in [ShapedArray, ShapeDtypeStruct]:
@@ -125,11 +142,21 @@ class WrappedInferenceFunc(GenerationMixin):
             cache[mesh] = ary
             return ary
 
-        reshard = lambda x: to_device(x) if hasattr(x, "device") else to_mesh(
-            x.device_mesh)
+        def single_element_reorder_cache(ary):
+            if hasattr(ary, "index_select"):
+                # Torch or Alpa path
+                device_idx = None
+                if hasattr(ary, "device"):  # Torch to_device
+                    device_idx = beam_idx.to(ary.device)
+                else:
+                    device_idx = to_mesh(ary.device_mesh)
+                return ary.index_select(0, device_idx)
+            else:
+                # Jax path
+                return jax_index_select(ary, cpu_idx, 0)
         return tuple(
             tuple(
-                past_state.index_select(0, reshard(past_state))
+                single_element_reorder_cache(past_state)
                 for past_state in layer_past)
             for layer_past in past)
 
@@ -248,7 +275,6 @@ def get_model(model_name: str,
             seq_len=config.max_target_positions,
             vocab_size=config.vocab_size)
 
-        # FIXME(yonghao): not tested with num beam > 1
         executable, params_aval = get_jax_executable(
             config,
             support_output_attentions=support_output_attentions,
@@ -256,7 +282,7 @@ def get_model(model_name: str,
 
         # load params
         params = load_params_np(params_aval, path, config, dummy)
-        init_cache = init_cache_np(config, batch_size=1)
+        init_cache = init_cache_np(config, batch_size=batch_size * num_beams)
         params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
     else:
         assert "alpa/opt" in model_name

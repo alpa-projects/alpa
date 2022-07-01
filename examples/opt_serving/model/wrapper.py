@@ -248,6 +248,7 @@ def get_model(model_name: str,
             seq_len=config.max_target_positions,
             vocab_size=config.vocab_size)
 
+        # FIXME(yonghao): not tested with num beam > 1
         executable, params_aval = get_jax_executable(
             config,
             support_output_attentions=support_output_attentions,
@@ -273,9 +274,11 @@ def get_model(model_name: str,
             seq_len=config.max_target_positions,
             vocab_size=config.vocab_size)
 
+        if autoregressive:
+            assert batch_size == 1, "we only support batch_sie = 1 for autoregressive!"
         executable, params_aval = get_pipeshard_executable(
             config,
-            batch_size=batch_size,
+            batch_size=batch_size * num_beams,
             num_micro_batches=num_micro_batches,
             decoding_length_per_step=decoding_length_per_step,
             support_output_attentions=support_output_attentions,
@@ -288,7 +291,7 @@ def get_model(model_name: str,
         if autoregressive:
             init_cache = init_cache_dis_array(executable,
                                               config,
-                                              batch_size,
+                                              batch_size * num_beams,
                                               dummy=dummy)
             set_skip_shard_args_check(init_cache)
         executable.sync()

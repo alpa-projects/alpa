@@ -1552,7 +1552,7 @@ class DistributedArray:
                                                    self.device_mesh.num_devices)
 
             as_option = AutoShardingOption()
-            strategy_config = StagePlan(global_config.build_random_seed,
+            strategy_config = StagePlan(global_config.compile_random_seed,
                                         self.device_mesh.shape, 1 << 60,
                                         as_option.all_reduce_threshold, None,
                                         -1)

@@ -679,9 +679,6 @@ def get_pipeshard_executable(config,
                              support_output_attentions=False,
                              support_output_hidden_states=False,
                              autoregressive=True):
-    if autoregressive:
-        assert num_micro_batches == 1, "we only support num_micro_batches=1 for autoregressive!"
-        assert batch_size == 1, "we only support batch_sie = 1 for autoregressive!"
 
     # Init model
     model, params = init_model_aval(config)

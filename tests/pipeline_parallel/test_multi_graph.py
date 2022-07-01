@@ -13,12 +13,7 @@ class MultipleGraphRuntimeTest(unittest.TestCase):
     def setUp(self):
         init(cluster="ray")
 
-    def run_2_mlp(self,
-                  manual_pipeline_layer=True,
-                  use_remat=False,
-                  use_value_and_grad=False,
-                  stage_mode="uniform",
-                  do_numerical_test=True):
+    def run_2_mlp(self, use_value_and_grad=False, stage_option="uniform"):
 
         def test_one_mlp(method, batch_size=64, hidden_dim=16):
             # Init model and optimizer
@@ -26,7 +21,7 @@ class MultipleGraphRuntimeTest(unittest.TestCase):
 
             model = MLPModel(hidden_dim=hidden_dim,
                              output_dim=output_dim,
-                             manual_pipeline_layer=manual_pipeline_layer)
+                             manual_pipeline_layer=True)
             rngkey = jax.random.PRNGKey(0)
             x = jax.random.normal(rngkey, (batch_size, input_dim), jnp.float32)
             y = jax.random.normal(rngkey, (batch_size, output_dim), jnp.float32)
@@ -34,12 +29,8 @@ class MultipleGraphRuntimeTest(unittest.TestCase):
             state = create_train_state(rngkey, model, [x])
 
             # Compile
-            serial_train_step = get_mlp_train_step(None, None, None,
-                                                   use_value_and_grad)
-            parallel_train_step = get_mlp_train_step(method,
-                                                     manual_pipeline_layer,
-                                                     use_remat,
-                                                     use_value_and_grad)
+            serial_train_step = get_mlp_train_step(None, use_value_and_grad)
+            parallel_train_step = get_mlp_train_step(method, use_value_and_grad)
             executable = parallel_train_step.get_executable(state, batch)
 
             expected_new_state, expected_val = serial_train_step(state, batch)
@@ -51,7 +42,9 @@ class MultipleGraphRuntimeTest(unittest.TestCase):
 
             return executable
 
-        method = PipeshardParallel(stage_mode=stage_mode, num_micro_batches=2)
+        method = PipeshardParallel(num_micro_batches=2,
+                                   stage_option=stage_option,
+                                   layer_option="manual")
         executable = test_one_mlp(method)
         executable_2 = test_one_mlp(method)
 

@@ -26,6 +26,7 @@ logger.setLevel(logging.DEBUG)
 
 
 class LayerOption(ABC):
+    """Options of grouping operators into layers."""
 
     def __init__(self):
         pass
@@ -36,6 +37,10 @@ class LayerOption(ABC):
 
 
 class ManualLayerOption(LayerOption):
+    """
+    Manually specifying the boundaries of layers by using
+    alpa.mark_pipeline_boundary()
+    """
 
     def __init__(self, remat_layer=False):
         self.remat_layer = remat_layer
@@ -46,6 +51,13 @@ class ManualLayerOption(LayerOption):
 
 
 class AutoLayerOption(LayerOption):
+    """
+    Use an algorithm to automatically group operators into
+    layers. The parameter `layer_num` specifies the number of
+    resulting layers. You can try a few values for this parameters.
+    The best choice of this value depends on the number of nodes in your
+    cluster and the number of repetitive blocks in your model.
+    """
 
     def __init__(self, layer_num: int, remat_layer=False):
         super().__init__()

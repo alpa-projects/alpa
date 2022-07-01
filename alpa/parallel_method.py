@@ -18,6 +18,7 @@ from typing import Callable, Optional, Sequence, Union, Any
 from jax import linear_util as lu
 from jax.core import AbstractValue
 from jax.tree_util import PyTreeDef
+import numpy as np
 
 from alpa.create_state_parallel import compile_create_state_executable
 from alpa.device_mesh import (PhysicalDeviceMesh, VirtualPhysicalMesh,
@@ -29,6 +30,7 @@ from alpa.pipeline_parallel.layer_construction import (LayerOption,
                                                        AutoLayerOption,
                                                        ManualLayerOption)
 from alpa.pipeline_parallel.stage_construction import (StageOption,
+                                                       AutoStageOption,
                                                        ManualStageOption,
                                                        UniformStageOption)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption, LogicalDeviceMesh
@@ -170,7 +172,7 @@ class PipeshardParallel(ParallelMethod):
             default_auto_sharding_option: Optional[AutoShardingOption] = None,
             pipeline_schedule: str = "1f1b",
             layer_option: Optional[Union[LayerOption, str]] = None,
-            stage_option: Optional[StageOption] = None):
+            stage_option: Optional[Union[StageOption, str]] = None):
         self.devices = devices
         self.num_micro_batches = num_micro_batches
         self.as_option = default_auto_sharding_option or AutoShardingOption()
@@ -178,6 +180,17 @@ class PipeshardParallel(ParallelMethod):
         if layer_option == "manual":
             layer_option = ManualLayerOption()
         self.layer_option = layer_option or AutoLayerOption(layer_num=8)
+        if stage_option == "auto":
+            stage_option = AutoStageOption(
+                submesh_physical_shape_space="power_of_two",
+                submesh_logical_shape_space="single_node_model_parallel",
+                stage_imbalance_tolerance=np.inf,
+                use_hlo_cost_model=False,
+                profiling_database_filename=None,
+                cached_compute_cost=None,
+            )
+        elif stage_option == "uniform":
+            stage_option = UniformStageOption()
         self.stage_option = stage_option or UniformStageOption()
 
     def compile_executable(

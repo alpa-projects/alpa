@@ -688,8 +688,8 @@ def get_pipeshard_executable(config,
 
     # Parallelize
     method = alpa.PipeshardParallel(num_micro_batches=num_micro_batches,
-                                    pipeline_schedule="inference")
-
+                                    pipeline_schedule="inference",
+                                    layer_option="manual")
     #method = alpa.ShardParallel()
 
     if autoregressive:

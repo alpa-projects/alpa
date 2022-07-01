@@ -18,7 +18,6 @@ from typing import Callable, Optional, Sequence, Union, Any
 from jax import linear_util as lu
 from jax.core import AbstractValue
 from jax.tree_util import PyTreeDef
-import numpy as np
 
 from alpa.create_state_parallel import compile_create_state_executable
 from alpa.device_mesh import (PhysicalDeviceMesh, VirtualPhysicalMesh,
@@ -26,10 +25,10 @@ from alpa.device_mesh import (PhysicalDeviceMesh, VirtualPhysicalMesh,
                               get_global_virtual_physical_mesh)
 from alpa.pipeline_parallel.compile_executable import compile_pipeshard_executable
 from alpa.pipeline_parallel.local_pipeline import compile_local_pipeline_executable
-from alpa.pipeline_parallel.layer_construction import (
-    LayerOption, AutoLayerOption, ManualLayerOption)
+from alpa.pipeline_parallel.layer_construction import (LayerOption,
+                                                       AutoLayerOption,
+                                                       ManualLayerOption)
 from alpa.pipeline_parallel.stage_construction import (StageOption,
-                                                       AutoStageOption,
                                                        ManualStageOption,
                                                        UniformStageOption)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption, LogicalDeviceMesh

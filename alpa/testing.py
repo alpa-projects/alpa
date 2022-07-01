@@ -15,9 +15,8 @@ from alpa.api import init, shutdown, parallelize, grad, value_and_grad
 from alpa.model.bert_model import BertConfig, FlaxBertLayer
 from alpa.model.model_util import FlaxBaseModelOutput, TrainState
 from alpa.parallel_method import PipeshardParallel
-from alpa.pipeline_parallel.layer_construction import (
-    automatic_layer_construction, manual_layer_construction,
-    AutoLayerOption, ManualLayerOption)
+from alpa.pipeline_parallel.layer_construction import (AutoLayerOption,
+                                                       ManualLayerOption)
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 from alpa.pipeline_parallel.stage_construction import (UniformStageOption,
                                                        StageOption)
@@ -182,8 +181,8 @@ def get_bert_layer_collection_inference_step(parallel_method):
         return inference_step
 
 
-def get_bert_layer_train_step(parallel_method,
-                  use_value_and_grad):
+def get_bert_layer_train_step(parallel_method, use_value_and_grad):
+
     def train_step(state, batch):
 
         def loss_func(params):
@@ -231,8 +230,9 @@ class PipelineBasicTest(unittest.TestCase):
         method = PipeshardParallel(
             num_micro_batches=4,
             default_auto_sharding_option=as_option or AutoShardingOption(),
-            layer_option=ManualLayerOption(remat_layer=use_remat) if manual_pipeline_layer else
-	                 AutoLayerOption(layer_num=2, remat_layer=use_remat),
+            layer_option=ManualLayerOption(
+                remat_layer=use_remat) if manual_pipeline_layer else
+            AutoLayerOption(layer_num=2, remat_layer=use_remat),
             stage_option=stage_option or UniformStageOption())
 
         # Init model and optimizer
@@ -290,8 +290,9 @@ class PipelineBasicTest(unittest.TestCase):
         method = PipeshardParallel(
             num_micro_batches=4,
             default_auto_sharding_option=as_option or AutoShardingOption(),
-            layer_option=ManualLayerOption(remat_layer=use_remat) if manual_pipeline_layer else
-	                 AutoLayerOption(layer_num=n_layers, remat_layer=use_remat),
+            layer_option=ManualLayerOption(
+                remat_layer=use_remat) if manual_pipeline_layer else
+            AutoLayerOption(layer_num=n_layers, remat_layer=use_remat),
             stage_option=stage_option or UniformStageOption())
 
         # Init model and optimizer
@@ -312,7 +313,8 @@ class PipelineBasicTest(unittest.TestCase):
 
         # Compile
         serial_train_step = get_bert_layer_train_step(None, use_value_and_grad)
-        parallel_train_step = get_bert_layer_train_step(method, use_value_and_grad)
+        parallel_train_step = get_bert_layer_train_step(method,
+                                                        use_value_and_grad)
         executable = parallel_train_step.get_executable(state, batch)
 
         # Run correctnesss test

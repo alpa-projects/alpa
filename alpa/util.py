@@ -611,8 +611,7 @@ class XlaPassContext:
         self.value_dict = value_dict
 
     def __enter__(self):
-        assert XlaPassContext.current is None, (
-            "Do not support nested context")
+        assert XlaPassContext.current is None, ("Do not support nested context")
         XlaPassContext.current = self
         xe.set_pass_context(self.value_dict)
 

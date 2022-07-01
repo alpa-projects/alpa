@@ -27,15 +27,13 @@ from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
                                                process_apply_gradient,
                                                split_compute_grad_and_apply_grad
                                               )
-from alpa.pipeline_parallel.layer_construction import (
-    LayerOption, AutoLayerOption, ManualLayerOption)
+from alpa.pipeline_parallel.layer_construction import LayerOption
 from alpa.pipeline_parallel.stage_construction import (
     cluster_layers_and_slice_mesh, StageOption)
 from alpa.pipeline_parallel.stage_profiling import CompileWorkerPool
 from alpa.shard_parallel.auto_sharding import AutoShardingOption
-from alpa.util import (get_var_mapping, trace_jaxpr_with_micro_batch, OrderedSet,
-                       GradFuncTransformContext)
-
+from alpa.util import (get_var_mapping, trace_jaxpr_with_micro_batch,
+                       OrderedSet, GradFuncTransformContext)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

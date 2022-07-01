@@ -219,7 +219,7 @@ def grad(*args, **kwargs):
     """
 
     def ret(*call_args, **call_kwargs):
-        # Apply transformations (e.g., layer construction, auto rematerialization)
+        # Apply transformations (e.g., layer construction, rematerialization)
         # to the forward func
         arg_list = list(args)
         for transform in GradFuncTransformContext.transforms:
@@ -243,7 +243,7 @@ def value_and_grad(*args, **kwargs):
     """
 
     def ret(*call_args, **call_kwargs):
-        # Apply transformations (e.g., layer construction, auto rematerialization)
+        # Apply transformations (e.g., layer construction, rematerialization)
         # to the forward func
         arg_list = list(args)
         for transform in GradFuncTransformContext.transforms:

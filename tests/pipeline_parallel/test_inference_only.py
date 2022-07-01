@@ -83,7 +83,8 @@ class PipelineInferenceTest(unittest.TestCase):
 
         # Compile
         serial_inference_step = get_bert_layer_collection_inference_step(None)
-        parallel_inference_step = get_bert_layer_collection_inference_step(method)
+        parallel_inference_step = get_bert_layer_collection_inference_step(
+            method)
         executable = parallel_inference_step.get_executable(state, batch)
 
         # Run correctnesss test

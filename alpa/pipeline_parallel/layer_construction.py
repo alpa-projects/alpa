@@ -1,6 +1,5 @@
 """Group small ops into layers and rematerialize at layer boundary."""
 from abc import ABC, abstractmethod
-from collections import namedtuple
 import logging
 from functools import partial, wraps
 from typing import Callable, Union, Sequence
@@ -27,6 +26,7 @@ logger.setLevel(logging.DEBUG)
 
 
 class LayerOption(ABC):
+
     def __init__(self):
         pass
 
@@ -36,6 +36,7 @@ class LayerOption(ABC):
 
 
 class ManualLayerOption(LayerOption):
+
     def __init__(self, remat_layer=False):
         self.remat_layer = remat_layer
         super().__init__()
@@ -45,6 +46,7 @@ class ManualLayerOption(LayerOption):
 
 
 class AutoLayerOption(LayerOption):
+
     def __init__(self, layer_num: int, remat_layer=False):
         super().__init__()
         self.layer_num = layer_num

@@ -10,10 +10,9 @@ import optax
 import alpa
 from alpa import (parallelize, get_global_cluster,
                   set_global_virtual_physical_mesh, ShardParallel,
-                  PipeshardParallel, ManualPipeshardParallel,
-                  AutoShardingOption, automatic_layer_construction)
+                  PipeshardParallel, AutoShardingOption, ManualStageOption,
+                  AutoStageOption, AutoLayerOption, automatic_remat)
 from alpa.model.wide_resnet import get_wide_resnet, TrainState
-from alpa.pipeline_parallel.layer_construction import automatic_remat
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.timer import timers
 from alpa.util import print_used_time, compute_param_number, to_str_round
@@ -75,7 +74,7 @@ def create_train_state(rngkey, model, input_images, learning_rate_fn):
     return state
 
 
-def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_auto_layers,
+def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_remat_layers,
                    method):
 
     @parallelize(method=method)
@@ -103,11 +102,7 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_auto_layers,
             return loss, (new_model_state, metrics)
 
         if isinstance(method, ShardParallel) and use_remat:
-            loss_fn = automatic_remat(loss_fn, layer_num=num_auto_layers)
-        else:
-            loss_fn = automatic_layer_construction(loss_fn,
-                                                   remat_layer=use_remat,
-                                                   layer_num=num_auto_layers)
+            loss_fn = automatic_remat(loss_fn, layer_num=num_remat_layers)
 
         step = state.step
         dynamic_scale = state.dynamic_scale
@@ -160,6 +155,11 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
     else:
         raise ValueError(f"Invalid dtype: {dtype}")
 
+    if num_layers == 50:
+        num_auto_layers = 16  # number of residual blocks
+    elif num_layers == 101:
+        num_auto_layers = 33
+
     # Connect to the cluster
     virtual_mesh = get_global_cluster().get_virtual_physical_mesh(
         host_ids=list(range(num_hosts)),
@@ -170,30 +170,29 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
     allow_mixed_mesh_shape = True
     if parallel_mode == "search":
         prefer_reduce_scatter, use_remat, auto_stage_option = parallel_args
+        auto_stage_option["cached_compute_cost"] = None
         method = PipeshardParallel(
-            stage_mode="auto",
             num_micro_batches=num_micro_batches,
             default_auto_sharding_option=AutoShardingOption(
                 prefer_reduce_scatter=prefer_reduce_scatter,
                 allow_mixed_mesh_shape=allow_mixed_mesh_shape,
             ),
-            **auto_stage_option)
+            layer_option=AutoLayerOption(layer_num=num_auto_layers,
+                                         remat_layer=use_remat),
+            stage_option=AutoStageOption(**auto_stage_option))
     elif parallel_mode == "load_solution":
         prefer_reduce_scatter, use_remat, manual_stage_option = parallel_args
-        method = ManualPipeshardParallel(
-            *manual_stage_option,
+        method = PipeshardParallel(
             num_micro_batches=num_micro_batches,
             default_auto_sharding_option=AutoShardingOption(
                 prefer_reduce_scatter=prefer_reduce_scatter,
                 allow_mixed_mesh_shape=allow_mixed_mesh_shape,
-            ))
+            ),
+            layer_option=AutoLayerOption(layer_num=num_auto_layers,
+                                         remat_layer=use_remat),
+            stage_option=ManualStageOption(*manual_stage_option))
     else:
         raise ValueError(f"Invalid model: {parallel_mode}")
-
-    if num_layers == 50:
-        num_auto_layers = 16  # number of residual blocks
-    elif num_layers == 101:
-        num_auto_layers = 33
 
     if num_micro_batches > 1:
         use_grad_acc = True
@@ -218,8 +217,8 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
     learning_rate_fn = create_learning_rate_fn()
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, batch["images"], learning_rate_fn)
-    train_step = get_train_step(learning_rate_fn, use_grad_acc, use_remat,
-                                num_auto_layers, method)
+    train_step = get_train_step(learning_rate_fn, use_grad_acc, False, None,
+                                method)
     print_used_time("Create train state")
     parameter_count = compute_param_number(state.params)
 

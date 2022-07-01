@@ -464,7 +464,9 @@ class TorchZHENTest(unittest.TestCase):
         optim_gen = torchoptim.adam(lr=1e-3)
         num_micro_batches = 2
         parallel_method = alpa.PipeshardParallel(
-            stage_mode="auto", num_micro_batches=num_micro_batches)
+            num_micro_batches=num_micro_batches,
+            layer_option=alpa.AutoLayerOption(layer_num=2),
+            stage_option="auto")
 
         _xla_client_mem_fraction_orig_value = alpa.global_config.xla_client_mem_fraction
         alpa.global_config.xla_client_mem_fraction = 0.7
@@ -497,7 +499,9 @@ class TorchZHENTest(unittest.TestCase):
         optim_gen = torchoptim.adam(lr=1e-3)
         num_micro_batches = 2
         parallel_method = alpa.PipeshardParallel(
-            stage_mode="auto", num_micro_batches=num_micro_batches)
+            num_micro_batches=num_micro_batches,
+            layer_option=alpa.AutoLayerOption(layer_num=2),
+            stage_option="auto")
 
         _xla_client_mem_fraction_orig_value = alpa.global_config.xla_client_mem_fraction
         alpa.global_config.xla_client_mem_fraction = 0.7

@@ -180,7 +180,7 @@ alpa.shutdown()
 #   parallelism strategies. In the above example, each partitioned stages will
 #   be assigned an equal number of devices to run. If you want to control the
 #   device assignment of each stage, you can use the more advanced
-#   ``alpa.ManualPipeshardParallel``.
+#   ``stage_option=alpa.ManualStageOption``.
 
 ################################################################################
 # Pipeline Parallelism with Automatic Assignment

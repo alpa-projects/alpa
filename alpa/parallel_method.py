@@ -31,7 +31,6 @@ from alpa.pipeline_parallel.layer_construction import (LayerOption,
                                                        ManualLayerOption)
 from alpa.pipeline_parallel.stage_construction import (StageOption,
                                                        AutoStageOption,
-                                                       ManualStageOption,
                                                        UniformStageOption)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption, LogicalDeviceMesh
 from alpa.shard_parallel.compile_executable import compile_shard_executable

@@ -1,8 +1,15 @@
+from functools import partial
 import os
 from typing import Sequence, Any
 
 import alpa
 import jax
+from jax import xla
+from jax import ShapeDtypeStruct, ShapedArray
+from jax._src.lib import xla_client as xc
+from jax.core import Primitive
+from jax.interpreters import pxla
+from jax.interpreters.pxla import NoSharding, Replicated, ShardingSpec
 import jax.numpy as jnp
 import numpy as np
 import torch
@@ -13,6 +20,21 @@ from examples.opt_serving.model.opt_model import (
     get_opt_config, get_pipeshard_executable, load_params_dis_array,
     init_cache_dis_array, load_params_np, init_cache_np, get_jax_executable)
 from examples.opt_serving.model.opt_utils import TransformerModelConfig
+
+
+index_select_p = Primitive("index-select")
+def jax_index_select(input, index, dim=0):
+    return index_select_p.bind(input, index, dim=dim)
+
+def _index_select_eval(input, index, dim):
+    return input
+
+def _index_select_translation(c, input, index, dim):
+    return xc.ops.IndexSelect(input, index, dim)
+
+index_select_p.def_abstract_eval(_index_select_eval)
+index_select_p.def_impl(partial(xla.apply_primitive, index_select_p))
+xla.translations[index_select_p] = _index_select_translation
 
 
 @dataclass
@@ -100,8 +122,46 @@ class WrappedInferenceFunc(GenerationMixin):
             past_key_values = ret.past_key_values
         return ret
 
+    def _reorder_cache(self, past, beam_idx):
+        # Current beam_idx is a torch tensor from beam scorer. To speedup,
+        # we need to have alpa's own beam scorer
+        cache = {}
+        cpu_idx = beam_idx.to("cpu").numpy()
+        if type(cpu_idx) not in [ShapedArray, ShapeDtypeStruct]:
+            cpu_idx = xla.canonicalize_dtype(cpu_idx)
 
-def get_hf_gpt_model(model_name, device):
+        def to_mesh(mesh):
+            if mesh in cache:
+                return cache[mesh]
+            avals = [ShapedArray(cpu_idx.shape, cpu_idx.dtype)]
+            replicated_spec = ShardingSpec([NoSharding()] * len(cpu_idx.shape),
+                                           [Replicated(mesh.num_devices)])
+            specs = [replicated_spec]
+            indices = [pxla.spec_to_indices(cpu_idx.shape, replicated_spec)]
+            ary = mesh.shard_args_to_arrays(avals, indices, specs, [cpu_idx])[0]
+            cache[mesh] = ary
+            return ary
+
+        def single_element_reorder_cache(ary):
+            if hasattr(ary, "index_select"):
+                # Torch or Alpa path
+                device_idx = None
+                if hasattr(ary, "device"):  # Torch to_device
+                    device_idx = beam_idx.to(ary.device)
+                else:
+                    device_idx = to_mesh(ary.device_mesh)
+                return ary.index_select(0, device_idx)
+            else:
+                # Jax path
+                return jax_index_select(ary, cpu_idx, 0)
+        return tuple(
+            tuple(
+                single_element_reorder_cache(past_state)
+                for past_state in layer_past)
+            for layer_past in past)
+
+
+def get_hf_gpt_model(model_name, device, num_beams):
     raw_model = GPT2LMHeadModel.from_pretrained(model_name)
     raw_model = raw_model.to(device)
 
@@ -116,6 +176,7 @@ def get_hf_gpt_model(model_name, device):
         return InferenceFuncOutput(out.logits, out.past_key_values)
 
     inference_func_config = raw_model.config
+    inference_func_config.num_beams = num_beams
     transformer_config = TransformerModelConfig(
         H=raw_model.config.n_embd,
         L=raw_model.config.n_layer,
@@ -127,7 +188,7 @@ def get_hf_gpt_model(model_name, device):
                                 executable, transformer_config)
 
 
-def get_hf_opt_model(model_name, device):
+def get_hf_opt_model(model_name, device, num_beams):
     raw_model = OPTForCausalLM.from_pretrained(
         model_name,
         torch_dtype=torch.float16 if "cuda" in device else torch.float32)
@@ -150,7 +211,7 @@ def get_hf_opt_model(model_name, device):
                         output_hidden_states=output_hidden_states)
         return InferenceFuncOutput(out.logits, out.past_key_values)
 
-    inference_func_config = InferenceFuncConfig()
+    inference_func_config = InferenceFuncConfig(num_beams=num_beams)
     for key in inference_func_config.__dataclass_fields__.keys():
         setattr(inference_func_config, key, getattr(raw_model.config, key))
     transformer_config = TransformerModelConfig(
@@ -171,6 +232,7 @@ def get_model(model_name: str,
               dtype=jnp.float16,
               dummy=False,
               batch_size=1,
+              num_beams=1,
               decoding_length_per_step=1,
               num_micro_batches=1,
               support_output_attentions=False,
@@ -191,9 +253,9 @@ def get_model(model_name: str,
             f"Cannot support num_micro_batches > 1 in autoregressive mode.")
 
     if "gpt" in model_name:
-        return get_hf_gpt_model(model_name, device)
+        return get_hf_gpt_model(model_name, device, num_beams)
     if "facebook/opt" in model_name:
-        return get_hf_opt_model(model_name, device)
+        return get_hf_opt_model(model_name, device, num_beams)
 
     assert ("jax/opt" in model_name or "alpa/opt" in model_name)
     name = model_name.split("-")[1].upper()
@@ -220,7 +282,7 @@ def get_model(model_name: str,
 
         # load params
         params = load_params_np(params_aval, path, config, dummy)
-        init_cache = init_cache_np(config, batch_size=1)
+        init_cache = init_cache_np(config, batch_size=batch_size * num_beams)
         params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
     else:
         assert "alpa/opt" in model_name
@@ -238,9 +300,11 @@ def get_model(model_name: str,
             seq_len=config.max_target_positions,
             vocab_size=config.vocab_size)
 
+        if autoregressive:
+            assert batch_size == 1, "we only support batch_sie = 1 for autoregressive!"
         executable, params_aval = get_pipeshard_executable(
             config,
-            batch_size=batch_size,
+            batch_size=batch_size * num_beams,
             num_micro_batches=num_micro_batches,
             decoding_length_per_step=decoding_length_per_step,
             support_output_attentions=support_output_attentions,
@@ -253,7 +317,7 @@ def get_model(model_name: str,
         if autoregressive:
             init_cache = init_cache_dis_array(executable,
                                               config,
-                                              1,
+                                              batch_size * num_beams,
                                               dummy=dummy)
             set_skip_shard_args_check(init_cache)
         executable.sync()
@@ -292,7 +356,7 @@ def get_model(model_name: str,
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)
 
-    inference_func_config = InferenceFuncConfig()
+    inference_func_config = InferenceFuncConfig(num_beams=num_beams)
     return WrappedInferenceFunc(inference_func, inference_func_config,
                                 executable, transformer_config)
 

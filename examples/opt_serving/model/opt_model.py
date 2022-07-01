@@ -57,7 +57,6 @@ class OPTConfig:
     decoder_attention_heads: int = 12
     decoder_input_dim: int = 768
     decoder_ffn_embed_dim: int = 3072
-    batch_size: int = 1
     pad: int = 1
     activation_fn: str = 'relu'
     dtype: any = jnp.float16
@@ -530,6 +529,7 @@ def init_model_aval(config):
 
 
 def init_cache_aval(config, batch_size):
+    dtype = config.dtype
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
     all_cache = []
@@ -537,10 +537,10 @@ def init_cache_aval(config, batch_size):
         layer_cache = (
             jax.core.ShapedArray((batch_size, config.max_target_positions,
                                   config.decoder_attention_heads, head_dim),
-                                 config.dtype),
+                                 dtype),
             jax.core.ShapedArray((batch_size, config.max_target_positions,
                                   config.decoder_attention_heads, head_dim),
-                                 config.dtype),
+                                 dtype),
             jax.core.ShapedArray((batch_size,), jnp.int32),
         )
         all_cache.append(layer_cache)
@@ -679,9 +679,6 @@ def get_pipeshard_executable(config,
                              support_output_attentions=False,
                              support_output_hidden_states=False,
                              autoregressive=True):
-    if autoregressive:
-        assert num_micro_batches == 1, "we only support num_micro_batches=1 for autoregressive!"
-        assert batch_size == 1, "we only support batch_sie = 1 for autoregressive!"
 
     # Init model
     model, params = init_model_aval(config)
@@ -708,9 +705,9 @@ def get_pipeshard_executable(config,
         alpa.global_config.always_donate_micro_batch_vars = False
         executable = inference_step_with_cache.get_executable(
             params, {
-                "input_ids": jax.core.ShapedArray((1, 1), jnp.int32),
-                "position_ids": jax.core.ShapedArray((1, 1), jnp.int32),
-                "cache": init_cache_aval(config, 1),
+                "input_ids": jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                "position_ids": jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                "cache": init_cache_aval(config, batch_size),
             })
     else:
 

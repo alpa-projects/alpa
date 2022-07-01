@@ -11,7 +11,7 @@ num_beams = 1
 # Load the model
 model = get_model(model_name="alpa/opt-2.7b",
                   device="cuda",
-                  path="/home/ubuntu/efs/parax-proj/",
+                  path="/home/ubuntu/opt_weights",
                   num_beams=num_beams)
 
 # Generate

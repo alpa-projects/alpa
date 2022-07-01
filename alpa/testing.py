@@ -181,7 +181,12 @@ def get_bert_layer_collection_inference_step(parallel_method):
         return inference_step
 
 
-def get_bert_layer_train_step(parallel_method, use_value_and_grad):
+def get_bert_layer_train_step(parallel_method,
+                              use_value_and_grad,
+                              use_alpa_grad=None):
+
+    if use_alpa_grad is None:
+        use_alpa_grad = parallel_method is not None
 
     def train_step(state, batch):
 
@@ -190,7 +195,7 @@ def get_bert_layer_train_step(parallel_method, use_value_and_grad):
             loss = jnp.mean((out - batch["y"])**2)
             return loss
 
-        if parallel_method:
+        if use_alpa_grad:
             if use_value_and_grad:
                 val, grads = value_and_grad(loss_func)(state.params)
             else:

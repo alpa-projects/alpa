@@ -17,13 +17,14 @@ from alpa.pipeline_parallel.computation import (
     create_donation_mapping,
     mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
     pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks)
+from alpa.pipeline_parallel.layer_construction import ManualLayerOption
 from alpa.pipeline_parallel.stage_profiling import (
     ApplyGradConfig, CompileConfig, ProfileConfig, generate_stage_info,
     compile_all, profile_all, compute_intermediate_size,
     compute_apply_grad_invar_size)
 from alpa.testing import (BertLayerModel, create_train_state,
                           get_bert_layer_train_step)
-from alpa.util import OrderedSet
+from alpa.util import OrderedSet, GradFuncTransformContext
 
 
 def _aval_key(a):
@@ -68,14 +69,11 @@ class StageConstructUtilTest(unittest.TestCase):
         state = create_train_state(rngkey, model, [x, attention_mask])
 
         # Compile
-        train_step = get_bert_layer_train_step(None,
-                                               manual_pipeline_layer,
-                                               use_remat,
-                                               n_layers,
-                                               False,
-                                               decorate_loss=True)
-        closed_jaxpr, output_tree = make_jaxpr(train_step,
-                                               return_shape=True)(state, batch)
+        train_step = get_bert_layer_train_step(None, False, True)
+        with GradFuncTransformContext(ManualLayerOption(use_remat).transform):
+            closed_jaxpr, output_tree = make_jaxpr(train_step,
+                                                   return_shape=True)(state,
+                                                                      batch)
         num_params = len(closed_jaxpr.jaxpr.invars) - 3
         donated_invars = [True] * num_params + [False] * 3
         return closed_jaxpr, output_tree, donated_invars

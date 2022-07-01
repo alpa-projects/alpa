@@ -179,7 +179,7 @@ class PipeshardParallel(ParallelMethod):
         self.pipeline_schedule = pipeline_schedule
         if layer_option == "manual":
             layer_option = ManualLayerOption()
-        self.layer_option = layer_option or AutoLayerOption(layer_num=8)
+        self.layer_option = layer_option or AutoLayerOption(layer_num=2)
         if stage_option == "auto":
             stage_option = AutoStageOption(
                 submesh_physical_shape_space="power_of_two",

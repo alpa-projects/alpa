@@ -363,8 +363,7 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
         k = a_argmin[r, q]
         reversed_sliced_eqns.append(jaxpr.eqns[k:r])
         r = k
-    assert r == 0, ("no solution for layer clustering"
-                    if r == -1 else "unknown error")
+    assert r == 0, "No solution for layer construction."
     solution = list(reversed(reversed_sliced_eqns))
 
     # print("dp solution")

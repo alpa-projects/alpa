@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from alpa import (init, shutdown, PipeshardParallel, parallelize,
-                  mark_pipeline_boundary, manual_layer_construction)
+                  mark_pipeline_boundary)
 from alpa.model.bert_model import BertConfig, FlaxBertLayerCollection
 from alpa.testing import (MLPModel, create_train_state,
                           get_bert_layer_collection_inference_step,

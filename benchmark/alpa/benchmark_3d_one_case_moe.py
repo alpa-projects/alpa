@@ -72,6 +72,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts,
         prefer_reduce_scatter, use_remat, num_auto_layers, auto_stage_option = parallel_args
         add_manual_layer_marker = num_manual_pipeline_stages = add_manual_remat = None
         use_fine_grained_remat = fine_grained_remat_num_layers = None
+        auto_stage_option["cached_compute_cost"] = None
         method = PipeshardParallel(
             num_micro_batches=num_micro_batches,
             default_auto_sharding_option=AutoShardingOption(
@@ -80,7 +81,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts,
             ),
             layer_option=AutoLayerOption(layer_num=num_auto_layers,
                                          remat_layer=use_remat),
-            stage_option=AutoStageOption(*auto_stage_option))
+            stage_option=AutoStageOption(**auto_stage_option))
     elif parallel_mode == "load_solution":
         prefer_reduce_scatter, use_remat, num_auto_layers, manual_stage_option = parallel_args
         add_manual_layer_marker = num_manual_pipeline_stages = add_manual_remat = None

@@ -6,8 +6,8 @@ import jax
 import jax.numpy as jnp
 import optax
 
-from alpa import (init, parallelize, mark_pipeline_boundary,
-                  grad, PipeshardParallel)
+from alpa import (init, parallelize, mark_pipeline_boundary, grad,
+                  PipeshardParallel)
 from alpa.model.model_util import TrainState
 from alpa.testing import assert_allclose
 

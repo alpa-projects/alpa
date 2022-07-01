@@ -41,6 +41,7 @@ if __name__ == "__main__":
     parser.add_argument("--decoder-length", type=int, default=1)
     parser.add_argument("--nb", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--num-beams", type=int, default=1)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--dtype", type=str, default="fp16")
     args = parser.parse_args()
@@ -159,7 +160,8 @@ if __name__ == "__main__":
                           args.path,
                           autoregressive,
                           dtype=dtype,
-                          dummy=args.dummy)
+                          dummy=args.dummy,
+                          num_beams=args.num_beams)
         load_time = time.time() - tic
 
         # warm up
@@ -169,7 +171,8 @@ if __name__ == "__main__":
                                 max_length=256,
                                 do_sample=False,
                                 return_dict_in_generate=True,
-                                output_hidden_states=False)
+                                output_hidden_states=False,
+                                num_beams=args.num_beams)
 
         H = model.transformer_config.H
         L = model.transformer_config.L

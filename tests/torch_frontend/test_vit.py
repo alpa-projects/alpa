@@ -270,26 +270,31 @@ params = {
 #     "num_auto_layers": 16,
 # }
 
-# # ViT-25B model
-# arch_params = {
-#     "n_layers": 36,
-#     "n_heads": 32,
-#     "hidden_d": 7680,
-#     "mlp_d": 30720,
-# }
-
-# ViT-120B model
+# ViT-25B model
 arch_params = {
-    "n_layers": 96,
-    "n_heads": 80,
-    "hidden_d": 10240,
-    "mlp_d": 40960,
+    "n_layers": 36,
+    "n_heads": 32,
+    "hidden_d": 7680,
+    "mlp_d": 30720,
 }
 parallel_config = {
     "global_batch_size": 32,  # 512
     "num_micro_batches": 32,  # 512,
     "num_auto_layers": 64,
 }
+
+# # ViT-120B model
+# arch_params = {
+#     "n_layers": 96,
+#     "n_heads": 80,
+#     "hidden_d": 10240,
+#     "mlp_d": 40960,
+# }
+# parallel_config = {
+#     "global_batch_size": 32,  # 512
+#     "num_micro_batches": 32,  # 512,
+#     "num_auto_layers": 64,
+# }
 
 """
 32: get_solution_case("15B", num_micro_batches=128,

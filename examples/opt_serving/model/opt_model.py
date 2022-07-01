@@ -529,7 +529,7 @@ def init_model_aval(config):
 
 
 def init_cache_aval(config, batch_size):
-    dtype = jnp.float32
+    dtype = config.dtype
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
     all_cache = []

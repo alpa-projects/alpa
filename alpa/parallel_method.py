@@ -219,51 +219,6 @@ class PipeshardParallel(ParallelMethod):
             self.as_option, self.layer_option, self.stage_option, *avals)
 
 
-class ManualPipeshardParallel(PipeshardParallel):
-    """Use pipeshard parallelism with manual assignment.
-
-    This method can be used to load the solution found by auto
-    PipeshardParallel.
-
-    Args:
-        forward_stage_layer_ids: Layer IDs of each forward stage.
-        submesh_physical_shapes: The physical shapes of submeshes of each stage.
-        submesh_logical_shapes: The logical shapes of submeshes of each stage.
-        submesh_autosharding_option_dicts: The auto-sharding options of each
-          stage.
-        devices: Specify the devices to use. If it is None, use all the devices
-          in the cluster.
-        num_micro_batches: The number of micro batches for gradient
-          accumulation.
-        default_auto_sharding_option: The default options of the auto-sharding
-          solver.
-        pipeline_schedule: The pipieline schedules.
-          Possible choices: {"1f1b", "gpipe", "inference"}
-    """
-
-    def __init__(
-            self,
-            forward_stage_layer_ids: Sequence[Sequence[int]],
-            submesh_physical_shapes: Sequence[Sequence[int]],
-            submesh_logical_shapes: Sequence[Sequence[int]],
-            submesh_autosharding_option_dicts: Sequence[dict],
-            devices: Optional[VirtualPhysicalMesh] = None,
-            num_micro_batches: int = 1,
-            default_auto_sharding_option: Optional[AutoShardingOption] = None,
-            pipeline_schedule: str = "1f1b"):
-        # pylint: disable=super-init-not-called
-        self.devices = devices
-        self.num_micro_batches = num_micro_batches
-        self.as_option = default_auto_sharding_option or AutoShardingOption()
-        self.pipeline_schedule = pipeline_schedule
-        self.stage_option = ManualStageOption(
-            forward_stage_layer_ids,
-            submesh_physical_shapes,
-            submesh_logical_shapes,
-            submesh_autosharding_option_dicts,
-        )
-
-
 class LocalPipelineParallel(ParallelMethod):
     """
     Run pipeline parallel on a single device.

@@ -7,9 +7,9 @@ import optax
 import ray
 
 from alpa import init, parallelize, PipeshardParallel
-from alpa.layer_construction import manual_layer_construction
-from alpa.parallel_method import LocalPipelineParallel
 from alpa.model.model_util import TrainState
+from alpa.parallel_method import LocalPipelineParallel
+from alpa.pipeline_parallel.layer_construction import manual_layer_construction
 from alpa.testing import MLPModel, assert_allclose
 
 

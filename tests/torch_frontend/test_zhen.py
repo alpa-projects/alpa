@@ -284,12 +284,12 @@ class ZHENLayer(nn.Module):
         return list(self.parameters())
 
     def forward(
-        self,
-        skip_connection: Optional[
-            torch.Tensor],  # the skip connection, i.e., previous layer's input
-        input: torch.Tensor,  # this is previous layer's ensemble output
-        # embs_for_skip, # original emb
-        # orig_embs_concat, # previous layer's ensemble
+            self,
+            skip_connection: Optional[
+                torch.
+                Tensor],  # the skip connection, i.e., previous layer's input
+            input: torch.Tensor,  # this is previous layer's ensemble output
+            # B, D, F
     ):
         B = input.shape[0]
         # process orig embs
@@ -307,10 +307,14 @@ class ZHENLayer(nn.Module):
         output = []  # do not call cat N times. Call it once.
         for token_mixer in self.token_mixer_list:
             if token_mixer == TokenMixer.DOT:  # num_dot_emb = 50
+                # B,D,F
                 input_feature_t = input_feature.permute(0, 2, 1)
+                # B,F,D
                 dot_products = torch.bmm(input_feature_t, input_feature)
+                # B,F,F
                 flattened_dot_products = torch.flatten(dot_products,
                                                        start_dim=-2)  # Flatten
+                # B,F**2
                 r = torch.addmm(self.ffn_b, flattened_dot_products,
                                 self.ffn_w.t())  # FC
                 r_act = torch.relu(r)  # Relu
@@ -319,49 +323,45 @@ class ZHENLayer(nn.Module):
                     self.pool_w,
                     bias=self.pool_b,
                 )
-                output.append(r_pooled)
+                output.append(r_pooled.view(B, -1, self.emb_dim))
 
             elif token_mixer == TokenMixer.LINEAR:
                 linear_emb_list = torch.nn.functional.linear(input_feature,
                                                              self.w_linear,
                                                              bias=self.b_linear)
-                flat_linear_emb_list = linear_emb_list.permute(0, 2, 1).reshape(
-                    B, -1)  # (B, feature, dim)
-
+                flat_linear_emb_list = linear_emb_list.permute(0, 2, 1)
                 output.append(flat_linear_emb_list)
 
             elif token_mixer == TokenMixer.ATTENTION:
+                # input: B,D,F
                 compress_list = torch.nn.functional.linear(
                     input_feature, self.w_attention, bias=self.b_attention)
-                compress_list_t = compress_list.permute(0, 2, 1)  # (b, 369, 64)
+                # B,D,O
+                compress_list_t = compress_list.permute(0, 2, 1)  # (B,O,D)
                 attention_emb_list = self.encoder_layer(compress_list_t)
-
-                flat_compress_list = attention_emb_list.permute(
-                    0, 2, 1).reshape(B, -1)  # (B, feature, dim)
-                output.append(flat_compress_list)
+                output.append(attention_emb_list)
 
             elif token_mixer == TokenMixer.CONVOLUTION:
                 reshape_input_feature = input_feature.reshape(
                     B, 1, self.emb_dim, -1)
                 r_conv = self.conv(reshape_input_feature)
                 reshape_r_conv = r_conv.reshape(B, self.emb_dim, -1)
-                compress_list = torch.nn.functional.linear(reshape_r_conv,
-                                                           self.w_conv,
-                                                           bias=self.b_conv)
-                flat_compress_list = compress_list.permute(0, 2, 1).reshape(
-                    B, -1)  # (B, feature, dim)
+                compress_list = torch.nn.functional.linear(
+                    reshape_r_conv, self.w_conv, bias=self.b_conv)  # B,output,D
+                flat_compress_list = compress_list.permute(0, 2, 1)
                 output.append(flat_compress_list)
             else:
                 assert 0, f"unknown module: {token_mixer}"
 
-        output = torch.cat(output, dim=1).view(B, -1, self.emb_dim)
+        # each output should be B,F,D
+        output = torch.cat(output, dim=1)
         output_embs = torch.nn.functional.layer_norm(
             output,
             output.size()[2:],
             weight=self.layer_norm_w,
             bias=self.layer_norm_b,
-        ).permute(0, 2, 1)
-        return output_embs, input_feature
+        )
+        return output_embs.permute(0, 2, 1), input_feature
 
 
 # ZHEN collection is different ZHEN layers

@@ -160,11 +160,9 @@ def flatten_uuid_set(container):
 class PipelineInstEmitterHelper:
     """Environment for PipelineInstEmitter."""
 
-    def __init__(self,
-                 global_invar_set: Set[Var],
+    def __init__(self, global_invar_set: Set[Var],
                  global_batch_invar_set: Set[Var],
-                 grad_dummy_invars: Dict[Var, Var],
-                 schedule: PipelineSchedule):
+                 grad_dummy_invars: Dict[Var, Var], schedule: PipelineSchedule):
         self.global_invar_set = global_invar_set
         self.global_batch_invar_set = global_batch_invar_set
         self.grad_dummy_invars = grad_dummy_invars
@@ -174,7 +172,8 @@ class PipelineInstEmitterHelper:
         self.env = {}
 
     def _get_var_key(self, var, batch_idx):
-        if var in self.global_invar_set and var not in self.global_batch_invar_set:
+        if (var in self.global_invar_set and
+                var not in self.global_batch_invar_set):
             key = (var, 0)
         elif (var in self.grad_dummy_invars and
               batch_idx != self.schedule.first_backward_batch_index):
@@ -290,8 +289,7 @@ class PipelineInstEmitter:
             v for v, b in zip(global_invars, is_batch) if b)
         self.env = PipelineInstEmitterHelper(global_invar_set,
                                              global_batch_invar_set,
-                                             grad_dummy_invars,
-                                             schedule)
+                                             grad_dummy_invars, schedule)
         self._communicator = None
         self._resharding_tasks = [
             [{} for _ in range(self.num_mesh)] for _ in range(self.num_mesh)
@@ -397,7 +395,8 @@ class PipelineInstEmitter:
             executable_config_lists)
 
         # Split input into micro batches
-        (input_config, input_shard_specs) = self._compile_split_input_to_microbatches()
+        (input_config,
+         input_shard_specs) = self._compile_split_input_to_microbatches()
 
         # Simulate the pipeline schedule and generate instructions
         donation_mapping = [DisjointDict() for _ in range(num_mesh)]

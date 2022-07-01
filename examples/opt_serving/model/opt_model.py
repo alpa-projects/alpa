@@ -57,7 +57,6 @@ class OPTConfig:
     decoder_attention_heads: int = 12
     decoder_input_dim: int = 768
     decoder_ffn_embed_dim: int = 3072
-    batch_size: int = 1
     pad: int = 1
     activation_fn: str = 'relu'
     dtype: any = jnp.float16
@@ -529,9 +528,8 @@ def init_model_aval(config):
     return model, params
 
 
-def init_cache_aval(config):
+def init_cache_aval(config, batch_size):
     dtype = jnp.float32
-    batch_size = config.batch_size
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
     all_cache = []
@@ -549,8 +547,7 @@ def init_cache_aval(config):
     return tuple(all_cache)
 
 
-def init_cache_np(config):
-    batch_size = config.batch_size
+def init_cache_np(config, batch_size):
     np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
@@ -714,9 +711,9 @@ def get_pipeshard_executable(config,
         alpa.global_config.always_donate_micro_batch_vars = False
         executable = inference_step_with_cache.get_executable(
             params, {
-                "input_ids": jax.core.ShapedArray((config.batch_size, 1), jnp.int32),
-                "position_ids": jax.core.ShapedArray((config.batch_size, 1), jnp.int32),
-                "cache": init_cache_aval(config),
+                "input_ids": jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                "position_ids": jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                "cache": init_cache_aval(config, batch_size),
             })
     else:
 
@@ -918,8 +915,8 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
     return flat_arrays
 
 
-def init_cache_dis_array(executable, config, dummy=False):
-    cache = init_cache_np(config)
+def init_cache_dis_array(executable, config, batch_size, dummy=False):
+    cache = init_cache_np(config, batch_size)
     alpa.global_config.use_dummy_value_for_benchmarking = dummy
     _, batch_info = executable.get_input_placement_specs()
     flat_args, in_tree = tree_flatten(cache)

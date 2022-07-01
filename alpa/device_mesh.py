@@ -47,12 +47,11 @@ import ray
 from alpa import mesh_profiling
 import alpa.collective as col
 from alpa.global_env import global_config
-from alpa.parallel_plan import StagePlan
 from alpa.monkey_patch import set_override_backend
 from alpa.shard_parallel.auto_sharding import (AutoShardingOption,
                                                LogicalDeviceMesh,
                                                run_spmd_partitioner_pass)
-from alpa.parallel_plan import PlacementSpec
+from alpa.parallel_plan import PlacementSpec, StagePlan
 from alpa.timer import timers
 from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
                        update_jax_platform, is_ray_node_resource,

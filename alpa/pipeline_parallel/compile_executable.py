@@ -227,6 +227,7 @@ def compile_pipeshard_executable_internal(
         flop_count=total_flops,
         in_tree=in_tree).compile()
 
+    debug_compilation_time("runtime emitter")
     return pipeshard_config
 
 

@@ -1,4 +1,7 @@
-"""Core implementations for stage construction algorithms."""
+"""
+Core implementations for stage construction algorithms.
+The algorithm groups layers into pipeline stages.
+"""
 from collections import namedtuple
 from datetime import datetime
 import logging

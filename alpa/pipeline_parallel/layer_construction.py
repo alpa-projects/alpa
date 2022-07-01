@@ -1,4 +1,6 @@
-"""Cluster small ops into layers and rematerialize at layer boundary."""
+"""Group small ops into layers and rematerialize at layer boundary."""
+from abc import ABC, abstractmethod
+from collections import namedtuple
 import logging
 from functools import partial, wraps
 from typing import Callable, Union, Sequence
@@ -22,6 +24,37 @@ from alpa.util import (clone_jaxpr, slices_to_jaxpr, OrderedSet,
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+
+class LayerOption(ABC):
+    def __init__(self):
+        pass
+
+    @abstractmethod
+    def transform(self, func):
+        raise NotImplementedError()
+
+
+class ManualLayerOption(LayerOption):
+    def __init__(self, remat_layer=False):
+        self.remat_layer = remat_layer
+        super().__init__()
+
+    def transform(self, func):
+        return manual_layer_construction(func, remat_layer=self.remat_layer)
+
+
+class AutoLayerOption(LayerOption):
+    def __init__(self, layer_num: int, remat_layer=False):
+        super().__init__()
+        self.layer_num = layer_num
+        self.remat_layer = remat_layer
+
+    def transform(self, func):
+        return automatic_layer_construction(func,
+                                            layer_num=self.layer_num,
+                                            remat_layer=self.remat_layer)
+
 
 LAYER_HEAVY_OP_LOWER_BOUND = 3
 DEFAULT_EPS = 0.6
@@ -533,8 +566,8 @@ def manual_layer_construction(fun: Callable = None,
 def automatic_layer_construction(fun: Callable = None,
                                  *,
                                  static_argnums: Sequence[int] = (),
-                                 remat_layer: bool = False,
                                  layer_num: int = None,
+                                 remat_layer: bool = False,
                                  eps: float = DEFAULT_EPS,
                                  cost_criteria: str = DEFAULT_COST_CRITERIA,
                                  layer_eps: float = 0.0):
@@ -546,10 +579,10 @@ def automatic_layer_construction(fun: Callable = None,
         static_argnums: An optional int or collection of ints that specify
           which positional arguments to treat as static (compile-time constant).
           Same as in jax.jit
-        remat_layer: Whether to rematerialize each layer at layer boundaries.
         layer_num: the number of layers to rematerialize. If set to "auto", the
           number of layers will be automatically determined by a binary search.
           The binary search might not work for complex input functions.
+        remat_layer: Whether to rematerialize each layer at layer boundaries.
         eps: the tolerance of inbalance of the costs of different layers.
         cost_criteria: the cost criteria to use for deciding the layers.
         layer_eps: a parameter for layer_num binary search.

@@ -29,6 +29,8 @@ class PipelineMLPTest(unittest.TestCase):
                 loss = jnp.mean((out - y)**2)
                 return loss
 
+            # Note, we can only use jax.grad in this testcase.
+            # TODO: Fix https://github.com/alpa-projects/alpa/issues/560
             grads = jax.grad(loss_func)(state.params, batch["x"], batch["y"])
             return grads
 

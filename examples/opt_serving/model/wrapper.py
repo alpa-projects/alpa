@@ -284,7 +284,8 @@ def get_model(model_name: str,
 
     # weight path
     path = os.path.join(path, f"{name}_np")
-    assert os.path.exists(path), f"No such file or directory: '{path}'"
+    if not dummy:
+        assert os.path.exists(path), f"No such file or directory: '{path}'"
 
     if "jax/opt" in model_name:
         config = get_opt_config(name,

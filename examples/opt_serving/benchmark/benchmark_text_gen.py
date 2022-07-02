@@ -61,6 +61,7 @@ if __name__ == "__main__":
     num_micro_batches = args.nb
     decoder_length_per_step = args.decoder_length
     batch_size = args.batch_size
+    num_beams = args.num_beams
     autoregressive = not args.forward
     dtype = jnp.float16 if args.dtype == "fp16" else jnp.float32
 
@@ -161,7 +162,7 @@ if __name__ == "__main__":
                           autoregressive,
                           dtype=dtype,
                           dummy=args.dummy,
-                          num_beams=args.num_beams)
+                          num_beams=num_beams)
         load_time = time.time() - tic
 
         # warm up
@@ -172,7 +173,7 @@ if __name__ == "__main__":
                                 do_sample=False,
                                 return_dict_in_generate=True,
                                 output_hidden_states=False,
-                                num_beams=args.num_beams)
+                                num_beams=num_beams)
 
         H = model.transformer_config.H
         L = model.transformer_config.L
@@ -197,7 +198,8 @@ if __name__ == "__main__":
                                     max_length=256,
                                     do_sample=False,
                                     return_dict_in_generate=True,
-                                    output_hidden_states=False)
+                                    output_hidden_states=False,
+                                    num_beams=num_beams)
             latency = time.time() - tic
             generated_ids = output.sequences
             generated_string = tokenizer.batch_decode(generated_ids,
@@ -211,10 +213,10 @@ if __name__ == "__main__":
             else:
                 compute_latency = latency
             tflops = compute_gpt_tflops_inference_with_padding(
-                batch_size, gen_len, seq_len, L, H, vocab_size, num_gpus,
+                num_beams * batch_size, gen_len, seq_len, L, H, vocab_size, num_gpus,
                 latency)
             compute_tflops = compute_gpt_tflops_inference_with_padding(
-                batch_size, gen_len, seq_len, L, H, vocab_size, num_gpus,
+                num_beams * batch_size, gen_len, seq_len, L, H, vocab_size, num_gpus,
                 compute_latency)
             speed = np.prod(generated_ids.shape) / latency
             if args.debug:
@@ -234,12 +236,12 @@ if __name__ == "__main__":
 
     heads = [
         "Model", "Device", "Dummy", "Load (s)", "Autoregressive", "Batchsize",
-        "#Microbatches", "#Stages", "Decoder step length", "TFlops",
+        "#Microbatches", "#Beams", "#Stages", "Decoder step length", "TFlops",
         "Compute TFlops", "Speed (token/s)", "latency (32 token)"
     ]
     values = [
         args.model, args.device, args.dummy, f"{load_time:.2f}",
-        f"{autoregressive}", f"{batch_size}", f"{num_micro_batches}", "2",
+        f"{autoregressive}", f"{batch_size}", f"{num_micro_batches}", f"{num_beams}", "2",
         f"{decoder_length_per_step}", f"{avg_tflops:.4f}",
         f"{avg_compute_tflops:.4f}", f"{avg_speed:.2f}",
         f"{latency_32_tokens:.2f}"

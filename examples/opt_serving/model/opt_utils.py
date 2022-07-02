@@ -1,3 +1,8 @@
+from functools import partial
+
+from jax import xla, jit
+from jax.core import Primitive
+from jax._src.lib import xla_client as xc
 from transformers.generation_utils import dataclass
 
 
@@ -27,14 +32,26 @@ def compute_gpt_tflops_inference_with_padding(batch_size, gen_len, seq_len,
     return tflops
 
 
-test_prompts = [
-    "Computer science is the study of computation and",
-    "Ion Stoica is a Romanian-American computer scientist specializing in",
-    "The University of California, Berkeley is a public",
-    "Today is a good day and I want to", "What is the valuation of Databricks?",
-    "Paris is the capital city of", "Which country has the most population?",
-    "What do you think about the future of Cryptocurrency?",
-    "What do you think about the meaning of life?",
-    "Donald Trump is the president of",
-    "GPT-3 is a large language model that is capable of"
-]
+def is_power_of_two(n):
+    return (n != 0) and (n & (n-1) == 0)
+
+
+index_select_p = Primitive("index-select")
+
+
+@partial(jit, static_argnums=(2,))
+def jax_index_select(input, index, dim=0):
+    return index_select_p.bind(input, index, dim=dim)
+
+
+def _index_select_eval(input, index, dim):
+    return input
+
+
+def _index_select_translation(c, input, index, dim):
+    return xc.ops.IndexSelect(input, index, dim)
+
+
+index_select_p.def_abstract_eval(_index_select_eval)
+index_select_p.def_impl(partial(xla.apply_primitive, index_select_p))
+xla.translations[index_select_p] = _index_select_translation

@@ -13,8 +13,10 @@ import logging
 from typing import Sequence, Optional
 import os
 
+from jax import xla
 import jax.numpy as jnp
-from jax._src.lib import xla_bridge as xb, xla_extension as xe
+from jax._src.api import ShapeDtypeStruct
+from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.core import ShapedArray
 from jax.interpreters import pxla
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
@@ -26,14 +28,16 @@ from alpa.device_mesh import (LocalPhysicalDeviceMesh,
                               next_array_uuids)
 from alpa.global_env import global_config
 from alpa.parallel_plan import PlacementSpec, StagePlan
-from alpa.shard_parallel.auto_sharding import (get_input_output_sharding_specs,
+from alpa.shard_parallel.auto_sharding import (AutoShardingOption,
+                                               get_input_output_sharding_specs,
                                                make_replicated_spec, HloStatus,
-                                               run_backend_compilation)
+                                               run_backend_compilation,
+                                               run_spmd_partitioner_pass)
 from alpa.timer import timers
 from alpa.util import (compile_allocate_zero_buffers,
                        compile_memset_zero_buffers, get_compile_options,
-                       get_shard_shape, get_microbatch_sharding_spec,
-                       profile_xla_executable)
+                       get_index_select_computation, get_shard_shape,
+                       get_microbatch_sharding_spec, profile_xla_executable)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -1117,3 +1121,33 @@ class ConcatMeshWorkerExecutable(MeshWorkerExecutable):
 
     def __del__(self):
         self.concat.delete()
+
+
+def get_index_select_mesh_executable(avals, sharding_specs, index, dim,
+                                     device_mesh, donate_avals):
+    if type(index) not in [ShapedArray, ShapeDtypeStruct]:
+        index = xla.canonicalize_dtype(index)
+    index_shape = xc.shape_from_pyval(index)
+    key = hash(("index_select", tuple(avals), tuple(sharding_specs),
+                tuple(donate_avals), dim, index_shape))
+    if key in device_mesh.operation_executables:
+        return device_mesh.operation_executables[key]
+    index_aval = ShapedArray(index.shape, index.dtype)
+    assert len(avals) == len(sharding_specs) == len(donate_avals)
+    c = get_index_select_computation(sharding_specs, dim, avals,
+                                     index_shape).as_hlo_module()
+    hlo_module = run_spmd_partitioner_pass(c, device_mesh.num_devices)
+
+    as_option = AutoShardingOption()
+    strategy_config = StagePlan(global_config.compile_random_seed,
+                                device_mesh.shape, 1 << 60,
+                                as_option.all_reduce_threshold, None, -1)
+    out_tree = tree_flatten(avals)[1]
+    executable = NormalMeshDriverExecutable(device_mesh,
+                                            hlo_module,
+                                            strategy_config,
+                                            [*avals, index_aval],
+                                            avals, [*donate_avals, False],
+                                            out_tree=out_tree)
+    device_mesh.operation_executables[key] = executable
+    return executable

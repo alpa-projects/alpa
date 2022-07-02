@@ -1,13 +1,13 @@
-from functools import partial
+from collections import defaultdict
 import os
 from typing import Sequence, Any
 
 import alpa
+from alpa.device_mesh import DistributedArray
+from alpa.mesh_executable import get_index_select_mesh_executable
 import jax
 from jax import xla
 from jax import ShapeDtypeStruct, ShapedArray
-from jax._src.lib import xla_client as xc
-from jax.core import Primitive
 from jax.interpreters import pxla
 from jax.interpreters.pxla import NoSharding, Replicated, ShardingSpec
 import jax.numpy as jnp
@@ -19,22 +19,9 @@ from transformers import OPTForCausalLM, GPT2LMHeadModel
 from examples.opt_serving.model.opt_model import (
     get_opt_config, get_pipeshard_executable, load_params_dis_array,
     init_cache_dis_array, load_params_np, init_cache_np, get_jax_executable)
-from examples.opt_serving.model.opt_utils import TransformerModelConfig
-
-
-index_select_p = Primitive("index-select")
-def jax_index_select(input, index, dim=0):
-    return index_select_p.bind(input, index, dim=dim)
-
-def _index_select_eval(input, index, dim):
-    return input
-
-def _index_select_translation(c, input, index, dim):
-    return xc.ops.IndexSelect(input, index, dim)
-
-index_select_p.def_abstract_eval(_index_select_eval)
-index_select_p.def_impl(partial(xla.apply_primitive, index_select_p))
-xla.translations[index_select_p] = _index_select_translation
+from examples.opt_serving.model.opt_utils import (TransformerModelConfig,
+                                                  jax_index_select,
+                                                  is_power_of_two)
 
 
 @dataclass
@@ -94,8 +81,11 @@ class WrappedInferenceFunc(GenerationMixin):
         self.main_input_name = "input_ids"
         self.executable = executable
         self.transformer_config = transformer_config
+        self.index_select_executables = {}
+        self.cache_location = None
 
     def forward(self, attention_mask):
+        # This function is never used
         raise NotImplementedError()
 
     def prepare_inputs_for_generation(self, input_ids, past=None, **kwargs):
@@ -114,6 +104,7 @@ class WrappedInferenceFunc(GenerationMixin):
                  output_attentions=None,
                  output_hidden_states=None,
                  return_dict=None):
+        # Decompose the call to token by token
         for i in range(input_ids.shape[1]):
             ret = self.inference_func(input_ids[:, i:i + 1],
                                       past_key_values,
@@ -123,42 +114,73 @@ class WrappedInferenceFunc(GenerationMixin):
         return ret
 
     def _reorder_cache(self, past, beam_idx):
-        # Current beam_idx is a torch tensor from beam scorer. To speedup,
-        # we need to have alpa's own beam scorer
-        cache = {}
-        cpu_idx = beam_idx.to("cpu").numpy()
-        if type(cpu_idx) not in [ShapedArray, ShapeDtypeStruct]:
-            cpu_idx = xla.canonicalize_dtype(cpu_idx)
+        # Reorder cache for beam search
 
-        def to_mesh(mesh):
-            if mesh in cache:
-                return cache[mesh]
-            avals = [ShapedArray(cpu_idx.shape, cpu_idx.dtype)]
-            replicated_spec = ShardingSpec([NoSharding()] * len(cpu_idx.shape),
-                                           [Replicated(mesh.num_devices)])
-            specs = [replicated_spec]
-            indices = [pxla.spec_to_indices(cpu_idx.shape, replicated_spec)]
-            ary = mesh.shard_args_to_arrays(avals, indices, specs, [cpu_idx])[0]
-            cache[mesh] = ary
-            return ary
+        # PyTorch
+        if hasattr(past[0][0], "index_select"):
+            return tuple(
+                tuple(
+                    past_state.index_select(0, beam_idx)
+                    for past_state in layer_past)
+                for layer_past in past)
 
-        def single_element_reorder_cache(ary):
-            if hasattr(ary, "index_select"):
-                # Torch or Alpa path
-                device_idx = None
-                if hasattr(ary, "device"):  # Torch to_device
-                    device_idx = beam_idx.to(ary.device)
-                else:
-                    device_idx = to_mesh(ary.device_mesh)
-                return ary.index_select(0, device_idx)
+        # Jax (single-device)
+        if not isinstance(past[0][0], DistributedArray):
+            beam_idx = jnp.array(beam_idx.to("cpu").numpy())
+            return tuple(
+                tuple(
+                    jax_index_select(past_state, beam_idx, 0)
+                    for past_state in layer_past)
+                for layer_past in past)
+
+        # Alpa
+        mesh_groups = defaultdict(list)
+        if self.cache_location is None:
+            self.cache_location = []
+            for layer_past in past:
+                tmp_loc = []
+                for past_state in layer_past:
+                    assert isinstance(past_state, DistributedArray)
+                    mesh = past_state.device_mesh
+                    mesh_groups[mesh].append(past_state)
+                    tmp_loc.append((mesh, len(mesh_groups[mesh]) - 1))
+                self.cache_location.append(tmp_loc)
+        else:
+            for layer_past in past:
+                for past_state in layer_past:
+                    assert isinstance(past_state, DistributedArray)
+                    mesh = past_state.device_mesh
+                    mesh_groups[mesh].append(past_state)
+
+        beam_idx = beam_idx.to("cpu").numpy()
+
+        def grouped_reorder_cache(arys, device_mesh):
+            if len(arys) == 0:
+                return []
+            if device_mesh in self.index_select_executables:
+                executable = self.index_select_executables[device_mesh]
             else:
-                # Jax path
-                return jax_index_select(ary, cpu_idx, 0)
+                dim = 0
+                avals = [ary.aval for ary in arys]
+                specs = [ary.sharding_spec for ary in arys]
+                executable = get_index_select_mesh_executable(
+                    avals, specs, beam_idx, dim, device_mesh,
+                    [False] * len(avals))
+                self.index_select_executables[device_mesh] = executable
+            ret = executable(*arys, beam_idx)
+            for v in ret:
+                v.skip_shard_args_check = True
+            return ret
+
+        results = {
+            mesh: grouped_reorder_cache(mesh_groups[mesh], mesh)
+            for mesh in mesh_groups
+        }
+
         return tuple(
-            tuple(
-                single_element_reorder_cache(past_state)
-                for past_state in layer_past)
-            for layer_past in past)
+            tuple(results[mesh][loc]
+                  for mesh, loc in layer_loc)
+            for layer_loc in self.cache_location)
 
 
 def get_hf_gpt_model(model_name, device, num_beams):
@@ -262,7 +284,8 @@ def get_model(model_name: str,
 
     # weight path
     path = os.path.join(path, f"{name}_np")
-    assert os.path.exists(path), f"No such file or directory: '{path}'"
+    if not dummy:
+        assert os.path.exists(path), f"No such file or directory: '{path}'"
 
     if "jax/opt" in model_name:
         config = get_opt_config(name,
@@ -287,6 +310,7 @@ def get_model(model_name: str,
         params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
     else:
         assert "alpa/opt" in model_name
+        assert is_power_of_two(num_beams), "num_beams must be a power of two"
         alpa.init()
 
         print(
@@ -294,6 +318,8 @@ def get_model(model_name: str,
         )
 
         num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
+        num_pp_stages = min(num_pp_stages,
+                            alpa.get_global_cluster().num_devices)
         config = get_opt_config(name, num_pp_stages=num_pp_stages, dtype=dtype)
         transformer_config = TransformerModelConfig(
             H=config.decoder_embed_dim,

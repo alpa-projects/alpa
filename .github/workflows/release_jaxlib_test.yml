@@ -46,9 +46,19 @@ jobs:
         run: |
           mkdir -p /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
           if [[ ${{ github.event.action }} == "release" ]]; then
+            echo ${{ github.event.action }}
+            echo ${CUDA_VERSION}
+            echo ${ALPA_BRANCH}
+          elif [[ ${{ github.event.action }} == "pull_request"]]; then
+            echo ${{ github.event.action }}
+            echo ${CUDA_VERSION}
+            echo ${ALPA_BRANCH}
+          elif [[ ${{ github.event.action }} == "push"]]; then
+            echo ${{ github.event.action }}
             echo ${CUDA_VERSION}
             echo ${ALPA_BRANCH}
           else
+            echo ${{ github.event.action }}
             echo ${CUDA_VERSION}
             echo ${ALPA_BRANCH}
             echo ${TF_BRANCH}
@@ -66,44 +76,43 @@ jobs:
       matrix:
         cuda: ["11.1", "11.2", "11.3"]
     steps:
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.8
 
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-    - name: Set up Python ${{ matrix.python }}
-      uses: actions/setup-python@v2
-      with:
-        python-version: ${{ matrix.python }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install github3.py requests
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        python -m pip install github3.py requests
+      - name: Get latest tag
+        id: latesttag
+        uses: "WyriHaximus/github-action-get-previous-tag@v1"
 
-    - name: Get latest tag
-      id: latesttag
-      uses: "WyriHaximus/github-action-get-previous-tag@v1"
+      - name: Upload wheels for CUDA${{ matrix.cuda }}
+        run: |
+          echo "Publish jaxlib"
+          ls /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
+          echo "Upload wheels to tag ${TAG}"
+          python build_jaxlib/release/wheel_upload.py --tag ${TAG} /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.} --dry-run
+        env:
+          CUDA_VERSION: ${{ matrix.cuda }}
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+          TAG: ${{ steps.latesttag.outputs.tag }}
 
-    - name: Upload wheels for CUDA${{ matrix.cuda }}
-      run: |
-        echo "Publish jaxlib"
-        ls /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
-        echo "Upload wheels to tag ${TAG}"
-        python build_jaxlib/release/wheel_upload.py --tag ${TAG} /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.} --dry-run
-      env:
-        CUDA_VERSION: ${{ matrix.cuda }}
-        GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
-        TAG: ${{ steps.latesttag.outputs.tag }}
+      - uses: actions/checkout@v3
+        name: "Checkout doc repo"
+        with:
+          repository: "alpa-projects/alpa-projects.github.io"
 
-    - uses: actions/checkout@v3
-      name: "Checkout doc repo"
-      with:
-        repository: "alpa-projects/alpa-projects.github.io"
-
-    - name: "Generate"
-      env:
-        GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
-        TAG: ${{ steps.latesttag.outputs.tag }}
-      run:
-        ls -ltr
-        cd ..
-        python build_jaxlib/release/generate_pypi_index.py --tag ${TAG} --dry-run
+      - name: "Generate"
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+          TAG: ${{ steps.latesttag.outputs.tag }}
+        run:
+          ls -ltr
+          cd ..
+          python build_jaxlib/release/generate_pypi_index.py --tag ${TAG} --dry-run

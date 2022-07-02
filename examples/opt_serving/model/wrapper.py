@@ -25,14 +25,19 @@ from examples.opt_serving.model.opt_model import (
 from examples.opt_serving.model.opt_utils import TransformerModelConfig
 
 index_select_p = Primitive("index-select")
+
+
 def jax_index_select(input, index, dim=0):
     return index_select_p.bind(input, index, dim=dim)
+
 
 def _index_select_eval(input, index, dim):
     return input
 
+
 def _index_select_translation(c, input, index, dim):
     return xc.ops.IndexSelect(input, index, dim)
+
 
 index_select_p.def_abstract_eval(_index_select_eval)
 index_select_p.def_impl(partial(xla.apply_primitive, index_select_p))

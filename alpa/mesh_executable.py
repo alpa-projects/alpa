@@ -1143,10 +1143,11 @@ def get_index_select_mesh_executable(avals, sharding_specs, index, dim,
                                 device_mesh.shape, 1 << 60,
                                 as_option.all_reduce_threshold, None, -1)
     out_tree = tree_flatten(avals)[1]
-    executable = NormalMeshDriverExecutable(device_mesh, hlo_module,
+    executable = NormalMeshDriverExecutable(device_mesh,
+                                            hlo_module,
                                             strategy_config,
-                                            [*avals, index_aval], avals,
-                                            [*donate_avals, False],
+                                            [*avals, index_aval],
+                                            avals, [*donate_avals, False],
                                             out_tree=out_tree)
     device_mesh.operation_executables[key] = executable
     return executable

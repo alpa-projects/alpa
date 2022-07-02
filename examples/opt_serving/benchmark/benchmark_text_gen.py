@@ -213,11 +213,11 @@ if __name__ == "__main__":
             else:
                 compute_latency = latency
             tflops = compute_gpt_tflops_inference_with_padding(
-                num_beams * batch_size, gen_len, seq_len, L, H, vocab_size, num_gpus,
-                latency)
+                num_beams * batch_size, gen_len, seq_len, L, H, vocab_size,
+                num_gpus, latency)
             compute_tflops = compute_gpt_tflops_inference_with_padding(
-                num_beams * batch_size, gen_len, seq_len, L, H, vocab_size, num_gpus,
-                compute_latency)
+                num_beams * batch_size, gen_len, seq_len, L, H, vocab_size,
+                num_gpus, compute_latency)
             speed = np.prod(generated_ids.shape) / latency
             if args.debug:
                 print(
@@ -241,8 +241,8 @@ if __name__ == "__main__":
     ]
     values = [
         args.model, args.device, args.dummy, f"{load_time:.2f}",
-        f"{autoregressive}", f"{batch_size}", f"{num_micro_batches}", f"{num_beams}", "2",
-        f"{decoder_length_per_step}", f"{avg_tflops:.4f}",
+        f"{autoregressive}", f"{batch_size}", f"{num_micro_batches}",
+        f"{num_beams}", "2", f"{decoder_length_per_step}", f"{avg_tflops:.4f}",
         f"{avg_compute_tflops:.4f}", f"{avg_speed:.2f}",
         f"{latency_32_tokens:.2f}"
     ]

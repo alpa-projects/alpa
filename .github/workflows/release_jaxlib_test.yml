@@ -3,8 +3,8 @@ name: Release Jaxlib exp
 on:
   release:
     types: [created]
-  push:
-    branches: [ new-pypi-infra ]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       tensorflow:
@@ -34,13 +34,13 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-#      - name: build image
-#        run: |
-#          docker build -t build-jaxlib-image-cuda${CUDA_VERSION} \
-#            -f docker/build_jaxlib.Dockerfile docker/ \
-#            --build-arg JAX_CUDA_VERSION=${CUDA_VERSION}
-#        env:
-#          CUDA_VERSION: ${{ matrix.cuda }}
+      - name: build image
+        run: |
+          docker build -t build-jaxlib-image-cuda${CUDA_VERSION} \
+            -f docker/build_jaxlib.Dockerfile docker/ \
+            --build-arg JAX_CUDA_VERSION=${CUDA_VERSION}
+        env:
+          CUDA_VERSION: ${{ matrix.cuda }}
 
       - name: Compile Jaxlib
         run: |

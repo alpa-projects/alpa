@@ -101,18 +101,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           TAG: ${{ steps.latesttag.outputs.tag }}
 
-      - uses: actions/checkout@v3
-        name: "Checkout docs"
-        with:
-          repository: "alpa-projects/alpa-projects.github.io"
-
       - name: "Generate"
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           TAG: ${{ steps.latesttag.outputs.tag }}
         run: |
+          
+          git clone https://$GITHUB_TOKEN@github.com/alpa-projects/alpa-projects.github.io
           ls -ltr
-          cd ..
-          ls -l
           ls -l alpa/
           python build_jaxlib/release/generate_pypi_index.py --tag ${TAG} --dry-run

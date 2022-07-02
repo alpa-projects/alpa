@@ -45,11 +45,7 @@ jobs:
       - name: Compile Jaxlib
         run: |
           mkdir -p /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
-          if [[ ${{ github.event.action }} == "release" ]]; then
-            echo ${{ github.event.action }}
-            echo ${CUDA_VERSION}
-            echo ${ALPA_BRANCH}
-          elif [[ ${{ github.event.action }} == "pull_request"]]; then
+          if [[ ${{ github.event.action }} == "pull_request" ]]; then
             echo ${{ github.event.action }}
             echo ${CUDA_VERSION}
             echo ${ALPA_BRANCH}

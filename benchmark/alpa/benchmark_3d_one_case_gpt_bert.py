@@ -172,7 +172,7 @@ def benchmark_gpt_bert_internal(model_type,
                 prefer_reduce_scatter=prefer_reduce_scatter),
             layer_option=AutoLayerOption(layer_num=num_auto_layers),
             stage_option=ManualStageOption(*manual_stage_option))
-    elif parallel_mode == "manual":
+    elif parallel_mode == "uniform":
         (prefer_reduce_scatter, use_remat, (dp, op, pp),
          force_batch_dim_mapping) = parallel_args
         as_option = AutoShardingOption(

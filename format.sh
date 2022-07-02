@@ -41,7 +41,9 @@ YAPF_FLAGS=(
 )
 
 YAPF_EXCLUDES=(
-    '--exclude' 'benchmark'
+    '--exclude' 'benchmark/cupy'
+    '--exclude' 'benchmark/deepspeed'
+    '--exclude' 'benchmark/megatron'
     '--exclude' 'docs'
     '--exclude' 'examples'
     '--exclude' 'playground'

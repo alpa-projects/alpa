@@ -88,7 +88,7 @@ jobs:
         echo "Publish jaxlib"
         ls /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
         echo "Upload wheels to tag ${TAG}"
-        python build_jaxlib/release/wheel_upload.py --tag ${TAG} /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
+        python build_jaxlib/release/wheel_upload.py --tag ${TAG} /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.} --dry-run
       env:
         CUDA_VERSION: ${{ matrix.cuda }}
         GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
@@ -106,4 +106,4 @@ jobs:
       run:
         ls -ltr
         cd ..
-        python build_jaxlib/release/generate_pypi_index.py --tag ${TAG}
+        python build_jaxlib/release/generate_pypi_index.py --tag ${TAG} --dry-run

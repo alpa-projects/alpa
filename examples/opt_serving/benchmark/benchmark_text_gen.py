@@ -28,8 +28,20 @@ import time
 import torch
 from transformers import AutoTokenizer
 
-from examples.opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding, test_prompts
+from examples.opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
 from examples.opt_serving.model.wrapper import get_model
+
+test_prompts = [
+    "Computer science is the study of computation and",
+    "Ion Stoica is a Romanian-American computer scientist specializing in",
+    "The University of California, Berkeley is a public",
+    "Today is a good day and I want to", "What is the valuation of Databricks?",
+    "Paris is the capital city of", "Which country has the most population?",
+    "What do you think about the future of Cryptocurrency?",
+    "What do you think about the meaning of life?",
+    "Donald Trump is the president of",
+    "GPT-3 is a large language model that is capable of"
+]
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -41,6 +53,7 @@ if __name__ == "__main__":
     parser.add_argument("--decoder-length", type=int, default=1)
     parser.add_argument("--nb", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--num-beams", type=int, default=1)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--dtype", type=str, default="fp16")
     args = parser.parse_args()
@@ -60,6 +73,7 @@ if __name__ == "__main__":
     num_micro_batches = args.nb
     decoder_length_per_step = args.decoder_length
     batch_size = args.batch_size
+    num_beams = args.num_beams
     autoregressive = not args.forward
     dtype = jnp.float16 if args.dtype == "fp16" else jnp.float32
 
@@ -159,7 +173,8 @@ if __name__ == "__main__":
                           args.path,
                           autoregressive,
                           dtype=dtype,
-                          dummy=args.dummy)
+                          dummy=args.dummy,
+                          num_beams=num_beams)
         load_time = time.time() - tic
 
         # warm up
@@ -169,7 +184,8 @@ if __name__ == "__main__":
                                 max_length=256,
                                 do_sample=False,
                                 return_dict_in_generate=True,
-                                output_hidden_states=False)
+                                output_hidden_states=False,
+                                num_beams=num_beams)
 
         H = model.transformer_config.H
         L = model.transformer_config.L
@@ -194,7 +210,8 @@ if __name__ == "__main__":
                                     max_length=256,
                                     do_sample=False,
                                     return_dict_in_generate=True,
-                                    output_hidden_states=False)
+                                    output_hidden_states=False,
+                                    num_beams=num_beams)
             latency = time.time() - tic
             generated_ids = output.sequences
             generated_string = tokenizer.batch_decode(generated_ids,
@@ -208,11 +225,11 @@ if __name__ == "__main__":
             else:
                 compute_latency = latency
             tflops = compute_gpt_tflops_inference_with_padding(
-                batch_size, gen_len, seq_len, L, H, vocab_size, num_gpus,
-                latency)
+                num_beams * batch_size, gen_len, seq_len, L, H, vocab_size,
+                num_gpus, latency)
             compute_tflops = compute_gpt_tflops_inference_with_padding(
-                batch_size, gen_len, seq_len, L, H, vocab_size, num_gpus,
-                compute_latency)
+                num_beams * batch_size, gen_len, seq_len, L, H, vocab_size,
+                num_gpus, compute_latency)
             speed = np.prod(generated_ids.shape) / latency
             if args.debug:
                 print(
@@ -224,20 +241,20 @@ if __name__ == "__main__":
             tflopss.append(tflops)
             compute_tflopss.append(compute_tflops)
 
-    avg_speed = sum(decode_speeds) / n_iters
-    avg_tflops = sum(tflopss) / n_iters
-    avg_compute_tflops = sum(compute_tflopss) / n_iters
+    avg_speed = np.mean(decode_speeds)
+    avg_tflops = np.mean(tflopss)
+    avg_compute_tflops = np.mean(compute_tflopss)
     latency_32_tokens = 32.0 / (avg_speed / batch_size)
 
     heads = [
         "Model", "Device", "Dummy", "Load (s)", "Autoregressive", "Batchsize",
-        "#Microbatches", "#Stages", "Decoder step length", "TFlops",
+        "#Microbatches", "#Beams", "#Stages", "Decoder step length", "TFlops",
         "Compute TFlops", "Speed (token/s)", "latency (32 token)"
     ]
     values = [
         args.model, args.device, args.dummy, f"{load_time:.2f}",
-        f"{autoregressive}", f"{batch_size}", f"{num_micro_batches}", "2",
-        f"{decoder_length_per_step}", f"{avg_tflops:.4f}",
+        f"{autoregressive}", f"{batch_size}", f"{num_micro_batches}",
+        f"{num_beams}", "2", f"{decoder_length_per_step}", f"{avg_tflops:.4f}",
         f"{avg_compute_tflops:.4f}", f"{avg_speed:.2f}",
         f"{latency_32_tokens:.2f}"
     ]

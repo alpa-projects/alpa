@@ -684,9 +684,17 @@ def get_pipeshard_executable(config,
     model, params = init_model_aval(config)
 
     # Parallelize
-    method = alpa.PipeshardParallel(num_micro_batches=num_micro_batches,
-                                    pipeline_schedule="inference",
-                                    layer_option="manual")
+    method = alpa.PipeshardParallel(
+        num_micro_batches=num_micro_batches,
+        pipeline_schedule="inference",
+        layer_option="manual",
+        default_auto_sharding_option=alpa.AutoShardingOption(
+            # Force operator model parallel
+            force_batch_dim_to_mesh_dim=None if batch_size == 1 else 0,
+            # Disabling all-to-all and all-gather generates better intra-op strategies.
+            allow_all_to_all=False,
+            allow_all_gather=False,
+        ))
     #method = alpa.ShardParallel()
 
     if autoregressive:
@@ -705,9 +713,12 @@ def get_pipeshard_executable(config,
         alpa.global_config.always_donate_micro_batch_vars = False
         executable = inference_step_with_cache.get_executable(
             params, {
-                "input_ids": jax.core.ShapedArray((batch_size, 1), jnp.int32),
-                "position_ids": jax.core.ShapedArray((batch_size, 1), jnp.int32),
-                "cache": init_cache_aval(config, batch_size),
+                "input_ids":
+                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                "position_ids":
+                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                "cache":
+                    init_cache_aval(config, batch_size),
             })
     else:
 
@@ -724,9 +735,6 @@ def get_pipeshard_executable(config,
         assert batch_size % num_micro_batches == 0, "cannot divide batch_size by num_micro_batches"
         micro_batch_size = batch_size // num_micro_batches
 
-        # Disable all-to-all and all-gather generates better intra-op strategies.
-        method.as_option.allow_all_to_all = False
-        method.as_option.allow_all_gather = False
         executable = inference_step.get_executable(
             params, {
                 "input_ids":

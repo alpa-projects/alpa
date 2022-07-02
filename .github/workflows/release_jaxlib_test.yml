@@ -99,8 +99,7 @@ jobs:
       with:
         repository: "alpa-projects/alpa-projects.github.io"
 
-    - uses
-      name: "Generate"
+    - name: "Generate"
       env:
         GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
         TAG: ${{ steps.latesttag.outputs.tag }}

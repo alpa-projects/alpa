@@ -13,60 +13,6 @@ def py_str(cstr):
     return cstr.decode("utf-8")
 
 
-def extract_group_key_order(name):
-    """Extract group key and order from name.
-
-    Parameters
-    ----------
-    name : str
-        name of the file.
-
-    Returns
-    -------
-    group_key : tuple
-        The group the build should belong to
-
-    order : tuple
-        The order used to sort the builds.
-        The higher the latest
-    """
-    assert name.endswith(".whl")
-    name = name[:-4]
-    arr = name.split("-")
-
-    pkg_name = arr[0]
-    group_key = [arr[0]] + arr[2:]
-
-    ver = arr[1]
-    plus_pos = ver.find("+")
-    if plus_pos != -1:
-        ver = ver[:plus_pos]
-
-    dev_pos = ver.find(".dev")
-    if dev_pos != -1:
-        # all nightly share the same group
-        group_key.append("nightly")
-        # dev number as the order.
-        pub_ver = [int(x) for x in ver[:dev_pos].split(".")]
-        order = pub_ver + [int(ver[dev_pos + 4 :])]
-    else:
-        # stable version has its own group
-        group_key.append(ver)
-        order = [0]
-
-    return tuple(group_key), tuple(order)
-
-
-def group_wheels(wheels):
-    group_map = {}
-    for asset in wheels:
-        gkey, order = extract_group_key_order(asset.name)
-        if gkey not in group_map:
-            group_map[gkey] = []
-        group_map[gkey].append((order, asset))
-    return group_map
-
-
 def url_is_valid(url):
     """Check if a given URL is valid, i.e. it returns 200 OK when requested."""
     r = requests.get(url)
@@ -75,23 +21,6 @@ def url_is_valid(url):
         print("Warning: HTTP code %s for url %s" % (r.status_code, url))
 
     return r.status_code == 200
-
-
-def run_prune(args, group_map):
-    keep_list = []
-    remove_list = []
-    for key, assets in group_map.items():
-        print(f"Group {key}:")
-        for idx, item in enumerate(reversed(sorted(assets, key=lambda x: x[0]))):
-            order, asset = item
-            if idx < args.keep_top:
-                print("keep  %s" % asset.browser_download_url)
-                keep_list.append(asset)
-            else:
-                print("remove  %s" % asset.browser_download_url)
-                remove_list.append(asset)
-        print()
-    return keep_list, remove_list
 
 
 def list_wheels(repo, tag):
@@ -165,12 +94,7 @@ def main():
         raise RuntimeError("need GITHUB_TOKEN")
     args = parser.parse_args()
     wheels = list_wheels(args.repo, args.tag)
-    # group_map = group_wheels(wheels)
-    # keep_list, remove_list = run_prune(args, group_map)
-    # NOTE: important to update html first before deletion
-    # so that the wheel page always points to correct asset
     update_wheel_page(wheels, args.site_path, args.dry_run)
-    # delete_assets(remove_list, args.dry_run)
 
 
 if __name__ == "__main__":

@@ -53,10 +53,6 @@ jobs:
             echo ${{ github.event.action }}
             echo ${CUDA_VERSION}
             echo ${ALPA_BRANCH}
-          elif [[ ${{ github.event.action }} == "push"]]; then
-            echo ${{ github.event.action }}
-            echo ${CUDA_VERSION}
-            echo ${ALPA_BRANCH}
           else
             echo ${{ github.event.action }}
             echo ${CUDA_VERSION}

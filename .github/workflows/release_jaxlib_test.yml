@@ -96,7 +96,7 @@ jobs:
           TAG: ${{ steps.latesttag.outputs.tag }}
 
       - uses: actions/checkout@v3
-        name: "Checkout doc repo"
+        name: "Checkout docs"
         with:
           repository: "alpa-projects/alpa-projects.github.io"
 

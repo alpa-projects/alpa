@@ -28,8 +28,22 @@ import time
 import torch
 from transformers import AutoTokenizer
 
-from examples.opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding, test_prompts
+from examples.opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
 from examples.opt_serving.model.wrapper import get_model
+
+test_prompts = [
+    "Computer science is the study of computation and",
+    "Ion Stoica is a Romanian-American computer scientist specializing in",
+    "The University of California, Berkeley is a public",
+    "Today is a good day and I want to",
+    "What is the valuation of Databricks?",
+    "Paris is the capital city of",
+    "Which country has the most population?",
+    "What do you think about the future of Cryptocurrency?",
+    "What do you think about the meaning of life?",
+    "Donald Trump is the president of",
+    "GPT-3 is a large language model that is capable of"
+]
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -229,9 +243,9 @@ if __name__ == "__main__":
             tflopss.append(tflops)
             compute_tflopss.append(compute_tflops)
 
-    avg_speed = sum(decode_speeds) / n_iters
-    avg_tflops = sum(tflopss) / n_iters
-    avg_compute_tflops = sum(compute_tflopss) / n_iters
+    avg_speed = np.mean(decode_speeds)
+    avg_tflops = np.mean(tflopss)
+    avg_compute_tflops = np.mean(compute_tflopss)
     latency_32_tokens = 32.0 / (avg_speed / batch_size)
 
     heads = [

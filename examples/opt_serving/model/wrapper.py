@@ -1,5 +1,4 @@
 from collections import defaultdict
-from functools import partial
 import os
 from typing import Sequence, Any
 
@@ -9,8 +8,6 @@ from alpa.mesh_executable import get_index_select_mesh_executable
 import jax
 from jax import xla
 from jax import ShapeDtypeStruct, ShapedArray
-from jax._src.lib import xla_client as xc
-from jax.core import Primitive
 from jax.interpreters import pxla
 from jax.interpreters.pxla import NoSharding, Replicated, ShardingSpec
 import jax.numpy as jnp
@@ -22,26 +19,8 @@ from transformers import OPTForCausalLM, GPT2LMHeadModel
 from examples.opt_serving.model.opt_model import (
     get_opt_config, get_pipeshard_executable, load_params_dis_array,
     init_cache_dis_array, load_params_np, init_cache_np, get_jax_executable)
-from examples.opt_serving.model.opt_utils import TransformerModelConfig
-
-index_select_p = Primitive("index-select")
-
-
-def jax_index_select(input, index, dim=0):
-    return index_select_p.bind(input, index, dim=dim)
-
-
-def _index_select_eval(input, index, dim):
-    return input
-
-
-def _index_select_translation(c, input, index, dim):
-    return xc.ops.IndexSelect(input, index, dim)
-
-
-index_select_p.def_abstract_eval(_index_select_eval)
-index_select_p.def_impl(partial(xla.apply_primitive, index_select_p))
-xla.translations[index_select_p] = _index_select_translation
+from examples.opt_serving.model.opt_utils import (
+    TransformerModelConfig, jax_index_select)
 
 
 @dataclass
@@ -105,6 +84,7 @@ class WrappedInferenceFunc(GenerationMixin):
         self.cache_location = None
 
     def forward(self, attention_mask):
+        # This function is never used
         raise NotImplementedError()
 
     def prepare_inputs_for_generation(self, input_ids, past=None, **kwargs):
@@ -123,6 +103,7 @@ class WrappedInferenceFunc(GenerationMixin):
                  output_attentions=None,
                  output_hidden_states=None,
                  return_dict=None):
+        # Decompose the call to token by token
         for i in range(input_ids.shape[1]):
             ret = self.inference_func(input_ids[:, i:i + 1],
                                       past_key_values,
@@ -132,37 +113,43 @@ class WrappedInferenceFunc(GenerationMixin):
         return ret
 
     def _reorder_cache(self, past, beam_idx):
-        # Current beam_idx is a torch tensor from beam scorer. To speedup,
-        # we need to have alpa's own beam scorer
-        cache = {}
-        cpu_idx = beam_idx.to("cpu").numpy()
-        if type(cpu_idx) not in [ShapedArray, ShapeDtypeStruct]:
-            cpu_idx = xla.canonicalize_dtype(cpu_idx)
+        # Reorder cache for beam search
 
-        def single_element_reorder_cache(ary):
-            if hasattr(ary, "index_select"):
-                # Torch path
-                return ary.index_select(0, beam_idx.to(ary.device))
-            else:
-                # Jax path
-                return jax_index_select(ary, cpu_idx, 0)
+        # PyTorch
+        if hasattr(past[0][0], "index_select"):
+            return tuple(tuple(past_state.index_select(0, beam_idx) for past_state in layer_past)
+                    for layer_past in past)
 
-        def to_mesh(cpu_val, mesh):
-            if mesh in cache:
-                return cache[mesh]
-            avals = [ShapedArray(cpu_val.shape, cpu_val.dtype)]
-            replicated_spec = ShardingSpec([NoSharding()] * len(cpu_val.shape),
-                                           [Replicated(mesh.num_devices)])
-            specs = [replicated_spec]
-            indices = [pxla.spec_to_indices(cpu_val.shape, replicated_spec)]
-            ary = mesh.shard_args_to_arrays(avals, indices, specs, [cpu_val])[0]
-            cache[mesh] = ary
-            return ary
+        # Jax (single-device)
+        if not isinstance(past[0][0], DistributedArray):
+            beam_idx = jnp.array(beam_idx.to("cpu").numpy())
+            return tuple(tuple(jax_index_select(past_state, beam_idx, 0) for past_state in layer_past)
+                    for layer_past in past)
+
+        # Alpa
+        mesh_groups = defaultdict(list)
+        if self.cache_location is None:
+            self.cache_location = []
+            for layer_past in past:
+                tmp_loc = []
+                for past_state in layer_past:
+                    assert isinstance(past_state, DistributedArray)
+                    mesh = past_state.device_mesh
+                    mesh_groups[mesh].append(past_state)
+                    tmp_loc.append((mesh, len(mesh_groups[mesh]) - 1))
+                self.cache_location.append(tmp_loc)
+        else:
+            for layer_past in past:
+                for past_state in layer_past:
+                    assert isinstance(past_state, DistributedArray)
+                    mesh = past_state.device_mesh
+                    mesh_groups[mesh].append(past_state)
+
+        beam_idx = beam_idx.to("cpu").numpy()
 
         def grouped_reorder_cache(arys, device_mesh):
             if len(arys) == 0:
                 return []
-            mesh_idx = to_mesh(cpu_idx, device_mesh)
             if device_mesh in self.index_select_executables:
                 executable = self.index_select_executables[device_mesh]
             else:
@@ -170,43 +157,21 @@ class WrappedInferenceFunc(GenerationMixin):
                 avals = [ary.aval for ary in arys]
                 specs = [ary.sharding_spec for ary in arys]
                 executable = get_index_select_mesh_executable(
-                    avals, specs, mesh_idx, dim, device_mesh,
+                    avals, specs, beam_idx, dim, device_mesh,
                     [False] * len(avals))
                 self.index_select_executables[device_mesh] = executable
-            ret = executable(*arys, mesh_idx)
+            ret = executable(*arys, beam_idx)
             for v in ret:
                 v.skip_shard_args_check = True
             return ret
 
-        mesh_groups = defaultdict(list)
-        if self.cache_location is None:
-            self.cache_location = []
-            for layer_past in past:
-                tmp_loc = []
-                for past_state in layer_past:
-                    if isinstance(past_state, DistributedArray):
-                        mesh = past_state.device_mesh
-                        mesh_groups[mesh].append(past_state)
-                        tmp_loc.append((mesh, len(mesh_groups[mesh]) - 1))
-                    else:
-                        tmp_loc.append((None, None))
-                self.cache_location.append(tmp_loc)
-        else:
-            for layer_past in past:
-                for past_state in layer_past:
-                    if isinstance(past_state, DistributedArray):
-                        mesh = past_state.device_mesh
-                        mesh_groups[mesh].append(past_state)
         results = {
             mesh: grouped_reorder_cache(mesh_groups[mesh], mesh)
             for mesh in mesh_groups
         }
 
-        return tuple(
-            tuple(results[mesh][loc] if mesh is not None else
-                  single_element_reorder_cache(past_state)
-                  for (mesh, loc), past_state in zip(layer_loc, layer_past))
-            for layer_loc, layer_past in zip(self.cache_location, past))
+        return tuple(tuple(results[mesh][loc] for mesh, loc in layer_loc)
+            for layer_loc in self.cache_location)
 
 
 def get_hf_gpt_model(model_name, device, num_beams):

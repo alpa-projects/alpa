@@ -307,6 +307,7 @@ def get_model(model_name: str,
         )
 
         num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
+        num_pp_stages = min(num_pp_stages, alpa.get_global_cluster().num_devices)
         config = get_opt_config(name, num_pp_stages=num_pp_stages, dtype=dtype)
         transformer_config = TransformerModelConfig(
             H=config.decoder_embed_dim,

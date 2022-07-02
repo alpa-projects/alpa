@@ -60,16 +60,12 @@ def update_wheel_page(keep_list, site_repo, dry_run=False):
     run_cmd(["git", "fetch"])
     run_cmd(["git", "checkout", "-B", "master", "origin/master"])
     wheel_html_path = os.path.join(site_repo, "wheels.html")
-    if not os.path.exists(wheel_html_path) or open(wheel_html_path, "r").read() != new_html:
-        print(f"Wheel page changed, update {wheel_html_path}..")
-        if not dry_run:
-            open(wheel_html_path, "w").write(new_html)
-            print(123)
-            run_cmd(["git", "add", "wheels.html"])
-            print(456)
-            run_cmd(["git", "commit", "-am", "wheel update at %s" % datetime.now()])
-            print(789)
-            run_cmd(["git", "push", "origin", "master"])
+    print(f"Wheel page changed, update {wheel_html_path}..")
+    if not dry_run:
+        open(wheel_html_path, "w").write(new_html)
+        run_cmd(["git", "add", "wheels.html"])
+        run_cmd(["git", "commit", "-am", "wheel update at %s" % datetime.now()])
+        run_cmd(["git", "push", "origin", "master"])
 
 
 def delete_assets(remove_list, dry_run):

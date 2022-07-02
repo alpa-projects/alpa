@@ -19,8 +19,9 @@ from transformers import OPTForCausalLM, GPT2LMHeadModel
 from examples.opt_serving.model.opt_model import (
     get_opt_config, get_pipeshard_executable, load_params_dis_array,
     init_cache_dis_array, load_params_np, init_cache_np, get_jax_executable)
-from examples.opt_serving.model.opt_utils import (
-    TransformerModelConfig, jax_index_select)
+from examples.opt_serving.model.opt_utils import (TransformerModelConfig,
+                                                  jax_index_select,
+                                                  is_power_of_two)
 
 
 @dataclass
@@ -117,14 +118,20 @@ class WrappedInferenceFunc(GenerationMixin):
 
         # PyTorch
         if hasattr(past[0][0], "index_select"):
-            return tuple(tuple(past_state.index_select(0, beam_idx) for past_state in layer_past)
-                    for layer_past in past)
+            return tuple(
+                tuple(
+                    past_state.index_select(0, beam_idx)
+                    for past_state in layer_past)
+                for layer_past in past)
 
         # Jax (single-device)
         if not isinstance(past[0][0], DistributedArray):
             beam_idx = jnp.array(beam_idx.to("cpu").numpy())
-            return tuple(tuple(jax_index_select(past_state, beam_idx, 0) for past_state in layer_past)
-                    for layer_past in past)
+            return tuple(
+                tuple(
+                    jax_index_select(past_state, beam_idx, 0)
+                    for past_state in layer_past)
+                for layer_past in past)
 
         # Alpa
         mesh_groups = defaultdict(list)
@@ -170,7 +177,9 @@ class WrappedInferenceFunc(GenerationMixin):
             for mesh in mesh_groups
         }
 
-        return tuple(tuple(results[mesh][loc] for mesh, loc in layer_loc)
+        return tuple(
+            tuple(results[mesh][loc]
+                  for mesh, loc in layer_loc)
             for layer_loc in self.cache_location)
 
 
@@ -300,6 +309,7 @@ def get_model(model_name: str,
         params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
     else:
         assert "alpa/opt" in model_name
+        assert is_power_of_two(num_beams), "num_beams must be a power of two"
         alpa.init()
 
         print(
@@ -307,7 +317,8 @@ def get_model(model_name: str,
         )
 
         num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
-        num_pp_stages = min(num_pp_stages, alpa.get_global_cluster().num_devices)
+        num_pp_stages = min(num_pp_stages,
+                            alpa.get_global_cluster().num_devices)
         config = get_opt_config(name, num_pp_stages=num_pp_stages, dtype=dtype)
         transformer_config = TransformerModelConfig(
             H=config.decoder_embed_dim,

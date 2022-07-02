@@ -713,9 +713,12 @@ def get_pipeshard_executable(config,
         alpa.global_config.always_donate_micro_batch_vars = False
         executable = inference_step_with_cache.get_executable(
             params, {
-                "input_ids": jax.core.ShapedArray((batch_size, 1), jnp.int32),
-                "position_ids": jax.core.ShapedArray((batch_size, 1), jnp.int32),
-                "cache": init_cache_aval(config, batch_size),
+                "input_ids":
+                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                "position_ids":
+                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                "cache":
+                    init_cache_aval(config, batch_size),
             })
     else:
 

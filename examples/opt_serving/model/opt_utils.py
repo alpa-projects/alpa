@@ -32,6 +32,10 @@ def compute_gpt_tflops_inference_with_padding(batch_size, gen_len, seq_len,
     return tflops
 
 
+def is_power_of_two(n):
+    return (n != 0) and (n & (n-1) == 0)
+
+
 index_select_p = Primitive("index-select")
 
 

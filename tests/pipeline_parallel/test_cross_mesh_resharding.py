@@ -2,6 +2,7 @@
 import unittest
 from alpa.pipeline_parallel.runtime_emitter import PipelineInstEmitter
 
+import jax
 from jax import xla
 from jax.core import Var
 from jax._src.abstract_arrays import ShapedArray
@@ -11,10 +12,9 @@ import jax.numpy as jnp
 import numpy as np
 
 from alpa import init
-from alpa.device_mesh import (DistributedArray,
+from alpa.device_mesh import (DistributedArray, create_remote_array_refs,
                               get_global_virtual_physical_mesh)
-from alpa.mesh_executable import (create_remote_buffer_refs, get_uuid_np_array,
-                                  next_mesh_executable_uuid)
+from alpa.mesh_executable import next_mesh_executable_uuid
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     CollectiveGroup, ReshardingTaskSpec, CrossMeshCommunicator,
@@ -83,18 +83,18 @@ def test_resharding(var,
     for worker in dst_mesh.workers:
         instruction_lists[worker] = []
     executable_config_lists = {worker: [] for worker in dst_mesh.workers}
-    src_uuids = np.arange(np.prod(src_mesh.shape)).reshape(src_mesh.shape)
-    dst_uuids = np.arange(np.prod(dst_mesh.shape)).reshape(dst_mesh.shape)
+    src_uuid = 21474
+    dst_uuid = 21475
     # allocate the buffer
     exec_uuid = next_mesh_executable_uuid()
     config = AllocateZeroWorkerExecutableConfig(
         exec_uuid, [get_shard_shape(var.aval, dst_sharding_spec)],
         [var.aval.dtype])
-    output_uuids = np.expand_dims(dst_uuids, axis=1)
-    for worker_idx, worker in enumerate(dst_mesh.workers):
+    output_uuids = [dst_uuid]
+    for worker in dst_mesh.workers:
         executable_config_lists[worker].append(config)
         in_uuids = []
-        out_uuids = output_uuids[worker_idx]
+        out_uuids = output_uuids
         instruction_lists[worker].append(
             PipelineInstruction.run(config.exec_uuid,
                                     in_uuids,
@@ -105,28 +105,26 @@ def test_resharding(var,
                                     info="allocate zero for recv"))
     # Create resharding task
     if resharding_mode == "send_recv":
-        PipelineInstEmitter._compile_resharding_task(src_mesh, dst_mesh,
-                                                     src_uuids, task, dst_uuids,
+        PipelineInstEmitter._compile_resharding_task(src_uuid, task, dst_uuid,
                                                      instruction_lists)
     else:
         PipelineInstEmitter._compile_broadcast_resharding_task(
-            src_mesh, dst_mesh, src_uuids, task, dst_uuids, instruction_lists)
+            src_mesh, src_uuid, task, dst_uuid, instruction_lists)
 
     exec_uuids = {}
 
     # Compile Pipeline Executable
-    for worker_idx, worker in enumerate(src_mesh.workers):
+    for worker in src_mesh.workers:
         exec_uuid = next_mesh_executable_uuid()
         worker.put_executable.remote(exec_uuid, PipeshardMeshWorkerExecuable,
-                                     instruction_lists[worker],
-                                     [src_uuids[worker_idx]], [], [], [], [],
+                                     instruction_lists[worker], [src_uuid], [],
+                                     [], [], [],
                                      [False] * src_mesh.num_devices_per_host)
         exec_uuids[worker] = exec_uuid
-    for worker_idx, worker in enumerate(dst_mesh.workers):
+    for worker in dst_mesh.workers:
         exec_uuid = next_mesh_executable_uuid()
         worker.put_executable.remote(exec_uuid, PipeshardMeshWorkerExecuable,
-                                     instruction_lists[worker], [],
-                                     [dst_uuids[worker_idx]],
+                                     instruction_lists[worker], [], [dst_uuid],
                                      executable_config_lists[worker], [], [],
                                      [False] * dst_mesh.num_devices_per_host)
         exec_uuids[worker] = exec_uuid
@@ -137,25 +135,24 @@ def test_resharding(var,
     indices = spec_to_indices(var.aval.shape, src_sharding_spec)
     test_array = xla.canonicalize_dtype(test_array)
     input_refs = src_mesh.shard_args_to_bufs([indices], (False,), (False,),
-                                             None, [test_array])[0]
-    input_refs = np.array(input_refs).reshape(src_mesh.shape)
-    input_uuids = get_uuid_np_array(input_refs)
-    output_refs, output_uuids = create_remote_buffer_refs(dst_mesh)
-    output_uuids = output_uuids.reshape(dst_mesh.shape)
+                                             None, [test_array])
+    input_refs = np.array(input_refs)
+    input_uuids = [ref.uuid for ref in input_refs]
+    output_refs, output_uuids = create_remote_array_refs(dst_mesh)
 
     # Run executables
     # for _ in range(3):
     # timers("overall_resharding_time").start()
-    for worker_idx, worker in enumerate(src_mesh.workers):
+    for worker in src_mesh.workers:
         worker.run_executable.remote(exec_uuids[worker],
-                                     [input_uuids[worker_idx]], [],
+                                     input_uuids, [],
                                      sync_for_timer=True)
-    for worker_idx, worker in enumerate(dst_mesh.workers):
+    for worker in dst_mesh.workers:
         worker.run_executable.remote(exec_uuids[worker], [],
-                                     [output_uuids[worker_idx]],
+                                     output_uuids,
                                      sync_for_timer=True)
     output_array = DistributedArray(dst_mesh, var.aval, dst_sharding_spec,
-                                    output_refs)
+                                    output_refs[0])
 
     # dst_mesh.sync_workers()
     # timers("overall_resharding_time").stop()
@@ -260,6 +257,7 @@ class ReshardingTest(unittest.TestCase):
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
                                  tensor_shape)
 
+    @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
     def test_8gpu_2_dim_allgather(self):
         src_shape = (1, 4)
         dst_shape = (1, 4)
@@ -306,6 +304,7 @@ class ReshardingTest(unittest.TestCase):
                                  tensor_shape,
                                  resharding_mode="broadcast")
 
+    @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
     def test_8gpu_broadcast(self):
         src_shape = (1, 4)
         dst_shape = (1, 4)

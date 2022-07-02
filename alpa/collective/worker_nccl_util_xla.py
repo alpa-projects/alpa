@@ -18,13 +18,14 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def send_tile(worker, uuid: int, offset: Sequence[slice], dst_rank: int,
-              dst_gpu_idx: int, group_name: str):
-    tensor_shape = worker.buffers[uuid].shape
+def send_tile(worker, uuid: int, device_id: int, offset: Sequence[slice],
+              dst_rank: int, dst_gpu_idx: int, group_name: str):
+    buffer = worker.buffers[uuid][device_id]
+    tensor_shape = buffer.shape
     if is_continuous_subset(offset, tensor_shape):
         start_pos, n_elements = (infer_start_pos_and_n_elements(
             tensor_shape, offset))
-        col.send_multigpu(worker.buffers[uuid],
+        col.send_multigpu(buffer,
                           dst_rank,
                           dst_gpu_idx,
                           group_name,
@@ -37,9 +38,8 @@ def send_tile(worker, uuid: int, offset: Sequence[slice], dst_rank: int,
                      "specs.")
         start_indices = tuple(o.start for o in offset)
         slice_sizes = tuple(o.stop - o.start for o in offset)
-        src_buffer = jax_tensor_index(
-            xla_buffer_to_jax_tensor(worker.buffers[uuid]), start_indices,
-            slice_sizes)
+        src_buffer = jax_tensor_index(xla_buffer_to_jax_tensor(buffer),
+                                      start_indices, slice_sizes)
         to_send = jax_tensor_to_xla_buffer(src_buffer)
         n_elements = np.prod(slice_sizes)
         col.send_multigpu(to_send,
@@ -53,21 +53,21 @@ def send_tile(worker, uuid: int, offset: Sequence[slice], dst_rank: int,
 def recv_tile(worker, uuid: int, device_id: int,
               indices_in_dst_tile: Sequence[slice], src_rank: int,
               src_gpu_idx: int, group_name: str):
-    tensor_shape = worker.buffers[uuid].shape
+    buffer = worker.buffers[uuid][device_id]
+    tensor_shape = buffer.shape
     slice_shape = tuple(ind.stop - ind.start for ind in indices_in_dst_tile)
     if is_continuous_subset(indices_in_dst_tile, tensor_shape):
         start_pos, n_elements = infer_start_pos_and_n_elements(
             tensor_shape, indices_in_dst_tile)
-        col.recv_multigpu(worker.buffers[uuid],
+        col.recv_multigpu(buffer,
                           src_rank,
                           src_gpu_idx,
                           group_name,
                           start_pos=start_pos,
                           n_elements=n_elements)
     else:
-        tmp_buffer = device_put(
-            jnp.ones(slice_shape, dtype=worker.buffers[uuid].dtype),
-            worker.local_devices[device_id])
+        tmp_buffer = device_put(jnp.ones(slice_shape, dtype=buffer.dtype),
+                                worker.local_devices[device_id])
         to_recv = jax_tensor_to_xla_buffer(tmp_buffer)
         n_elements = np.prod(slice_shape)
         col.recv_multigpu(to_recv,
@@ -78,24 +78,23 @@ def recv_tile(worker, uuid: int, device_id: int,
                           n_elements=n_elements)
         start_indices = tuple(
             ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
-        new_buffer = jax_tensor_set(
-            xla_buffer_to_jax_tensor(worker.buffers[uuid]),
-            xla_buffer_to_jax_tensor(to_recv), start_indices)
-        worker.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
+        new_buffer = jax_tensor_set(xla_buffer_to_jax_tensor(buffer),
+                                    xla_buffer_to_jax_tensor(to_recv),
+                                    start_indices)
+        worker.buffers[uuid][device_id] = jax_tensor_to_xla_buffer(new_buffer)
 
 
-def allgather(worker, uuids: Sequence[int], device_ids: Sequence[int],
+def allgather(worker, uuid: int, device_ids: Sequence[int],
               tensor_slices: Sequence[slice], output_slice):
     communicators = worker.allgather_communicators[repr(sorted(device_ids))]
-    tensor_shape = worker.buffers[uuids[device_ids[0]]].shape
+    tensor_shape = worker.buffers[uuid][device_ids[0]].shape
     global_start_pos, _ = infer_start_pos_and_n_elements(
         tensor_shape, output_slice)
 
     buffers = []
     local_start_pos_list = []
     for device_id, tensor_slice in zip(device_ids, tensor_slices):
-        uuid = uuids[device_id]
-        xla_buffer = worker.buffers[uuid]
+        xla_buffer = worker.buffers[uuid][device_id]
         start_pos, _ = infer_start_pos_and_n_elements(tensor_shape,
                                                       tensor_slice)
         buffers.append(xla_buffer)
@@ -106,11 +105,10 @@ def allgather(worker, uuids: Sequence[int], device_ids: Sequence[int],
                              global_start_pos, local_n_elements)
 
     for device_id, buf in zip(device_ids, buffers):
-        uuid = uuids[device_id]
-        worker.buffers[uuid] = buf
+        worker.buffers[uuid][device_id] = buf
 
 
-def broadcast(worker, uuids, comm_key, world_size, devices_ids,
+def broadcast(worker, uuid, comm_key, world_size, devices_ids,
               devices_global_rank, tensor_slices, group_name):
     buffers = []
     local_start_pos_list = []
@@ -118,26 +116,24 @@ def broadcast(worker, uuids, comm_key, world_size, devices_ids,
     for device_id, global_rank, tensor_slice in zip(devices_ids,
                                                     devices_global_rank,
                                                     tensor_slices):
-        uuid = uuids[device_id]
-        tensor_shape = worker.buffers[uuid].shape
+        buffer = worker.buffers[uuid][device_id]
+        tensor_shape = buffer.shape
         slice_shape = tuple(ind.stop - ind.start for ind in tensor_slice)
         if is_continuous_subset(tensor_slice, tensor_shape):
             # fast path, two cases: (1) same shape, (2) continuous subset.
             start_pos, _ = infer_start_pos_and_n_elements(
                 tensor_shape, tensor_slice)
             local_start_pos_list.append(start_pos)
-            buffers.append(worker.buffers[uuid])
+            buffers.append(buffer)
         else:
             tmp = None
             if global_rank == 0:
                 start_indices = tuple(o.start for o in tensor_slice)
-                tmp = jax_tensor_index(
-                    xla_buffer_to_jax_tensor(worker.buffers[uuid]),
-                    start_indices, slice_shape)
+                tmp = jax_tensor_index(xla_buffer_to_jax_tensor(buffer),
+                                       start_indices, slice_shape)
             else:
-                tmp = device_put(
-                    jnp.ones(slice_shape, dtype=worker.buffers[uuid].dtype),
-                    worker.local_devices[device_id])
+                tmp = device_put(jnp.ones(slice_shape, dtype=buffer.dtype),
+                                 worker.local_devices[device_id])
             local_start_pos_list.append(0)
             buffers.append(jax_tensor_to_xla_buffer(tmp))
 
@@ -149,18 +145,19 @@ def broadcast(worker, uuids, comm_key, world_size, devices_ids,
             buffers, devices_ids, devices_global_rank, tensor_slices):
         if global_rank == 0:
             continue
-        uuid = uuids[device_id]
-        tensor_shape = worker.buffers[uuid].shape
+        buffer = worker.buffers[uuid][device_id]
+        tensor_shape = buffer.shape
         slice_shape = tuple(ind.stop - ind.start for ind in tensor_slice)
         if is_continuous_subset(tensor_slice, tensor_shape):
-            worker.buffers[uuid] = xla_buffer
+            new_buffer = xla_buffer
         else:
             start_indices = tuple(
                 ind_in_dst.start for ind_in_dst in tensor_slice)
-            new_buffer = jax_tensor_set(
-                xla_buffer_to_jax_tensor(worker.buffers[uuid]),
-                xla_buffer_to_jax_tensor(xla_buffer), start_indices)
-            worker.buffers[uuid] = jax_tensor_to_xla_buffer(new_buffer)
+            new_buffer = jax_tensor_set(xla_buffer_to_jax_tensor(buffer),
+                                        xla_buffer_to_jax_tensor(xla_buffer),
+                                        start_indices)
+            new_buffer = jax_tensor_to_xla_buffer(new_buffer)
+        worker.buffers[uuid][device_id] = new_buffer
 
 
 def init_local_comm(device_ids):

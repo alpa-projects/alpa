@@ -7,8 +7,8 @@ from jax.interpreters import pxla, xla
 import numpy as np
 import ray
 
-from alpa.device_mesh import LocalPhysicalDeviceMesh, DistributedArray
-from alpa.mesh_executable import create_remote_buffer_refs
+from alpa.device_mesh import (LocalPhysicalDeviceMesh, DistributedArray,
+                              create_remote_array_refs)
 
 
 class DataLoader:
@@ -128,11 +128,11 @@ class MeshDriverDataLoader:
         self.output_uuids = []
         self.output_arrays = []
         for i in range(len(avals)):
-            buf_refs, buf_uuids = create_remote_buffer_refs(physical_mesh)
-            self.output_uuids.append(buf_uuids)
+            ary_ref, ary_uuid = create_remote_array_refs(physical_mesh)
+            self.output_uuids.append(ary_uuid[0])
             self.output_arrays.append(
                 DistributedArray(physical_mesh, avals[i], sharding_specs[i],
-                                 buf_refs))
+                                 ary_ref[0]))
 
         # Create worker part data loaders
         self.worker_data_loaders = []
@@ -163,10 +163,7 @@ class MeshDriverDataLoader:
                 end = (
                     (i // num_hosts_for_one_batch) + 1) * num_samples_per_host
 
-                host_output_uuids.append(
-                    self.output_uuids[j][i * physical_mesh.num_devices_per_host:
-                                         (i + 1) *
-                                         physical_mesh.num_devices_per_host])
+                host_output_uuids.append(self.output_uuids[j])
                 host_indices.append([])
                 for k in range(physical_mesh.num_devices_per_host):
                     device_id = i * physical_mesh.num_devices_per_host + k
@@ -242,8 +239,7 @@ class MeshWorkerDataLoader:
     def pop_left(self):
         batch = self.queue.popleft()
         for i, shards in enumerate(batch):
-            for uuid, shard in zip(self.output_uuids[i], shards):
-                self.buffers[uuid] = shard
+            self.buffers[self.output_uuids[i]] = shards
 
     def __iter__(self):
         if self.prefetch_size:

@@ -77,7 +77,7 @@ if __name__ == "__main__":
 
     if not autoregressive:
         # Increase the frequency of deleting buffers to avoid OOM.
-        global_config.delete_remote_buffers_threshold = 4
+        global_config.delete_remote_arrays_threshold = 1
 
         # forward mode
         tic = time.time()

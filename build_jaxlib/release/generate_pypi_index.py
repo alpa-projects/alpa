@@ -94,16 +94,17 @@ def run_prune(args, group_map):
     return keep_list, remove_list
 
 
-def list_wheels(repo):
+def list_wheels(repo, tag):
     gh = github3.login(token=os.environ["GITHUB_TOKEN"])
     repo = gh.repository(*repo.split("/"))
     wheels = []
-
-    for release in repo.releases():
-        tag = release.tag_name
-        for asset in release.assets():
-            if asset.name.endswith(".whl") and url_is_valid(asset.browser_download_url):
-                wheels.append(asset)
+    all_tags = [release.tag_name for release in repo.releases]
+    if tag not in all_tags:
+        raise RuntimeError("The tag provided does not exist.")
+    release = repo.release_from_tag(tag)
+    for asset in release.assets():
+        if asset.name.endswith(".whl") and url_is_valid(asset.browser_download_url):
+            wheels.append(asset)
     return wheels
 
 
@@ -148,23 +149,23 @@ def delete_assets(remove_list, dry_run):
 def main():
     logging.basicConfig(level=logging.WARNING)
     parser = argparse.ArgumentParser(
-        description="Prune nightly build and synchronize the wheel page."
+        description="Generate a wheel page given a release tag, assuming the wheels have been uploaded."
     )
-    parser.add_argument("--keep-top", type=int, default=1)
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--site-path", type=str, default="tlc-pack.github.io")
-    parser.add_argument("--repo", type=str, default="tlc-pack/tlcpack")
+    parser.add_argument("--site-path", type=str, default="alpa-projects.github.io")
+    parser.add_argument("--repo", type=str, default="alpa-projects/alpa")
+    parser.add_argument("--tag", type=str)
 
     if "GITHUB_TOKEN" not in os.environ:
         raise RuntimeError("need GITHUB_TOKEN")
     args = parser.parse_args()
-    wheels = list_wheels(args.repo)
-    group_map = group_wheels(wheels)
-    keep_list, remove_list = run_prune(args, group_map)
+    wheels = list_wheels(args.repo, args.tag)
+    # group_map = group_wheels(wheels)
+    # keep_list, remove_list = run_prune(args, group_map)
     # NOTE: important to update html first before deletion
     # so that the wheel page always points to correct asset
-    update_wheel_page(keep_list, args.site_path, args.dry_run)
-    delete_assets(remove_list, args.dry_run)
+    update_wheel_page(wheels, args.site_path, args.dry_run)
+    # delete_assets(remove_list, args.dry_run)
 
 
 if __name__ == "__main__":

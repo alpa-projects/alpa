@@ -98,11 +98,12 @@ def list_wheels(repo, tag):
     gh = github3.login(token=os.environ["GITHUB_TOKEN"])
     repo = gh.repository(*repo.split("/"))
     wheels = []
-    all_tags = [release.tag_name for release in repo.releases]
+    all_tags = [release.tag_name for release in repo.releases()]
     if tag not in all_tags:
         raise RuntimeError("The tag provided does not exist.")
     release = repo.release_from_tag(tag)
     for asset in release.assets():
+        print(f"Validating {asset.name} with url: {asset.browser_download_url}")
         if asset.name.endswith(".whl") and url_is_valid(asset.browser_download_url):
             wheels.append(asset)
     return wheels
@@ -128,14 +129,18 @@ def update_wheel_page(keep_list, site_repo, dry_run=False):
             raise RuntimeError(msg)
 
     run_cmd(["git", "fetch"])
-    run_cmd(["git", "checkout", "-B", "main", "origin/main"])
+    run_cmd(["git", "checkout", "-B", "master", "origin/master"])
     wheel_html_path = os.path.join(site_repo, "wheels.html")
-    if open(wheel_html_path, "r").read() != new_html:
+    if not os.path.exists(wheel_html_path) or open(wheel_html_path, "r").read() != new_html:
         print(f"Wheel page changed, update {wheel_html_path}..")
         if not dry_run:
             open(wheel_html_path, "w").write(new_html)
+            print(123)
+            run_cmd(["git", "add", "wheels.html"])
+            print(456)
             run_cmd(["git", "commit", "-am", "wheel update at %s" % datetime.now()])
-            run_cmd(["git", "push", "origin", "main"])
+            print(789)
+            run_cmd(["git", "push", "origin", "master"])
 
 
 def delete_assets(remove_list, dry_run):

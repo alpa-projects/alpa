@@ -1,11 +1,12 @@
 """Update the wheels page, prune old nightly builds if necessary."""
-import github3
 import os
 import logging
 import argparse
 import subprocess
 from datetime import datetime
 
+import github3
+import github3.session as session
 import requests
 
 
@@ -24,7 +25,8 @@ def url_is_valid(url):
 
 
 def list_wheels(repo, tag):
-    gh = github3.login(token=os.environ["GITHUB_TOKEN"])
+    gh = github3.GitHub(token=os.environ["GITHUB_TOKEN"],
+                        session=session.GitHubSession(default_connect_timeout=100, default_read_timeout=100))
     repo = gh.repository(*repo.split("/"))
     wheels = []
     all_tags = [release.tag_name for release in repo.releases()]

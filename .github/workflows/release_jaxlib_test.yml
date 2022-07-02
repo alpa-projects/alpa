@@ -45,12 +45,16 @@ jobs:
       - name: Compile Jaxlib
         run: |
           mkdir -p /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
-          if [[ ${{ github.event.action }} == "pull_request" ]]; then
-            echo ${{ github.event.action }}
+          if [[ ${{ github.event_name }} == "pull_request" ]]; then
+            echo ${{ github.event_name }}
+            echo ${{ github.event }}
+            echo ${{ github.action }}
             echo ${CUDA_VERSION}
             echo ${ALPA_BRANCH}
           else
-            echo ${{ github.event.action }}
+            echo ${{ github.event_name }}
+            echo ${{ github.event }}
+            echo ${{ github.action }}
             echo ${CUDA_VERSION}
             echo ${ALPA_BRANCH}
             echo ${TF_BRANCH}
@@ -86,10 +90,10 @@ jobs:
 
       - name: Upload wheels for CUDA${{ matrix.cuda }}
         run: |
-          echo "Publish jaxlib"
+          echo "Publish jaxlib to tag ${TAG}"
           ls /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
           echo "Upload wheels to tag ${TAG}"
-          python build_jaxlib/release/wheel_upload.py --tag ${TAG} /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.} --dry-run
+          python build_jaxlib/release/wheel_upload.py --tag ${TAG} --path /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.} --dry-run
         env:
           CUDA_VERSION: ${{ matrix.cuda }}
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}

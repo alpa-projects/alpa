@@ -724,6 +724,9 @@ def get_pipeshard_executable(config,
         assert batch_size % num_micro_batches == 0, "cannot divide batch_size by num_micro_batches"
         micro_batch_size = batch_size // num_micro_batches
 
+        # Disable all-to-all and all-gather generates better intra-op strategies.
+        method.as_option.allow_all_to_all = False
+        method.as_option.allow_all_gather = False
         executable = inference_step.get_executable(
             params, {
                 "input_ids":

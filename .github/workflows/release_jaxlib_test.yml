@@ -47,14 +47,10 @@ jobs:
           mkdir -p /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
           if [[ ${{ github.event_name }} == "pull_request" ]]; then
             echo ${{ github.event_name }}
-            echo ${{ github.event }}
-            echo ${{ github.action }}
             echo ${CUDA_VERSION}
             echo ${ALPA_BRANCH}
           else
             echo ${{ github.event_name }}
-            echo ${{ github.event }}
-            echo ${{ github.action }}
             echo ${CUDA_VERSION}
             echo ${ALPA_BRANCH}
             echo ${TF_BRANCH}
@@ -108,7 +104,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           TAG: ${{ steps.latesttag.outputs.tag }}
-        run:
+        run: |
           ls -ltr
           cd ..
           python build_jaxlib/release/generate_pypi_index.py --tag ${TAG} --dry-run

@@ -48,20 +48,11 @@ jobs:
           if [[ ${{ github.event.action }} == "release" ]]; then
             echo ${CUDA_VERSION}
             echo ${ALPA_BRANCH}
-#            docker run --gpus all --tmpfs /build:exec \
-#              --rm -v /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}:/dist \
-#              build-jaxlib-image-cuda${CUDA_VERSION} ${PYTHON_VERSION} \
-#              cuda ${CUDA_VERSION} ${ALPA_BRANCH}
           else
-#            docker run --gpus all --tmpfs /build:exec \
-#              --rm -v /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}:/dist \
-#              build-jaxlib-image-cuda${CUDA_VERSION} ${PYTHON_VERSION} \
-#              cuda ${CUDA_VERSION} ${ALPA_BRANCH} ${TF_BRANCH}
             echo ${CUDA_VERSION}
             echo ${ALPA_BRANCH}
             echo ${TF_BRANCH}
           fi
-
         env:
           CUDA_VERSION: ${{ matrix.cuda }}
           PYTHON_VERSION: ${{ matrix.python }}

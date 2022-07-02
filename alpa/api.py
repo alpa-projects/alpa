@@ -15,7 +15,7 @@ from alpa.device_mesh import init_global_cluster, shutdown_global_cluster
 from alpa.parallel_method import ParallelMethod, ShardParallel
 from alpa.pipeline_parallel.primitive_def import mark_gradient
 from alpa.util import (auto_donate_argnums, auto_static_argnums,
-                       abstractify_with_aval)
+                       abstractify_with_aval, GradFuncTransformContext)
 
 is_initialized = False
 
@@ -219,8 +219,15 @@ def grad(*args, **kwargs):
     """
 
     def ret(*call_args, **call_kwargs):
-        func = api.grad(*args, **kwargs)
-        return mark_gradient(func(*call_args, **call_kwargs))
+        # Apply transformations (e.g., layer construction, rematerialization)
+        # to the forward func
+        arg_list = list(args)
+        for transform in GradFuncTransformContext.transforms:
+            arg_list[0] = transform(arg_list[0])
+        grad_func = api.grad(*arg_list, **kwargs)
+
+        grads = grad_func(*call_args, **call_kwargs)
+        return mark_gradient(grads)
 
     return ret
 
@@ -236,8 +243,14 @@ def value_and_grad(*args, **kwargs):
     """
 
     def ret(*call_args, **call_kwargs):
-        func = api.value_and_grad(*args, **kwargs)
-        val, grads = func(*call_args, **call_kwargs)
+        # Apply transformations (e.g., layer construction, rematerialization)
+        # to the forward func
+        arg_list = list(args)
+        for transform in GradFuncTransformContext.transforms:
+            arg_list[0] = transform(arg_list[0])
+        grad_func = api.value_and_grad(*arg_list, **kwargs)
+
+        val, grads = grad_func(*call_args, **call_kwargs)
         return mark_gradient((val, grads))
 
     return ret

@@ -8,7 +8,8 @@ import ray
 import alpa
 from alpa import (parallelize, global_config, get_global_cluster,
                   set_global_virtual_physical_mesh, AutoShardingOption,
-                  PipeshardParallel, ManualPipeshardParallel)
+                  PipeshardParallel, ManualStageOption, AutoStageOption,
+                  AutoLayerOption)
 from alpa.model.model_util import optax_adafactor
 from alpa.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
@@ -69,42 +70,42 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts,
     # Parallel configs
     if parallel_mode == "search":
         prefer_reduce_scatter, use_remat, num_auto_layers, auto_stage_option = parallel_args
-        auto_layer = True
-        auto_remat_mode = "fine_grained" if use_remat else None
-        num_auto_remat_layers = num_layers
-        add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
+        add_manual_layer_marker = num_manual_pipeline_stages = add_manual_remat = None
+        use_fine_grained_remat = fine_grained_remat_num_layers = None
+        auto_stage_option["cached_compute_cost"] = None
         method = PipeshardParallel(
-            stage_mode="auto",
             num_micro_batches=num_micro_batches,
             default_auto_sharding_option=AutoShardingOption(
                 prefer_reduce_scatter=prefer_reduce_scatter,
                 allow_mixed_mesh_shape=True,
             ),
-            **auto_stage_option)
+            layer_option=AutoLayerOption(layer_num=num_auto_layers,
+                                         remat_layer=use_remat),
+            stage_option=AutoStageOption(**auto_stage_option))
     elif parallel_mode == "load_solution":
         prefer_reduce_scatter, use_remat, num_auto_layers, manual_stage_option = parallel_args
-        auto_layer = True
-        auto_remat_mode = "fine_grained" if use_remat else None
-        num_auto_remat_layers = num_layers
-        add_manual_layer_marker = add_manual_remat = num_manual_pipeline_stages = False
-        method = ManualPipeshardParallel(
-            *manual_stage_option,
+        add_manual_layer_marker = num_manual_pipeline_stages = add_manual_remat = None
+        use_fine_grained_remat = use_remat
+        fine_grained_remat_num_layers = num_layers
+        method = PipeshardParallel(
             num_micro_batches=num_micro_batches,
             default_auto_sharding_option=AutoShardingOption(
                 prefer_reduce_scatter=prefer_reduce_scatter,
                 allow_mixed_mesh_shape=True,
-            ))
+            ),
+            layer_option=AutoLayerOption(layer_num=num_auto_layers),
+            stage_option=ManualStageOption(*manual_stage_option))
     elif parallel_mode == "manual":
         (prefer_reduce_scatter, use_remat, (dp, op, pp),
          force_batch_dim_mapping) = parallel_args
         as_option = AutoShardingOption(
-            prefer_reduce_scatter=prefer_reduce_scatter)
+            prefer_reduce_scatter=prefer_reduce_scatter,
+            allow_mixed_mesh_shape=True)
         if force_batch_dim_mapping:
             as_option.force_batch_dim_to_mesh_dim = 0
-        auto_layer = False
-        num_auto_layers = auto_remat_mode = num_auto_remat_layers = None
         add_manual_layer_marker = True
         add_manual_remat = use_remat
+        use_fine_grained_remat = fine_grained_remat_num_layers = None
 
         logical_mesh_shape = (dp, op)
         num_manual_pipeline_stages = pp
@@ -117,13 +118,15 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts,
             physical_mesh_shape = (num_mesh_devices // num_devices_per_host,
                                    num_devices_per_host)
 
-        method = ManualPipeshardParallel(
+        method = PipeshardParallel(
             num_micro_batches=num_micro_batches,
-            forward_stage_layer_ids=[[i] for i in range(pp)],
-            submesh_physical_shapes=[physical_mesh_shape] * pp,
-            submesh_logical_shapes=[logical_mesh_shape] * pp,
-            submesh_autosharding_option_dicts=[{}] * pp,
-            default_auto_sharding_option=as_option)
+            default_auto_sharding_option=as_option,
+            layer_option="manual",
+            stage_option=ManualStageOption(
+                forward_stage_layer_ids=[[i] for i in range(pp)],
+                submesh_physical_shapes=[physical_mesh_shape] * pp,
+                submesh_logical_shapes=[logical_mesh_shape] * pp,
+                submesh_autosharding_option_dicts=[{}] * pp))
     else:
         raise ValueError(f"Invalid model: {parallel_mode}")
 
@@ -160,9 +163,8 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts,
     print_used_time("Create train state")
 
     # Compile executable
-    train_step = get_train_step(method, auto_layer, num_manual_pipeline_stages,
-                                num_auto_layers, auto_remat_mode,
-                                num_auto_remat_layers)
+    train_step = get_train_step(method, use_fine_grained_remat,
+                                fine_grained_remat_num_layers)
     executable = train_step.get_executable(state, batch, rngkey)
     print_used_time("Compile (driver)")
 

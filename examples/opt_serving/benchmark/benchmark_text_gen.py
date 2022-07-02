@@ -52,12 +52,9 @@ if __name__ == "__main__":
     global_config.shard_parallel_sync_for_timer = True
 
     # Note(Hao): we need to use "opt-30b" and disable "add_bos_token".
-    if args.model.startswith("alpa") or args.model.startswith("jax"):
-        tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b",
-                                                  use_fast=False)
-        tokenizer.add_bos_token = False
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b",
+                                              use_fast=False)
+    tokenizer.add_bos_token = False
 
     # Do some param check
     num_micro_batches = args.nb
@@ -187,7 +184,7 @@ if __name__ == "__main__":
             num_gpus = 1
 
         # benchmark
-        for i in range(n_iters):
+        for i in range(min(n_iters, len(test_prompts))):
             prompt = test_prompts[i]
             torch.manual_seed(8)
             input_ids = tokenizer(prompt,

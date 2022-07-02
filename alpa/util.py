@@ -115,6 +115,23 @@ def update_jax_platform(platform):
     xb.get_backend.cache_clear()
 
 
+class GradFuncTransformContext:
+    """
+    A context to hold transformations applied to the forward function
+    before calling alpa.grad or alpa.value_and_grad.
+    """
+    transforms = []
+
+    def __init__(self, transform):
+        self.transform = transform
+
+    def __enter__(self):
+        GradFuncTransformContext.transforms.append(self.transform)
+
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        GradFuncTransformContext.transforms.pop()
+
+
 ########################################
 ##### Data Structure Utilities
 ########################################
@@ -543,6 +560,23 @@ def compile_concatenate(backend, mesh_shape, sharding_spec, batch_size,
     return hlo_proto
 
 
+def get_index_select_computation(sharding_spec, dim, aval, index_shape):
+    sharding = pxla.sharding_spec_sharding_proto(sharding_spec)
+    c = xc.XlaBuilder("index_select")
+    c.set_sharding(sharding)
+    operand = xc.ops.Parameter(
+        c, 0, xc.shape_from_pyval(np.ones(aval.shape, aval.dtype)))
+    c.clear_sharding()
+    index = xc.ops.Parameter(c, 1, index_shape)
+    index_selected = xc.ops.IndexSelect(operand, index, dim)
+    sharding2 = xc.OpSharding()
+    sharding2.type = sharding.type.TUPLE
+    sharding2.tuple_shardings = [sharding]
+    c.set_sharding(sharding2)
+    c = c.build(xc.ops.Tuple(c, [index_selected]))
+    return c
+
+
 def get_shard_shape(aval: ShapedArray, sharding_spec: pxla.ShardingSpec):
     """Return the shape of a shard."""
     shape = []
@@ -594,8 +628,7 @@ class XlaPassContext:
         self.value_dict = value_dict
 
     def __enter__(self):
-        assert XlaPassContext.current is None, (
-            "Do not support recurrent context")
+        assert XlaPassContext.current is None, ("Do not support nested context")
         XlaPassContext.current = self
         xe.set_pass_context(self.value_dict)
 

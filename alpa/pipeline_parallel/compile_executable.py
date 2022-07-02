@@ -27,11 +27,13 @@ from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
                                                process_apply_gradient,
                                                split_compute_grad_and_apply_grad
                                               )
+from alpa.pipeline_parallel.layer_construction import LayerOption
 from alpa.pipeline_parallel.stage_construction import (
     cluster_layers_and_slice_mesh, StageOption)
 from alpa.pipeline_parallel.stage_profiling import CompileWorkerPool
 from alpa.shard_parallel.auto_sharding import AutoShardingOption
-from alpa.util import get_var_mapping, trace_jaxpr_with_micro_batch, OrderedSet
+from alpa.util import (get_var_mapping, trace_jaxpr_with_micro_batch,
+                       OrderedSet, GradFuncTransformContext)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -43,7 +45,8 @@ def compile_pipeshard_executable(
         donated_invars: Sequence[bool], batch_invars: Sequence[bool],
         virtual_mesh: VirtualPhysicalMesh, num_microbatch: int,
         pipeline_schedule: str, default_as_option: AutoShardingOption,
-        stage_option: StageOption, *avals: Sequence[AbstractValue]):
+        layer_option: LayerOption, stage_option: StageOption,
+        *avals: Sequence[AbstractValue]):
     """
     Compile a callable for pipeshard parallel which combines
     pipeline parallelism and 2d shard parallelsim.
@@ -51,19 +54,23 @@ def compile_pipeshard_executable(
     debug_compilation_time(None)
     name_base = f"{fun.__name__}_pipeshard_parallel"
 
-    # Trace the function wit a micro batch to get the jaxpr
-    closed_jaxpr, micro_batch_size = trace_jaxpr_with_micro_batch(
-        fun, batch_invars, num_microbatch, avals)
+    if pipeline_schedule == "inference":
+        fun.f = layer_option.transform(fun.f)
 
-    if num_microbatch > 1:
-        # Trace again with a full batch
-        for store in fun.stores:
-            if store:
-                store.reset()
-        full_batch_closed_jaxpr, _ = trace_jaxpr_with_micro_batch(
-            fun, batch_invars, 1, avals)
-    else:
-        full_batch_closed_jaxpr = None
+    with GradFuncTransformContext(layer_option.transform):
+        # Trace the function wit a micro batch to get the jaxpr
+        closed_jaxpr, micro_batch_size = trace_jaxpr_with_micro_batch(
+            fun, batch_invars, num_microbatch, avals)
+
+        if num_microbatch > 1:
+            # Trace again with a full batch
+            for store in fun.stores:
+                if store:
+                    store.reset()
+            full_batch_closed_jaxpr, _ = trace_jaxpr_with_micro_batch(
+                fun, batch_invars, 1, avals)
+        else:
+            full_batch_closed_jaxpr = None
     debug_compilation_time("trace")
 
     pipeshard_config = compile_pipeshard_executable_internal(
@@ -220,6 +227,7 @@ def compile_pipeshard_executable_internal(
         flop_count=total_flops,
         in_tree=in_tree).compile()
 
+    debug_compilation_time("runtime emitter")
     return pipeshard_config
 
 

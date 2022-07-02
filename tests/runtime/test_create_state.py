@@ -10,7 +10,7 @@ import optax
 
 import alpa
 from alpa import (init, shutdown, parallelize, ShardParallel, PipeshardParallel,
-                  CreateStateParallel, manual_layer_construction, fetch)
+                  CreateStateParallel)
 
 
 class CreateStateTest(unittest.TestCase):
@@ -43,9 +43,6 @@ class CreateStateTest(unittest.TestCase):
             def loss_func(params):
                 out = state.apply_fn(params, batch["x"])
                 return jnp.mean((out - batch["y"])**2)
-
-            if isinstance(method, PipeshardParallel):
-                loss_func = manual_layer_construction(loss_func)
 
             grads = alpa.grad(loss_func)(state.params)
             new_state = state.apply_gradients(grads=grads)
@@ -94,7 +91,7 @@ class CreateStateTest(unittest.TestCase):
         self.run_test(method)
 
     def test_pipeshard_parallel(self):
-        method = PipeshardParallel(num_micro_batches=2)
+        method = PipeshardParallel(num_micro_batches=2, layer_option="manual")
         self.run_test(method)
 
 

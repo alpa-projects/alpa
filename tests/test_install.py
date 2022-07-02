@@ -10,8 +10,8 @@ import numpy as np
 import optax
 import ray
 
-from alpa import (init, parallelize, grad, ShardParallel,
-                  automatic_layer_construction, PipeshardParallel)
+from alpa import (init, parallelize, grad, ShardParallel, PipeshardParallel,
+                  AutoLayerOption)
 from alpa.device_mesh import get_global_cluster
 from alpa.testing import assert_allclose
 
@@ -87,7 +87,6 @@ class InstallationTest(unittest.TestCase):
 
         def train_step(state, batch):
 
-            @automatic_layer_construction(layer_num=layer_num)
             def loss_func(params):
                 out = state.apply_fn(params, batch['x'])
                 return jnp.mean((out - batch['y'])**2)
@@ -101,7 +100,10 @@ class InstallationTest(unittest.TestCase):
 
         # Parallel execution
         p_train_step = parallelize(
-            train_step, method=PipeshardParallel(num_micro_batches=2))
+            train_step,
+            method=PipeshardParallel(
+                num_micro_batches=2,
+                layer_option=AutoLayerOption(layer_num=layer_num)))
         actual_state = p_train_step(state, batch)
 
         # Check results

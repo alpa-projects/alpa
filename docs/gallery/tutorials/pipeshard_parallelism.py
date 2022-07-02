@@ -16,7 +16,7 @@ Then we show how to use Alpa to automate this process.
 ################################################################################
 # Import Libraries and Initialize Environment
 # -------------------------------------------
-# We first import the required libraries.
+# First, import the required libraries.
 
 import alpa
 from alpa.testing import assert_allclose
@@ -89,7 +89,7 @@ tx = optax.adam(learning_rate=1e-3)
 state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
 
-# Define training step
+# Define the training step
 def train_step(state, batch):
 
     def loss_func(params):
@@ -108,14 +108,14 @@ expected_state = train_step(state, batch)
 ################################################################################
 # Pipeline Parallelism with Manual Assignment
 # -------------------------------------------
-# To manually assign stages for pipeline parallelism, we can use the
-# ``alpa.mark_pipeline_boundary`` function to mark the boundary of each pipeline
-# stage, and use the ``@alpa.manual_layer_construction`` decorator to indicate
-# that we are manually assigning stages. Note that each the pipeline stage is
-# also automatically parallelized by the shard parallel pass.
+# Pipeline paralleism requires partitioning the model into several pipeline
+# stages. To manually assign stages, we can use ``alpa.mark_pipeline_boundary``
+# to mark the boundary of each pipeline stage in the forward function.
+# Note that each pipeline stage is also automatically parallelized by the
+# shard parallel pass.
 
 
-# Define the manually parallelized model with pipeline markers.
+# Define a MLP model with manual stage boundaries.
 class ManualPipelineMLPModel(nn.Module):
     hidden_dim: int
 
@@ -125,7 +125,7 @@ class ManualPipelineMLPModel(nn.Module):
         x = nn.relu(x)
         x = nn.Dense(features=self.hidden_dim)(x)
         x = nn.relu(x)
-        # Use this boundary marker to separate the network into two stages.
+        # Use this boundary marker to separate the model into two stages.
         alpa.mark_pipeline_boundary()
         x = nn.Dense(features=self.hidden_dim * 4)(x)
         x = nn.relu(x)
@@ -142,13 +142,15 @@ manual_pipeline_state = TrainState.create(apply_fn=manual_pipeline_model.apply,
                                           tx=tx)
 
 
-# Define the training step with manually parallelized pipeline stages.
+# Define the training step.
 # We use the "alpa.PipeshardParallel" option to let alpa use both
-# pipeline parallelism and shard parallelism.
-@alpa.parallelize(method=alpa.PipeshardParallel(num_micro_batches=16))
+# pipeline parallelism and shard parallelism. To make pipeline parallelism
+# efficient, we need to fill the pipeline with many micro batches,
+# so a `num_micro_batches` should be specified.
+@alpa.parallelize(method=alpa.PipeshardParallel(num_micro_batches=16,
+                                                layer_option="manual"))
 def manual_pipeline_train_step(state, batch):
-    # Indicate that we are manually assigning pipeline stages.
-    @alpa.manual_layer_construction
+
     def loss_func(params):
         out = state.apply_fn(params, batch["x"])
         loss = jnp.mean((out - batch["y"])**2)
@@ -170,6 +172,16 @@ assert_allclose(expected_state.params,
 
 alpa.shutdown()
 
+####################
+#
+# .. note::
+#
+#   In addition, Alpa supports more flexible manual assignments of pipeline
+#   parallelism strategies. In the above example, each partitioned stages will
+#   be assigned an equal number of devices to run. If you want to control the
+#   device assignment of each stage, you can use the more advanced
+#   ``stage_option=alpa.ManualStageOption``.
+
 ################################################################################
 # Pipeline Parallelism with Automatic Assignment
 # ----------------------------------------------
@@ -189,19 +201,19 @@ alpa.shutdown()
 
 alpa.init(cluster="ray")
 
-# Define training step with automatic pipeline-operator parallelism. Note that
-# we reuse the same model and state as the single device case. The only
-# modification required is the two decorators. The stage construction and
-# mesh slicing are performed within the `parallelize` decorator.
+# Define the parallel method.
+# `alpa.AutoLayerOption(layer_num=2)` means we use the auto layer construcion
+# algorithm to cluster primitive operators into two layers.
+# `stage_option="auto"` means we enable the auto stage construction algorithm.
+method = alpa.PipeshardParallel(num_micro_batches=16,
+                                layer_option=alpa.AutoLayerOption(layer_num=2),
+                                stage_option="auto")
 
 
-@alpa.parallelize(method=alpa.PipeshardParallel(num_micro_batches=16,
-                                                stage_mode="auto"))
+# Define the training step. The function body is the same as the above one.
+@alpa.parallelize(method=method)
 def auto_pipeline_train_step(state, batch):
-    # Indicate that we use automatic layer construction. The `layer_num` here
-    # is a hyperparameter to control how many layers we get from the
-    # layer construction algorithm.
-    @alpa.automatic_layer_construction(layer_num=2)
+
     def loss_func(params):
         out = state.apply_fn(params, batch["x"])
         loss = jnp.mean((out - batch["y"])**2)

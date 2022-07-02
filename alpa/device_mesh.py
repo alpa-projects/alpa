@@ -32,7 +32,7 @@ from typing import Any, List, Union, Sequence, Tuple, Optional
 import jax
 from jax import core, xla, device_put
 from jax._src.api import ShapeDtypeStruct
-from jax._src.lib import xla_bridge as xb, xla_extension as xe
+from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax._src.tree_util import tree_leaves
 from jax.abstract_arrays import array_types
 from jax.core import ShapedArray
@@ -48,11 +48,14 @@ from alpa import mesh_profiling
 import alpa.collective as col
 from alpa.global_env import global_config
 from alpa.monkey_patch import set_override_backend
-from alpa.shard_parallel.auto_sharding import LogicalDeviceMesh
-from alpa.parallel_plan import PlacementSpec
+from alpa.shard_parallel.auto_sharding import (AutoShardingOption,
+                                               LogicalDeviceMesh,
+                                               run_spmd_partitioner_pass)
+from alpa.parallel_plan import PlacementSpec, StagePlan
 from alpa.timer import timers
 from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
-                       update_jax_platform, is_ray_node_resource)
+                       update_jax_platform, is_ray_node_resource,
+                       get_index_select_computation)
 
 if global_config.nccl_mode == "cupy":
     import alpa.collective.worker_nccl_util_cupy as worker_nccl_util
@@ -608,6 +611,7 @@ class PhysicalDeviceMesh(ABC):
     num_hosts: int
     num_devices_per_host: int
     mesh_id: int
+    operation_executables: dict
 
     def get_signature(self) -> str:
         """Return a signature string that contains the mesh shape and GPU
@@ -810,6 +814,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.num_devices_per_host = len(self.devices)
         self.mesh_id = 0
         self.device_strs = []
+        self.operation_executables = {}
 
         self.set_runtime_random_seed(global_config.runtime_random_seed)
 
@@ -898,6 +903,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def shutdown(self, forced=False):
         self.sync_workers()
+        self.operation_executables.clear()
 
 
 def device_id_to_str(host_ip, device_id, device_type="gpu"):
@@ -934,6 +940,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.workers = None
         self.launched = False
         self.service_server = None
+        self.operation_executables = {}
 
         if devices is not None:
             if len(devices) != len(host_ids):
@@ -1301,6 +1308,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         if not self.launched:
             return
         if not forced:
+            self.operation_executables.clear()
             ray.get([w.shutdown.remote() for w in self.workers])
         for worker in self.workers:
             ray.kill(worker)
@@ -1309,6 +1317,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.service_server.shutdown()
         self.service_server = None
         self.launched = False
+        self.operation_executables.clear()  # clear with forced shutdown
 
 
 ########################################
@@ -1525,6 +1534,34 @@ class DistributedArray:
 
     # TODO(lmzheng): copy more functions from DeviceArray
     #   (jax/_src/device_array.py)
+    def index_select(self, dim, index):
+        """Compile and run index select operation."""
+        # pylint: disable=import-outside-toplevel
+        from alpa.mesh_executable import NormalMeshDriverExecutable
+        if type(index) not in [ShapedArray, ShapeDtypeStruct]:
+            index = xla.canonicalize_dtype(index)
+        index_shape = xc.shape_from_pyval(index)
+        key = hash(("index_select", self.aval, dim, index_shape))
+        if key in self.device_mesh.operation_executables:
+            executable = self.device_mesh.operation_executables[key]
+        else:
+            index_aval = ShapedArray(index.shape, index.dtype)
+            c = get_index_select_computation(self.sharding_spec, dim, self.aval,
+                                             index_shape).as_hlo_module()
+            hlo_module = run_spmd_partitioner_pass(c,
+                                                   self.device_mesh.num_devices)
+
+            as_option = AutoShardingOption()
+            strategy_config = StagePlan(global_config.compile_random_seed,
+                                        self.device_mesh.shape, 1 << 60,
+                                        as_option.all_reduce_threshold, None,
+                                        -1)
+            executable = NormalMeshDriverExecutable(self.device_mesh,
+                                                    hlo_module, strategy_config,
+                                                    [self.aval, index_aval],
+                                                    [self.aval], [False, False])
+            self.device_mesh.operation_executables[key] = executable
+        return executable.launch_on_driver(self, index)
 
     def __str__(self):
         return (f"DistributedArray(sharding_spec={self.sharding_spec}, "

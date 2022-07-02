@@ -5,8 +5,7 @@ import jax.numpy as jnp
 import ray
 
 from alpa import (init, shutdown, parallelize, grad, global_config,
-                  ShardParallel, PipeshardParallel,
-                  automatic_layer_construction)
+                  ShardParallel, PipeshardParallel, AutoLayerOption)
 from alpa.device_mesh import get_global_cluster
 
 from test_install import create_train_state_and_batch
@@ -50,10 +49,11 @@ class MemoryLeakTest(unittest.TestCase):
     def test_pipeline_parallel(self):
         layer_num = min(get_global_cluster().num_devices, 2)
 
-        @parallelize(method=PipeshardParallel(num_micro_batches=2))
+        @parallelize(method=PipeshardParallel(
+            num_micro_batches=2,
+            layer_option=AutoLayerOption(layer_num=layer_num)))
         def train_step(state, batch):
 
-            @automatic_layer_construction(layer_num=layer_num)
             def loss_func(params):
                 out = state.apply_fn(params, batch['x'])
                 return jnp.mean((out - batch['y'])**2)

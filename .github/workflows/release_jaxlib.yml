@@ -47,17 +47,19 @@ jobs:
             docker run --gpus all --tmpfs /build:exec \
               --rm -v /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}:/dist \
               build-jaxlib-image-cuda${CUDA_VERSION} ${PYTHON_VERSION} \
-              cuda ${CUDA_VERSION}
+              cuda ${CUDA_VERSION} ${ALPA_BRANCH}
           else
             docker run --gpus all --tmpfs /build:exec \
               --rm -v /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}:/dist \
               build-jaxlib-image-cuda${CUDA_VERSION} ${PYTHON_VERSION} \
-              cuda ${CUDA_VERSION} ${{ github.event.inputs.tensorflow }}
+              cuda ${CUDA_VERSION} ${ALPA_BRANCH} ${TF_BRANCH}
           fi
 
         env:
           CUDA_VERSION: ${{ matrix.cuda }}
           PYTHON_VERSION: ${{ matrix.python }}
+          ALPA_BRANCH: ${{ github.ref }}
+          TF_BRANCH: ${{ github.event.inputs.tensorflow }}
 
   publish:
     runs-on: [self-hosted]
@@ -78,15 +80,17 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         python -m pip install github3.py
-        tag=$(head -n 1 VERSION)
-        
+
+    - name: Get latest tag
+      id: latesttag
+      uses: "WyriHaximus/github-action-get-previous-tag@v1"
 
     - name: Publish CUDA${{ matrix.cuda }}
       run: |
         echo "Publish jaxlib"
         ls /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
-        
-        mv /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}/*.whl /data/alpa-pypi/packages/
+        python build_jaxlib/release/wheel_upload.py --tag ${TAG} /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
       env:
         CUDA_VERSION: ${{ matrix.cuda }}
         GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+        TAG: ${{ steps.latesttag.outputs.tag }}

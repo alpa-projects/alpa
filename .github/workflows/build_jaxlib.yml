@@ -45,7 +45,7 @@ jobs:
           mkdir -p dist
           docker run --gpus all --tmpfs /build:exec \
           --rm -v $(pwd)/dist:/dist build-jaxlib-image \
-          3.8 cuda 11.1 ${TF_BRANCH##*/}
+          3.8 cuda 11.1 main ${TF_BRANCH##*/}
 
       # change this to publishing to pypi
       - name: Publish to local

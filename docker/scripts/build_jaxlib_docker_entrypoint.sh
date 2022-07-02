@@ -13,7 +13,7 @@ export CUDA_PATH=/usr/local/cuda
 export LD_LIBRARY_PATH=$CUDA_PATH/lib64:$LD_LIBRARY_PATH
 
 usage() {
-  echo "usage: ${0##*/} [3.7|3.8|3.9] [cuda|nocuda] [11.1|11.2|11.3] [tensorflow-alpa branch name]"
+  echo "usage: ${0##*/} [3.7|3.8|3.9] [cuda|nocuda] [11.1|11.2|11.3] [alpa branch name] [tensorflow-alpa branch name]"
   exit 1
 }
 
@@ -28,9 +28,20 @@ echo "Python version $PY_VERSION"
 # switch tensorflow-alpa branch if necessary
 git clone --recursive https://github.com/alpa-projects/alpa.git
 
+# switch alpa branch
 if [[ $# -eq 4 ]]
 then
-  TF_BRANCH="$4"
+  ALPA_BRANCH="$4"
+  echo "Switch to alpa branch ALPA_BRANCH"
+  cd /build/alpa
+  git fetch origin +${ALPA_BRANCH}
+  git checkout -qf FETCH_HEAD
+  git submodule update --recursive
+
+# switch tensorflow-alpa branch, this will overwrite the above
+if [[ $# -eq 5 ]]
+then
+  TF_BRANCH="$5"
   echo "Switch to tensorflow-alpa branch $TF_BRANCH"
   cd /build/alpa/third_party/tensorflow-alpa
   git fetch origin +${TF_BRANCH}

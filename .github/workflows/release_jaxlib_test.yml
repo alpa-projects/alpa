@@ -113,5 +113,6 @@ jobs:
         run: |
           ls -ltr
           cd ..
-          ls -ltr
+          ls -l
+          ls -l alpa/
           python build_jaxlib/release/generate_pypi_index.py --tag ${TAG} --dry-run

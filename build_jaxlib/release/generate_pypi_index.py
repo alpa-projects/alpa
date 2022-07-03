@@ -1,4 +1,4 @@
-"""Update the wheels page, prune old nightly builds if necessary."""
+"""Generate and upload a PyPI index page given a tag."""
 import os
 import logging
 import argparse

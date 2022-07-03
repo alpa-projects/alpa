@@ -103,5 +103,8 @@ jobs:
           TAG: ${{ steps.latesttag.outputs.tag }}
         run: |
           git clone https://$GITHUB_TOKEN@github.com/alpa-projects/alpa-projects.github.io
-          ls -ltr
+          cd alpa-projects.github.io
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          cd ..
           python build_jaxlib/release/generate_pypi_index.py --tag ${TAG}

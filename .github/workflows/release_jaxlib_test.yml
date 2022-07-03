@@ -62,7 +62,7 @@ jobs:
         run: |
           echo "Move to one single folder"
           ls /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
-          mv /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}/*.whl /data/alpa-pypi/packages/
+          mv /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}/* /data/alpa-pypi/packages/
         env:
           CUDA_VERSION: ${{ matrix.cuda }}
 

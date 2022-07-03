@@ -1,4 +1,4 @@
-name: Release Jaxlib exp
+name: Release Jaxlib
 
 on:
   release:
@@ -42,15 +42,17 @@ jobs:
       - name: Compile Jaxlib
         run: |
           mkdir -p /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
+          echo "Compile Python ${PYTHON_VERSION}, CUDA ${CUDA_VERSION}, ALPA BRANCH: ${ALPA_BRANCH}, TF_BRANCH: ${TF_BRANCH}"
           if [[ ${{ github.event_name }} == "release" ]]; then
-            echo ${{ github.event_name }}
-            echo ${CUDA_VERSION}
-            echo ${ALPA_BRANCH}
+            docker run --gpus all --tmpfs /build:exec \
+              --rm -v /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}:/dist \
+              build-jaxlib-image-cuda${CUDA_VERSION} ${PYTHON_VERSION} \
+              cuda ${CUDA_VERSION} ${ALPA_BRANCH}
           else
-            echo ${{ github.event_name }}
-            echo ${CUDA_VERSION}
-            echo ${ALPA_BRANCH}
-            echo ${TF_BRANCH}
+            docker run --gpus all --tmpfs /build:exec \
+              --rm -v /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}:/dist \
+              build-jaxlib-image-cuda${CUDA_VERSION} ${PYTHON_VERSION} \
+              cuda ${CUDA_VERSION} ${ALPA_BRANCH} ${TF_BRANCH}
           fi
         env:
           CUDA_VERSION: ${{ matrix.cuda }}
@@ -62,7 +64,7 @@ jobs:
         run: |
           echo "Move to one single folder"
           ls /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
-#          mv /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}/* /data/alpa-pypi/packages/
+          mv /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}/*.whl /data/alpa-pypi/packages/
         env:
           CUDA_VERSION: ${{ matrix.cuda }}
 
@@ -90,8 +92,8 @@ jobs:
 
       - name: Upload wheels
         run: |
-          ls /data/alpa-pypi/packages/
           echo "Upload wheels to tag ${TAG}"
+          ls /data/alpa-pypi/packages/
           python build_jaxlib/release/wheel_upload.py --tag ${TAG} --path /data/alpa-pypi/packages/
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}

@@ -5,7 +5,6 @@ import enum
 import logging
 from typing import Any, Callable, Dict, Optional, Sequence, Union, Set
 
-from jax._src.tree_util import PyTreeDef, tree_unflatten
 from jax.core import Var
 from jax.interpreters import pxla
 from jax.lib import xla_bridge as xb
@@ -250,8 +249,9 @@ class PipeshardConfig:
     # Output configs
     output_local_uuid_list: Sequence[Sequence[int]]
     outs_handler: Callable
-    # Others
+    # Others (debug info)
     input_placement_specs: Sequence[PlacementSpec]
+    output_placement_specs: Sequence[PlacementSpec]
     sharding_annotated_hlo_texts: Sequence[str]
     flop_count: int
 
@@ -266,7 +266,7 @@ class PipelineInstEmitter:
                                                                           Var],
                  mesh_group: PhysicalDeviceMeshGroup,
                  schedule: PipelineSchedule, is_batch: Sequence[bool],
-                 num_batch: int, in_tree: PyTreeDef, flop_count: int):
+                 num_batch: int, flop_count: int):
         ##### Input arguments #####
         self.stages = stages
         self.global_invars = global_invars
@@ -278,7 +278,6 @@ class PipelineInstEmitter:
         self.schedule = schedule
         self.is_batch = is_batch
         self.num_batch = num_batch
-        self.in_tree = in_tree
         self.flop_count = flop_count
         self.sharding_annotated_hlo_texts = [x.get_hlo_text() for x in stages]
 
@@ -416,8 +415,9 @@ class PipelineInstEmitter:
         # Compile information for outputs
         output_local_uuid_list, mesh_output_indices, output_spec_list = (
             self._compile_collect_outputs())
-        outs_handler = self._get_outs_handler(mesh_output_indices,
-                                              output_spec_list)
+        outs_handler, output_placement_specs = self._get_outs_handler(
+            mesh_output_indices, output_spec_list)
+
         # Add gradient accumulation buffer
         reduced_var_uuid_lists = []
         for mesh_idx in range(num_mesh):
@@ -459,6 +459,7 @@ class PipelineInstEmitter:
             outs_handler,
             # Others
             input_placement_specs,
+            output_placement_specs,
             self.sharding_annotated_hlo_texts,
             self.flop_count)
 
@@ -919,6 +920,7 @@ class PipelineInstEmitter:
         outvar_index_on_mesh_list = []
         spec_list = []
         indices_list = []
+        output_placement_specs = []
 
         # Generate cached info
         for i, aval in enumerate(avals):
@@ -931,6 +933,9 @@ class PipelineInstEmitter:
                 outvar_index_on_mesh_list.append(outvar_index_on_mesh)
                 spec_list.append(spec)
                 indices_list.append(pxla.spec_to_indices(aval.shape, spec))
+
+                output_placement_specs.append(
+                    PlacementSpec(aval, (mesh_idx_list[-1],), (spec_list[-1],)))
             else:
                 # for RepliatedDistributedArray
                 mesh_idx_list.append([])
@@ -947,6 +952,9 @@ class PipelineInstEmitter:
                     spec_list[-1].append(spec)
                     indices_list[-1].append(
                         pxla.spec_to_indices(aval.shape, spec))
+                output_placement_specs.append(
+                    PlacementSpec(aval, tuple(mesh_idx_list[-1]),
+                                  tuple(spec_list[-1])))
 
         def outs_handler(mesh_group, refs):
             ret = []
@@ -980,12 +988,10 @@ class PipelineInstEmitter:
                 ret.append(arr)
             return ret
 
-        return outs_handler
+        return outs_handler, output_placement_specs
 
     def _compile_input_placement_spec(self, mesh_arg_indices,
                                       input_shard_specs):
-        assert self.in_tree is not None
-
         # build spec_arr: List[flatten global index -> PlacementSpec]
         spec_arr = [None] * len(self.is_batch)
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
@@ -1002,7 +1008,7 @@ class PipelineInstEmitter:
                         old_val.mesh_ids + (physical_mesh.mesh_id,),
                         old_val.sharding_specs + (shard_spec,))
 
-        return tree_unflatten(self.in_tree, spec_arr)
+        return spec_arr
 
     # TODO(yonghao): set empty buffer is not compatiable with local allgather
     @staticmethod

@@ -61,7 +61,19 @@ class MeshDriverExecutable(ABC):
         raise NotImplementedError()
 
     def get_input_placement_specs(self):
-        """Return the preferred placement specs for input arguments."""
+        """
+        Return the preferred placement specs for input arguments.
+        The return value is a pytree of PlacementSpec
+        with the same structure as the input pytree.
+        """
+        raise NotImplementedError()
+
+    def get_output_placement_specs(self):
+        """
+        Return the preferred placement specs for outputs.
+        The return value is a pytree of PlacementSpec
+        with the same structure as the output pytree.
+        """
         raise NotImplementedError()
 
     def preshard_dynamic_args(self, *args):
@@ -158,6 +170,15 @@ def get_sync_func_worker(worker):
         worker.local_devices[0].synchronize_all_activity()
 
     return sync_func_worker
+
+
+def wrap_to_placement_spec_tree(physical_mesh, avals, sharding_specs, pytree):
+    """Wrap avals and sharding specs to a pytree of placement specs."""
+    placement_specs = [
+        PlacementSpec(aval, (physical_mesh.mesh_id,), (sharding_spec,))
+        for aval, sharding_spec in zip(avals, sharding_specs)
+    ]
+    return tree_unflatten(pytree, placement_specs)
 
 
 class NormalMeshDriverExecutable(MeshDriverExecutable):
@@ -284,13 +305,24 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         return self.outs_handler(output_bufs)
 
     def get_input_placement_specs(self):
-        """Return the preferred placement specs for input arguments."""
-        placement_specs = [
-            PlacementSpec(aval, (self.physical_mesh.mesh_id,),
-                          (sharding_spec,)) for aval, sharding_spec in zip(
-                              self.avals, self.input_sharding_specs)
-        ]
-        return tree_unflatten(self.in_tree, placement_specs)
+        """
+        Return the preferred placement specs for input arguments.
+        The return value is a pytree of PlacementSpec
+        with the same structure as the input pytree.
+        """
+        return wrap_to_placement_spec_tree(self.physical_mesh, self.avals,
+                                           self.input_sharding_specs,
+                                           self.in_tree)
+
+    def get_output_placement_specs(self):
+        """
+        Return the preferred placement specs for outputs.
+        The return value is a pytree of PlacementSpec
+        with the same structure as the output pytree.
+        """
+        return wrap_to_placement_spec_tree(self.physical_mesh, self.out_avals,
+                                           self.output_sharding_specs,
+                                           self.out_tree)
 
     def preshard_dynamic_args(self, *args):
         """Pre-shard the input arguments."""
@@ -505,6 +537,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                                             out_avals,
                                             physical_mesh.num_devices,
                                             logical_mesh_shape))
+        self.output_sharding_specs = output_sharding_specs
         num_grads = len(grad_avals)
         assert accumulate_grad_input_sharding_specs[
             -num_grads:] == grad_sharding_specs
@@ -701,13 +734,24 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         return self.outs_handler(output_bufs)
 
     def get_input_placement_specs(self):
-        """Return the preferred placement specs for input arguments."""
-        placement_specs = [
-            PlacementSpec(aval, (self.physical_mesh.mesh_id,),
-                          (sharding_spec,)) for aval, sharding_spec in zip(
-                              self.avals, self.global_arg_sharding_specs)
-        ]
-        return tree_unflatten(self.in_tree, placement_specs)
+        """
+        Return the preferred placement specs for input arguments.
+        The return value is a pytree of PlacementSpec
+        with the same structure as the input pytree.
+        """
+        return wrap_to_placement_spec_tree(self.physical_mesh, self.avals,
+                                           self.global_arg_sharding_specs,
+                                           self.in_tree)
+
+    def get_output_placement_specs(self):
+        """
+        Return the preferred placement specs for outputs.
+        The return value is a pytree of PlacementSpec
+        with the same structure as the output pytree.
+        """
+        return wrap_to_placement_spec_tree(self.physical_mesh, self.out_avals,
+                                           self.output_sharding_specs,
+                                           self.out_tree)
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size of this executable."""

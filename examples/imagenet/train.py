@@ -165,12 +165,12 @@ def eval_step(state, batch):
 
 
 def create_input_iter(dataset_builder, batch_size, image_size, dtype,
-                      sharding_specs, physical_mesh, train, cache):
+                      placement_specs, train, cache):
   ds = input_pipeline.create_split(
       dataset_builder, batch_size, image_size=image_size, dtype=dtype,
       train=train, cache=cache)
   it = map(lambda xs: jax.tree_map(lambda x: x._numpy(), xs), ds)
-  it = alpa.DataLoader(it, sharding_specs, physical_mesh=physical_mesh, prefetch_size=4)
+  it = alpa.DataLoader(it, placement_specs, prefetch_size=4)
   return it
 
 
@@ -306,17 +306,16 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
     "label": jax.core.ShapedArray((config.batch_size,), jnp.int32),
   }
   executable = p_train_step.get_executable(state, batch)
-  physical_mesh = executable.physical_mesh
   logging.info('Initial compilation completed.')
 
-  sharding_specs = executable.input_sharding_specs[-2:]
+  batch_placement_specs = executable.get_input_placement_specs()[1]
 
   train_iter = create_input_iter(
       dataset_builder, local_batch_size, image_size, input_dtype,
-      sharding_specs, physical_mesh, train=True, cache=config.cache)
+      batch_placement_specs, train=True, cache=config.cache)
   eval_iter = create_input_iter(
       dataset_builder, local_batch_size, image_size, input_dtype,
-      sharding_specs, physical_mesh, train=False, cache=config.cache)
+      batch_placement_specs, train=False, cache=config.cache)
 
   train_metrics = []
   hooks = []

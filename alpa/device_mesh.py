@@ -809,7 +809,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.devices = devices if devices is not None else xb.local_devices()
         self.num_hosts = 1
         self.num_devices_per_host = len(self.devices)
-        self.mesh_id = 0
+        self.mesh_id = -1
         self.device_strs = []
         self.operation_executables = {}
 

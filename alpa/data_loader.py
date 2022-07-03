@@ -3,11 +3,11 @@ import collections
 import itertools
 
 import jax
-from jax.interpreters import pxla, xla
+from jax.interpreters import pxla
 import numpy as np
 import ray
 
-from alpa.device_mesh import (LocalPhysicalDeviceMesh, DistributedArray,
+from alpa.device_mesh import (DistributedArray, get_global_physical_mesh,
                               create_remote_array_refs)
 
 
@@ -15,38 +15,28 @@ class DataLoader:
     """A driver-only dataloader that loads data on the driver process and
     sends the data to all workers."""
 
-    def __init__(self,
-                 input_iter,
-                 sharding_specs,
-                 physical_mesh=None,
-                 prefetch_size=1):
+    def __init__(self, input_iter, placement_specs, prefetch_size=1):
         self.input_iter = input_iter
-        self.sharding_specs = sharding_specs
         self.prefetch_size = prefetch_size
 
-        if physical_mesh is None:
-            self.physical_mesh = LocalPhysicalDeviceMesh()
-        else:
-            self.physical_mesh = physical_mesh
+        self.physical_mesh = get_global_physical_mesh()
+        self.avals = []
+        self.indices = []
+        self.sharding_specs = []
+        for ps in jax.tree_leaves(placement_specs):
+            assert len(ps.mesh_ids) == 1
+            assert ps.mesh_ids[0] == self.physical_mesh.mesh_id
+
+            self.avals.append(ps.aval)
+            self.sharding_specs.append(ps.sharding_specs[0])
+            self.indices.append(
+                tuple(ps.sharding_specs[0].indices(ps.aval.shape)))
 
         self.queue = collections.deque()
-        self.first_iter = True
-        self.avals = None
-        self.indices = None
 
     def enqueue(self, num_batches):
         for batch in itertools.islice(self.input_iter, num_batches):
             flatten_args, tree = jax.tree_flatten(batch)
-
-            # Cache meta info
-            if self.first_iter:
-                self.first_iter = False
-                self.avals = [xla.abstractify(a) for a in flatten_args]
-                self.indices = [
-                    tuple(spec.indices(aval.shape))
-                    for spec, aval in zip(self.sharding_specs, self.avals)
-                ]
-
             new_args = self.physical_mesh.shard_args_to_arrays(
                 self.avals, self.indices, self.sharding_specs, flatten_args)
             self.queue.append(jax.tree_unflatten(tree, new_args))
@@ -112,14 +102,19 @@ class MeshDriverDataLoader:
                  batch_size,
                  num_samples,
                  input_iter_func,
-                 avals,
-                 sharding_specs,
-                 physical_mesh,
+                 placement_specs,
                  prefetch_size=1):
-        indices = [
-            tuple(np.ravel(spec.indices(aval.shape)))
-            for spec, aval in zip(sharding_specs, avals)
-        ]
+        physical_mesh = get_global_physical_mesh()
+        avals = []
+        sharding_specs = []
+        indices = []
+        for ps in jax.tree_leaves(placement_specs):
+            avals.append(ps.aval)
+            assert len(ps.mesh_ids) == 1
+            assert ps.mesh_ids[0] == physical_mesh.mesh_id
+            sharding_specs.append(ps.sharding_specs[0])
+            indices.append(np.ravel(ps.sharding_specs[0].indices(
+                ps.aval.shape)))
 
         self.uuid = next_mesh_data_loader_uuid()
         self.physical_mesh = physical_mesh

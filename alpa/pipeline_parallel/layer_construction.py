@@ -13,9 +13,11 @@ from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun,
                       new_jaxpr_eqn, gensym, raise_to_shaped, get_aval)
 from jax.interpreters.partial_eval import remat_call_p
 
+from alpa.global_env import global_config
 from alpa.pipeline_parallel.layer_stats import (global_invar_size,
                                                 is_nontrivial, eqn_flops,
-                                                heavy_count)
+                                                heavy_count,
+                                                log_layer_slicing_stats)
 from alpa.pipeline_parallel.primitive_def import (pipeline_p,
                                                   mark_pipeline_jaxpreqn)
 from alpa.util import (clone_jaxpr, slices_to_jaxpr, OrderedSet,
@@ -448,6 +450,8 @@ def layer_level_jaxpr_transformation(fn: Callable,
                                                    eps,
                                                    costs,
                                                    cost_criteria=cost_criteria)
+            if global_config.print_auto_layer_stats:
+                log_layer_slicing_stats(jaxpr, sliced_eqns)
         else:
             sliced_eqns = slice_eqns_by_layer_boundary(jaxpr)
 

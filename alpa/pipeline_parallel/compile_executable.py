@@ -74,14 +74,15 @@ def compile_pipeshard_executable(
     debug_compilation_time("trace")
 
     pipeshard_config = compile_pipeshard_executable_internal(
-        closed_jaxpr, full_batch_closed_jaxpr, micro_batch_size, in_tree,
-        donated_invars, batch_invars, virtual_mesh, num_microbatch,
-        pipeline_schedule, default_as_option, stage_option, name_base, None)
+        closed_jaxpr, full_batch_closed_jaxpr, micro_batch_size, donated_invars,
+        batch_invars, virtual_mesh, num_microbatch, pipeline_schedule,
+        default_as_option, stage_option, name_base, None)
 
     executable = PipeshardDriverExecutable(
         mesh_group=virtual_mesh.launched_physical_mesh_group,
         pipeshard_config=pipeshard_config,
         num_batch=num_microbatch,
+        in_tree=in_tree,
         out_tree=out_tree_thunk(),
         static_argnums=static_argnums)
     debug_compilation_time("driver executable")
@@ -91,11 +92,10 @@ def compile_pipeshard_executable(
 def compile_pipeshard_executable_internal(
         closed_jaxpr: ClosedJaxpr,
         full_batch_closed_jaxpr: Optional[ClosedJaxpr], micro_batch_size: int,
-        in_tree: PyTreeDef, donated_invars: Sequence[bool],
-        batch_invars: Sequence[bool], virtual_mesh: VirtualPhysicalMesh,
-        num_microbatch: int, pipeline_schedule: str,
-        default_as_option: AutoShardingOption, stage_option: StageOption,
-        name_base: str,
+        donated_invars: Sequence[bool], batch_invars: Sequence[bool],
+        virtual_mesh: VirtualPhysicalMesh, num_microbatch: int,
+        pipeline_schedule: str, default_as_option: AutoShardingOption,
+        stage_option: StageOption, name_base: str,
         output_shardings: Optional[Sequence[pxla.ShardingSpec]]):
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
@@ -224,8 +224,7 @@ def compile_pipeshard_executable_internal(
         schedule=schedule,
         is_batch=batch_invars,
         num_batch=num_microbatch,
-        flop_count=total_flops,
-        in_tree=in_tree).compile()
+        flop_count=total_flops).compile()
 
     debug_compilation_time("runtime emitter")
     return pipeshard_config

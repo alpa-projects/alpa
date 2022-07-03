@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from jax.interpreters import pxla
 
 from alpa import init, MeshDriverDataLoader
+from alpa.parallel_plan import PlacementSpec
 from alpa.device_mesh import get_global_physical_mesh
 from alpa.testing import (assert_allclose, data_loader_test_input_iter_func as
                           input_iter_func)
@@ -21,18 +22,20 @@ class DataLoaderTest(unittest.TestCase):
         self.physical_mesh = get_global_physical_mesh(create_if_not_exist=True)
 
     def run_test(self, sharding_specs):
-
         batch_size = 64
         num_samples = 256
         avals = [
             jax.core.ShapedArray((batch_size, 32), jnp.float32),
             jax.core.ShapedArray((batch_size,), jnp.int32)
         ]
+        placement_specs = [
+            PlacementSpec(aval, (self.physical_mesh.mesh_id,), (sharding_spec,))
+            for aval, sharding_spec in zip(avals, sharding_specs)
+        ]
         prefetch_size = 2
 
         data_loader = MeshDriverDataLoader(batch_size, num_samples,
-                                           input_iter_func, avals,
-                                           sharding_specs, self.physical_mesh,
+                                           input_iter_func, placement_specs,
                                            prefetch_size)
         expected_data_loader = input_iter_func(0, num_samples, batch_size)
 

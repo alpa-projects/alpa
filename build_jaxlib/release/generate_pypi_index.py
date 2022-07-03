@@ -40,7 +40,7 @@ def list_wheels(repo, tag):
     return wheels
 
 
-def update_wheel_page(keep_list, site_repo, dry_run=False):
+def update_wheel_page(keep_list, site_repo, tag, dry_run=False):
     """Update the wheel page"""
     new_html = ""
     for asset in keep_list:
@@ -62,12 +62,14 @@ def update_wheel_page(keep_list, site_repo, dry_run=False):
     run_cmd(["git", "fetch"])
     run_cmd(["git", "checkout", "-B", "master", "origin/master"])
     wheel_html_path = os.path.join(site_repo, "wheels.html")
-    print(f"Wheel page changed, update {wheel_html_path}..")
-    if not dry_run:
-        open(wheel_html_path, "w").write(new_html)
-        run_cmd(["git", "add", "wheels.html"])
-        run_cmd(["git", "commit", "-am", "wheel update at %s" % datetime.now()])
-        run_cmd(["git", "push", "origin", "master"])
+    if not os.path.exists(wheel_html_path) or open(wheel_html_path, "r").read() != new_html:
+        print(f"Wheel page changed, update {wheel_html_path}..")
+        if not dry_run:
+            open(wheel_html_path, "w").write(new_html)
+            run_cmd(["git", "add", "wheels.html"])
+            run_cmd(["git", "commit", "-am",
+                     f"wheel update at {datetime.now()} from tag {tag}"])
+            run_cmd(["git", "push", "origin", "master"])
 
 
 def delete_assets(remove_list, dry_run):
@@ -92,7 +94,7 @@ def main():
         raise RuntimeError("need GITHUB_TOKEN")
     args = parser.parse_args()
     wheels = list_wheels(args.repo, args.tag)
-    update_wheel_page(wheels, args.site_path, args.dry_run)
+    update_wheel_page(wheels, args.site_path, args.tag, args.dry_run)
 
 
 if __name__ == "__main__":

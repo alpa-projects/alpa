@@ -3,8 +3,6 @@ name: Release Jaxlib exp
 on:
   release:
     types: [created]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
     inputs:
       tensorflow:
@@ -44,7 +42,7 @@ jobs:
       - name: Compile Jaxlib
         run: |
           mkdir -p /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
-          if [[ ${{ github.event_name }} == "pull_request" ]]; then
+          if [[ ${{ github.event_name }} == "release" ]]; then
             echo ${{ github.event_name }}
             echo ${CUDA_VERSION}
             echo ${ALPA_BRANCH}
@@ -81,11 +79,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Test
-        run: |
-          ls -ltr
-          git branch
-
       - name: Get latest tag
         id: latesttag
         uses: "WyriHaximus/github-action-get-previous-tag@v1"
@@ -101,13 +94,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           TAG: ${{ steps.latesttag.outputs.tag }}
 
-      - name: "Generate"
+      - name: "Generate and update PyPI index"
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           TAG: ${{ steps.latesttag.outputs.tag }}
         run: |
-          
           git clone https://$GITHUB_TOKEN@github.com/alpa-projects/alpa-projects.github.io
           ls -ltr
-          ls -l alpa/
           python build_jaxlib/release/generate_pypi_index.py --tag ${TAG} --dry-run

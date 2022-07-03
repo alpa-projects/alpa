@@ -1,6 +1,7 @@
 <html lang="en">
 <head>
     <title>Serving OPT-175B Language Model with Alpa</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
     <link rel="icon" type="image/x-icon" href="alpa-logo.ico">
     <script src="//code.jquery.com/jquery-1.11.0.min.js"></script>
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
@@ -24,7 +25,10 @@
             "length": 32
         },
         "chatbot": {
-            "prompt": "A chat between a professor and a graduate student in Computer Science.\n\nStudent: Which is the best Computer Science graduate school in the US? UC Berkeley or Carnegie Mellon?\nProfessor:",
+            "prompt": "A chat between a curious human and the Statue of Liberty.\n\n" +
+                "Human: What is your name?\nStatue: I am the Statue of Liberty\n" +
+                "Human: Where do you live?\nStatue: New York City.\n" +
+                "Human: How long have you lived there?",
             "length": 128
         },
         "philosophy": {
@@ -32,15 +36,19 @@
             "length": 128
         },
         "translation": {
-            "prompt": "Please translate the following sentence from English into Chinese: I love you!",
-            "length": 64
+            "prompt": "English: I want to go home.\nChinese: 我想回家。\n\n" +
+                "English: I don't know.\nChinese: 我不知道。\n\n" +
+                "English: I am hungry.\nChinese:",
+            "length": 256
         },
         "cryptocurrency": {
             "prompt": "What do you think about the future of Bitcoin?",
             "length": 256
         },
-        "elonmusk": {
-            "prompt": "Do you think Elon Musk and Amber Heard make a good match?",
+        "programming": {
+            "prompt":
+                "def fib(n):\n" +
+                "    Returns n-th Fibonacci number.",
             "length": 256
         },
         "math": {
@@ -193,9 +201,9 @@ label {
 
   <div class="container my-5 text-center">
       <div class="py-5">
-        <img class="d-block mx-auto mb-2" src="https://raw.githubusercontent.com/alpa-projects/alpa/hao-webserver/examples/opt_serving/service/alpa-logo.svg" width="368">
+        <img class="d-block mx-auto mb-2 img-fluid" style="width:30%;" src="https://raw.githubusercontent.com/alpa-projects/alpa/main/examples/opt_serving/service/alpa-logo.svg">
       </div>
-      <h1 class="display-5 fw col-lg-10 mx-auto">Large Model for Everyone</h1>
+      <h1 class="display-2 fw col-lg-10 mx-auto">Large Model for Everyone</h1>
     <div class="col-lg-10 py-2 mx-auto">
       <p class="lead mb-4">
           Alpa is a system for training and serving gigantic machine learning models.
@@ -213,9 +221,10 @@ label {
 <div class="container py-5" id="generation">
     <div class="p-4 mb-3 bg-light rounded-4">
     <span>
-        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="gold" class="bi bi-lightning-fill" viewBox="0 0 24 24">
-            <path d="M5.52.359A.5.5 0 0 1 6 0h4a.5.5 0 0 1 .474.658L8.694 6H12.5a.5.5 0 0 1 .395.807l-7 9a.5.5 0 0 1-.873-.454L6.823 9.5H3.5a.5.5 0 0 1-.48-.641l2.5-8.5z"/>
-        </svg>
+        <i class="bi bi-robot"></i>
+<!--        <svg xmlns="http://www.w3.org/2000/svg" fill="gold" class="bi bi-lightning-fill" style="" viewBox="0 0 24 24">-->
+<!--            <path d="M5.52.359A.5.5 0 0 1 6 0h4a.5.5 0 0 1 .474.658L8.694 6H12.5a.5.5 0 0 1 .395.807l-7 9a.5.5 0 0 1-.873-.454L6.823 9.5H3.5a.5.5 0 0 1-.48-.641l2.5-8.5z"/>-->
+<!--        </svg>-->
         <strong class="display-6 fw-bold">Free, Unlimited OPT-175B Text Generation</strong>
     </span>
 <!--    <div style="padding-left: 50px">-->
@@ -231,7 +240,7 @@ label {
     <a type="button" class="btn btn-outline-success btn-lg" href='javascript:set_prompt("philosophy");'><i class="fa-solid fa-lightbulb"></i> Philosophy</a>
     <a type="button" class="btn btn-outline-danger btn-lg" href='javascript:set_prompt("translation");'><i class="fa-solid fa-language"></i> Translation</a>
     <a type="button" class="btn btn-outline-warning btn-lg" href='javascript:set_prompt("cryptocurrency");'><i class="fa-brands fa-bitcoin" style="font-size:24px;"></i> Cryptocurrency</a>
-    <a type="button" class="btn btn-outline-info btn-lg" href='javascript:set_prompt("elonmusk");'><i class="fa-solid fa-rocket"></i> Elon Musk</a>
+    <a type="button" class="btn btn-outline-info btn-lg" href='javascript:set_prompt("programming");'><i class="fa-solid fa-rocket"></i> CodePilot</a>
     <a type="button" class="btn btn-outline-dark btn-lg" href='javascript:set_prompt("math");'><i class="fa-solid fa-calculator"></i> Math</a>
     </span>
 </p>

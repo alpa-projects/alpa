@@ -58,12 +58,17 @@ jobs:
           ALPA_BRANCH: ${{ github.ref }}
           TF_BRANCH: ${{ github.event.inputs.tensorflow }}
 
+      - name: Move CUDA${{ matrix.cuda }}
+        run: |
+          echo "Move to one single folder"
+          ls /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
+          mv /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}/*.whl /data/alpa-pypi/packages/
+        env:
+          CUDA_VERSION: ${{ matrix.cuda }}
+
   publish:
     runs-on: [self-hosted]
     needs: [build-jaxlib]
-    strategy:
-      matrix:
-        cuda: ["11.1", "11.2", "11.3"]
     steps:
       - name: Set up Python 3.8
         uses: actions/setup-python@v2
@@ -83,13 +88,12 @@ jobs:
         id: latesttag
         uses: "WyriHaximus/github-action-get-previous-tag@v1"
 
-      - name: Upload wheels for CUDA${{ matrix.cuda }}
+      - name: Upload wheels
         run: |
-          ls /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
+          ls /data/alpa-pypi/packages/
           echo "Upload wheels to tag ${TAG}"
-          python build_jaxlib/release/wheel_upload.py --tag ${TAG} --path /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
+          python build_jaxlib/release/wheel_upload.py --tag ${TAG} --path /data/alpa-pypi/packages/
         env:
-          CUDA_VERSION: ${{ matrix.cuda }}
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           TAG: ${{ steps.latesttag.outputs.tag }}
 

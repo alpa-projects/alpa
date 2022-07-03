@@ -5,7 +5,6 @@ import enum
 import logging
 from typing import Any, Callable, Dict, Optional, Sequence, Union, Set
 
-from jax._src.tree_util import PyTreeDef, tree_unflatten
 from jax.core import Var
 from jax.interpreters import pxla
 from jax.lib import xla_bridge as xb
@@ -935,8 +934,8 @@ class PipelineInstEmitter:
                 spec_list.append(spec)
                 indices_list.append(pxla.spec_to_indices(aval.shape, spec))
 
-                output_placement_specs.append(PlacementSpec(
-                    aval, (mesh_idx_list[-1],), (spec_list[-1],)))
+                output_placement_specs.append(
+                    PlacementSpec(aval, (mesh_idx_list[-1],), (spec_list[-1],)))
             else:
                 # for RepliatedDistributedArray
                 mesh_idx_list.append([])
@@ -953,8 +952,9 @@ class PipelineInstEmitter:
                     spec_list[-1].append(spec)
                     indices_list[-1].append(
                         pxla.spec_to_indices(aval.shape, spec))
-                output_placement_specs.append(PlacementSpec(
-                    aval, tuple(mesh_idx_list[-1]), tuple(spec_list[-1])))
+                output_placement_specs.append(
+                    PlacementSpec(aval, tuple(mesh_idx_list[-1]),
+                                  tuple(spec_list[-1])))
 
         def outs_handler(mesh_group, refs):
             ret = []

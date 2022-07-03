@@ -195,10 +195,19 @@ class PipeshardDriverExecutable:
         return self.outs_handler(self.mesh_group, output_bufs)
 
     def get_input_placement_specs(self):
-        """Return the preferred placement specs for input arguments."""
+        """
+        Return the preferred placement specs for input arguments.
+        The return value is a pytree of PlacementSpec
+        with the same structure as the input pytree.
+        """
         return tree_unflatten(self.in_tree, self.input_placement_specs)
 
     def get_output_placement_specs(self):
+        """
+        Return the preferred placement specs for outputs.
+        The return value is a pytree of PlacementSpec
+        with the same structure as the output pytree.
+        """
         return tree_unflatten(self.out_tree, self.output_placement_specs)
 
     def __call__(self, *args):

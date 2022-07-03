@@ -69,18 +69,16 @@ class CreateStateTest(unittest.TestCase):
         state = train_step(state, batch)
 
         if isinstance(method, ShardParallel):
-            actual = create_state.get_last_executable().output_sharding_specs
-            if method.num_micro_batches == None:  # NormalMeshDriverExecutable
-                expected = train_step.get_last_executable(
-                ).input_sharding_specs[:len(actual)]
-            else:  # GradAccMeshDriverExecutable
-                expected = train_step.get_last_executable(
-                ).global_arg_sharding_specs[:len(actual)]
-            for x, y in zip(actual, expected):
-                assert x == y, f"{x} vs. {y}"
+            actual = jax.tree_flatten(create_state.get_last_executable().
+                                      get_output_placement_specs())[0]
+            expected = jax.tree_flatten(
+                train_step.get_last_executable().get_input_placement_specs()
+                [0])[0]
+            assert actual == expected
         elif isinstance(method, PipeshardParallel):
             # The assertion is already in CreateStateExecutable::launch_on_driver
-            pass
+            # Here, we just call the function to test whether it is runnable.
+            train_step.get_last_executable().get_output_placement_specs()
 
     def test_shard_parallel(self):
         method = ShardParallel(num_micro_batches=None)

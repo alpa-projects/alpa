@@ -16,7 +16,8 @@ from jax.interpreters.partial_eval import remat_call_p
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.layer_stats import (global_invar_size,
                                                 is_nontrivial, eqn_flops,
-                                                heavy_count, log_layer_slicing_stats)
+                                                heavy_count,
+                                                log_layer_slicing_stats)
 from alpa.pipeline_parallel.primitive_def import (pipeline_p,
                                                   mark_pipeline_jaxpreqn)
 from alpa.util import (clone_jaxpr, slices_to_jaxpr, OrderedSet,

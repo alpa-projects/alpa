@@ -5,7 +5,8 @@ from typing import Sequence, Optional
 from jax._src.lib import xla_bridge as xb, xla_extension as xe
 from jax.core import ClosedJaxpr, Var
 from jax.interpreters import partial_eval as pe, pxla
-from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef, tree_map
+from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
+import numpy as np
 
 from alpa.device_mesh import ReplicatedDistributedArray, PhysicalDeviceMeshGroup
 from alpa.mesh_executable import (NormalMeshDriverExecutable,
@@ -60,7 +61,7 @@ class CreateStateExecutable(PipeshardDriverExecutable):
                     indices = pxla.spec_to_indices(array.shape, sharding_spec)
                     dis_array = self.mesh_group[mesh_id].shard_args_to_arrays(
                         (array.aval,), (indices,), (sharding_spec,),
-                        (array._value,))[0]
+                        (np.asarray(array),))[0]
                     distributed_arrays.append(dis_array)
                 outputs[idx] = ReplicatedDistributedArray(
                     meshes, distributed_arrays)
@@ -106,7 +107,8 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
 
         return NormalMeshDriverExecutable(physical_mesh, hlo_module, stage_plan,
                                           avals, out_avals,
-                                          [False] * len(avals))
+                                          [False] * len(avals), static_argnums,
+                                          in_tree, out_tree)
     else:
         # Construct a new pipelined jaxpr
         outvars = jaxpr.outvars
@@ -128,8 +130,8 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
 
         # Compile a pipeshard executable with predefined output shardings
         pipeshard_config = compile_pipeshard_executable_internal(
-            new_jaxpr, None, 1, in_tree, [False] * len(avals),
-            [False] * len(avals), executable.mesh_group.parent, 1, "inference",
+            new_jaxpr, None, 1, [False] * len(avals), [False] * len(avals),
+            executable.mesh_group.parent, 1, "inference",
             AutoShardingOption(enable_auto_sharding=False),
             UniformStageOption(), name, output_shardings)
 

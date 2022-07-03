@@ -82,6 +82,7 @@ def compile_pipeshard_executable(
         mesh_group=virtual_mesh.launched_physical_mesh_group,
         pipeshard_config=pipeshard_config,
         num_batch=num_microbatch,
+        in_tree=in_tree,
         out_tree=out_tree_thunk(),
         static_argnums=static_argnums)
     debug_compilation_time("driver executable")
@@ -224,8 +225,7 @@ def compile_pipeshard_executable_internal(
         schedule=schedule,
         is_batch=batch_invars,
         num_batch=num_microbatch,
-        flop_count=total_flops,
-        in_tree=in_tree).compile()
+        flop_count=total_flops).compile()
 
     debug_compilation_time("runtime emitter")
     return pipeshard_config

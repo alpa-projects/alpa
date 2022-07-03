@@ -78,6 +78,7 @@ class GlobalConfig:
 
         ########## Options of logging ##########
         self.print_compilation_time = False
+        self.print_auto_layer_stats = False
 
 
 global_config = GlobalConfig()

@@ -27,7 +27,7 @@ def adam(lr=1e-4):
         def optim_func(params, optim_state, params_grad):
             for k in params:
                 params[k] = params[k] + params_grad[k] * lr
-                optim_state[k] = optim_state[k] + 1
+                optim_state[k] = optim_state[k] + params_grad[k]
             return params, optim_state
 
         optim_state = copy.deepcopy(params)

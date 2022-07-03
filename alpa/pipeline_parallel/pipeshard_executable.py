@@ -44,6 +44,7 @@ class PipeshardDriverExecutable:
                  mesh_group: PhysicalDeviceMeshGroup,
                  pipeshard_config: PipeshardConfig,
                  num_batch: int,
+                 in_tree: PyTreeDef,
                  out_tree: Optional[PyTreeDef] = None,
                  static_argnums: Optional[Sequence[int]] = None):
         ##### Input arguments #####
@@ -51,6 +52,7 @@ class PipeshardDriverExecutable:
         self.num_mesh = len(mesh_group)
         self.num_batch = num_batch
         self.static_argnums = static_argnums
+        self.in_tree = in_tree
         self.out_tree = out_tree
 
         ##### For debugging and serialization #####
@@ -58,6 +60,7 @@ class PipeshardDriverExecutable:
         self.schedule = pipeshard_config.schedule
         self.flop_count = pipeshard_config.flop_count
         self.input_placement_specs = pipeshard_config.input_placement_specs
+        self.output_placement_specs = pipeshard_config.output_placement_specs
         # List[stage_idx -> str]
         self.fully_optimized_hlo_texts = []
         self.sharding_annotated_hlo_texts = (
@@ -193,7 +196,10 @@ class PipeshardDriverExecutable:
 
     def get_input_placement_specs(self):
         """Return the preferred placement specs for input arguments."""
-        return self.input_placement_specs
+        return tree_unflatten(self.in_tree, self.input_placement_specs)
+
+    def get_output_placement_specs(self):
+        return tree_unflatten(self.out_tree, self.output_placement_specs)
 
     def __call__(self, *args):
         """Fast call without signature matching."""

@@ -16,10 +16,12 @@ from alpa.device_mesh import (DistributedArray, PhysicalDeviceMeshGroup,
 from alpa.mesh_executable import next_mesh_executable_uuid
 from alpa.parallel_plan import PlacementSpec
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
-from alpa.pipeline_parallel.schedules import PipelineSchedule
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     CrossMeshCommunicator, SymbolicBroadcastReshardingTask,
     SymbolicReshardingTask, ReshardingTask)
+from alpa.pipeline_parallel.schedules import PipelineSchedule
+from alpa.pipeline_parallel.stage_construction import ManualStageOption
+from alpa.shard_parallel.auto_sharding import AutoShardingOption
 from alpa.util import (DisjointDict, OrderedSet, get_shard_shape,
                        get_microbatch_sharding_spec, compile_concatenate)
 
@@ -252,6 +254,8 @@ class PipeshardConfig:
     # Others (debug info)
     input_placement_specs: Sequence[PlacementSpec]
     output_placement_specs: Sequence[PlacementSpec]
+    default_auto_sharding_option: AutoShardingOption
+    manual_stage_option: ManualStageOption
     sharding_annotated_hlo_texts: Sequence[str]
     flop_count: int
 
@@ -266,7 +270,9 @@ class PipelineInstEmitter:
                                                                           Var],
                  mesh_group: PhysicalDeviceMeshGroup,
                  schedule: PipelineSchedule, is_batch: Sequence[bool],
-                 num_batch: int, flop_count: int):
+                 num_batch: int,
+                 default_auto_sharding_option: AutoShardingOption,
+                 manual_stage_option: ManualStageOption, flop_count: int):
         ##### Input arguments #####
         self.stages = stages
         self.global_invars = global_invars
@@ -278,6 +284,8 @@ class PipelineInstEmitter:
         self.schedule = schedule
         self.is_batch = is_batch
         self.num_batch = num_batch
+        self.default_auto_sharding_option = default_auto_sharding_option
+        self.manual_stage_option = manual_stage_option
         self.flop_count = flop_count
         self.sharding_annotated_hlo_texts = [x.get_hlo_text() for x in stages]
 
@@ -460,6 +468,8 @@ class PipelineInstEmitter:
             # Others
             input_placement_specs,
             output_placement_specs,
+            self.default_auto_sharding_option,
+            self.manual_stage_option,
             self.sharding_annotated_hlo_texts,
             self.flop_count)
 

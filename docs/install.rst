@@ -42,11 +42,12 @@ Regardless of installing from wheels or from source, there are a few prerequisit
   If it prints nothing, then NCCL has already been installed.
   Otherwise, follow the printed instructions to install NCCL.
 
-.. _install-from-wheels:
 
 Methods
 -------
 Choose one of the methods below.
+
+.. _install-from-wheels:
 
 Method 1: Install from Python Wheels
 ####################################
@@ -124,13 +125,12 @@ Method 2: Install from Source
 
 Check Installation
 ------------------
-You can check the installation by running the following test script.
+You can check the installation by running the following commands.
 
 .. code:: bash
 
-  cd alpa
   ray start --head
-  python3 tests/test_install.py
+  python3 -m alpa.test_install
 
 [Optional] PyTorch Frontend
 -------------------------------------
@@ -158,6 +158,10 @@ Please look at ``tests/torch_frontend/test_simple.py`` for usage examples.
 
 Troubleshooting
 ---------------
+
+Unhandled Cuda Error
+####################
+If you see errors like ``cupy_backends.cuda.libs.nccl.NcclError: NCCL_ERROR_UNHANDLED_CUDA_ERROR: unhandled cuda error``, it is mainly due to the compatibility issues between CUDA, NCCL, and GPU driver versions. Please double check these versions and see `Issue #496 <https://github.com/alpa-projects/alpa/issues/496>`_ for more details.
 
 Using Alpa on Slurm
 ###################

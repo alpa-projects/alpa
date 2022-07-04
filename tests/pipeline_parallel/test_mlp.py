@@ -35,14 +35,15 @@ class PipelineMLPTest(unittest.TestCase):
             return grads
 
         batch_size = 64
-        hidden_dim = 1024
-        input_dim = output_dim = hidden_dim
+        hidden_size = 1024
 
-        x = jnp.ones((batch_size, input_dim))
-        y = jnp.ones((batch_size, output_dim))
+        x = jnp.ones((batch_size, hidden_size))
+        y = jnp.ones((batch_size, hidden_size))
 
         # Init model and optimizer
-        model = MLPModel(hidden_dim=hidden_dim, output_dim=output_dim)
+        model = MLPModel(num_layers=4,
+                         hidden_size=hidden_size,
+                         add_manual_pipeline_marker=True)
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x)
         tx = optax.sgd(learning_rate=1e-2)
@@ -69,7 +70,7 @@ class PipelineMLPTest(unittest.TestCase):
         self.train_2_layer_mlp(LocalPipelineParallel())
 
     def test_2_layer_mlp_pipeshard_parallel(self):
-        self.train_2_layer_mlp(PipeshardParallel())
+        self.train_2_layer_mlp(PipeshardParallel(layer_option="manual"))
 
 
 def suite():

@@ -20,7 +20,7 @@ class ScatterGatherTest(PipelineBasicTest):
                 dict(force_batch_dim_to_mesh_dim=0), {}
             ])
 
-        self.run_n_layer_bert(n_layers=2,
+        self.run_n_layer_bert(num_layers=2,
                               batch_size=4,
                               seq_len=4,
                               hidden_size=4,

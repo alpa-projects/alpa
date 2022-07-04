@@ -33,7 +33,6 @@ class ParallelPlanTest(unittest.TestCase):
 
         with open("tmp_plan.pkl", "wb") as fout:
             pickle.dump(plan, fout)
-
         with open("tmp_plan.pkl", "rb") as fin:
             plan = pickle.load(fin)
 
@@ -51,8 +50,7 @@ class ParallelPlanTest(unittest.TestCase):
         method = PipeshardParallel(
             num_micro_batches=2,
             layer_option=AutoLayerOption(layer_num=2),
-            stage_option=AutoStageOption(
-                submesh_logical_shape_space="data_parallel_only"))
+            stage_option="uniform")
         p_train_step = parallelize(train_step, method=method)
 
         executable1 = p_train_step.get_executable(state, batch)
@@ -60,7 +58,6 @@ class ParallelPlanTest(unittest.TestCase):
 
         with open("tmp_plan.pkl", "wb") as fout:
             pickle.dump(plan, fout)
-
         with open("tmp_plan.pkl", "rb") as fin:
             plan = pickle.load(fin)
 
@@ -73,7 +70,7 @@ class ParallelPlanTest(unittest.TestCase):
 
 def suite():
     s = unittest.TestSuite()
-    #s.addTest(ParallelPlanTest("test_shard_parallel"))
+    s.addTest(ParallelPlanTest("test_shard_parallel"))
     s.addTest(ParallelPlanTest("test_pipeshard_parallel"))
     return s
 

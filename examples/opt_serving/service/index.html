@@ -313,9 +313,9 @@ label {
         </h2>
         <div id="panelsStayOpen-collapseOne" class="accordion-collapse collapse show" aria-labelledby="panelsStayOpen-headingOne">
           <div class="accordion-body">
-              Alpa is an open-source system for training large-scale neural networks. Alpa aims to automate large-scale distributed training and serving with <strong>just a few lines of code</strong>.
+            <a href="https://github.com/alpa-projects/alpa" target="_blank">Alpa</a> is an open-source system for training large-scale neural networks. Alpa aims to automate large-scale distributed training and serving with <strong>just a few lines of code</strong>.
               Alpa was initially developed by folks in the Sky Lab, UC Berkeley. Some advanced techniques used in Alpa have been written in <a href="https://arxiv.org/pdf/2201.12023.pdf" target="_blank"> a paper published in OSDI'2022</a>.
-              Alpa community is growing with new contributors from Google, Amazon, and Meta.
+              Alpa community is growing with new contributors from Google, Amazon, Meta, and <a href="https://github.com/alpa-projects/alpa/graphs/contributors" target="_blank">more</a>.
           </div>
         </div>
       </div>
@@ -336,6 +336,21 @@ label {
       </div>
 
       <div class="accordion-item">
+        <h2 class="accordion-header" id="panelsStayOpen-headingSampling">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#panelsStayOpen-collapseSampling" aria-expanded="false" aria-controls="panelsStayOpen-collapseSampling">
+            What sampling method do you use? What do Temperature and Top-p mean?
+          </button>
+        </h2>
+        <div id="panelsStayOpen-collapseSampling" class="accordion-collapse collapse" aria-labelledby="panelsStayOpen-headingSampling">
+          <div class="accordion-body">
+            Right now we use random sampling, so every time you click "generate" the generated result might be different. The <em>temperature</em> controls how <em>sharp</em> the sampling distribution is. Lower temperature pushes the generator to pick the tokens with higher scores from the model. <em>Top-p</em> sampling chooses from the smallest possible set of words whose cumulative probability exceeds the probability <em>p</em>. Small value of <em>p</em> prevents the model to choose from tokens with lower scores. See more detailed description on how to sample on <a href="https://huggingface.co/blog/how-to-generate" target="_blank">this page from huggingface</a>.
+            <br  \>
+            We are actively working on implementing beam search. Stay tuned!
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion-item">
         <h2 class="accordion-header" id="panelsStayOpen-headingThree">
           <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#panelsStayOpen-collapseThree" aria-expanded="false" aria-controls="panelsStayOpen-collapseThree">
             Any tips for better generation?
@@ -345,6 +360,7 @@ label {
           <div class="accordion-body">
               You can start with the provided examples. Avoid spaces at the end of your query. New lines are great though.
               More examples can be found in the appendix of the <a href="https://arxiv.org/pdf/2205.01068.pdf" target="_blank">OPT paper</a>.
+              <br  \>
               <b>WARNING</b>: This model will generate many offensive things. Due to this being an alpha
               demo, no safety measures are in place.
           </div>
@@ -359,7 +375,7 @@ label {
         </h2>
         <div id="panelsStayOpen-collapseFour" class="accordion-collapse collapse" aria-labelledby="panelsStayOpen-headingFour">
           <div class="accordion-body">
-            Because Alpa is more automatic, scalable, and cost-effective.
+            Because Alpa is <b>more automatic, scalable, and cost-effective</b>. Alpa is a general purpose model-parallel training and inference framework that is designed to work for any neural networks, so you should be able to modify the model in your own way and it can still be served with Alpa.
           </div>
         </div>
       </div>
@@ -432,9 +448,10 @@ label {
           <span class="mb-3 mb-md-0 text-muted">&copy; 2022 Alpa Developers.</span>
         </div>
 
-        <ul class="nav col-md-4 justify-content-end">
+        <ul class="nav col-md-5 justify-content-end">
           <li class="nav-item"><a href="#generation" class="nav-link px-2 text-muted">Generation</a></li>
           <li class="nav-item"><a href="#faq" class="nav-link px-2 text-muted">FAQs</a></li>
+          <li class="nav-item"><a href="https://github.com/alpa-projects/alpa/blob/main/LICENSE" target="_blank" class="nav-link px-2 text-muted">Alpa License</a></li>
           <li class="nav-item"><a href="https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/MODEL_LICENSE.md" target="_blank" class="nav-link px-2 text-muted">OPT License</a></li>
           <li class="nav-item"><a href="https://github.com/alpa-projects/alpa" target="_blank" class="nav-link px-2 text-muted">GitHub</a></li>
         </ul>

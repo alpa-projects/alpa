@@ -12,7 +12,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 import torch
-from examples.opt_serving.scripts.utils import load_and_pop_last_optimizer_state
+from opt_serving.scripts.utils import load_and_pop_last_optimizer_state
 
 logger = logging.getLogger(__name__)
 

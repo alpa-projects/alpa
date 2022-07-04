@@ -5,15 +5,15 @@ from typing import List, Optional
 import torch
 from transformers import AutoTokenizer
 
-from examples.opt_serving.model.wrapper import get_model
-from examples.opt_serving.dataset import TokenBlockDataset, PadDataset, NestedDictionaryDataset, NumelDataset, \
+from opt_serving.model.wrapper import get_model
+from opt_serving.dataset import TokenBlockDataset, PadDataset, NestedDictionaryDataset, NumelDataset, \
     BaseDataset, iterators
-from examples.opt_serving.service.utils import build_logger
-from examples.opt_serving.dataset import data_utils
-from examples.opt_serving.dataset.prepend_token_dataset import PrependTokenDataset
-from examples.opt_serving.dataset.strip_token_dataset import StripTokenDataset
-from examples.opt_serving.service.constants import MAX_SEQ_LEN
-from examples.opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
+from opt_serving.service.utils import build_logger
+from opt_serving.dataset import data_utils
+from opt_serving.dataset.prepend_token_dataset import PrependTokenDataset
+from opt_serving.dataset.strip_token_dataset import StripTokenDataset
+from opt_serving.service.constants import MAX_SEQ_LEN
+from opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
 
 logger = build_logger()
 

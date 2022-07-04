@@ -1,6 +1,6 @@
 from torch.utils.data.dataloader import default_collate
 
-from examples.opt_serving.dataset.base_dataset import BaseDataset
+from opt_serving.dataset.base_dataset import BaseDataset
 
 
 class BaseWrapperDataset(BaseDataset):

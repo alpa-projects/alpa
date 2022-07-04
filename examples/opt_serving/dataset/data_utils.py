@@ -104,7 +104,7 @@ def batch_by_size(
             *required_batch_size_multiple* will be ignored (default: None).
     """
     try:
-        from examples.opt_serving.dataset.data_utils_fast import (
+        from opt_serving.dataset.data_utils_fast import (
             batch_by_size_fn,
             batch_by_size_vec,
             batch_fixed_shapes_fast,

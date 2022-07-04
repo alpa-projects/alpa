@@ -10,7 +10,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib.xla_bridge import get_backend as default_get_backend
 from jax.core import Primitive
-from jax.interpreters import partial_eval as pe
+from jax.interpreters import partial_eval as pe, pxla
 from jax.interpreters import xla, mlir
 from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
                                   register_translation, wrap_name,
@@ -109,7 +109,6 @@ def _rng_normal_lowering(ctx, mu, sigma, *, shape):
 mlir.register_lowering(rng_normal_p, _rng_normal_lowering)
 
 
-# Monkey patch random generator to use the stateful random generator.
 def fast_normal(key, shape=(), dtype=dtypes.float_, mu=0.0, sigma=1.0):
     shape = core.as_named_shape(shape)
     mu = jnp.asarray(mu, dtype)
@@ -126,6 +125,7 @@ def remove_fold_in(key, data):
     return key
 
 
+# Monkey patch random generator to use the stateful random generator.
 jax._src.random.uniform = fast_uniform
 jax.random.uniform = fast_uniform
 jax._src.random.normal = fast_normal
@@ -136,6 +136,7 @@ jax._src.random.fold_in = remove_fold_in
 jax.random.fold_in = remove_fold_in
 
 
+# Monkey patch remat to use identity instead of while loop
 def _zeros(c, xla_shape):
     if xla_shape.is_array():
         shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
@@ -228,6 +229,64 @@ for dict_val in _backend_specific_translations.values():
         del dict_val[pe.remat_call_p]
 register_translation(pe.remat_call_p, _remat_translation_rule)
 
+
+# Support pickle ShardingSpec
+def sharding_spec_getstate(self):
+    sharding = []
+    for x in self.sharding:
+        if isinstance(x, pxla.NoSharding):
+            sharding.append((0,))
+        elif isinstance(x, pxla.Chunked):
+            sharding.append((1, x.chunks))
+        elif isinstance(x, pxla.Unstacked):
+            sharding.append((2, x.size))
+        else:
+            raise ValueError(f"Invalid sharding: {x}")
+    mesh_mapping = []
+    for x in self.mesh_mapping:
+        if isinstance(x, pxla.ShardedAxis):
+            mesh_mapping.append((0, x.axis))
+        elif isinstance(x, pxla.Replicated):
+            mesh_mapping.append((1, x.replicas))
+        else:
+            raise ValueError(f"Invalid sharding: {x}")
+    return (sharding, mesh_mapping)
+
+
+def sharding_spec_setstate(self, state_tuple):
+    sharding_encoding, mesh_mapping_encoding = state_tuple
+
+    sharding = []
+    for x in sharding_encoding:
+        if x[0] == 0:
+            sharding.append(pxla.NoSharding())
+        elif x[0] == 1:
+            sharding.append(pxla.Chunked(x[1]))
+        elif x[0] == 2:
+            sharding.append(pxla.Unstacked(x[1]))
+        else:
+            raise ValueError(f"Invalid sharding: {x}")
+
+    mesh_mapping = []
+    for x in mesh_mapping_encoding:
+        if x[0] == 0:
+            mesh_mapping.append(pxla.ShardedAxis(x[1]))
+        elif x[0] == 1:
+            mesh_mapping.append(pxla.Replicated(x[1]))
+        else:
+            raise ValueError(f"Invalid sharding: {x}")
+
+    # pylint: disable=unnecessary-dunder-call
+    self.__init__(
+        sharding=sharding,
+        mesh_mapping=mesh_mapping,
+    )
+
+
+setattr(pxla.ShardingSpec, "__getstate__", sharding_spec_getstate)
+setattr(pxla.ShardingSpec, "__setstate__", sharding_spec_setstate)
+
+# Monkey patch tree map to disable some warnings
 jax._src.tree_util.tree_multimap = jax._src.tree_util.tree_map
 jax.tree_multimap = jax._src.tree_util.tree_map
 

@@ -19,7 +19,7 @@ from jax._src.api import ShapeDtypeStruct
 from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.core import ShapedArray
 from jax.interpreters import pxla
-from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
+from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves, PyTreeDef
 import numpy as np
 import ray
 
@@ -27,7 +27,8 @@ from alpa.device_mesh import (LocalPhysicalDeviceMesh,
                               DistributedPhysicalDeviceMesh, RemoteArrayRef,
                               next_array_uuids)
 from alpa.global_env import global_config
-from alpa.parallel_plan import PlacementSpec, StagePlan
+from alpa.parallel_plan import (PlacementSpec, StagePlan, ClusterInfo,
+                                ParallelPlan)
 from alpa.shard_parallel.auto_sharding import (AutoShardingOption,
                                                get_input_output_sharding_specs,
                                                make_replicated_spec, HloStatus,
@@ -74,6 +75,10 @@ class MeshDriverExecutable(ABC):
         The return value is a pytree of PlacementSpec
         with the same structure as the output pytree.
         """
+        raise NotImplementedError()
+
+    def get_parallel_plan(self):
+        """Get the overall parallel plan."""
         raise NotImplementedError()
 
     def preshard_dynamic_args(self, *args):
@@ -205,6 +210,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         self.out_tree = out_tree
         self.flop_count = flop_count
         self.stage_plan = stage_plan
+        self.auto_sharding_option = stage_plan.auto_sharding_option
         self.auto_sharding_objective = stage_plan.auto_sharding_objective
 
         # Read sharding specs
@@ -323,6 +329,13 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         return wrap_to_placement_spec_tree(self.physical_mesh, self.out_avals,
                                            self.output_sharding_specs,
                                            self.out_tree)
+
+    def get_parallel_plan(self):
+        """Get the overall parallel plan."""
+        cluster_info = ClusterInfo(self.physical_mesh.num_hosts,
+                                   self.physical_mesh.num_devices_per_host)
+        return ParallelPlan(cluster_info, None, self.auto_sharding_option, None,
+                            tree_leaves(self.get_input_placement_specs()))
 
     def preshard_dynamic_args(self, *args):
         """Pre-shard the input arguments."""
@@ -517,6 +530,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         self.out_tree = out_tree
         self.flop_count = flop_count
         self.stage_plan = stage_plan
+        self.auto_sharding_option = stage_plan.auto_sharding_option
         self.auto_sharding_objective = stage_plan.auto_sharding_objective
 
         # Read sharding specs
@@ -752,6 +766,14 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         return wrap_to_placement_spec_tree(self.physical_mesh, self.out_avals,
                                            self.output_sharding_specs,
                                            self.out_tree)
+
+    def get_parallel_plan(self):
+        """Get the overall parallel plan."""
+        cluster_info = ClusterInfo(self.physical_mesh.num_hosts,
+                                   self.physical_mesh.num_devices_per_host)
+        return ParallelPlan(cluster_info, self.num_micro_batches,
+                            self.auto_sharding_option, None,
+                            tree_leaves(self.get_input_placement_specs()))
 
     def get_total_allocation_size(self):
         """Get the total allocated memory size of this executable."""
@@ -1185,7 +1207,8 @@ def get_index_select_mesh_executable(avals, sharding_specs, index, dim,
     as_option = AutoShardingOption()
     strategy_config = StagePlan(global_config.compile_random_seed,
                                 device_mesh.shape, 1 << 60,
-                                as_option.all_reduce_threshold, None, -1)
+                                as_option.all_reduce_threshold,
+                                AutoShardingOption(), None, -1)
     out_tree = tree_flatten(avals)[1]
     executable = NormalMeshDriverExecutable(device_mesh,
                                             hlo_module,

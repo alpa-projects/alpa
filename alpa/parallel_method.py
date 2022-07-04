@@ -164,7 +164,7 @@ class PipeshardParallel(ParallelMethod):
           Possible choices are {"manual", alpa.AutoLayerOption,
                                  alpa.ManualLayerOption}
         stage_option: Options of grouping layers into pipeline stages.
-          Possible choices are {"uniform", "auto", alpa.AutoStageOption,,
+          Possible choices are {"uniform", "auto", alpa.AutoStageOption,
                                  alpa.ManualStageOption}
     """
 
@@ -178,7 +178,8 @@ class PipeshardParallel(ParallelMethod):
             stage_option: Optional[Union[StageOption, str]] = None):
         self.devices = devices
         self.num_micro_batches = num_micro_batches
-        self.as_option = default_auto_sharding_option or AutoShardingOption()
+        self.as_option = (default_auto_sharding_option or
+                          AutoShardingOption(prefer_reduce_scatter=True))
         self.pipeline_schedule = pipeline_schedule
         if layer_option == "manual":
             layer_option = ManualLayerOption()

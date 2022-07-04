@@ -42,21 +42,21 @@ Use the following script to format the code and check linting errors:
 
     ./format.sh
 
-Unittest
---------
-Every New feature should come with a unittest. See this `README.md <https://github.com/alpa-projects/alpa/tree/main/tests/README.md>`_ on how to run tests locally.
+Unit Testing
+------------
+Every New feature should come with a unit test. See this `README.md <https://github.com/alpa-projects/alpa/tree/main/tests/README.md>`_ on how to run tests locally.
 
-Update submodule tensorflow-alpa
---------------------------------
+Updating submodule tensorflow-alpa
+----------------------------------
 Alpa repo stores a commit hash of the submodule tensorflow-alpa, so git knows which version of tensorflow-alpa should be used.
-However, commands like ``git pull`` do not update the submodule to the lastest stored commit. You need to additionaly use the commands below.
+However, commands like ``git pull`` do not update the submodule to the latest stored commit. You need to additionally use the commands below.
 
 .. code-block:: bash
 
     git submodule update --init --recursive
 
-Contribute to submodule tensorflow-alpa
----------------------------------------
+Contributing to submodule tensorflow-alpa
+-----------------------------------------
 If you want to contribute code to tensorflow-alpa, you can follow the steps below
 
 1. Contributors send a pull request to tensorflow-alpa.

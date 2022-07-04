@@ -1,3 +1,4 @@
+# pylint: disable=missing-class-docstring
 """Some basic tests to test installation."""
 import os
 import unittest
@@ -7,7 +8,6 @@ from flax.training.train_state import TrainState
 import jax
 import jax.numpy as jnp
 import optax
-import ray
 
 from alpa import (init, parallelize, grad, ShardParallel, PipeshardParallel,
                   AutoLayerOption)
@@ -60,8 +60,8 @@ class InstallationTest(unittest.TestCase):
         def train_step(state, batch):
 
             def loss_func(params):
-                out = state.apply_fn(params, batch['x'])
-                return jnp.mean((out - batch['y'])**2)
+                out = state.apply_fn(params, batch["x"])
+                return jnp.mean((out - batch["y"])**2)
 
             grads = grad(loss_func)(state.params)
             new_state = state.apply_gradients(grads=grads)
@@ -87,8 +87,8 @@ class InstallationTest(unittest.TestCase):
         def train_step(state, batch):
 
             def loss_func(params):
-                out = state.apply_fn(params, batch['x'])
-                return jnp.mean((out - batch['y'])**2)
+                out = state.apply_fn(params, batch["x"])
+                return jnp.mean((out - batch["y"])**2)
 
             grads = grad(loss_func)(state.params)
             new_state = state.apply_gradients(grads=grads)
@@ -110,10 +110,10 @@ class InstallationTest(unittest.TestCase):
 
 
 def suite():
-    suite = unittest.TestSuite()
-    suite.addTest(InstallationTest("test_1_shard_parallel"))
-    suite.addTest(InstallationTest("test_2_pipeline_parallel"))
-    return suite
+    s = unittest.TestSuite()
+    s.addTest(InstallationTest("test_1_shard_parallel"))
+    s.addTest(InstallationTest("test_2_pipeline_parallel"))
+    return s
 
 
 if __name__ == "__main__":

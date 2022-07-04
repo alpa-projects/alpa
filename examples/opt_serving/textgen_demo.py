@@ -1,6 +1,6 @@
 """Use huggingface/transformers interface and Alpa backend for distributed inference."""
 from transformers import AutoTokenizer
-from examples.opt_serving.model.wrapper import get_model
+from opt_serving.model.wrapper import get_model
 
 # Load the tokenizer. We have to use the 30B version because
 # other versions have some issues. The 30B version works for all OPT models.

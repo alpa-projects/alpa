@@ -7,8 +7,7 @@ import ray
 from alpa import (init, shutdown, parallelize, grad, global_config,
                   ShardParallel, PipeshardParallel, AutoLayerOption)
 from alpa.device_mesh import get_global_cluster
-
-from test_install import create_train_state_and_batch
+from alpa.test_install import create_train_state_and_batch
 
 
 class MemoryLeakTest(unittest.TestCase):

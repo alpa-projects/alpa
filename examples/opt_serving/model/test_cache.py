@@ -7,10 +7,10 @@ import numpy as np
 
 from alpa.testing import assert_allclose
 from opt_serving.model.opt_model import (get_opt_config, init_model_aval,
-                                                  inference_step_no_cache,
-                                                  init_cache_np,
-                                                  build_position_ids,
-                                                  load_params_np)
+                                         inference_step_no_cache,
+                                         init_cache_np,
+                                         build_position_ids,
+                                         load_params_np)
 
 
 def print_params(params, prefix=""):

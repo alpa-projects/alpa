@@ -10,16 +10,16 @@ class PipelineRematTest(PipelineBasicTest):
         self.run_mlp(use_remat=True)
 
     def test_2_layer_bert_remat(self):
-        self.run_n_layer_bert(n_layers=2, use_remat=True)
+        self.run_n_layer_bert(num_layers=2, use_remat=True)
 
     def test_2_layer_bert_auto_layer_slicing_remat(self):
-        self.run_n_layer_bert(n_layers=2,
+        self.run_n_layer_bert(num_layers=2,
                               manual_pipeline_layer=False,
                               use_remat=True)
 
     @unittest.skipIf(jax.local_device_count("gpu") < 8, "no enough device")
     def test_8_layer_bert_auto_layer_slicing_remat(self):
-        self.run_n_layer_bert(n_layers=8,
+        self.run_n_layer_bert(num_layers=8,
                               manual_pipeline_layer=False,
                               use_remat=True)
 

@@ -9,10 +9,19 @@ import numpy as np
 import pickle
 import flax
 
-from alpa import init, PipeshardParallel
-from alpa.util import tree_to_nparray
-from alpa.testing import (MLPModel, create_train_state, get_mlp_train_step,
-                          assert_allclose)
+from alpa import init, parallelize, PipeshardParallel
+from alpa.testing import get_mlp_train_state_and_step, assert_allclose
+
+
+def tree_to_nparray(tree):
+    """Convert a pytree to a pytree of numpy array."""
+
+    def convert_to_nparray(x):
+        if hasattr(x, "__array__"):
+            return np.asanyarray(x)
+        return x
+
+    return jax.tree_map(convert_to_nparray, tree)
 
 
 class SaveLoadTest(unittest.TestCase):
@@ -21,24 +30,14 @@ class SaveLoadTest(unittest.TestCase):
         init(cluster="ray")
 
     def test_mlp_state_load(self):
-        # Init model and optimizer
-        batch_size = 64
-        hidden_dim = 16
-        input_dim = output_dim = hidden_dim
-
-        model = MLPModel(hidden_dim=hidden_dim,
-                         output_dim=output_dim,
-                         manual_pipeline_layer=True)
-        rngkey = jax.random.PRNGKey(0)
-        x = jax.random.normal(rngkey, (batch_size, input_dim), jnp.float32)
-        y = jax.random.normal(rngkey, (batch_size, output_dim), jnp.float32)
-        batch = {'x': x, 'y': y}
-        state = create_train_state(rngkey, model, [x])
+        # Init model
+        state, batch, train_step = get_mlp_train_state_and_step(
+            batch_size=128, hidden_size=128, add_manual_pipeline_marker=True)
 
         # Compile
         method = PipeshardParallel(num_micro_batches=2, layer_option="manual")
-        serial_train_step = get_mlp_train_step(None, False)
-        parallel_train_step = get_mlp_train_step(method, False)
+        serial_train_step = train_step
+        parallel_train_step = parallelize(train_step, method=method)
         executable = parallel_train_step.get_executable(state, batch)
 
         serial_state = state

@@ -9,14 +9,11 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 
-from alpa import (init, shutdown, DistributedArray, PipeshardParallel,
-                  save_checkpoint, restore_checkpoint)
+from alpa import (init, shutdown, parallelize, DistributedArray,
+                  PipeshardParallel, save_checkpoint, restore_checkpoint)
 from alpa.device_mesh import get_global_cluster
-from alpa.model.bert_model import BertConfig
-from alpa.model.model_util import TrainState
-from alpa.testing import (MLPModel, BertLayerModel, create_train_state,
-                          get_bert_layer_train_step, get_mlp_train_step,
-                          assert_allclose)
+from alpa.testing import (get_mlp_train_state_and_step,
+                          get_bert_layer_train_state_and_step, assert_allclose)
 
 
 class DistSaveLoadTest(unittest.TestCase):
@@ -126,20 +123,12 @@ class DistSaveLoadTest(unittest.TestCase):
     def test_jax_mlp_save_dist_load(self):
         save_prefix = self._get_save_prefix()
 
-        # Init model and optimizer
-        batch_size = 64
-        hidden_dim = 16
-        input_dim = output_dim = hidden_dim
-        model = MLPModel(hidden_dim=hidden_dim,
-                         output_dim=output_dim,
-                         manual_pipeline_layer=True)
-
-        # Init batch args
-        rngkey = jax.random.PRNGKey(0)
-        x = jax.random.normal(rngkey, (batch_size, input_dim), jnp.float32)
-        y = jax.random.normal(rngkey, (batch_size, output_dim), jnp.float32)
-        batch = {'x': x, 'y': y}
-        jax_state = create_train_state(rngkey, model, [x])
+        # Init model
+        jax_state, batch, train_step = get_mlp_train_state_and_step(
+            batch_size=64,
+            hidden_size=16,
+            num_layers=4,
+            add_manual_pipeline_marker=True)
 
         with tempfile.TemporaryDirectory(prefix=save_prefix) as ckpt_dir:
             # save normal jax model using tensorstore for distributed loading
@@ -148,8 +137,8 @@ class DistSaveLoadTest(unittest.TestCase):
             # Compile
             method = PipeshardParallel(num_micro_batches=2,
                                        layer_option="manual")
-            serial_train_step = get_mlp_train_step(None, False)
-            parallel_train_step = get_mlp_train_step(method, False)
+            serial_train_step = train_step
+            parallel_train_step = parallelize(train_step, method=method)
             executable = parallel_train_step.get_executable(jax_state, batch)
 
             # Restore checkpoint
@@ -166,25 +155,17 @@ class DistSaveLoadTest(unittest.TestCase):
     def test_distributed_mlp_uncached_save_load(self):
         save_prefix = self._get_save_prefix()
 
-        # Init model and optimizer
-        batch_size = 64
-        hidden_dim = 16
-        input_dim = output_dim = hidden_dim
-        model = MLPModel(hidden_dim=hidden_dim,
-                         output_dim=output_dim,
-                         manual_pipeline_layer=True)
-
-        # Init batch args
-        rngkey = jax.random.PRNGKey(0)
-        x = jax.random.normal(rngkey, (batch_size, input_dim), jnp.float32)
-        y = jax.random.normal(rngkey, (batch_size, output_dim), jnp.float32)
-        batch = {'x': x, 'y': y}
-        state = create_train_state(rngkey, model, [x])
+        # Init model
+        state, batch, train_step = get_mlp_train_state_and_step(
+            batch_size=128,
+            hidden_size=16,
+            num_layers=4,
+            add_manual_pipeline_marker=True)
 
         # Compile
-        method = PipeshardParallel(num_micro_batches=2, layer_option="manual")
-        serial_train_step = get_mlp_train_step(None, False)
-        parallel_train_step = get_mlp_train_step(method, False)
+        method = PipeshardParallel(num_micro_batches=1, layer_option="manual")
+        serial_train_step = train_step
+        parallel_train_step = parallelize(train_step, method=method)
         executable = parallel_train_step.get_executable(state, batch)
 
         # Run before save
@@ -206,48 +187,26 @@ class DistSaveLoadTest(unittest.TestCase):
             # Run after load
             serial_state = serial_train_step(serial_state, batch)[0]
             load_state = parallel_train_step(load_state, batch)[0]
+
         # Check results
         assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)
 
     def test_distributed_bert_cached_save_load(self):
         save_prefix = self._get_save_prefix()
 
-        # Config
-        batch_size = 16
-        seq_len = 8
-        hidden_size = 128
-        num_heads = 8
-        n_layers = 4
-        dtype = jnp.float32
-
-        # Init batch args
-        rngkey = jax.random.PRNGKey(0)
-        x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
-                              dtype=dtype)
-        y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
-                              dtype=dtype)
-        attention_mask = jnp.ones((batch_size, seq_len), dtype=dtype)
-        batch = {"x": x, "y": y, "attention_mask": attention_mask}
-
-        # Init model and optimizer
-        model = BertLayerModel(config=BertConfig(hidden_size=hidden_size,
-                                                 intermediate_size=hidden_size *
-                                                 4,
-                                                 num_attention_heads=num_heads,
-                                                 num_hidden_layers=n_layers),
-                               manual_pipeline_layer=True)
-        rngkey = jax.random.PRNGKey(0)
-        params = model.init(rngkey, x, attention_mask)
-        tx = optax.sgd(learning_rate=1e-2)
-        state = TrainState.create(apply_fn=model.apply,
-                                  params=params,
-                                  tx=tx,
-                                  dynamic_scale=None)
+        # Init model
+        state, batch, train_step = get_bert_layer_train_state_and_step(
+            batch_size=16,
+            seq_len=8,
+            num_layers=4,
+            hidden_size=128,
+            num_heads=8,
+            add_manual_pipeline_marker=True)
 
         # Compile
         method = PipeshardParallel(num_micro_batches=2, layer_option="manual")
-        serial_train_step = get_bert_layer_train_step(None, False)
-        parallel_train_step = get_bert_layer_train_step(method, False)
+        serial_train_step = train_step
+        parallel_train_step = parallelize(train_step, method=method)
         executable = parallel_train_step.get_executable(state, batch)
 
         # Run before save

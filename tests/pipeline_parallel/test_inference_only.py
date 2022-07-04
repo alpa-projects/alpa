@@ -4,12 +4,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from alpa import (init, shutdown, PipeshardParallel, parallelize,
+from alpa import (init, shutdown, parallelize, PipeshardParallel,
                   mark_pipeline_boundary)
 from alpa.model.bert_model import BertConfig, FlaxBertLayerCollection
-from alpa.testing import (MLPModel, create_train_state,
-                          get_bert_layer_collection_inference_step,
-                          get_mlp_inference_step, assert_allclose)
+from alpa.testing import (MLPModel, create_train_state, mlp_inference_step,
+                          bert_layer_collection_inference_step, assert_allclose)
 
 
 class PipelineInferenceTest(unittest.TestCase):
@@ -28,21 +27,23 @@ class PipelineInferenceTest(unittest.TestCase):
 
         # Init model and optimizer
         batch_size = 64
-        hidden_dim = 16
-        input_dim = output_dim = hidden_dim
+        hidden_size = 16
 
-        model = MLPModel(hidden_dim=hidden_dim,
-                         output_dim=output_dim,
-                         manual_pipeline_layer=manual_pipeline_layer)
+        model = MLPModel(hidden_size=hidden_size,
+                         num_layers=4,
+                         add_manual_pipeline_marker=manual_pipeline_layer)
         rngkey = jax.random.PRNGKey(0)
-        x = jax.random.normal(rngkey, (batch_size, input_dim), jnp.float32)
-        y = jax.random.normal(rngkey, (batch_size, output_dim), jnp.float32)
+        x = jax.random.normal(rngkey, (batch_size, hidden_size), jnp.float32)
+        y = jax.random.normal(rngkey, (batch_size, hidden_size), jnp.float32)
         batch = {'x': x, 'y': y}
         state = create_train_state(rngkey, model, [x])
 
         # Compile
-        serial_inference_step = get_mlp_inference_step(None)
-        parallel_inference_step = get_mlp_inference_step(method)
+        serial_inference_step = mlp_inference_step
+
+        parallel_inference_step = parallelize(mlp_inference_step,
+                                              method=method,
+                                              donate_argnums=())
         executable = parallel_inference_step.get_executable(state, batch)
 
         # Run correctnesss test
@@ -82,9 +83,12 @@ class PipelineInferenceTest(unittest.TestCase):
         state = create_train_state(rngkey, model, [x, attention_mask])
 
         # Compile
-        serial_inference_step = get_bert_layer_collection_inference_step(None)
-        parallel_inference_step = get_bert_layer_collection_inference_step(
-            method)
+        serial_inference_step = bert_layer_collection_inference_step
+        parallel_inference_step = parallelize(
+            bert_layer_collection_inference_step,
+            method=method,
+            donate_argnums=())
+        executable = parallel_inference_step.get_executable(state, batch)
         executable = parallel_inference_step.get_executable(state, batch)
 
         # Run correctnesss test

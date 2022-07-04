@@ -7,7 +7,7 @@ from jax.core import ClosedJaxpr, Var, gensym
 import jax.numpy as jnp
 import ray
 
-from alpa import init
+from alpa import init, grad
 from alpa.model.bert_model import BertConfig
 from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
                                                process_apply_gradient,
@@ -22,8 +22,7 @@ from alpa.pipeline_parallel.stage_profiling import (
     ApplyGradConfig, CompileConfig, ProfileConfig, generate_stage_info,
     compile_all, profile_all, compute_intermediate_size,
     compute_apply_grad_invar_size)
-from alpa.testing import (BertLayerModel, create_train_state,
-                          get_bert_layer_train_step)
+from alpa.testing import get_bert_layer_train_state_and_step
 from alpa.util import OrderedSet, GradFuncTransformContext
 
 
@@ -45,31 +44,29 @@ class StageConstructUtilTest(unittest.TestCase):
     def setUp(self):
         init(cluster="ray")
 
-    def _create_n_layer_jaxpr_with_donation(self,
-                                            n_layers=2,
-                                            batch_size=16,
-                                            seq_len=256,
-                                            hidden_size=512,
-                                            num_heads=512 // 64,
-                                            use_remat=True):
-        manual_pipeline_layer = True
-        rngkey = jax.random.PRNGKey(0)
-        x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
-                              dtype=jnp.float32)
-        y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
-                              dtype=jnp.float32)
-        attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
-        model = BertLayerModel(config=BertConfig(hidden_size=hidden_size,
-                                                 intermediate_size=hidden_size *
-                                                 4,
-                                                 num_attention_heads=num_heads,
-                                                 num_hidden_layers=n_layers),
-                               manual_pipeline_layer=manual_pipeline_layer)
-        batch = {"x": x, "y": y, "attention_mask": attention_mask}
-        state = create_train_state(rngkey, model, [x, attention_mask])
+    def _create_n_layer_jaxpr_with_donation(self, num_layers, use_remat=True):
+        state, batch, _ = get_bert_layer_train_state_and_step(
+            batch_size=16,
+            seq_len=256,
+            num_layers=num_layers,
+            hidden_size=512,
+            num_heads=512 // 64,
+            add_manual_pipeline_marker=True,
+        )
+
+        def train_step(state, batch):
+
+            def loss_func(params):
+                out = state.apply_fn(params, batch["x"],
+                                     batch["attention_mask"])
+                loss = jnp.mean((out - batch["y"])**2)
+                return loss
+
+            grads = grad(loss_func)(state.params)
+            new_state = state.apply_gradients(grads=grads)
+            return new_state
 
         # Compile
-        train_step = get_bert_layer_train_step(None, False, True)
         with GradFuncTransformContext(ManualLayerOption(use_remat).transform):
             closed_jaxpr, output_tree = make_jaxpr(train_step,
                                                    return_shape=True)(state,
@@ -238,7 +235,8 @@ class StageConstructUtilTest(unittest.TestCase):
 
     def test_generate_stage_config(self):
         (closed_jaxpr, output_tree,
-         donated_invars) = self._create_n_layer_jaxpr_with_donation(n_layers=4)
+         donated_invars) = self._create_n_layer_jaxpr_with_donation(
+             num_layers=4)
         info = self._post_process_jaxpr(closed_jaxpr, donated_invars)
         self._test_generate_stage_config_indices(info, 0, 0)
         self._test_generate_stage_config_indices(info, 3, 3)
@@ -249,7 +247,8 @@ class StageConstructUtilTest(unittest.TestCase):
 
     def test_compile_all(self):
         (closed_jaxpr, output_tree,
-         donated_invars) = self._create_n_layer_jaxpr_with_donation(n_layers=4)
+         donated_invars) = self._create_n_layer_jaxpr_with_donation(
+             num_layers=4)
         info = self._post_process_jaxpr(closed_jaxpr, donated_invars)
         stages = []
         test_intervals = [(0, 0), (3, 3), (0, 1), (1, 2), (2, 3), (0, 3)]

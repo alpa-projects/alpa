@@ -47,10 +47,9 @@ class ParallelPlanTest(unittest.TestCase):
                                                                 hidden_size=128,
                                                                 num_layers=4)
 
-        method = PipeshardParallel(
-            num_micro_batches=2,
-            layer_option=AutoLayerOption(layer_num=2),
-            stage_option="uniform")
+        method = PipeshardParallel(num_micro_batches=2,
+                                   layer_option=AutoLayerOption(layer_num=2),
+                                   stage_option="uniform")
         p_train_step = parallelize(train_step, method=method)
 
         executable1 = p_train_step.get_executable(state, batch)

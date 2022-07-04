@@ -82,6 +82,7 @@ def compile_pipeshard_executable(
         mesh_group=virtual_mesh.launched_physical_mesh_group,
         pipeshard_config=pipeshard_config,
         num_batch=num_microbatch,
+        layer_option=layer_option,
         in_tree=in_tree,
         out_tree=out_tree_thunk(),
         static_argnums=static_argnums)
@@ -146,8 +147,7 @@ def compile_pipeshard_executable_internal(
 
     # Construct pipeline stages by merging layers
     (jax_pipeline_stages, stage_to_mesh, sliced_virtual_meshes,
-     logical_mesh_shapes,
-     autosharding_option_dicts) = cluster_layers_and_slice_mesh(
+     manual_stage_option) = cluster_layers_and_slice_mesh(
          jax_pipeline_layers, virtual_mesh, donation_mapping, acc_grad_outvars,
          num_microbatch, micro_batch_size, jax_apply_layers,
          apply_grad_global_info, pipeline_schedule, default_as_option,
@@ -202,7 +202,8 @@ def compile_pipeshard_executable_internal(
     xla_stages, total_flops = shard_each_stage(
         jax_all_stages, sliced_virtual_meshes, schedule, n_stages, num_meshes,
         grad_in_to_out, global_invars, acc_grad_outvars, donate_invars_dict,
-        num_microbatch, logical_mesh_shapes, autosharding_option_dicts,
+        num_microbatch, manual_stage_option.submesh_logical_shapes,
+        manual_stage_option.submesh_autosharding_option_dicts,
         default_as_option, output_sharding_dict, name_base, gensym_func)
     total_flops *= num_microbatch
     debug_compilation_time("shard stages")
@@ -224,6 +225,8 @@ def compile_pipeshard_executable_internal(
         schedule=schedule,
         is_batch=batch_invars,
         num_batch=num_microbatch,
+        default_auto_sharding_option=default_as_option,
+        manual_stage_option=manual_stage_option,
         flop_count=total_flops).compile()
 
     debug_compilation_time("runtime emitter")

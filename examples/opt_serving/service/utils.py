@@ -6,7 +6,7 @@ import sys
 import os
 import datetime
 
-from examples.opt_serving.service.constants import LOGDIR
+from opt_serving.service.constants import LOGDIR
 
 
 def normalize_newlines(s: str):

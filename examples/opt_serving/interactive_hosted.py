@@ -12,12 +12,12 @@ import torch
 from flask import Flask, request, jsonify
 from werkzeug.exceptions import HTTPException
 
-from examples.opt_serving.generator import GeneratorInterface
-from examples.opt_serving.service.queue import PriorityQueueRingShard
-from examples.opt_serving.service.responses import OAIResponse
-from examples.opt_serving.service.utils import encode_fn, build_logger
-from examples.opt_serving.service.workers import WorkItem
-from examples.opt_serving.service.constants import MAX_SEQ_LEN, MAX_BATCH_TOKENS, DEFAULT_PORT, TIMEOUT_MS
+from opt_serving.generator import GeneratorInterface
+from opt_serving.service.queue import PriorityQueueRingShard
+from opt_serving.service.responses import OAIResponse
+from opt_serving.service.utils import encode_fn, build_logger
+from opt_serving.service.workers import WorkItem
+from opt_serving.service.constants import MAX_SEQ_LEN, MAX_BATCH_TOKENS, DEFAULT_PORT, TIMEOUT_MS
 
 app = Flask(__name__)
 BATCH_QUEUE = PriorityQueueRingShard()

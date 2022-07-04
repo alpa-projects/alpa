@@ -37,7 +37,8 @@ class AutoStageOption:
     # Possible choices: {"power_of_two", "small_power_of_two", "all"}.
     submesh_physical_shape_space: str = "power_of_two"
     # The search space of the logical mesh shapes.
-    # Possible choices: {"default", "single_node_model_parallel", "all"}.
+    # Possible choices: {"same_as_physical", "data_parallel_only",
+    #                    "single_node_model_parallel", "all"}.
     submesh_logical_shape_space: str = "single_node_model_parallel"
     # The tolerance of imbalance in the auto-stage construction.
     stage_imbalance_tolerance: float = np.inf
@@ -232,8 +233,9 @@ def get_one_submesh_autosharding_config_choices(
 
     Args:
         virtual_submesh: a submesh.
-        space: possible choices: {"default", "single_node_model_parallel",
-            "all"}.
+        space: The search space of the logical mesh shapes.
+            possible choices: {"same_as_physical", "data_parallel_only",
+                               "single_node_model_parallel", "all"}.
         batch_size: the batch size used.
     """
     results = []
@@ -253,9 +255,9 @@ def get_one_submesh_autosharding_config_choices(
                             "force_batch_dim_to_mesh_dim": 0
                         }))
         results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {}))
-    elif space == "default":
+    elif space == "same_as_physical":
         results.append((virtual_submesh.get_logical_mesh(), {}))
-    elif space == "dp_only":
+    elif space == "data_parallel_only":
         results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {
             "force_batch_dim_to_mesh_dim": 0
         }))
@@ -750,8 +752,12 @@ def cluster_layers_and_slice_mesh(
     ]:
         if name in timers.timers:
             timers(name).stop()
-    return (stages, stage_to_mesh, sliced_meshes, logical_mesh_shapes,
-            autosharding_option_dicts)
+
+    manual_stage_option = ManualStageOption(
+        forward_stage_layer_ids, tuple(x.shape for x in sliced_meshes),
+        logical_mesh_shapes, autosharding_option_dicts)
+
+    return stages, stage_to_mesh, sliced_meshes, manual_stage_option
 
 
 def get_stage_outvars(layers: Sequence[JaxPipelineComputation],

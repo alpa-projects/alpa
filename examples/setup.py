@@ -27,14 +27,14 @@ else:
 
 extensions = [
     NumpyExtension(
-        "dataset.token_block_utils_fast",
-        sources=["dataset/token_block_utils_fast.pyx"],
+        "opt_serving.dataset.token_block_utils_fast",
+        sources=["opt_serving/dataset/token_block_utils_fast.pyx"],
         language="c++",
         extra_compile_args=extra_compile_args,
     ),
     NumpyExtension(
-        "dataset.data_utils_fast",
-        sources=["dataset/data_utils_fast.pyx"],
+        "opt_serving.dataset.data_utils_fast",
+        sources=["opt_serving/dataset/data_utils_fast.pyx"],
         language="c++",
         extra_compile_args=extra_compile_args,
     )
@@ -51,4 +51,7 @@ try:
 except ImportError:
     pass
 
-setup(ext_modules=extensions, cmdclass=cmdclass)
+setup(name="opt_serving",
+      ext_modules=extensions,
+      packages=find_packages(),
+      cmdclass=cmdclass)

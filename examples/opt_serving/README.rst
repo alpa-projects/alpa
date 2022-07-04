@@ -29,7 +29,7 @@ In this example, we use Alpa to serve the open-source OPT model, supporting all 
 
 .. note::
 
-  You will need at least 350GB GPU memory on your entire cluster to to serve the OPT-175B model.
+  You will need at least 350GB GPU memory on your entire cluster to serve the OPT-175B model.
   For example, you can use 4 x AWS p3.16xlarge instances, which provide 4 (instance) x 8 (GPU/instance) x 16 (GB/GPU) = 512 GB memory.
 
   You can also follow this guide to setup a serving system to serve smaller versions of OPT, such as OPT-66B, OPT-30B, etc.
@@ -42,7 +42,7 @@ Use huggingface/transformers interface and Alpa backend for distributed inferenc
 .. code:: python
 
   from transformers import AutoTokenizer
-  from examples.opt_serving.model.wrapper import get_model
+  from opt_serving.model.wrapper import get_model
 
   # Load the tokenizer. We have to use the 30B version because
   # other versions have some issues. The 30B version works for all OPT models.
@@ -66,11 +66,9 @@ Use huggingface/transformers interface and Alpa backend for distributed inferenc
 
 Requirements
 ============
-1. Install Alpa following the `installation guide <https://alpa-projects.github.io/install.html>`_.
-   You can either install by python wheel or build from source, but you always need to clone
-   the `Alpa repo <https://github.com/alpa-projects/alpa>`_ to fetch the code for examples below.
+1. Install Alpa following the `installation guide <https://alpa-projects.github.io/install.html>`_. You can either install by python wheel or build from source.
 
-2. Install additional requirements for serving:
+2. Install additional requirements for ``opt_serving``:
 
   .. code:: shell
 
@@ -79,12 +77,19 @@ Requirements
     # Install torch corresponding to your CUDA version, e.g., for CUDA 11.3:
     pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu113
 
-
-3. Compile several cython files for faster data processing:
+3. Clone the ``alpa`` repo. If you install alpa by python wheel, please clone the alpa repo. If you install from source, you already did this step.
 
   .. code:: shell
 
-    cd examples/opt_serving && bash build.sh
+    git clone git@github.com:alpa-projects/alpa.git
+
+4. Install ``opt_serving`` package. Go to the examples folder and install the package.
+
+  .. code:: shell
+
+    cd alpa/examples
+    pip3 install -e .
+
 
 Get Alpa-compatible OPT Weights
 ===============================
@@ -109,7 +114,7 @@ For processing other sizes of OPT (125M - 66B), you can skip Step 1 and start fr
 
   .. code:: shell
 
-    python step_2_consolidate_992_shards_to_singleton.py --read-prefix [PATH_TO_992_SHARDS]/checkpoint_last --save-prefix [PATH_TO_SAVE_CHECKPOINT]
+    python3 step_2_consolidate_992_shards_to_singleton.py --read-prefix [PATH_TO_992_SHARDS]/checkpoint_last --save-prefix [PATH_TO_SAVE_CHECKPOINT]
 
   The consolidated checkpoint will be saved at ``PATH_TO_SAVE_CHECKPOINT`` as specified in the command.
 
@@ -117,7 +122,7 @@ For processing other sizes of OPT (125M - 66B), you can skip Step 1 and start fr
 
     The above script will require a peak memory (RAM) usage as large as twice of the model size.
     For example, if you are performing consolidation for the 175B model, it will approximately have a peak memory usage of 175B x 2 bytes x 2 = 700GB.
-    Please make sure you RAM is sufficient to run the script without throwing an OOM exception.
+    Please make sure your RAM is sufficient to run the script without throwing an OOM exception.
 
   .. note::
 
@@ -144,14 +149,14 @@ For processing other sizes of OPT (125M - 66B), you can skip Step 1 and start fr
 
     .. code:: shell
 
-      python step_3_convert_to_numpy_weights.py --ckpt_path PATH_TO_SAVE_CHECKPOINT --output-folder OUTPUT_PATH
+      python3 step_3_convert_to_numpy_weights.py --ckpt_path PATH_TO_SAVE_CHECKPOINT --output-folder OUTPUT_PATH
 
 
     The weights will be saved at the folder ``OUTPUT_PATH`` as specified in the command.
 
   .. note::
 
-    The above script also require 350GB free disk space to write the numpy-formatted weights.
+    The above script also requires 350GB free disk space to write the numpy-formatted weights.
 
 
 Download Alpa-compatible weights
@@ -171,24 +176,23 @@ Run and Benchmark Generation in the Command Line
 ================================================
 
 The code of this tutorial is under `examples/opt_serving <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving>`_.
-Add the root directory of Alpa repo to the environment variable ``PYTHONPATH`` if you install Alpa by wheel (Not required if you install Alpa from source).
 
-- Run generation using the 125M model with PyTorch/HuggingFace backend:
+- Run generation using the 125M model with PyTorch/HuggingFace backend on a single GPU:
 
   .. code:: shell
 
-    cd benchmark
-    python3 benchmark_text_gen.py --model facebook/opt-125m
+    cd opt_serving/benchmark
+    python3 benchmark_text_gen.py --model facebook/opt-125m --debug
 
 
-- Run generation using the 125M model with JAX backend in debug mode to see the generated text:
+- Run generation using the 125M model with JAX backend on a single GPU:
 
   .. code:: shell
 
     python3 benchmark_text_gen.py --model jax/opt-125m --path [PATH_TO_WEIGHT] --debug
 
 
-- Run model-parallel generation on multiple GPUs using the 2.7B model with Alpa:
+- Run model-parallel generation using the 2.7B model with Alpa on multiple GPUs:
 
   .. code:: shell
 
@@ -198,13 +202,13 @@ Add the root directory of Alpa repo to the environment variable ``PYTHONPATH`` i
     python3 benchmark_text_gen.py --model alpa/opt-2.7b --path [PATH_TO_WEIGHT] --debug
 
 
-- Run distributed generation with the 175B model using Alpa on a cluster of GPUs. Note you will need >350GB total GPU memory in the entire cluster to successfully run the inference.
+- Run distributed generation using the 175B model with Alpa on a cluster of GPU nodes.
+  Note you will need >350GB total GPU memory in the entire cluster to successfully run the inference.
 
-  Before running the command below, start Ray on the cluster following `this guide <https://docs.ray.io/en/latest/cluster/cloud.html#manual-cluster>`_.
+  Before running the command below, start Ray on the cluster following `this guide <https://docs.ray.io/en/latest/cluster/cloud.html#manual-cluster>`_. You can check the cluster status by ``ray status``. You should be able to see all GPUs and all nodes in the output.
 
   .. code:: shell
 
-    # Remember to start Ray on all nodes of the cluster
     python3 benchmark_text_gen.py --model alpa/opt-175b --path [PATH_TO_WEIGHT] --debug
 
 Launch a Web Server to Serve the OPT Models
@@ -216,7 +220,6 @@ Launch the web server:
 
   # Serve the OPT-175B model at port 10001
   python3 interactive_hosted.py --model alpa/opt-175b --port 10001 --path [PATH_TO_WEIGHT]
-
 
 Then open ``https://[IP-ADDRESS]:10001`` in your browser to try out the model!
 

@@ -4,10 +4,10 @@ import unittest
 import jax.numpy as jnp
 import ray
 
-from alpa import (init, shutdown, parallelize, grad, global_config,
-                  ShardParallel, PipeshardParallel, AutoLayerOption)
+from alpa import (init, shutdown, parallelize, global_config, ShardParallel,
+                  PipeshardParallel)
 from alpa.device_mesh import get_global_cluster
-from alpa.test_install import create_train_state_and_batch
+from alpa.test_install import get_mlp_train_state_and_step
 
 
 class MemoryLeakTest(unittest.TestCase):
@@ -20,51 +20,35 @@ class MemoryLeakTest(unittest.TestCase):
         shutdown()
 
     def test_shard_parallel(self):
-
-        @parallelize(method=ShardParallel(num_micro_batches=2))
-        def train_step(state, batch):
-
-            def loss_func(params):
-                out = state.apply_fn(params, batch['x'])
-                return jnp.mean((out - batch['y'])**2)
-
-            grads = grad(loss_func)(state.params)
-            new_state = state.apply_gradients(grads=grads)
-            return new_state
-
-        state, batch = create_train_state_and_batch(128, 128)
+        state, batch, train_step = get_mlp_train_state_and_step(batch_size=128,
+                                                                hidden_size=128)
+        train_step = parallelize(train_step,
+                                 method=ShardParallel(num_micro_batches=2))
 
         for i in range(2):
-            state = train_step(state, batch)
+            state, loss = train_step(state, batch)
+            del loss
         del state
 
         # Assert all buffers are freed
         executable = train_step.get_last_executable()
         for w in executable.physical_mesh.workers:
-            assert len(ray.get(w.get_live_buffer_uuids.remote())) == 0
-
-        executable.physical_mesh.shutdown()
+            # One loss array cannot be deleted due to python's GC behavior
+            assert len(ray.get(w.get_live_buffer_uuids.remote())) <= 1
 
     def test_pipeline_parallel(self):
+        state, batch, train_step = get_mlp_train_state_and_step(
+            batch_size=128, hidden_size=128, add_manual_pipeline_marker=True)
+
         layer_num = min(get_global_cluster().num_devices, 2)
-
-        @parallelize(method=PipeshardParallel(
-            num_micro_batches=2,
-            layer_option=AutoLayerOption(layer_num=layer_num)))
-        def train_step(state, batch):
-
-            def loss_func(params):
-                out = state.apply_fn(params, batch['x'])
-                return jnp.mean((out - batch['y'])**2)
-
-            grads = grad(loss_func)(state.params)
-            new_state = state.apply_gradients(grads=grads)
-            return new_state
-
-        state, batch = create_train_state_and_batch(128, 128)
+        train_step = parallelize(
+            train_step,
+            method=PipeshardParallel(num_micro_batches=2,
+                                     layer_option="manual"))
 
         for i in range(2):
-            state = train_step(state, batch)
+            state, loss = train_step(state, batch)
+            del loss
         del state
 
         # Assert all buffers are freed

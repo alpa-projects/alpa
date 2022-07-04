@@ -28,8 +28,8 @@ import time
 import torch
 from transformers import AutoTokenizer
 
-from examples.opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
-from examples.opt_serving.model.wrapper import get_model
+from opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
+from opt_serving.model.wrapper import get_model
 
 test_prompts = [
     "Computer science is the study of computation and",

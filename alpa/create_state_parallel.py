@@ -38,6 +38,7 @@ class CreateStateExecutable(PipeshardDriverExecutable):
         super().__init__(mesh_group=mesh_group,
                          pipeshard_config=pipeshard_config,
                          num_batch=1,
+                         layer_option=None,
                          in_tree=in_tree,
                          out_tree=out_tree,
                          static_argnums=static_argnums)

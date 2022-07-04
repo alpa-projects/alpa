@@ -11,7 +11,7 @@ import optax
 from flax import linen as nn
 from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 
-from alpa.api import init, shutdown, parallelize, grad, value_and_grad
+from alpa.api import init, shutdown, parallelize, value_and_grad
 from alpa.model.bert_model import BertConfig, FlaxBertLayer
 from alpa.model.model_util import FlaxBaseModelOutput, TrainState
 from alpa.parallel_method import PipeshardParallel
@@ -40,37 +40,75 @@ def assert_allclose(x, y, rtol=1e-4, atol=1e-4):
         x = np.asarray(x)
         y = np.asarray(y)
         np.testing.assert_allclose(x, y, rtol, atol)
+    elif isinstance(x, TrainState):
+        assert isinstance(y, TrainState)
+        assert_allclose(jax.tree_leaves(x), jax.tree_leaves(y))
     elif x == y:
         return
     else:
         raise TypeError((type(x), type(y)))
 
 
-# Models and functions for Pipeline Tests
 class MLPModel(nn.Module):
     """An MLP model for testing."""
-    hidden_dim: int
-    output_dim: int
-    manual_pipeline_layer: bool = True
+    num_layers: int
+    hidden_size: int
     use_bias: bool = True
+    add_manual_pipeline_marker: bool = True
 
     @nn.compact
     def __call__(self, x):
-        x = nn.Dense(features=self.hidden_dim, use_bias=self.use_bias)(x)
-        x = nn.relu(x)
-        x = nn.Dense(features=self.hidden_dim, use_bias=self.use_bias)(x)
-        if self.manual_pipeline_layer:
-            mark_pipeline_boundary()
-        x = nn.Dense(features=self.hidden_dim, use_bias=self.use_bias)(x)
-        x = nn.Dense(features=self.output_dim, use_bias=self.use_bias)(x)
+        for i in range(self.num_layers):
+            x = nn.Dense(self.hidden_size, use_bias=self.use_bias)(x)
+
+            if (self.add_manual_pipeline_marker and
+                    i == self.num_layers // 2 - 1):
+                mark_pipeline_boundary()
         return x
+
+
+def get_mlp_train_state_and_step(batch_size,
+                                 hidden_size,
+                                 num_layers=4,
+                                 use_bias=True,
+                                 add_manual_pipeline_marker=False):
+    # Init input batch
+    rngkey = jax.random.PRNGKey(0)
+    x = jax.random.normal(rngkey, (batch_size, hidden_size), dtype=jnp.float32)
+    y = jax.random.normal(rngkey, (batch_size, hidden_size), dtype=jnp.float32)
+    batch = {"x": x, "y": y}
+
+    # Init model and optimizer
+    model = MLPModel(num_layers=num_layers,
+                     hidden_size=hidden_size,
+                     use_bias=use_bias,
+                     add_manual_pipeline_marker=add_manual_pipeline_marker)
+    params = model.init(rngkey, batch["x"])
+    tx = optax.sgd(learning_rate=1e-2, momentum=0.9)
+    state = TrainState.create(apply_fn=model.apply,
+                              params=params,
+                              tx=tx,
+                              dynamic_scale=None)
+
+    # Define train step
+    def train_step(state, batch):
+
+        def loss_func(params):
+            out = state.apply_fn(params, batch["x"])
+            return jnp.mean((out - batch["y"])**2)
+
+        val, grads = value_and_grad(loss_func)(state.params)
+        new_state = state.apply_gradients(grads=grads)
+        return new_state, val
+
+    return state, batch, train_step
 
 
 class BertLayerModel(nn.Module):
     """A BERT model for testing."""
     config: BertConfig
     dtype: jnp.dtype = jnp.float32
-    manual_pipeline_layer: bool = True
+    add_manual_pipeline_marker: bool = True
 
     def setup(self):
         # pylint: disable=attribute-defined-outside-init
@@ -83,9 +121,48 @@ class BertLayerModel(nn.Module):
         for i, layer in enumerate(self.layers):
             layer_outputs = layer(x, attention_mask)
             x = layer_outputs[0]
-            if self.manual_pipeline_layer and i != len(self.layers) - 1:
+
+            if self.add_manual_pipeline_marker and i != len(self.layers) - 1:
                 mark_pipeline_boundary()
         return x
+
+
+def get_bert_layer_train_state_and_step(batch_size, seq_len, num_layers,
+                                        hidden_size, num_heads,
+                                        add_manual_pipeline_marker):
+    rngkey = jax.random.PRNGKey(0)
+    x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
+                          dtype=jnp.float32)
+    y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
+                          dtype=jnp.float32)
+    attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
+    batch = {"x": x, "y": y, "attention_mask": attention_mask}
+
+    model = BertLayerModel(
+        config=BertConfig(hidden_size=hidden_size,
+                          intermediate_size=hidden_size * 4,
+                          num_attention_heads=num_heads,
+                          num_hidden_layers=num_layers),
+        add_manual_pipeline_marker=add_manual_pipeline_marker)
+    params = model.init(rngkey, batch["x"], batch["attention_mask"])
+    tx = optax.adam(learning_rate=1e-2)
+    state = TrainState.create(apply_fn=model.apply,
+                              params=params,
+                              tx=tx,
+                              dynamic_scale=None)
+
+    def train_step(state, batch):
+
+        def loss_func(params):
+            out = state.apply_fn(params, batch["x"], batch["attention_mask"])
+            loss = jnp.mean((out - batch["y"])**2)
+            return loss
+
+        val, grads = value_and_grad(loss_func)(state.params)
+        new_state = state.apply_gradients(grads=grads)
+        return new_state, val
+
+    return state, batch, train_step
 
 
 def create_train_state(rngkey, model, inputs):
@@ -98,123 +175,26 @@ def create_train_state(rngkey, model, inputs):
     return state
 
 
-def create_dummy_train_state(rngkey, model, inputs, dtype=jnp.float16):
-    params = model.init_dummy(rngkey, *inputs)
-    tx = optax.adam(learning_rate=1e-2)
-    mixed_precision = (dtype == jnp.float16)
-    state = TrainState.create(apply_fn=model.apply,
-                              params=params,
-                              tx=tx,
-                              mixed_precision=mixed_precision,
-                              dynamic_scale=None)
-    return state
+def mlp_inference_step(state, batch):
+    out = state.apply_fn(state.params, batch["x"])
+    loss = jnp.mean((out - batch["y"])**2)
+    return out, loss
 
 
-def get_mlp_train_step(parallel_method, use_value_and_grad):
-
-    def train_step(state, batch):
-
-        def loss_func(params):
-            out = state.apply_fn(params, batch["x"])
-            loss = jnp.mean((out - batch["y"])**2)
-            return loss
-
-        if parallel_method:
-            if use_value_and_grad:
-                val, grads = value_and_grad(loss_func)(state.params)
-            else:
-                grads = grad(loss_func)(state.params)
-                val = jax.tree_leaves(grads)[0]
-        else:
-            if use_value_and_grad:
-                val, grads = jax.value_and_grad(loss_func)(state.params)
-            else:
-                grads = jax.grad(loss_func)(state.params)
-                val = jax.tree_leaves(grads)[0]
-
-        new_state = state.apply_gradients(grads=grads)
-        return new_state, val
-
-    if parallel_method:
-        return parallelize(train_step, method=parallel_method)
-    else:
-        return train_step
-
-
-def get_mlp_inference_step(parallel_method):
-
-    def inference_step(state, batch):
-        out = state.apply_fn(state.params, batch["x"])
-        loss = jnp.mean((out - batch["y"])**2)
-        return out, loss
-
-    if parallel_method:
-        return parallelize(inference_step,
-                           donate_argnums=(),
-                           method=parallel_method)
-    else:
-        return inference_step
-
-
-def get_bert_layer_collection_inference_step(parallel_method):
-
-    def inference_step(state, batch):
-        out = state.apply_fn(state.params,
-                             batch["x"],
-                             batch["attention_mask"],
-                             output_attentions=True,
-                             output_hidden_states=True)
-        loss = jnp.mean((out.last_hidden_state - batch["y"])**2)
-        # FIXME(yonghao): Otherwise, the first hidden state is an input,
-        #   but we do not support outputing an input(not batch-related
-        #   outputs).
-        out = FlaxBaseModelOutput(last_hidden_state=out.last_hidden_state,
-                                  hidden_states=out.hidden_states[1:],
-                                  attentions=out.attentions)
-        return out, loss
-
-    if parallel_method:
-        return parallelize(inference_step,
-                           donate_argnums=(),
-                           method=parallel_method)
-    else:
-        return inference_step
-
-
-def get_bert_layer_train_step(parallel_method,
-                              use_value_and_grad,
-                              use_alpa_grad=None):
-
-    if use_alpa_grad is None:
-        use_alpa_grad = parallel_method is not None
-
-    def train_step(state, batch):
-
-        def loss_func(params):
-            out = state.apply_fn(params, batch["x"], batch["attention_mask"])
-            loss = jnp.mean((out - batch["y"])**2)
-            return loss
-
-        if use_alpa_grad:
-            if use_value_and_grad:
-                val, grads = value_and_grad(loss_func)(state.params)
-            else:
-                grads = grad(loss_func)(state.params)
-                val = jax.tree_leaves(grads)[0]
-        else:
-            if use_value_and_grad:
-                val, grads = jax.value_and_grad(loss_func)(state.params)
-            else:
-                grads = jax.grad(loss_func)(state.params)
-                val = jax.tree_leaves(grads)[0]
-
-        new_state = state.apply_gradients(grads=grads)
-        return new_state, val
-
-    if parallel_method:
-        return parallelize(train_step, method=parallel_method)
-    else:
-        return train_step
+def bert_layer_collection_inference_step(state, batch):
+    out = state.apply_fn(state.params,
+                         batch["x"],
+                         batch["attention_mask"],
+                         output_attentions=True,
+                         output_hidden_states=True)
+    loss = jnp.mean((out.last_hidden_state - batch["y"])**2)
+    # FIXME(yonghao): Otherwise, the first hidden state is an input,
+    #   but we do not support outputing an input(not batch-related
+    #   outputs).
+    out = FlaxBaseModelOutput(last_hidden_state=out.last_hidden_state,
+                              hidden_states=out.hidden_states[1:],
+                              attentions=out.attentions)
+    return out, loss
 
 
 class PipelineBasicTest(unittest.TestCase):
@@ -228,7 +208,6 @@ class PipelineBasicTest(unittest.TestCase):
     def run_mlp(self,
                 manual_pipeline_layer: bool = True,
                 use_remat: bool = False,
-                use_value_and_grad: bool = False,
                 stage_option: Optional[StageOption] = None,
                 as_option: Optional[AutoShardingOption] = None,
                 do_numerical_test: bool = True):
@@ -240,23 +219,16 @@ class PipelineBasicTest(unittest.TestCase):
             AutoLayerOption(layer_num=2, remat_layer=use_remat),
             stage_option=stage_option or UniformStageOption())
 
-        # Init model and optimizer
-        batch_size = 64
-        hidden_dim = 16
-        input_dim = output_dim = hidden_dim
-
-        model = MLPModel(hidden_dim=hidden_dim,
-                         output_dim=output_dim,
-                         manual_pipeline_layer=manual_pipeline_layer)
-        rngkey = jax.random.PRNGKey(0)
-        x = jax.random.normal(rngkey, (batch_size, input_dim), jnp.float32)
-        y = jax.random.normal(rngkey, (batch_size, output_dim), jnp.float32)
-        batch = {"x": x, "y": y}
-        state = create_train_state(rngkey, model, [x])
+        # Init model
+        state, batch, train_step = get_mlp_train_state_and_step(
+            batch_size=64,
+            hidden_size=16,
+            num_layers=4,
+            add_manual_pipeline_marker=manual_pipeline_layer)
 
         # Compile
-        serial_train_step = get_mlp_train_step(None, use_value_and_grad)
-        parallel_train_step = get_mlp_train_step(method, use_value_and_grad)
+        serial_train_step = train_step
+        parallel_train_step = parallelize(train_step, method=method)
         executable = parallel_train_step.get_executable(state, batch)
 
         # Run correctnesss test
@@ -281,13 +253,12 @@ class PipelineBasicTest(unittest.TestCase):
         return hlo_text
 
     def run_n_layer_bert(self,
-                         n_layers,
+                         num_layers,
                          batch_size=16,
                          seq_len=256,
                          hidden_size=512,
                          num_heads=512 // 64,
                          use_remat=False,
-                         use_value_and_grad=False,
                          manual_pipeline_layer=True,
                          stage_option: Optional[StageOption] = None,
                          as_option: Optional[AutoShardingOption] = None,
@@ -297,29 +268,21 @@ class PipelineBasicTest(unittest.TestCase):
             default_auto_sharding_option=as_option or AutoShardingOption(),
             layer_option=ManualLayerOption(
                 remat_layer=use_remat) if manual_pipeline_layer else
-            AutoLayerOption(layer_num=n_layers, remat_layer=use_remat),
+            AutoLayerOption(layer_num=num_layers, remat_layer=use_remat),
             stage_option=stage_option or UniformStageOption())
 
-        # Init model and optimizer
-        rngkey = jax.random.PRNGKey(0)
-        x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
-                              dtype=jnp.float32)
-        y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
-                              dtype=jnp.float32)
-        attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
-        model = BertLayerModel(config=BertConfig(hidden_size=hidden_size,
-                                                 intermediate_size=hidden_size *
-                                                 4,
-                                                 num_attention_heads=num_heads,
-                                                 num_hidden_layers=n_layers),
-                               manual_pipeline_layer=manual_pipeline_layer)
-        batch = {"x": x, "y": y, "attention_mask": attention_mask}
-        state = create_train_state(rngkey, model, [x, attention_mask])
+        # Init model
+        state, batch, train_step = get_bert_layer_train_state_and_step(
+            batch_size=batch_size,
+            seq_len=seq_len,
+            num_layers=num_layers,
+            hidden_size=hidden_size,
+            num_heads=num_heads,
+            add_manual_pipeline_marker=manual_pipeline_layer)
 
         # Compile
-        serial_train_step = get_bert_layer_train_step(None, use_value_and_grad)
-        parallel_train_step = get_bert_layer_train_step(method,
-                                                        use_value_and_grad)
+        serial_train_step = train_step
+        parallel_train_step = parallelize(train_step, method=method)
         executable = parallel_train_step.get_executable(state, batch)
 
         # Run correctnesss test

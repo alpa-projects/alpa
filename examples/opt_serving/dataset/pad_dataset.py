@@ -1,5 +1,5 @@
-from examples.opt_serving.dataset import BaseWrapperDataset
-from examples.opt_serving.dataset import data_utils
+from opt_serving.dataset import BaseWrapperDataset
+from opt_serving.dataset import data_utils
 
 
 class PadDataset(BaseWrapperDataset):

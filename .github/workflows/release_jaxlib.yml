@@ -4,10 +4,11 @@ on:
   release:
     types: [created]
   workflow_dispatch:
-
-env:
-  TWINE_USERNAME: "__token__"
-  TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+    inputs:
+      tensorflow:
+        description: 'TensorFlow-alpa branch to build'
+        required: true
+        default: 'master'
 
 jobs:
 
@@ -41,26 +42,71 @@ jobs:
       - name: Compile Jaxlib
         run: |
           mkdir -p /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
-
-          docker run --gpus all --tmpfs /build:exec \
-          --rm -v /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}:/dist \
-          build-jaxlib-image-cuda${CUDA_VERSION} ${PYTHON_VERSION} \
-          cuda ${CUDA_VERSION}
+          echo "Compile Python ${PYTHON_VERSION}, CUDA ${CUDA_VERSION}, ALPA BRANCH: ${ALPA_BRANCH}, TF_BRANCH: ${TF_BRANCH}"
+          if [[ ${{ github.event_name }} == "release" ]]; then
+            docker run --gpus all --tmpfs /build:exec \
+              --rm -v /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}:/dist \
+              build-jaxlib-image-cuda${CUDA_VERSION} ${PYTHON_VERSION} \
+              cuda ${CUDA_VERSION} ${ALPA_BRANCH}
+          else
+            docker run --gpus all --tmpfs /build:exec \
+              --rm -v /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}:/dist \
+              build-jaxlib-image-cuda${CUDA_VERSION} ${PYTHON_VERSION} \
+              cuda ${CUDA_VERSION} ${ALPA_BRANCH} ${TF_BRANCH}
+          fi
         env:
           CUDA_VERSION: ${{ matrix.cuda }}
           PYTHON_VERSION: ${{ matrix.python }}
+          ALPA_BRANCH: ${{ github.ref }}
+          TF_BRANCH: ${{ github.event.inputs.tensorflow }}
+
+      - name: Move CUDA${{ matrix.cuda }}
+        run: |
+          echo "Move to one single folder"
+          ls /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
+          mv /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}/*.whl /data/alpa-pypi/packages/
+        env:
+          CUDA_VERSION: ${{ matrix.cuda }}
 
   publish:
     runs-on: [self-hosted]
     needs: [build-jaxlib]
-    strategy:
-      matrix:
-        cuda: ["11.1", "11.2", "11.3"]
     steps:
-    - name: Publish CUDA${{ matrix.cuda }}
-      run: |
-        echo "Move to self-hosted pypi"
-        ls /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}
-        mv /data/alpa-dist/jaxlib-alpa/cuda${CUDA_VERSION//.}/*.whl /data/alpa-pypi/packages/
-      env:
-        CUDA_VERSION: ${{ matrix.cuda }}
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.8
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install github3.py requests
+
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Get latest tag
+        id: latesttag
+        uses: "WyriHaximus/github-action-get-previous-tag@v1"
+
+      - name: Upload wheels
+        run: |
+          echo "Upload wheels to tag ${TAG}"
+          ls /data/alpa-pypi/packages/
+          python build_jaxlib/release/wheel_upload.py --tag ${TAG} --path /data/alpa-pypi/packages/
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+          TAG: ${{ steps.latesttag.outputs.tag }}
+
+      - name: "Generate and update PyPI index"
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+          TAG: ${{ steps.latesttag.outputs.tag }}
+        run: |
+          git clone https://$GITHUB_TOKEN@github.com/alpa-projects/alpa-projects.github.io
+          cd alpa-projects.github.io
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          cd ..
+          python build_jaxlib/release/generate_pypi_index.py --tag ${TAG}

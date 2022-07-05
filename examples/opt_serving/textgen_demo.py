@@ -7,21 +7,26 @@ from opt_serving.model.wrapper import get_model
 tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", use_fast=False)
 tokenizer.add_bos_token = False
 
-num_beams = 1
+generate_params = {'do_sample': True, 'num_beams': 4, 'num_return_sequences': 3}
+
 # Load the model
 model = get_model(model_name="alpa/opt-2.7b",
                   device="cuda",
                   path="/home/ubuntu/opt_weights",
-                  num_beams=num_beams)
+                  **generate_params)
 
 # Generate
 prompt = "Paris is the capital city of"
 
 input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to("cuda")
-output = model.generate(input_ids=input_ids,
-                        max_length=256,
-                        do_sample=True,
-                        num_beams=num_beams)
-generated_string = tokenizer.batch_decode(output, skip_special_tokens=True)
+outputs = model.generate(input_ids=input_ids,
+                         max_length=256,
+                         no_repeat_ngram_size=2,
+                         **generate_params)
 
-print(generated_string)
+# Print results
+print("Output:\n" + 100 * '-')
+for i, output in enumerate(outputs):
+    print("{}: {}".format(i, tokenizer.decode(output,
+                                              skip_special_tokens=True)))
+    print(100 * '-')

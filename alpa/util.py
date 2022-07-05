@@ -560,7 +560,7 @@ def compile_concatenate(backend, mesh_shape, sharding_spec, batch_size,
     return hlo_proto
 
 
-def compile_allgather(backend, shape, dtype, src_spec, dst_spec, num_devices):
+def compile_allgather(shape, dtype, src_spec, dst_spec, num_devices):
     c = xc.XlaBuilder("allgather")
     src_sharding = pxla.sharding_spec_sharding_proto(src_spec)
     c.set_sharding(src_sharding)
@@ -581,8 +581,7 @@ def compile_allgather(backend, shape, dtype, src_spec, dst_spec, num_devices):
         device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
         parameter_is_tupled_arguments=False,
-        build_random_seed=build_random_seed
-    )
+        build_random_seed=build_random_seed)
     xe.run_spmd_partitioner(hlo_module, compile_options)
     return hlo_module.as_serialized_hlo_module_proto()
 

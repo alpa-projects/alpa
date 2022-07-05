@@ -24,7 +24,8 @@ from alpa.pipeline_parallel.primitive_def import (mark_hook_jaxpreqn,
 from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                run_spmd_partitioner_pass,
                                                get_input_output_sharding_specs,
-                                               hlo_sharding_to_sharding_spec)
+                                               hlo_sharding_to_sharding_spec,
+                                               AutoShardingOption)
 from alpa.global_env import global_config
 from alpa.util import (OrderedSet, clone_jaxpr, get_compile_options,
                        jaxpr_to_hlo_module, setup_computation_alias,
@@ -214,7 +215,8 @@ class XlaShardedPipelineComputation(PipelineComputation):
         backend_name = "gpu"
         backend = xb.get_backend(backend_name)
         stage_plan = StagePlan(global_config.compile_random_seed,
-                               logical_mesh_shape, 1, 1, None, 0)
+                               logical_mesh_shape, 1, 1, AutoShardingOption(),
+                               None, 0)
         compiled = compile_dummy_zero_constant(backend,
                                                np.prod(logical_mesh_shape))
         sharding_annotated_module = compiled.hlo_modules()[0]

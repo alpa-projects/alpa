@@ -4,7 +4,7 @@ import logging
 import numpy as np
 import torch.utils.data
 
-from examples.opt_serving.dataset import data_utils
+from opt_serving.dataset import data_utils
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ class BaseDataset(torch.utils.data.Dataset, EpochListening):
         Given an ordered set of indices, return batches according to
         *max_tokens*, *max_sentences* and *required_batch_size_multiple*.
         """
-        from examples.opt_serving.dataset import data_utils
+        from opt_serving.dataset import data_utils
 
         fixed_shapes = self.get_batch_shapes()
         if fixed_shapes is not None:

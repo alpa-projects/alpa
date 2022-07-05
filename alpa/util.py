@@ -98,17 +98,6 @@ def abstractify_with_aval(x):
         return xla.abstractify(x)
 
 
-def tree_to_nparray(tree):
-    """Convert a pytree to a pytree of numpy array."""
-
-    def convert_to_nparray(x):
-        if hasattr(x, "__array__"):
-            return np.asanyarray(x)
-        return x
-
-    return tree_map(convert_to_nparray, tree)
-
-
 def update_jax_platform(platform):
     """Update the jax backend platform."""
     jax.config.update("jax_platform_name", platform)

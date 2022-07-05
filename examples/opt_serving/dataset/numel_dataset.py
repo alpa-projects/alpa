@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from examples.opt_serving.dataset import BaseWrapperDataset
+from opt_serving.dataset import BaseWrapperDataset
 
 
 class NumelDataset(BaseWrapperDataset):

@@ -13,11 +13,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from examples.opt_serving.model.opt_model import (
+from opt_serving.model.opt_model import (
     get_opt_config, get_pipeshard_executable, load_params_dis_array,
     init_cache_dis_array, load_params_np, init_cache_np, get_jax_executable,
     build_position_ids, init_model_aval, init_cache_aval)
-from examples.opt_serving.model.wrapper import set_skip_shard_args_check
+from opt_serving.model.wrapper import set_skip_shard_args_check
 
 
 def run_benchmark(args):

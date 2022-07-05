@@ -4,7 +4,7 @@ import os
 import time
 from typing import Optional, Sequence
 
-from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
+from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves, PyTreeDef
 import numpy as np
 import ray.exceptions
 
@@ -16,6 +16,8 @@ from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
                                   MemzeroWorkerExecutable,
                                   PartialGradAccMeshWorkerExecutable,
                                   next_mesh_executable_uuid)
+from alpa.parallel_plan import ClusterInfo, PipelinePlan, ParallelPlan
+from alpa.pipeline_parallel.layer_construction import LayerOption
 from alpa.pipeline_parallel.runtime_emitter import (
     AllocateZeroWorkerExecutableConfig, ConcatWorkerExecutableConfig,
     ExecutableConfig, MemZeroWorkerExecutableConfig,
@@ -44,6 +46,7 @@ class PipeshardDriverExecutable:
                  mesh_group: PhysicalDeviceMeshGroup,
                  pipeshard_config: PipeshardConfig,
                  num_batch: int,
+                 layer_option: LayerOption,
                  in_tree: PyTreeDef,
                  out_tree: Optional[PyTreeDef] = None,
                  static_argnums: Optional[Sequence[int]] = None):
@@ -51,9 +54,9 @@ class PipeshardDriverExecutable:
         self.mesh_group = mesh_group
         self.num_mesh = len(mesh_group)
         self.num_batch = num_batch
-        self.static_argnums = static_argnums
         self.in_tree = in_tree
         self.out_tree = out_tree
+        self.static_argnums = static_argnums
 
         ##### For debugging and serialization #####
         self.stages = pipeshard_config.xla_stages
@@ -67,6 +70,13 @@ class PipeshardDriverExecutable:
             pipeshard_config.sharding_annotated_hlo_texts)
         # List[stage_idx -> executable_uuid]
         self.executable_uuids = pipeshard_config.executable_uuids
+        self.default_auto_sharding_option = (
+            pipeshard_config.default_auto_sharding_option)
+        self.pipeline_plan = PipelinePlan(
+            self.schedule.name,
+            layer_option,
+            pipeshard_config.manual_stage_option,
+        )
 
         ##### For handling inputs of the executable #####
         # go to the definition of PipeshardInputConfig for more details.
@@ -209,6 +219,16 @@ class PipeshardDriverExecutable:
         with the same structure as the output pytree.
         """
         return tree_unflatten(self.out_tree, self.output_placement_specs)
+
+    def get_parallel_plan(self):
+        """Get the overall parallel plan."""
+        virtual_mesh = self.mesh_group.parent
+        cluster_info = ClusterInfo(virtual_mesh.num_hosts,
+                                   virtual_mesh.num_devices_per_host)
+        return ParallelPlan(cluster_info, self.num_batch,
+                            self.default_auto_sharding_option,
+                            self.pipeline_plan,
+                            tree_leaves(self.get_input_placement_specs()))
 
     def __call__(self, *args):
         """Fast call without signature matching."""

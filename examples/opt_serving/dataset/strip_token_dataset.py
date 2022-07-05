@@ -1,4 +1,4 @@
-from examples.opt_serving.dataset import BaseWrapperDataset
+from opt_serving.dataset import BaseWrapperDataset
 
 
 class StripTokenDataset(BaseWrapperDataset):

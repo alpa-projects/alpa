@@ -77,6 +77,11 @@ class PipelineSchedule(metaclass=ABCMeta):
 
         self._schedules: List[List[Tuple]] = self._generate_schedule()
 
+    @property
+    @abstractmethod
+    def name(self):
+        raise NotImplementedError()
+
     @abstractmethod
     def _generate_schedule(self):
         """Implementation of the schedule."""
@@ -181,6 +186,10 @@ class PipelineSchedule(metaclass=ABCMeta):
 class GpipeSchedule(PipelineSchedule):
     """Construct a Gpipe-like schedule."""
 
+    @property
+    def name(self):
+        return "gpipe"
+
     def _generate_schedule(self):
         """
         Generate a Gpipe-like schedule.
@@ -268,6 +277,10 @@ class PipeDreamFlush(PipelineSchedule):
 
     It has similar latency to GPipe but is more memory-efficient.
     """
+
+    @property
+    def name(self):
+        return "1f1b"
 
     def _generate_schedule(self):
         m = self.num_batch
@@ -377,6 +390,10 @@ class PipeDreamFlush(PipelineSchedule):
 
 class InferenceSchedule(PipelineSchedule):
     """Construct a Gpipe-like schedule."""
+
+    @property
+    def name(self):
+        return "inference"
 
     def _generate_schedule(self):
         """

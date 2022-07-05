@@ -3,7 +3,7 @@ from typing import Tuple, Union
 import numpy as np
 import torch
 
-from examples.opt_serving.dataset import BaseDataset
+from opt_serving.dataset import BaseDataset
 # from metaseq.data import plasma_utils
 
 
@@ -106,7 +106,7 @@ class TokenBlockDataset(BaseDataset):
             #     _get_slice_indices_fast,
             #     _get_block_to_dataset_index_fast,
             # )
-            from examples.opt_serving.dataset.token_block_utils_fast import (
+            from opt_serving.dataset.token_block_utils_fast import (
                 _get_slice_indices_fast,
                 _get_block_to_dataset_index_fast,
             )

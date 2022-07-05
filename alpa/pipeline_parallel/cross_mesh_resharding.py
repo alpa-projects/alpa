@@ -4,7 +4,6 @@ import math
 from typing import List, Any
 
 import numpy as np
-from jax._src.lib import xla_bridge as xb
 from jax.interpreters import pxla
 import ray
 

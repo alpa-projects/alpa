@@ -20,7 +20,7 @@ TrainState = namedtuple("TrainState", ["params", "bufs", "optim_state"])
 
 
 def train_torch_module(pt_module_gen, weight_init_func, dataloader, loss_func,
-                       optim_gen, parallel_method, auto_layer_con_func=None, num_epochs=1):
+                       optim_gen, parallel_method, auto_layer_con_func=None, num_epochs=20):
     # for mode in ["local", "dist"]:
     for mode in ["dist"]:
         # "local": pure PT eager mode on a single GPU,
@@ -120,11 +120,11 @@ def train_torch_module(pt_module_gen, weight_init_func, dataloader, loss_func,
                 pt_batch = atorch.to_format(atorch.mode(), pt_batch)
                 state, loss_value = train_step(state, pt_batch)
                 train_step_executable.sync()
-                # # do whatever with the loss value, e.g. plot it on a graph
+                # do whatever with the loss value, e.g. plot it on a graph
                 print(f"Iter: {i}, Loss: {float(loss_value):.6f}")
-        # latencies = executable.get_execution_time_costs(warmup=2)
-        # print(f"latencies (sec): {latencies}")
-        # print(f"avg. latency (sec): {np.mean(latencies)}")
+        latencies = executable.get_execution_time_costs(warmup=2)
+        print(f"latencies (sec): {latencies}")
+        print(f"avg. latency (sec): {np.mean(latencies)}")
 
         if atorch.mode() == "dist":
             alpa.shutdown()

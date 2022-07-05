@@ -18,18 +18,18 @@ class StageConstructionTest(PipelineBasicTest):
         self.run_mlp(manual_pipeline_layer=False, stage_option=auto_stage())
 
     def test_2_layer_bert_stage_construction(self):
-        self.run_n_layer_bert(n_layers=2, stage_option=auto_stage())
+        self.run_n_layer_bert(num_layers=2, stage_option=auto_stage())
 
     def test_2_layer_bert_layer_and_stage(self):
-        self.run_n_layer_bert(n_layers=2,
+        self.run_n_layer_bert(num_layers=2,
                               manual_pipeline_layer=False,
                               stage_option=auto_stage())
 
     def test_8_layer_bert_stage_construction(self):
-        self.run_n_layer_bert(n_layers=8, stage_option=auto_stage())
+        self.run_n_layer_bert(num_layers=8, stage_option=auto_stage())
 
     def test_8_layer_bert_layer_and_stage(self):
-        self.run_n_layer_bert(n_layers=8,
+        self.run_n_layer_bert(num_layers=8,
                               manual_pipeline_layer=False,
                               stage_option=auto_stage())
 

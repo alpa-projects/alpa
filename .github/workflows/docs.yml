@@ -35,3 +35,4 @@ jobs:
           external_repository: alpa-projects/alpa-projects.github.io
           publish_branch: master
           publish_dir: /data/alpa-dist/docs
+          keep_files: true

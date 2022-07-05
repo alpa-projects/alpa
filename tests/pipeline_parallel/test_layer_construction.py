@@ -10,11 +10,11 @@ class LayerConstructionTest(PipelineBasicTest):
         self.run_mlp(manual_pipeline_layer=False)
 
     def test_2_layer_bert_layer_construction(self):
-        self.run_n_layer_bert(n_layers=2, manual_pipeline_layer=False)
+        self.run_n_layer_bert(num_layers=2, manual_pipeline_layer=False)
 
     @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
     def test_8_layer_bert_layer_construction(self):
-        self.run_n_layer_bert(n_layers=8, manual_pipeline_layer=False)
+        self.run_n_layer_bert(num_layers=8, manual_pipeline_layer=False)
 
 
 def suite():

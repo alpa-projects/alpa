@@ -363,7 +363,7 @@ def run_auto_sharding_pass(
 
     stage_plan = StagePlan(build_random_seed, logical_mesh.shape,
                            all_gather_threshold, as_option.all_reduce_threshold,
-                           last_s_val, last_objective)
+                           as_option, last_s_val, last_objective)
 
     if return_mode == "single":
         return hlo_module, stage_plan

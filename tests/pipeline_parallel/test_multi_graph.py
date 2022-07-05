@@ -3,9 +3,8 @@ import jax.numpy as jnp
 import numpy as np
 import unittest
 
-from alpa import init, global_config, PipeshardParallel
-from alpa.testing import (get_mlp_train_step, MLPModel, create_train_state,
-                          assert_allclose)
+from alpa import init, parallelize, global_config, PipeshardParallel
+from alpa.testing import assert_allclose, get_mlp_train_state_and_step
 
 
 class MultipleGraphRuntimeTest(unittest.TestCase):
@@ -15,24 +14,18 @@ class MultipleGraphRuntimeTest(unittest.TestCase):
 
     def run_2_mlp(self, use_value_and_grad=False, stage_option="uniform"):
 
-        def test_one_mlp(method, batch_size=64, hidden_dim=16):
-            # Init model and optimizer
-            input_dim = output_dim = hidden_dim
-
-            model = MLPModel(hidden_dim=hidden_dim,
-                             output_dim=output_dim,
-                             manual_pipeline_layer=True)
-            rngkey = jax.random.PRNGKey(0)
-            x = jax.random.normal(rngkey, (batch_size, input_dim), jnp.float32)
-            y = jax.random.normal(rngkey, (batch_size, output_dim), jnp.float32)
-            batch = {'x': x, 'y': y}
-            state = create_train_state(rngkey, model, [x])
+        def test_one_mlp(method, batch_size=64, hidden_size=16):
+            state, batch, train_step = get_mlp_train_state_and_step(
+                batch_size=batch_size,
+                hidden_size=hidden_size,
+                add_manual_pipeline_marker=True)
 
             # Compile
-            serial_train_step = get_mlp_train_step(None, use_value_and_grad)
-            parallel_train_step = get_mlp_train_step(method, use_value_and_grad)
+            serial_train_step = train_step
+            parallel_train_step = parallelize(train_step, method=method)
             executable = parallel_train_step.get_executable(state, batch)
 
+            # Run and check
             expected_new_state, expected_val = serial_train_step(state, batch)
             actual_new_state, actual_val = parallel_train_step(state, batch)
 

@@ -5,7 +5,7 @@ import argparse
 import os
 
 import numpy as np
-from examples.opt_serving.scripts.utils import torch_load_cpu
+from opt_serving.scripts.utils import torch_load_cpu
 
 
 def save_numpy(weight_dict, to_folder):

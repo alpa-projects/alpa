@@ -16,10 +16,10 @@ import torch
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
 from transformers import OPTForCausalLM, GPT2LMHeadModel
 
-from examples.opt_serving.model.opt_model import (
+from opt_serving.model.opt_model import (
     get_opt_config, get_pipeshard_executable, load_params_dis_array,
     init_cache_dis_array, load_params_np, init_cache_np, get_jax_executable)
-from examples.opt_serving.model.opt_utils import (TransformerModelConfig,
+from opt_serving.model.opt_utils import (TransformerModelConfig,
                                                   jax_index_select,
                                                   is_power_of_two)
 

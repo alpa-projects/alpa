@@ -291,8 +291,8 @@ arch_params = {
     "mlp_d": 40960,
 }
 parallel_config = {
-    "global_batch_size": 128,  # 512
-    "num_micro_batches": 128,  # 512,
+    "global_batch_size": 512,
+    "num_micro_batches": 512,
     "num_auto_layers": 64,
 }
 

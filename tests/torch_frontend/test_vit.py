@@ -244,7 +244,7 @@ params = {
 #     "hidden_d": 1024,
 #     "mlp_d": 4096,
 # }
-# parallel_config = {
+# train_config = {
 #     "global_batch_size": 128,  # 512
 #     "num_micro_batches": 128,  # 128,
 #     "num_auto_layers": 16,
@@ -265,7 +265,7 @@ params = {
 #     "hidden_d": 5120,
 #     "mlp_d": 20480,
 # }
-# parallel_config = {
+# train_config = {
 #     "global_batch_size": 512,  # 512
 #     "num_micro_batches": 256,  # 128,
 #     "num_auto_layers": 16,
@@ -278,7 +278,7 @@ params = {
 #     "hidden_d": 7680,
 #     "mlp_d": 30720,
 # }
-# parallel_config = {
+# train_config = {
 #     "global_batch_size": 32,  # 512
 #     "num_micro_batches": 32,  # 512,
 #     "num_auto_layers": 64,
@@ -291,13 +291,14 @@ arch_params = {
     "hidden_d": 10240,
     "mlp_d": 40960,
 }
-parallel_config = {
+train_config = {
     "global_batch_size": 512,
     "num_micro_batches": int(sys.argv[1]),
     "num_auto_layers": 64,
+    "dtype": torch.half,
 }
-# gBS = 512
-# #mb = 512, latency: 46.213s
+# gBS = 512, fp16
+# #mb = 512, latency: TODO
 # #mb = 256, latency: TODO
 # #mb = 128, latency: TODO
 # #mb = 64, latency: TODO
@@ -311,12 +312,13 @@ parallel_config = {
 """
 
 params.update(arch_params)
-pt_module_gen = lambda: ViT(params=params)
-global_batch_size = parallel_config["global_batch_size"]
+dtype = train_config["dtype"]
+pt_module_gen = lambda: ViT(params=params).to(dtype)  # fp16
+global_batch_size = train_config["global_batch_size"]
 
 dataloader = [
-    (torch.randn(global_batch_size, num_channels, image_size, image_size), torch.randn(global_batch_size, num_classes)),
-    # (torch.randn(global_batch_size, num_channels, image_size, image_size), torch.randn(global_batch_size, num_classes)),
+    (torch.randn(global_batch_size, num_channels, image_size, image_size, dtype=dtype), torch.randn(global_batch_size, num_classes, dtype=dtype)),
+    # (torch.randn(global_batch_size, num_channels, image_size, image_size, dtype=dtype), torch.randn(global_batch_size, num_classes, dtype=dtype)),
 ]
 loss_func = lambda *args, **kwargs: nn.functional.mse_loss(
     *args, **kwargs)
@@ -330,12 +332,12 @@ class TorchViTTest(unittest.TestCase):
         alpa.set_seed(123)
 
     def test_vit_pipeshard(self):
-        num_micro_batches = parallel_config["num_micro_batches"]
-        num_auto_layers = parallel_config["num_auto_layers"]
+        num_micro_batches = train_config["num_micro_batches"]
+        num_auto_layers = train_config["num_auto_layers"]
         #parallel_method = alpa.PipeshardParallel(
         #    stage_mode="auto",
         #    num_micro_batches=num_micro_batches,
-        #    default_auto_sharding_option=alpa.AutoShardingOption(**parallel_config["auto_sharding_option"]),
+        #    default_auto_sharding_option=alpa.AutoShardingOption(**train_config["auto_sharding_option"]),
         #)
 
         #parallel_method = alpa.ManualPipeshardParallel(

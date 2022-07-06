@@ -86,6 +86,8 @@ class WithinSubsectionOrder:
 #
 html_theme = 'sphinx_rtd_theme'
 
+html_favicon = 'logo/alpa-logo.ico'
+
 html_context = {
     'display_github': True,
     'github_user': 'alpa-projects',

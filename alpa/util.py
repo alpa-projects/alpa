@@ -40,7 +40,8 @@ import tqdm
 
 import alpa
 from alpa.global_env import global_config, is_worker
-from alpa.monkey_patch import restore_random, monkey_patch_random
+from alpa.monkey_patch import (restore_random, monkey_patch_random,
+                               rng_primitives)
 from alpa.pipeline_parallel.primitive_def import pipeline_p
 
 PLACEMENT_GROUP_TIMEOUT_S_ENV = "ALPA_PLACEMENT_GROUP_TIMEOUT_S_ENV"
@@ -733,7 +734,8 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
     interval, while helps reduce forward output size.
 
     As Alpa monkey patches random number generation to stateful version,
-    this function also gets and sets rng keys.
+    this function also gets the generated rng state and set it an input
+    of the offloaded remat part.
 
     Args:
         closed_jaxpr: the original jaxpr.
@@ -793,6 +795,42 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
                 base.discard(var)
         return base
 
+    rng_primitives_set = set(rng_primitives)
+
+    def add_rng_as_output(jaxpr: Jaxpr):
+        rng_outvars = []
+        for eqn in jaxpr.eqns:
+            if eqn.primitive in rng_primitives_set:
+                assert not eqn.primitive.multiple_results
+                rng_outvars.append(eqn.outvars[0])
+        new_outvars = jaxpr.outvars + rng_outvars
+        return Jaxpr(jaxpr.constvars, jaxpr.invars, new_outvars,
+                     jaxpr.eqns), rng_outvars
+
+    def get_rng_from_input(jaxpr: Jaxpr):
+        new_invars = list(jaxpr.invars)
+        new_eqns = []
+        for eqn in jaxpr.eqns:
+            if eqn.primitive in rng_primitives_set:
+                new_invars.append(eqn.outvars[0])
+            else:
+                new_eqns.append(eqn)
+        return Jaxpr(jaxpr.constvars, new_invars, jaxpr.outvars, new_eqns)
+
+    def clone_outvars(outvars):
+        new_outvars = []
+        var_mapping = {}
+        for v in outvars:
+            if isinstance(v, DropVar):
+                new_outvars.append(v)
+            else:
+                new_v = gensym_fn(v.aval)
+                new_outvars.append(new_v)
+                var_mapping[v] = new_v
+                while v in var_pipeline_mapping:
+                    v = var_pipeline_mapping[v]
+                    var_mapping[v] = new_v
+        return new_outvars, var_mapping
 
     # Find offloaded eqns
     offloaded_eqns = set()
@@ -833,33 +871,42 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
     discarded = difference_cross_marker(closed_jaxpr.eqns,
                                         offloaded_vars_from.keys(),
                                         closed_jaxpr.jaxpr.outvars)
+    # Dict[fwd_eqn_idx -> Sequence[fwd_rng_outvars]]
+    rng_vars = {}
     for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
         if eqn.primitive is pipeline_p:
             # Rewrite pipeline_markers
             new_eqns.append(_offload_remat_process_pipeline(eqn, discarded))
         elif eqn_idx in offloaded_eqns:
-            # FIXME(yonghao): add rng result as an output
-            cloned_eqn = clone_jaxpr_eqn(eqn)
+            # add rng result as an output
+            new_params = dict(eqn.params)
+            new_called, rng_outvars = add_rng_as_output(
+                new_params["call_jaxpr"])
+            new_params["call_jaxpr"] = new_called
+            rng_outvars = [gensym_fn(v.aval) for v in rng_outvars]
+            new_outvars = list(eqn.outvars) + rng_outvars
+            rng_vars[eqn_idx] = rng_outvars
+            cloned_eqn = clone_jaxpr_eqn(eqn,
+                                         outvars=new_outvars,
+                                         params=new_params)
             new_eqns.append(cloned_eqn)
         elif eqn_idx not in offload_to:
             new_eqns.append(eqn)
         else:
             inserted_idx = offload_to[eqn_idx]
-            var_mapping = {}
             # clone the forward remat call
+            # rewrite the inserted. Remove its rng, add invars from the cloned
             inserted = closed_jaxpr.eqns[inserted_idx]
-            new_outvars = []
-            for v in inserted.outvars:
-                if isinstance(v, DropVar):
-                    new_outvars.append(v)
-                else:
-                    new_v = gensym_fn(v.aval)
-                    new_outvars.append(new_v)
-                    var_mapping[v] = new_v
-                    while v in var_pipeline_mapping:
-                        v = var_pipeline_mapping[v]
-                        var_mapping[v] = new_v
-            cloned_fwd = clone_jaxpr_eqn(inserted, outvars=new_outvars)
+            cloned_invars = list(inserted.invars)
+            cloned_invars.extend(rng_vars[inserted_idx])
+            cloned_params = dict(inserted.params)
+            cloned_params["call_jaxpr"] = get_rng_from_input(
+                inserted.params["call_jaxpr"])
+            cloned_outvars, var_mapping = clone_outvars(inserted.outvars)
+            cloned_fwd = clone_jaxpr_eqn(inserted,
+                                         cloned_invars,
+                                         cloned_outvars,
+                                         params=cloned_params)
             # rewrite invars for bwd remat call
             new_invars = [get_var_mapping(var_mapping, v) for v in eqn.invars]
             new_eqn = clone_jaxpr_eqn(eqn, invars=new_invars)

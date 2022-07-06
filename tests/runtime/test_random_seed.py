@@ -2,12 +2,13 @@
 import unittest
 
 import jax
+from jax._src.tree_util import tree_flatten, tree_unflatten
 import jax.numpy as jnp
 import numpy as np
 
 from alpa import init, grad, parallelize, ShardParallel, set_seed, shutdown
 from alpa.parallel_method import PipeshardParallel
-from alpa.pipeline_parallel.layer_construction import manual_layer_construction, manual_remat
+from alpa.pipeline_parallel.layer_construction import ManualLayerOption
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 from alpa.testing import assert_allclose
 
@@ -55,31 +56,34 @@ class RandomSeedTest(unittest.TestCase):
     def test_remat_rng(self):
         init(cluster="ray")
         shape = (4, 4)
-        def get_parallelized_step(method, add_marker=False):
-            def forward(params, x, key):
-                rns = jax.random.normal(key, shape)
+
+        def get_parallelized_step(parallel_method):
+
+            def train_step(*args):
+                def loss_func(params, x, key):
+                    rns = jax.random.normal(key, shape)
+                    y = x @ params["x1"]
+                    y = y @ rns
+                    mark_pipeline_boundary()
+                    y = y @ params["x2"]
+                    return jnp.mean(y), rns
+
+                grads, rns = grad(loss_func, has_aux=True)(*args)
+                grad_val, tree = tree_flatten(grads)
+                return tree_unflatten(tree, [val + 1 for val in grad_val]), rns
+
+            return parallelize(train_step, method=parallel_method, donate_argnums=())
+
+        def normal_step(params, x, rns):
+            def forward(params, x, rns):
                 y = x @ params["x1"]
                 y = y @ rns
-                mark_pipeline_boundary()
                 y = y @ params["x2"]
-                return jnp.mean(y), rns
-            if add_marker:
-                forward = manual_layer_construction(forward, remat_layer=True)
-            else:
-                forward = manual_remat(forward)
-            @parallelize(method=method, donate_argnums=())
-            def fn(*args):
-                return grad(forward, has_aux=True)(*args)
-            return fn
-        @jax.grad
-        def normal_step(params, x, rns):
-            y = x @ params["x1"]
-            y = y @ rns
-            y = y @ params["x2"]
-            return jnp.mean(y)
+                return jnp.mean(y)
+            grad_val, tree = tree_flatten(jax.grad(forward)(params, x, rns))
+            return tree_unflatten(tree, [val + 1 for val in grad_val])
 
-        remat_pipeline_fn = get_parallelized_step(PipeshardParallel(num_micro_batches=2), True)
-        remat_shard_fn = get_parallelized_step(ShardParallel(num_micro_batches=2), False)
+        remat_pipeline_fn = get_parallelized_step(PipeshardParallel(num_micro_batches=1, layer_option=ManualLayerOption(True)))
 
         key = jax.random.PRNGKey(0)
         x = jax.random.normal(key, shape)
@@ -91,9 +95,6 @@ class RandomSeedTest(unittest.TestCase):
         expected_out = normal_step(params, x, rns._value)
         assert_allclose(pipeline_out, expected_out)
 
-        shard_out, rns = remat_shard_fn(params, x, key)
-        expected_out = normal_step(params, x, rns._value)
-        assert_allclose(shard_out, expected_out)
         shutdown()
 
 def suite():

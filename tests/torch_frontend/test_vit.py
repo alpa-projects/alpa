@@ -1,4 +1,5 @@
 import unittest
+import sys
 
 import torch
 from torch import nn
@@ -292,9 +293,15 @@ arch_params = {
 }
 parallel_config = {
     "global_batch_size": 512,
-    "num_micro_batches": 512,
+    "num_micro_batches": int(sys.argv[2]),
     "num_auto_layers": 64,
 }
+# gBS = 512
+# #mb = 512, latency: 46.213s
+# #mb = 256, latency: 46.213s
+# #mb = 128, latency: 46.213s
+# #mb = 64, latency: 46.213s
+# #mb = 32, latency: 46.213s
 
 """
 32: get_solution_case("15B", num_micro_batches=128,

@@ -42,7 +42,7 @@ class AutoStageOption:
     submesh_logical_shape_space: str = "single_node_model_parallel"
     # The tolerance of imbalance in the auto-stage construction.
     stage_imbalance_tolerance: float = np.inf
-    # The tolerance of imbalance in the auto-stage construction.
+    # Use HLO cost model for computational cost or profile for the cost.
     use_hlo_cost_model: bool = False
     # The filename of profiling result database.
     profiling_database_filename: Optional[str] = None

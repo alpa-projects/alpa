@@ -1,9 +1,13 @@
 Alpa Documentation
 ==================
+.. raw:: html
 
-Alpa is a system for large-scale distributed training.
-Alpa is specifically designed for training giant neural networks that cannot fit into a single device.
-Alpa can automatically generate dstirbuted execution plans that unify data, operator, and pipeline parallelism.
+  <a class="github-button" href="https://github.com/alpa-projects/alpa" data-size="large" data-show-count="true" aria-label="Star alpa-projects/alpa on GitHub">Star</a>
+  <a class="github-button" href="https://github.com/alpa-projects/alpa/fork" data-icon="octicon-repo-forked" data-size="large" data-show-count="true" aria-label="Fork alpa-projects/alpa on GitHub">Fork</a>
+  <script async defer src="https://buttons.github.io/buttons.js"></script>
+  <br></br>
+
+Alpa is a system for training and serving large-scale neural networks.
 
 .. toctree::
    :maxdepth: 1

@@ -518,6 +518,7 @@ def get_opt_config(name, **kwargs):
 
 
 def init_model_aval(config):
+    """Initialize model with parameters with abstract values (shape-only arrays)."""
     model = OPTForLMModule(config, dtype=config.dtype)
     rngkey = jax.core.ShapedArray((2,), jnp.uint32)
     input_ids = jax.core.ShapedArray((1, 128), jnp.int32)
@@ -529,6 +530,7 @@ def init_model_aval(config):
 
 
 def init_cache_aval(config, batch_size):
+    """Initialize cache with abstract values (shape-only arrays)."""
     dtype = config.dtype
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
@@ -548,6 +550,7 @@ def init_cache_aval(config, batch_size):
 
 
 def init_cache_np(config, batch_size):
+    """Init cache with numpy arrays."""
     np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
@@ -578,6 +581,7 @@ def inference_step_no_cache(params, batch, apply_func):
 
 
 def load_params_np(params, path, config, dummy=False):
+    """Load parameterswith numpy arrays."""
     if dummy:
         np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
         return jax.tree_map(lambda x: np.full(x.shape, 1e-9, np_dtype), params)
@@ -751,6 +755,7 @@ def get_pipeshard_executable(config,
 
 def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
                                 uuids, indices, mesh_ids):
+    """The worker function to load OPT parameters."""
 
     def load_array(key):
         return np.load(os.path.join(path, key))
@@ -833,6 +838,7 @@ setattr(MeshHostWorker, "load_opt_params_worker_func",
 
 
 def load_params_dis_array(path, executable, params_aval, config, dummy=False):
+    """Load parameters with distributed arrays."""
     if dummy:
         alpa.global_config.use_dummy_value_for_benchmarking = True
         params_info, _ = executable.get_input_placement_specs()
@@ -920,6 +926,7 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
 
 
 def init_cache_dis_array(executable, config, batch_size, dummy=False):
+    """Initialize cache with distributed arrays."""
     cache = init_cache_np(config, batch_size)
     alpa.global_config.use_dummy_value_for_benchmarking = dummy
     _, batch_info = executable.get_input_placement_specs()

@@ -49,7 +49,7 @@ tests/tmp
 benchmark/deepspeed/data
 
 # plots
-*.pdf
+benchmark/**.pdf
 
 # Numpy cache
 *.npy

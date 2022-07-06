@@ -5,7 +5,7 @@ import numpy as np
 import ray
 
 from alpa import init
-from alpa.device_mesh import get_global_virtual_physical_mesh, ReshardingAllGatherSpec, next_array_uuids
+from alpa.device_mesh import get_global_virtual_physical_mesh, next_array_uuids
 from alpa.global_env import global_config
 
 
@@ -14,6 +14,7 @@ class XLANCCLTest(unittest.TestCase):
     def setUp(self):
         init(cluster="ray")
 
+    @unittest.skip("manually calling allgather is deprecated")
     def test_xla_nccl_allgather(self):
         backup_nccl_mode = global_config.nccl_mode
         global_config.nccl_mode = "xla_extension"

@@ -971,7 +971,7 @@ class CrossMeshCommunicator:
     def _rewrite_allgather_spec(sharding_spec: pxla.ShardingSpec, mesh,
                                 var_shape):
         """
-        Given a sharding spec, if use_scatter_gather is turned on and the tensor
+        Given a sharding spec, if use_local_allgather is on and the tensor
         corresponding to the spec is not fully sharded, the function rewrite the
         spec to a fully-sharded one, and return info of added chunks.
 
@@ -984,7 +984,7 @@ class CrossMeshCommunicator:
         3. When there is no replicas on m_dim, the iteration terminates.
         """
 
-        if not global_config.use_scatter_gather:
+        if not global_config.use_local_allgather:
             return sharding_spec
         # check whether the tensor is fully sharded.
         replicated_mesh_dim = []

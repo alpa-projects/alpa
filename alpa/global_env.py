@@ -54,7 +54,7 @@ class GlobalConfig:
         # This is a debug option.
         self.pipeline_use_signal_send_recv = False
         # Whether to use the scatter-gater/local-all-gather optimization.
-        self.use_scatter_gather = True
+        self.use_local_allgather = True
         self.eagerly_create_communicators = True
         self.use_memzero_for_gradient_accumulation = False
         # Cross mesh resharding mode. Possible choices: {"send_recv",

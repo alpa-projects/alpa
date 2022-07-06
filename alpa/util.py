@@ -524,6 +524,10 @@ def compile_memset_zero_buffers(backend, num_devices: int,
 
 def compile_concatenate(backend, mesh_shape, sharding_spec, batch_size,
                         batch_dim, aval):
+    """
+    Compile an XLA executable that concatenates values over the batch dimension,
+    keeping the sharding spec unchanged.
+    """
     num_devices = np.prod(mesh_shape)
     sharding = pxla.sharding_spec_sharding_proto(sharding_spec)
     build_random_seed = global_config.compile_random_seed
@@ -550,6 +554,10 @@ def compile_concatenate(backend, mesh_shape, sharding_spec, batch_size,
 
 
 def compile_allgather(shape, dtype, src_spec, dst_spec, num_devices):
+    """
+    Compile an XLA executable that runs allgather to reshard the tensor from src
+    sharding spec to dst sharding spec.
+    """
     c = xc.XlaBuilder("allgather")
     src_sharding = pxla.sharding_spec_sharding_proto(src_spec)
     c.set_sharding(src_sharding)
@@ -576,6 +584,7 @@ def compile_allgather(shape, dtype, src_spec, dst_spec, num_devices):
 
 
 def get_index_select_computation(sharding_specs, dim, avals, index_shape):
+    """Compile an XLA executable that runs index select for each tensor."""
     c = xc.XlaBuilder("index_select")
     shardings = []
     selected = []

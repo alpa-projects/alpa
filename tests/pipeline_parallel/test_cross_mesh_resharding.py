@@ -32,11 +32,11 @@ def test_resharding(var,
                     src_sharding_spec,
                     dst_mesh,
                     dst_sharding_spec,
-                    use_scatter_gather,
+                    use_local_allgather,
                     resharding_mode,
                     src_loads=None,
                     dst_loads=None):
-    global_config.use_scatter_gather = use_scatter_gather
+    global_config.use_local_allgather = use_local_allgather
     global_config.resharding_mode = resharding_mode
 
     # Resharding task spec and send/recv strategy
@@ -178,7 +178,7 @@ class ReshardingTest(unittest.TestCase):
                             src_sharding_spec,
                             dst_sharding_spec,
                             tensor_shape,
-                            use_scatter_gather=True,
+                            use_local_allgather=True,
                             resharding_mode="send_recv",
                             tensor_dtype=None):
         virtual_mesh = get_global_virtual_physical_mesh()
@@ -202,7 +202,7 @@ class ReshardingTest(unittest.TestCase):
         tensor_dtype = tensor_dtype or jnp.int32
         var = Var(0, "", ShapedArray(tensor_shape, tensor_dtype))
         test_resharding(var, src_mesh, src_sharding_spec, dst_mesh,
-                        dst_sharding_spec, use_scatter_gather, resharding_mode)
+                        dst_sharding_spec, use_local_allgather, resharding_mode)
         src_mesh.shutdown()
         dst_mesh.shutdown()
 

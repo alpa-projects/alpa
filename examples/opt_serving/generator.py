@@ -707,7 +707,9 @@ class Generator:
             # top_k=self.top_k,
             top_p=self.top_p,
             early_stopping=True,
-            no_repeat_ngram_size=2
+            repetition_penalty=1.0,
+            no_repeat_ngram_size=8,
+            # no_repeat_ngram_size=2
             # return_dict_in_generate=True
             # output_hidden_states=True
         )

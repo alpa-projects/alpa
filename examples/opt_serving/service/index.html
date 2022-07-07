@@ -26,14 +26,14 @@
         },
         "chatbot": {
             "prompt": "A chat between a curious human and the Statue of Liberty.\n\n" +
-                "Human: What is your name?\nStatue: I am the Statue of Liberty\n" +
+                "Human: What is your name?\nStatue: I am the Statue of Liberty.\n" +
                 "Human: Where do you live?\nStatue: New York City.\n" +
                 "Human: How long have you lived there?",
             "length": 128
         },
         "philosophy": {
             "prompt": "What is the meaning of life?",
-            "length": 128
+            "length": 256
         },
         "translation": {
             "prompt": "English: I want to go home.\nChinese: 我想回家。\n\n" +
@@ -47,13 +47,13 @@
         },
         "programming": {
             "prompt":
-                "def fib(n):\n" +
-                "    Returns n-th Fibonacci number.",
+                "def fib(k):\n" +
+                "    \"\"\"Returns the k-th Fibonacci number.\"\"\"",
             "length": 256
         },
         "math": {
             "prompt": "Question: If x is 2 and y is 5, what is x + y?\nAnswer: 7\n\nQuestion: If x is 8 and y is 9, what is x + y?\nAnswer:",
-            "length": 32
+            "length": 128
         }
     };
 
@@ -189,7 +189,7 @@ label {
         <nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top border-bottom">
             <div class="container d-flex flex-wrap justify-content-center">
               <a href="#home" class="d-flex align-items-center mb-3 mb-md-0 me-md-auto text-decoration-none">
-                  <img alt="alpa logo" class="bi me-2 img-fluid" width="8%;" src="https://raw.githubusercontent.com/alpa-projects/alpa/opt175b-website/docs/logo/alpa-logo-cropped.svg">
+                  <img alt="alpa logo" class="bi me-2 img-fluid" width="7%;" src="https://raw.githubusercontent.com/alpa-projects/alpa/opt175b-website/docs/logo/alpa-logo-cropped.svg">
               </a>
               <ul class="nav nav-pills">
                 <li class="nav-item"><a href="#generation" class="nav-link" aria-current="page">Generation</a></li>
@@ -344,7 +344,7 @@ label {
         <div id="panelsStayOpen-collapseOne" class="accordion-collapse collapse show" aria-labelledby="panelsStayOpen-headingOne">
           <div class="accordion-body">
             <a href="https://github.com/alpa-projects/alpa" target="_blank">Alpa</a> is an open-source system for training and serving large-scale neural networks. Alpa aims to automate large-scale distributed training and serving with <strong>just a few lines of code</strong>.
-              Alpa was initially developed by folks in the Sky Lab, UC Berkeley. Some advanced techniques used in Alpa have been written in <a href="https://arxiv.org/pdf/2201.12023.pdf" target="_blank"> a paper published in OSDI'2022</a>.
+              Alpa was initially developed by folks in the <a href="https://sky.cs.berkeley.edu/" target="_blank">Sky Lab, UC Berkeley</a>. Some advanced techniques used in Alpa have been written in <a href="https://arxiv.org/pdf/2201.12023.pdf" target="_blank"> a paper published in OSDI'2022</a>.
               Alpa community is growing with new contributors from Google, Amazon, Meta, and <a href="https://github.com/alpa-projects/alpa/graphs/contributors" target="_blank">more</a>.
           </div>
         </div>
@@ -434,7 +434,7 @@ label {
         </h2>
         <div id="panelsStayOpen-data-collection-collapse" class="accordion-collapse collapse" aria-labelledby="panelsStayOpen-data-collection">
           <div class="accordion-body">
-            We are not storing your inputs. We only log the timestamp at your access and the length of your inputs.
+            We are not storing the content of your inputs. We only log the traffic patterns, such as the timestamp when you submitted your inputs and the length of your inputs.
           </div>
         </div>
       </div>
@@ -500,7 +500,7 @@ label {
                 and <a href="https://sky.cs.berkeley.edu/" target="_blank">Sky Lab, UC Berkeley</a>.
           </p>
           <p>
-              If you are interested in donation or sponsorship, please get in touch with Alpa authors by joining <a href="https://docs.google.com/forms/d/e/1FAIpQLScXE0pDOm1FBcKS8C9JxAS6GbD-8b037NqH36ndKRMrGJ3_Cw/viewform" target="_blank">our Slack</a>
+              If you are interested in any form of donation or sponsorship to help the development of Alpa, please get in touch with Alpa authors in <a href="https://docs.google.com/forms/d/e/1FAIpQLScXE0pDOm1FBcKS8C9JxAS6GbD-8b037NqH36ndKRMrGJ3_Cw/viewform" target="_blank">Alpa Slack</a>.
           </p>
           </div>
         </div>
@@ -581,62 +581,6 @@ label {
     </div>
 </div>
 
-<!--<div class="container">-->
-<!--  <div id="myCarousel" class="carousel slide" data-bs-ride="carousel">-->
-<!--    <div class="carousel-indicators">-->
-<!--      <button type="button" data-bs-target="#myCarousel" data-bs-slide-to="0" class="active" aria-current="true" aria-label="Slide 1"></button>-->
-<!--      <button type="button" data-bs-target="#myCarousel" data-bs-slide-to="1" aria-label="Slide 2"></button>-->
-<!--      <button type="button" data-bs-target="#myCarousel" data-bs-slide-to="2" aria-label="Slide 3"></button>-->
-<!--    </div>-->
-<!--    <div class="carousel-inner">-->
-<!--      <div class="carousel-item active">-->
-<!--        <svg class="bd-placeholder-img" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" preserveAspectRatio="xMidYMid slice" focusable="false"><rect width="100%" height="100%" fill="#777"/></svg>-->
-
-<!--        <div class="container">-->
-<!--          <div class="carousel-caption text-start">-->
-<!--            <h1>Example headline.</h1>-->
-<!--            <p>Some representative placeholder content for the first slide of the carousel.</p>-->
-<!--            <p><a class="btn btn-lg btn-primary" href="#">Sign up today</a></p>-->
-<!--          </div>-->
-<!--        </div>-->
-<!--      </div>-->
-
-<!--      <div class="carousel-item">-->
-<!--        <svg class="bd-placeholder-img" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" preserveAspectRatio="xMidYMid slice" focusable="false"><rect width="100%" height="100%" fill="#777"/></svg>-->
-
-<!--        <div class="container">-->
-<!--          <div class="carousel-caption">-->
-<!--            <h1>Another example headline.</h1>-->
-<!--            <p>Some representative placeholder content for the second slide of the carousel.</p>-->
-<!--            <p><a class="btn btn-lg btn-primary" href="#">Learn more</a></p>-->
-<!--          </div>-->
-<!--        </div>-->
-<!--      </div>-->
-
-<!--      <div class="carousel-item">-->
-<!--        <svg class="bd-placeholder-img" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" preserveAspectRatio="xMidYMid slice" focusable="false"><rect width="100%" height="100%" fill="#777"/></svg>-->
-
-<!--        <div class="container">-->
-<!--          <div class="carousel-caption text-end">-->
-<!--            <h1>One more for good measure.</h1>-->
-<!--            <p>Some representative placeholder content for the third slide of this carousel.</p>-->
-<!--            <p><a class="btn btn-lg btn-primary" href="#">Browse gallery</a></p>-->
-<!--          </div>-->
-<!--        </div>-->
-<!--      </div>-->
-<!--    </div>-->
-<!--    <button class="carousel-control-prev" type="button" data-bs-target="#myCarousel" data-bs-slide="prev">-->
-<!--      <span class="carousel-control-prev-icon" aria-hidden="true"></span>-->
-<!--      <span class="visually-hidden">Previous</span>-->
-<!--    </button>-->
-<!--    <button class="carousel-control-next" type="button" data-bs-target="#myCarousel" data-bs-slide="next">-->
-<!--      <span class="carousel-control-next-icon" aria-hidden="true"></span>-->
-<!--      <span class="visually-hidden">Next</span>-->
-<!--    </button>-->
-<!--  </div>-->
-<!--</div>-->
-
-
 <div class="container py-5 my-5 text-center bg-light rounded-4" id="contact">
   <h1 class="display-5 fw col-lg-10 mx-auto py-5">Interested in contributing to the Alpa project?</h1>
     <div class="col-lg-9 mx-auto">
@@ -652,7 +596,7 @@ label {
       <footer class="d-flex flex-wrap justify-content-between align-items-center py-3 border-top">
       <div class="col-md-4 d-flex align-items-center">
           <a href="#home" class="mb-3 me-2 mb-md-0 text-muted text-decoration-none lh-1">
-            <img alt="alpa logo" class="bi me-2 img-fluid" style="width: 40px" src="https://raw.githubusercontent.com/alpa-projects/alpa/opt175b-website/docs/logo/alpa-logo-cropped.svg">
+            <img alt="alpa logo" class="bi me-2 img-fluid" style="width: 40px;" src="https://raw.githubusercontent.com/alpa-projects/alpa/opt175b-website/docs/logo/alpa-logo-cropped.svg">
           </a>
           <span class="mb-3 mb-md-0 text-muted">&copy; 2022 Alpa Developers.</span>
         </div>

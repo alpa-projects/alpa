@@ -15,6 +15,8 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.1.1/css/all.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-social/5.1.1/bootstrap-social.css">
 
+    <link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/npm/slick-carousel@1.8.1/slick/slick.css"/>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.9.0/slick.min.js"></script>
     <script type="text/javascript">
     // these constants are only used for providing user expectations.
     var OVERHEAD = 1;
@@ -23,7 +25,7 @@
     // examples for the user
     var EXAMPLES = {
         "fact": {
-            "prompt": "Question: Where were the 2004 Olympics held?\nAnswer: Athens, Greece\n\nQuestion: Who was the president of the United States in 1940?\nAnswer:",
+            "prompt": "Question: Where were the 2004 Olympics held?\nAnswer: Athens, Greece\n\nQuestion: What is the longest river on the earth?\nAnswer:",
             "length": 64
         },
         "chatbot": {
@@ -33,8 +35,12 @@
                 "Human: How long have you lived there?",
             "length": 128
         },
-        "philosophy": {
-            "prompt": "Please create an outline for an essay about the meaning of life.",
+        "airport": {
+            "prompt": "Extract the airport codes from this text.\n\n" +
+                "Text: \"I want a flight from New York to San Francisco.\"\n" +
+                "Airport codes: JFK, SFO.\n\n" +
+                "Text: \"I want you to book a flight from Phoenix to Las Vegas.\"\n" +
+                "Airport codes:",
             "length": 128
         },
         "translation": {
@@ -50,7 +56,7 @@
         "programming": {
             "prompt":
                 "def fib(k):\n" +
-                "    \"\"\"Returns the k-th Fibonacci number.\"\"\"",
+                "    \"\"\"Returns the k-th Fibonacci number. Check the corner cases.\"\"\"",
             "length": 64
         },
         "math": {
@@ -60,7 +66,7 @@
                       "Answer: 3x + y = 3(8) + 9 = 24 + 9 = 33\n\n" +
                       "Question: If x is 7 and y is 6, what is x + 4y?\n" +
                       "Answer:",
-            "length": 128
+            "length": 64
         }
     };
 
@@ -95,13 +101,36 @@
     }
 
     function test() {
-        // // $("#promptDisplay").text("A chat between a professor and a graduate student in Computer Science.\n\nStudent: Which is the best Computer Science graduate school in the US? UC Berkeley or CMU?\nProfessor: ");
-        // $("#promptDisplay").text("def fib(n):\n" +
-        //         "    Returns n-th Fibonacci number."
-        // )
+        $("#promptDisplay").text("A chat between a professor and a graduate student in Computer Science.\n\nStudent: Which is the best Computer Science graduate school in the US? UC Berkeley or CMU?\nProfessor: ");
+        $("#promptDisplay").text("def fib(n):\n" +
+                "    Returns n-th Fibonacci number."
+        )
         $("#response").text("Sorry I don't know\n");
         $("#error").text("");
     }
+
+    $(document).ready(function() {
+      $('.logo-carousel').slick({
+        slidesToShow: 4,
+        slidesToScroll: 1,
+        autoplay: true,
+        autoplaySpeed: 5000,
+        arrows: true,
+        dots: false,
+        pauseOnHover: false,
+        responsive: [{
+          breakpoint: 768,
+          settings: {
+            slidesToShow: 4
+          }
+        }, {
+          breakpoint: 520,
+          settings: {
+            slidesToShow: 2
+          }
+        }]
+      });
+    });
 
     // actual logic
     $(document).ready(function() {
@@ -144,6 +173,79 @@
     </script>
 </head>
 <style>
+
+.slick-slide {
+  margin: 0px 20px;
+}
+
+.logo-carousel {
+  overflow: inherit;
+  /*border-top: 1px solid #353535;*/
+  /*border-bottom: 1px solid #353535;*/
+}
+
+.slick-slide img {
+  width: 100%;
+}
+
+.slick-loading {
+  visibility: hidden;
+}
+
+.slick-slide.slick-loading img {
+  display: none;
+}
+
+.slick-slide.dragging img {
+  pointer-events: none;
+}
+
+.slick-loading .slick-slide {
+  visibility: hidden;
+}
+
+.slick-arrow {
+  position: absolute;
+  top: 50%;
+  background: url(https://raw.githubusercontent.com/solodev/infinite-logo-carousel/master/images/arrow.svg?sanitize=true) center no-repeat;
+  color: #fff;
+  filter: invert(77%) sepia(32%) saturate(1%) hue-rotate(344deg) brightness(105%) contrast(103%);
+  border: none;
+  width: 2rem;
+  height: 1.5rem;
+  text-indent: -10000px;
+  margin-top: -16px;
+  z-index: 99;
+}
+
+.slick-arrow.slick-next {
+  right: -40px;
+  transform: rotate(180deg);
+}
+
+.slick-arrow.slick-prev {
+  left: -40px;
+}
+
+/* Media Queries */
+
+@media (max-width: 768px) {
+  .slick-arrow {
+    width: 1rem;
+    height: 1rem;
+  }
+}
+
+.row {
+  overflow: hidden;
+}
+
+/* JsFiddle Example only/don't use */
+.logo-carousel {
+  margin-top: 32px;
+}
+
+
 #result {
     white-space: pre-wrap;
     word-wrap: break-word;
@@ -179,7 +281,7 @@
 <!--  <body class="d-flex h-100 text-center text-dark bg-dark">-->
 <body class="bg-white wy-text-center">
   <div class="container">
-    <header class="d-flex flex-wrap justify-content-center py-3 mb-4 border-bottom">
+    <header class="d-flex flex-wrap justify-content-center py-2 mb-4 border-bottom">
      <!--
       <a href="/" class="d-flex align-items-center mb-3 mb-md-0 me-md-auto text-dark text-decoration-none">
         <img alt="alpa logo" class="bi me-2" width="40" src="https://raw.githubusercontent.com/alpa-projects/alpa/main/docs/logo/alpa-logo-cropped.svg">
@@ -224,11 +326,11 @@
         <strong class="display-6 fw-bold">Free, Unlimited OPT-175B Text Generation</strong>
     </p>
     <p> <strong>Warning</strong>: This model might generate something offensive. No safety measures are in place as a free service. </p>
-    <p id="examples"> <strong>Examples: </strong> </p>
+<!--    <p id="examples"> <strong>Examples: </strong> </p>-->
     <div class="gap-2 d-sm-flex justify-content-sm-center" style="line-height: 250%">
     <a type="button" class="btn btn-outline-primary" href='javascript:set_prompt("fact");'><i class="fa-brands fa-wikipedia-w"></i> Fact</a>
     <a type="button" class="btn btn-outline-secondary" href='javascript:set_prompt("chatbot");'><i class="fa-solid fa-robot"></i> Chatbot</a>
-    <a type="button" class="btn btn-outline-success" href='javascript:set_prompt("philosophy");'><i class="fa-solid fa-lightbulb"></i> Philosophy</a>
+    <a type="button" class="btn btn-outline-success" href='javascript:set_prompt("airport");'><i class="fa-solid fa-plane-departure"></i> Airport Code</a>
     <a type="button" class="btn btn-outline-danger" href='javascript:set_prompt("translation");'><i class="fa-solid fa-language"></i> Translation</a>
     <a type="button" class="btn btn-outline-warning" href='javascript:set_prompt("cryptocurrency");'><i class="fa-brands fa-bitcoin"></i> Cryptocurrency</a>
     <a type="button" class="btn btn-outline-info" href='javascript:set_prompt("programming");'><i class="fa-solid fa-rocket"></i> Code</a>
@@ -238,7 +340,7 @@
 <form method="POST" action="/generate" id="generate-form">
     <div class="my-3">
         <label for="textbox" class="form-label"></label>
-        <textarea class="form-control" style="font-size: 20px;" name="prompt" rows="6" id="textbox" placeholder="Type the prompts here"></textarea>
+        <textarea class="form-control" style="font-size: 20px;" name="prompt" rows="8" id="textbox" placeholder="Type the prompts here"></textarea>
     </div>
 
     <!--<button type="button" class="btn btn-secondary wrapper" data-toggle="tooltip" data-placement="bottom" title="Tooltip on right">-->
@@ -301,7 +403,6 @@
     <a class="btn btn-block btn-tumblr" onclick="takeshot()"><i class="fa-solid fa-camera"></i> Screenshot</a>
     <a href="https://twitter.com/intent/tweet?text=Prompting%20OPT-175B%20with%20Alpa%20is%20fun!%20Try%20it%20yourself%20(unlimited)%20at%20http%3A%2F%2Fopt.alpa.ai%2F!%20%23alpa" target="_blank" class="btn btn-block btn-twitter"><i class="fa-brands fa-twitter"></i> Tweet it! #alpa</a>
   </div>
-</div>
 </div>
 
 <div class="container bg-white py-3" id="faq">
@@ -526,32 +627,20 @@
 </div>
 </div>
 
-
-<div class="container bg-light py-3" id="partners">
-    <h1 class="display-6 py-3 my-3 fw">Alpa Partners</h1>
-    <div class="row text-center py-4">
-      <div class="col-lg-4">
-        <img alt="UC Berkeley" class="bi me-2 img-fluid" style="width:80%;" src="https://www.casl-project.ai/assets/img/berkeley.png">
+<div class="container py-3" id="partners">
+  <h1 class="display-6 py-3 my-3 fw">Alpa Partners</h1>
+  <div class="row">
+      <div class="container">
+        <section class="logo-carousel slider" data-arrows="true">
+          <div class="slide"><img src="http://assets.stickpng.com/images/5842f745a6515b1e0ad75b25.png" style="width: 70%;"></div>
+          <div class="slide"><img src="https://mma.prnewswire.com/media/1227419/MBZUAI_Logo.jpg?w=500" style="width:80%;"></div>
+          <div class="slide"><img src="https://lever-client-logos.s3.us-west-2.amazonaws.com/0114ec37-170e-4864-b9a9-f85452de1ce0-1633971232076.png" style="width:80%;"></div>
+          <div class="slide"><img src="https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/Amazon_Web_Services_Logo.svg/512px-Amazon_Web_Services_Logo.svg.png?20170912170050" style="width: 50%;" ></div>
+          <div class="slide"><img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTE2WoDOUPB5L3bRgbQZkU-iLCtmRLYSj29iwFqtMAKQCNALlPtbwSUoswoSvqk8sjrT5w&usqp=CAU" style="width: 60%;"></div>
+          <div class="slide"><img src="https://upload.wikimedia.org/wikipedia/commons/7/7b/Meta_Platforms_Inc._logo.svg" style="width: 80%;"></div>
+        </section>
       </div>
-      <div class="col-lg-4">
-        <img alt="MBZUAI" class="bi me-2 img-fluid" src="https://mma.prnewswire.com/media/1227419/MBZUAI_Logo.jpg?w=500">
-      </div>
-      <div class="col-lg-4">
-        <img alt="Anyscale" class="bi me-2 img-fluid" style="width:90%;" src="https://lever-client-logos.s3.us-west-2.amazonaws.com/0114ec37-170e-4864-b9a9-f85452de1ce0-1633971232076.png">
-      </div>
-    </div>
-
-    <div class="row text-center py-4">
-      <div class="col-lg-4">
-        <img alt="AWS" class="bi me-2 img-fluid" style="width: 50%;" src="https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/Amazon_Web_Services_Logo.svg/512px-Amazon_Web_Services_Logo.svg.png?20170912170050">
-      </div>
-      <div class="col-lg-4">
-        <img alt="Google" class="bi me-2 img-fluid" style="width: 60%;" src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTE2WoDOUPB5L3bRgbQZkU-iLCtmRLYSj29iwFqtMAKQCNALlPtbwSUoswoSvqk8sjrT5w&usqp=CAU">
-      </div>
-      <div class="col-lg-4">
-        <img alt="Meta" class="bi me-2 img-fluid" style="width:80%;" src="https://upload.wikimedia.org/wikipedia/commons/7/7b/Meta_Platforms_Inc._logo.svg">
-      </div>
-    </div>
+  </div>
 </div>
 
 <div class="container py-5 my-5 text-center bg-light rounded-4" id="contact">

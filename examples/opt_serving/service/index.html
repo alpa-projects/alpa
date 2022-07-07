@@ -1,7 +1,9 @@
 <html lang="en">
 <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Serving OPT-175B Language Model with Alpa</title>
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
     <link rel="icon" type="image/x-icon" href="https://raw.githubusercontent.com/alpa-projects/alpa/main/docs/logo/alpa-logo.ico">
     <script src="//code.jquery.com/jquery-1.11.0.min.js"></script>
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
@@ -21,8 +23,8 @@
     // examples for the user
     var EXAMPLES = {
         "fact": {
-            "prompt": "Question: What is the color of the cloud?\nAnswer: White\n\nQuestion: What is the color of the sky?\nAnswer:",
-            "length": 32
+            "prompt": "Question: Where were the 2004 Olympics held?\nAnswer: Athens, Greece\n\nQuestion: Who was the president of the United States in 1940?\nAnswer:",
+            "length": 64
         },
         "chatbot": {
             "prompt": "A chat between a curious human and the Statue of Liberty.\n\n" +
@@ -32,27 +34,32 @@
             "length": 128
         },
         "philosophy": {
-            "prompt": "What is the meaning of life?",
-            "length": 256
+            "prompt": "Please create an outline for an essay about the meaning of life.",
+            "length": 128
         },
         "translation": {
             "prompt": "English: I want to go home.\nChinese: 我想回家。\n\n" +
-                "English: I don't know.\nChinese: 我不知道。\n\n" +
-                "English: I am hungry.\nChinese:",
+                      "English: I don't know.\nChinese: 我不知道。\n\n" +
+                      "English: I am hungry.\nChinese:",
             "length": 256
         },
         "cryptocurrency": {
-            "prompt": "What do you think about the future of Dogecoin?",
-            "length": 256
+            "prompt": "Every year, cryptocurrency experts prepare forecasts for the price of Dogecoin. In 2025, it is estimated that DOGE will",
+            "length": 128
         },
         "programming": {
             "prompt":
                 "def fib(k):\n" +
                 "    \"\"\"Returns the k-th Fibonacci number.\"\"\"",
-            "length": 256
+            "length": 64
         },
         "math": {
-            "prompt": "Question: If x is 2 and y is 5, what is x + y?\nAnswer: 7\n\nQuestion: If x is 8 and y is 9, what is x + y?\nAnswer:",
+            "prompt": "Question: If x is 2 and y is 5, what is x + 2y?\n" +
+                      "Answer: x + 2y = 2 + 2(5) = 2 + 10 = 12\n\n" +
+                      "Question: If x is 8 and y is 9, what is 3x + y?\n" +
+                      "Answer: 3x + y = 3(8) + 9 = 24 + 9 = 33\n\n" +
+                      "Question: If x is 7 and y is 6, what is x + 4y?\n" +
+                      "Answer:",
             "length": 128
         }
     };
@@ -137,9 +144,6 @@
     </script>
 </head>
 <style>
-.submit-holder {
-    margin-top: 2em;
-}
 #result {
     white-space: pre-wrap;
     word-wrap: break-word;
@@ -167,17 +171,6 @@
     display: flex;
     align-items: center;
 }
-
-label {
-    margin-top: 1em;
-    display: inline-block;
-    width: 10em;
-    text-align: right;
-    font-size: 60%;
-    font-weight: bold;
-}
-#loader_holder_super {
-}
 #error {
     color: red;
 }
@@ -185,43 +178,38 @@ label {
 
 <!--  <body class="d-flex h-100 text-center text-dark bg-dark">-->
 <body class="bg-white wy-text-center">
-    <header id="home">
-        <nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top border-bottom">
-            <div class="container d-flex flex-wrap justify-content-center">
-              <a href="#home" class="d-flex align-items-center mb-3 mb-md-0 me-md-auto text-decoration-none">
-                  <img alt="alpa logo" class="bi me-2 img-fluid" width="7%;" src="https://raw.githubusercontent.com/alpa-projects/alpa/opt175b-website/docs/logo/alpa-logo-cropped.svg">
-              </a>
-              <ul class="nav nav-pills">
-                <li class="nav-item"><a href="#generation" class="nav-link" aria-current="page">Generation</a></li>
-                <li class="nav-item"><a href="#faq" class="nav-link">FAQs</a></li>
-                <li class="nav-item"><a href="#contact" class="nav-link">Contact</a></li>
-                <li class="nav-item"><a href="https://github.com/alpa-projects/alpa" class="nav-link" target="_blank"><i class="fa-brands fa-github"></i> GitHub</a></li>
-              </ul>
-            </div>
-        </nav>
+  <div class="container">
+    <header class="d-flex flex-wrap justify-content-center py-3 mb-4 border-bottom">
+     <!--
+      <a href="/" class="d-flex align-items-center mb-3 mb-md-0 me-md-auto text-dark text-decoration-none">
+        <img alt="alpa logo" class="bi me-2" width="40" src="https://raw.githubusercontent.com/alpa-projects/alpa/main/docs/logo/alpa-logo-cropped.svg">
+      </a>
+      -->
+      <ul class="nav nav-pills">
+        <li class="nav-item"><a href="#generation" class="nav-link" aria-current="page">Generation</a></li>
+        <li class="nav-item"><a href="#faq" class="nav-link">FAQs</a></li>
+        <li class="nav-item"><a href="#contact" class="nav-link">Contact</a></li>
+        <li class="nav-item"><a href="https://github.com/alpa-projects/alpa" class="nav-link" target="_blank"><i class="fa-brands fa-github"></i> GitHub</a></li>
+      </ul>
     </header>
-
+  </div>
 
   <div class="container my-5 text-center">
       <div class="py-5">
-        <img alt="alpa logo" class="d-block mx-auto mb-2 py-3 img-fluid" style="width:35%;" src="https://raw.githubusercontent.com/alpa-projects/alpa/opt175b-website/docs/logo/alpa-logo-cropped.svg">
+        <img alt="alpa logo" width="200" src="https://raw.githubusercontent.com/alpa-projects/alpa/main/docs/logo/alpa-logo-cropped.svg">
       </div>
-      <h1 class="display-2 fw col-lg-10 mx-auto">Large Model for Everyone</h1>
-      <div class="col-lg-10 py-2 mx-auto">
+      <h1 class="display-2">Large Model for Everyone</h1>
       <p class="lead mb-4">
           Alpa is a system for training and serving gigantic machine learning models.
           <br  \>
           Alpa makes training and serving large models like GPT-3 simple, affordable, accessible to everyone.
       </p>
+      <div class="pt-2 pb-4">
+        <iframe src="https://ghbtns.com/github-btn.html?user=alpa-projects&repo=alpa&type=star&count=true&size=large"  width="170" height="35" title="GitHub"></iframe>
       </div>
 
-     <div class="d-grid gap-2 d-sm-flex justify-content-sm-center py-4 my-4">
-         <iframe src="https://ghbtns.com/github-btn.html?user=alpa-projects&repo=alpa&type=star&count=true&size=large"  width="170" height="35" title="GitHub" class="px-2"></iframe>
-<!--         <iframe src="https://ghbtns.com/github-btn.html?user=alpa-projects&repo=alpa&type=fork&count=true&size=large" width="170" height="35" title="GitHub" class="px-2"></iframe>-->
-     </div>
-
-      <div class="d-grid gap-2 d-sm-flex justify-content-sm-center">
-        <a href="#generation" class="btn btn-primary px-4 gap-3 btn-lg">Try Live Generation</a>
+      <div class="d-grid gap-4 d-sm-flex justify-content-sm-center">
+        <a href="#generation" class="btn btn-primary px-4 btn-lg">Try Live Generation</a>
         <a href="https://alpa-projects.github.io/tutorials/opt_serving.html" class="btn btn-outline-primary px-4 btn-lg" target="_blank">Host Your Own Service</a>
       </div>
   </div>
@@ -229,76 +217,66 @@ label {
 <!--<div class="bg-white" id="generation">-->
 <div class="container py-5" id="generation">
     <div class="p-4 mb-3 bg-light rounded-4">
-    <span>
-        <i class="bi bi-robot"></i>
+    <p>
         <svg xmlns="http://www.w3.org/2000/svg" fill="gold" class="bi bi-lightning-fill" style="width:5%;" viewBox="0 0 20 20">
             <path d="M5.52.359A.5.5 0 0 1 6 0h4a.5.5 0 0 1 .474.658L8.694 6H12.5a.5.5 0 0 1 .395.807l-7 9a.5.5 0 0 1-.873-.454L6.823 9.5H3.5a.5.5 0 0 1-.48-.641l2.5-8.5z"/>
         </svg>
         <strong class="display-6 fw-bold">Free, Unlimited OPT-175B Text Generation</strong>
-    </span>
-
-    <div class="px-4" data-html2canvas-ignore="true">
-        <strong>Warning</strong>: This model might generate something offensive. No safety measures are in place as a free service.
+    </p>
+    <p> <strong>Warning</strong>: This model might generate something offensive. No safety measures are in place as a free service. </p>
+    <p id="examples"> <strong>Examples: </strong> </p>
+    <div class="gap-2 d-sm-flex justify-content-sm-center" style="line-height: 250%">
+    <a type="button" class="btn btn-outline-primary" href='javascript:set_prompt("fact");'><i class="fa-brands fa-wikipedia-w"></i> Fact</a>
+    <a type="button" class="btn btn-outline-secondary" href='javascript:set_prompt("chatbot");'><i class="fa-solid fa-robot"></i> Chatbot</a>
+    <a type="button" class="btn btn-outline-success" href='javascript:set_prompt("philosophy");'><i class="fa-solid fa-lightbulb"></i> Philosophy</a>
+    <a type="button" class="btn btn-outline-danger" href='javascript:set_prompt("translation");'><i class="fa-solid fa-language"></i> Translation</a>
+    <a type="button" class="btn btn-outline-warning" href='javascript:set_prompt("cryptocurrency");'><i class="fa-brands fa-bitcoin"></i> Cryptocurrency</a>
+    <a type="button" class="btn btn-outline-info" href='javascript:set_prompt("programming");'><i class="fa-solid fa-rocket"></i> Code</a>
+    <a type="button" class="btn btn-outline-dark" href='javascript:set_prompt("math");'><i class="fa-solid fa-calculator"></i> Math</a>
     </div>
 
-<div class="p-4 mb-3 bg-light rounded-4">
-<p id="examples">
-    <span class="lead fw-bold ">Examples:
-    <a type="button" class="btn btn-outline-primary btn-lg" href='javascript:set_prompt("fact");'><i class="fa-brands fa-wikipedia-w"></i> Fact</a>
-    <a type="button" class="btn btn-outline-secondary btn-lg" href='javascript:set_prompt("chatbot");'><i class="fa-solid fa-robot"></i> Chatbot</a>
-    <a type="button" class="btn btn-outline-success btn-lg" href='javascript:set_prompt("philosophy");'><i class="fa-solid fa-lightbulb"></i> Philosophy</a>
-    <a type="button" class="btn btn-outline-danger btn-lg" href='javascript:set_prompt("translation");'><i class="fa-solid fa-language"></i> Translation</a>
-    <a type="button" class="btn btn-outline-warning btn-lg" href='javascript:set_prompt("cryptocurrency");'><i class="fa-brands fa-bitcoin"></i> Cryptocurrency</a>
-    <a type="button" class="btn btn-outline-info btn-lg" href='javascript:set_prompt("programming");'><i class="fa-solid fa-rocket"></i> CodePilot</a>
-    <a type="button" class="btn btn-outline-dark btn-lg" href='javascript:set_prompt("math");'><i class="fa-solid fa-calculator"></i> Math</a>
-    </span>
-</p>
-
 <form method="POST" action="/generate" id="generate-form">
-    <div class="mb-3">
+    <div class="my-3">
         <label for="textbox" class="form-label"></label>
-        <textarea class="form-control" style="font-size: 20px;" name="prompt" rows="8" id="textbox" placeholder="Type the prompts here"></textarea>
+        <textarea class="form-control" style="font-size: 20px;" name="prompt" rows="6" id="textbox" placeholder="Type the prompts here"></textarea>
     </div>
 
     <!--<button type="button" class="btn btn-secondary wrapper" data-toggle="tooltip" data-placement="bottom" title="Tooltip on right">-->
     <!--  Tooltip on right-->
     <!--</button>-->
 
-    <div class="form-group row" data-html2canvas-ignore="true">
-    <label for="length_slider" class="col-sm-3 col-form-label">Response Length:  </label>
-    <div class="col-sm-7 my-2">
+    <div class="row" data-html2canvas-ignore="true">
+      <div class="col-auto"> <label for="length_slider" class="form-label fw-bold">Response Length:</label> </div>
+      <div class="col-auto"> <output class="form-label" id="length_slider_output">64</output> </div>
+      <div class="col-auto">
         <input type="range" value="64" min="32" max="512" step="32" class="form-range"
-            oninput="this.parentNode.nextElementSibling.value = this.value" name="max_tokens"
-            id='length_slider'>
-    </div>
-    <output class='col-sm-2 col-form-label' id="length_slider_output">64</output>
+          oninput="this.parentNode.previousElementSibling.childNodes[1].value = this.value" name="max_tokens" id='length_slider'>
+      </div>
     </div>
 
-    <div class="form-group row" data-html2canvas-ignore="true">
-        <label for="temperature_slider" class="col-sm-3 col-form-label">Temperature:</label>
-        <div class="col-sm-7 my-2">
-            <input type="range" value="0.7" min="0.1" max="1.0" step="0.10" class="form-range"
-            oninput="this.parentNode.nextElementSibling.value = this.value" name="temperature" id="temperature_slider">
-        </div>
-            <output class='col-sm-2 col-form-label'>0.7</output>
+    <div class="row" data-html2canvas-ignore="true">
+      <div class="col-auto"> <label for="temperature_slider" class="form-label fw-bold">Temperature: &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</label> </div>
+      <div class="col-auto"> <output class="form-label">0.5</output> </div>
+      <div class="col-auto">
+         <input type="range" value="0.5" min="0.0" max="1.0" step="0.1" class="form-range"
+          oninput="this.parentNode.previousElementSibling.childNodes[1].value = this.value" name="temperature" id='temperature_slider'>
+      </div>
     </div>
 
-    <div class="form-group row" data-html2canvas-ignore="true">
-        <label for="topp_slider" class="col-sm-3 col-form-label">Top-p:</label>
-        <div class="col-sm-7 my-2">
-        <input type="range" value="0.5" min="0.0" max="1.0" step="0.10" class="form-range"
-            oninput="this.parentNode.nextElementSibling.value = this.value" name="top_p" id="topp_slider">
-        </div>
-       <output class='col-sm-2 col-form-label'>0.5</output>
+    <div class="row" data-html2canvas-ignore="true">
+      <div class="col-auto">
+          <label for="topp_slider" class="form-label fw-bold">
+              Top-p: &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+          </label> </div>
+      <div class="col-auto"> <output class="form-label">0.9</output> </div>
+      <div class="col-auto">
+          <input type="range" value="0.9" min="0.0" max="1.0" step="0.1" class="form-range"
+          oninput="this.parentNode.previousElementSibling.childNodes[1].value = this.value" name="top_p" id='topp_slider'>
+      </div>
     </div>
-    <div class="submit-holder">
-        <input class="btn btn-primary btn-lg" type="submit" value="Generate" id="generate-form-button"/>
-    </div>
+
+    <div> <input class="btn btn-primary btn-lg mt-2" type="submit" value="Generate" id="generate-form-button"/> </div>
 </form>
-
-<!--    <div class="submit-holder">-->
-<!--        <input class="btn btn-primary btn-lg" type="submit" value="Test" onclick="test()"/>-->
-<!--    </div>-->
 
 <div id="loader_holder_super" class="py-2">
     <div id="loader_holder">
@@ -314,8 +292,8 @@ label {
 </div>
 
 
-<div class="d-grid gap-2 d-sm-flex justify-content-sm-center">
-    <p class="text-center lead">Like the results? &#11088;  Support Alpa development by staring Alpa on GitHub </p>
+<div class="d-sm-flex justify-content-center text-center">
+    <p class="lead">Like the results? &#11088;  Support Alpa development by staring Alpa on GitHub  &nbsp;</p>
     <a class="github-button" href="https://github.com/alpa-projects/alpa" data-color-scheme="no-preference: light; light: light; dark: dark;" data-icon="octicon-star" data-size="large" data-show-count="true" aria-label="Star alpa-projects/alpa on GitHub">Star</a>
 </div>
 
@@ -325,11 +303,6 @@ label {
   </div>
 </div>
 </div>
-
-
-
-
-
 
 <div class="container bg-white py-3" id="faq">
     <h1 class="display-6 py-3 fw">Frequently Asked Questions</h1>
@@ -554,29 +527,29 @@ label {
 </div>
 
 
-<div class="container bg-white py-3" id="partners">
+<div class="container bg-light py-3" id="partners">
     <h1 class="display-6 py-3 my-3 fw">Alpa Partners</h1>
     <div class="row text-center py-4">
       <div class="col-lg-4">
-        <img alt="alpa logo" class="bi me-2 img-fluid" style="width:80%;" src="https://www.casl-project.ai/assets/img/berkeley.png">
+        <img alt="UC Berkeley" class="bi me-2 img-fluid" style="width:80%;" src="https://www.casl-project.ai/assets/img/berkeley.png">
       </div>
       <div class="col-lg-4">
-        <img alt="alpa logo" class="bi me-2 img-fluid" src="https://mma.prnewswire.com/media/1227419/MBZUAI_Logo.jpg?w=500">
+        <img alt="MBZUAI" class="bi me-2 img-fluid" src="https://mma.prnewswire.com/media/1227419/MBZUAI_Logo.jpg?w=500">
       </div>
       <div class="col-lg-4">
-        <img alt="alpa logo" class="bi me-2 img-fluid" style="width:90%;" src="https://lever-client-logos.s3.us-west-2.amazonaws.com/0114ec37-170e-4864-b9a9-f85452de1ce0-1633971232076.png">
+        <img alt="Anyscale" class="bi me-2 img-fluid" style="width:90%;" src="https://lever-client-logos.s3.us-west-2.amazonaws.com/0114ec37-170e-4864-b9a9-f85452de1ce0-1633971232076.png">
       </div>
     </div>
 
     <div class="row text-center py-4">
       <div class="col-lg-4">
-        <img alt="alpa logo" class="bi me-2 img-fluid" style="width: 50%;" src="https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/Amazon_Web_Services_Logo.svg/512px-Amazon_Web_Services_Logo.svg.png?20170912170050">
+        <img alt="AWS" class="bi me-2 img-fluid" style="width: 50%;" src="https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/Amazon_Web_Services_Logo.svg/512px-Amazon_Web_Services_Logo.svg.png?20170912170050">
       </div>
       <div class="col-lg-4">
-        <img alt="alpa logo" class="bi me-2 img-fluid" style="width: 60%;" src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTE2WoDOUPB5L3bRgbQZkU-iLCtmRLYSj29iwFqtMAKQCNALlPtbwSUoswoSvqk8sjrT5w&usqp=CAU">
+        <img alt="Google" class="bi me-2 img-fluid" style="width: 60%;" src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTE2WoDOUPB5L3bRgbQZkU-iLCtmRLYSj29iwFqtMAKQCNALlPtbwSUoswoSvqk8sjrT5w&usqp=CAU">
       </div>
       <div class="col-lg-4">
-        <img alt="alpa logo" class="bi me-2 img-fluid" style="width:80%;" src="https://upload.wikimedia.org/wikipedia/commons/7/7b/Meta_Platforms_Inc._logo.svg">
+        <img alt="Meta" class="bi me-2 img-fluid" style="width:80%;" src="https://upload.wikimedia.org/wikipedia/commons/7/7b/Meta_Platforms_Inc._logo.svg">
       </div>
     </div>
 </div>
@@ -591,25 +564,24 @@ label {
     </div>
 </div>
 
-<div>
-    <div class="container">
-      <footer class="d-flex flex-wrap justify-content-between align-items-center py-3 border-top">
-      <div class="col-md-4 d-flex align-items-center">
-          <a href="#home" class="mb-3 me-2 mb-md-0 text-muted text-decoration-none lh-1">
-            <img alt="alpa logo" class="bi me-2 img-fluid" style="width: 40px;" src="https://raw.githubusercontent.com/alpa-projects/alpa/opt175b-website/docs/logo/alpa-logo-cropped.svg">
-          </a>
-          <span class="mb-3 mb-md-0 text-muted">&copy; 2022 Alpa Developers.</span>
-        </div>
+  <div class="container">
+    <footer class="d-flex flex-wrap justify-content-between align-items-center py-3 border-top">
+    <div class="d-flex align-items-center">
+        <a href="#home" class="me-2">
+          <img alt="alpa logo" style="width: 40px;" src="https://raw.githubusercontent.com/alpa-projects/alpa/main/docs/logo/alpa-logo-cropped.svg">
+        </a>
+        <span class="text-muted">&copy; 2022 Alpa Developers.</span>
+      </div>
 
-        <ul class="nav col-md-5 justify-content-end">
-          <li class="nav-item"><a href="#generation" class="nav-link px-2 text-muted">Generation</a></li>
-          <li class="nav-item"><a href="#faq" class="nav-link px-2 text-muted">FAQs</a></li>
-          <li class="nav-item"><a href="https://github.com/alpa-projects/alpa/blob/main/LICENSE" target="_blank" class="nav-link px-2 text-muted">Alpa License</a></li>
-          <li class="nav-item"><a href="https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/MODEL_LICENSE.md" target="_blank" class="nav-link px-2 text-muted">OPT License</a></li>
-          <li class="nav-item"><a href="https://github.com/alpa-projects/alpa" target="_blank" class="nav-link px-2 text-muted">GitHub</a></li>
-        </ul>
-      </footer>
-    </div>
-</div>
+      <ul class="nav nav-pills">
+        <li class="nav-item"><a href="#generation" class="nav-link px-2 text-muted">Generation</a></li>
+        <li class="nav-item"><a href="#faq" class="nav-link px-2 text-muted">FAQs</a></li>
+        <li class="nav-item"><a href="https://github.com/alpa-projects/alpa/blob/main/LICENSE" target="_blank" class="nav-link px-2 text-muted">Alpa License</a></li>
+        <li class="nav-item"><a href="https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/MODEL_LICENSE.md" target="_blank" class="nav-link px-2 text-muted">OPT License</a></li>
+        <li class="nav-item"><a href="https://github.com/alpa-projects/alpa" target="_blank" class="nav-link px-2 text-muted">GitHub</a></li>
+      </ul>
+    </footer>
+  </div>
+
 </body>
 </html>

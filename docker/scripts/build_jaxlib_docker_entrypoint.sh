@@ -37,6 +37,7 @@ then
   git fetch origin +${ALPA_BRANCH}
   git checkout -qf FETCH_HEAD
   git submodule update --recursive
+fi
 
 # switch tensorflow-alpa branch, this will overwrite the above
 if [[ $# -eq 5 ]]

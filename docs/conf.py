@@ -20,7 +20,7 @@ project = 'Alpa'
 #author = '<Author>'
 
 # The full version, including alpha/beta/rc tags
-release = '0.0.1'
+release = '0.1.4'
 
 
 # -- General configuration ---------------------------------------------------
@@ -85,6 +85,16 @@ class WithinSubsectionOrder:
 # a list of builtin themes.
 #
 html_theme = 'sphinx_rtd_theme'
+
+html_favicon = 'logo/alpa-logo.ico'
+
+html_context = {
+    'display_github': True,
+    'github_user': 'alpa-projects',
+    'github_repo': 'alpa',
+    'github_version': 'main',
+    "conf_py_path": "/docs/",
+}
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,

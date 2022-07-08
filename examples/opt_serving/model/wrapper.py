@@ -105,13 +105,10 @@ class WrappedInferenceFunc(GenerationMixin):
                  output_attentions=None,
                  output_hidden_states=None,
                  return_dict=None):
-        # Decompose the call to token by token
-        for i in range(input_ids.shape[1]):
-            ret = self.inference_func(input_ids[:, i:i + 1],
-                                      past_key_values,
-                                      output_hidden_states=output_hidden_states,
-                                      output_attentions=output_attentions)
-            past_key_values = ret.past_key_values
+        ret = self.inference_func(input_ids,
+                                  past_key_values,
+                                  output_hidden_states=output_hidden_states,
+                                  output_attentions=output_attentions)
         return ret
 
     def _reorder_cache(self, past, beam_idx):
@@ -358,17 +355,13 @@ def get_model(model_name: str,
         # load params
         params = load_params_dis_array(path, executable, params_aval, config,
                                        dummy)
-        if autoregressive:
-            init_cache = init_cache_dis_array(executable,
-                                              config,
-                                              expand_size,
-                                              dummy=dummy)
-            set_skip_shard_args_check(init_cache)
-        executable.sync()
 
-        # return executable directly if not autoregressive
-        if not autoregressive:
-            return executable, params, transformer_config
+        init_cache = init_cache_dis_array(executable,
+                                          config,
+                                          batch_size * num_beams,
+                                          dummy=dummy)
+        set_skip_shard_args_check(init_cache)
+        executable.sync()
 
     step_ct = 0
 
@@ -400,9 +393,23 @@ def get_model(model_name: str,
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)
 
+    def inference_func_with_decompose_input(input_ids,
+                                            past_key_values,
+                                            output_attentions=None,
+                                            output_hidden_states=None):
+        # Decompose the call to token by token
+        for i in range(input_ids.shape[1]):
+            ret = inference_func(input_ids[:, i:i + 1],
+                                 past_key_values,
+                                 output_hidden_states=output_hidden_states,
+                                 output_attentions=output_attentions)
+            past_key_values = ret.past_key_values
+        return ret
+
     inference_func_config = InferenceFuncConfig(num_beams=num_beams)
-    return WrappedInferenceFunc(inference_func, inference_func_config,
-                                executable, transformer_config)
+    return WrappedInferenceFunc(
+        inference_func_with_decompose_input if autoregressive else inference_func,
+        inference_func_config, executable, transformer_config)
 
 
 def set_skip_shard_args_check(attention_cache):

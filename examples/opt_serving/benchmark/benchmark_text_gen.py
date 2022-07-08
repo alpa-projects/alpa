@@ -59,8 +59,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Some global params
-    warmup_iters = 5
-    n_iters = 10
+    warmup_iters = 2
+    n_iters = 0
     global_config.pipeline_sync_for_timer = True
     global_config.shard_parallel_sync_for_timer = True
 
@@ -92,7 +92,7 @@ if __name__ == "__main__":
 
         # forward mode
         tic = time.time()
-        model, params, transformer_config = get_model(
+        model = get_model(
             args.model,
             args.device,
             args.path,
@@ -104,41 +104,43 @@ if __name__ == "__main__":
             num_micro_batches=num_micro_batches)
         load_time = time.time() - tic
 
-        # create batch
-        input_ids = jnp.ones((batch_size, decoder_length_per_step),
-                             dtype=jnp.int32)
-        position_ids = jnp.ones((batch_size, decoder_length_per_step),
-                                dtype=jnp.int32)
+        # use existing batch if decoder length is matched
+        test_prompt = None
+        for prompt in test_prompts:
+            if decoder_length_per_step == len(prompt):
+                print("Using prompt %s for benchmarking" % prompt)
+                test_prompt = prompt
+                break
+        if test_prompt is None:
+            # create batch
+            print("Using random prompt for benchmarking")
+            test_prompt = " ".join(["we" for _ in range(decoder_length_per_step)])
+
+        input_ids = tokenizer(test_prompt, return_tensors="pt").input_ids.to(args.device)
+        assert input_ids.shape[1] == decoder_length_per_step
 
         # get model config
-        H = transformer_config.H
-        L = transformer_config.L
-        seq_len = transformer_config.seq_len
-        vocab_size = transformer_config.vocab_size
+        H = model.transformer_config.H
+        L = model.transformer_config.L
+        seq_len = model.transformer_config.seq_len
+        vocab_size = model.transformer_config.vocab_size
 
         num_gpus = alpa.get_global_cluster(
         ).num_devices if "alpa" in args.model else 1
 
         # warm up
         for _ in range(warmup_iters):
-            forward_results = model(params, {
-                "input_ids": input_ids,
-                "position_ids": position_ids
-            })
-            model.sync()
+            output = model(input_ids)
+            model.executable.sync()
+            #np.save(np.array(forward_results.past_key_value[0][0]))
 
         # benchmark
         for i in range(n_iters):
             torch.manual_seed(8)
 
             tic = time.time()
-            forward_results = model(params, {
-                "input_ids": input_ids,
-                "position_ids": position_ids
-            })
-            model.sync()
-            # a = np.array(forward_results)
-            # print(a)
+            output = model(input_ids)
+            model.executable.sync()
             latency = time.time() - tic
 
             compute_latency = model.get_execution_time_costs()[-1]

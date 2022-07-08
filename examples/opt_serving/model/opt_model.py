@@ -706,18 +706,18 @@ def get_pipeshard_executable(config,
         ))
     #method = alpa.ShardParallel()
 
-    if autoregressive:
+    @alpa.parallelize(batch_argnums=(1,), method=method)
+    def inference_step_with_cache(params, batch):
+        output = model.apply(
+            params,
+            batch["input_ids"],
+            batch["position_ids"],
+            attention_cache=batch["cache"],
+            output_attentions=support_output_attentions,
+            output_hidden_states=support_output_hidden_states)
+        return output
 
-        @alpa.parallelize(batch_argnums=(1,), method=method)
-        def inference_step_with_cache(params, batch):
-            output = model.apply(
-                params,
-                batch["input_ids"],
-                batch["position_ids"],
-                attention_cache=batch["cache"],
-                output_attentions=support_output_attentions,
-                output_hidden_states=support_output_hidden_states)
-            return output
+    if autoregressive:
 
         alpa.global_config.always_donate_micro_batch_vars = False
         executable = inference_step_with_cache.get_executable(
@@ -731,20 +731,10 @@ def get_pipeshard_executable(config,
             })
     else:
 
-        @alpa.parallelize(batch_argnums=(1,), method=method)
-        def inference_step(params, batch):
-            output = model.apply(
-                params,
-                batch["input_ids"],
-                batch["position_ids"],
-                output_attentions=support_output_attentions,
-                output_hidden_states=support_output_hidden_states)
-            return output
-
         assert batch_size % num_micro_batches == 0, "cannot divide batch_size by num_micro_batches"
         micro_batch_size = batch_size // num_micro_batches
 
-        executable = inference_step.get_executable(
+        executable = inference_step_with_cache.get_executable(
             params, {
                 "input_ids":
                     jax.core.ShapedArray(
@@ -752,6 +742,8 @@ def get_pipeshard_executable(config,
                 "position_ids":
                     jax.core.ShapedArray(
                         (batch_size, decoding_length_per_step), jnp.int32),
+                "cache":
+                    init_cache_aval(config, batch_size),
             })
 
     executable.dump_debug_info("tmp")

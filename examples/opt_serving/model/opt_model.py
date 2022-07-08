@@ -734,6 +734,7 @@ def get_pipeshard_executable(config,
         assert batch_size % num_micro_batches == 0, "cannot divide batch_size by num_micro_batches"
         micro_batch_size = batch_size // num_micro_batches
 
+        alpa.global_config.always_donate_micro_batch_vars = False
         executable = inference_step_with_cache.get_executable(
             params, {
                 "input_ids":

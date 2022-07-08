@@ -59,8 +59,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Some global params
-    warmup_iters = 2
-    n_iters = 0
+    warmup_iters = 5
+    n_iters = 10
     global_config.pipeline_sync_for_timer = True
     global_config.shard_parallel_sync_for_timer = True
 
@@ -107,8 +107,8 @@ if __name__ == "__main__":
         # use existing batch if decoder length is matched
         test_prompt = None
         for prompt in test_prompts:
-            if decoder_length_per_step == len(prompt):
-                print("Using prompt %s for benchmarking" % prompt)
+            if decoder_length_per_step == len(prompt.split()):
+                print("Using prompt \"%s\" for benchmarking" % prompt)
                 test_prompt = prompt
                 break
         if test_prompt is None:
@@ -132,7 +132,6 @@ if __name__ == "__main__":
         for _ in range(warmup_iters):
             output = model(input_ids)
             model.executable.sync()
-            #np.save(np.array(forward_results.past_key_value[0][0]))
 
         # benchmark
         for i in range(n_iters):
@@ -143,12 +142,11 @@ if __name__ == "__main__":
             model.executable.sync()
             latency = time.time() - tic
 
-            compute_latency = model.get_execution_time_costs()[-1]
-            # print(f"input length: {input_ids.shape[1]}, output_length: {input_ids.shape[1]}, num_gpus: {num_gpus}")
+            compute_latency = model.executable.get_execution_time_costs()[-1]
             assert decoder_length_per_step == input_ids.shape[1]
 
-            memory_allocated = model.mesh_group.get_memory_allocated() / 1e9
-            max_memory_allocated = model.mesh_group.get_max_memory_allocated(
+            memory_allocated = model.executable.mesh_group.get_memory_allocated() / 1e9
+            max_memory_allocated = model.executable.mesh_group.get_max_memory_allocated(
             ) / 1e9
 
             tflops = compute_gpt_tflops_inference_with_padding(

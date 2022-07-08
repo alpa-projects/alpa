@@ -380,7 +380,7 @@ def get_model(model_name: str,
 
         logits_step = torch.from_numpy(np.array(output.logits)).to(device)
 
-        step_ct += 1
+        step_ct += input_ids_step.shape[1]
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)
 

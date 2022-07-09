@@ -73,10 +73,6 @@ ReshardingRecvSpec = namedtuple("ReshardingRecvSpec",
                                 ["device_id", "shape", "dtype", "tile_specs"])
 ReshardingRecvTask = namedtuple("ReshardingRecvTask",
                                 ["recv_specs", "group_name"])
-ReshardingAllGatherSpec = namedtuple(
-    "ReshardingAllGatherSpec", ["device_ids", "tensor_slices", "output_slice"])
-ReshardingAllGatherTask = namedtuple("ReshardingAllGatherTask",
-                                     ["allgather_specs"])
 ReshardingBroadcastSpec = namedtuple("ReshardingBroadcastSpec", [
     "comm_key", "world_size", "devices_ids", "devices_global_rank",
     "tensor_slices", "recv_tile_shape", "dtype"
@@ -138,9 +134,7 @@ class MeshHostWorker:
 
         self.send_tasks = {}  # Dict[uuid -> ReshardingSendTask]
         self.recv_tasks = {}  # Dict[uuid -> ReshardingRecvTask]
-        self.allgather_tasks = {}  # Dict[uuid -> AllgatherTask]
         self.broadcast_tasks = {}  # Dict[uuid -> BroadcastTask]
-        self.allgather_communicators = {}
         self.broadcast_communicators = {}
 
         self.data_loaders = {}  # Dict[uuid -> MeshWorkerDataLoader]
@@ -466,25 +460,6 @@ class MeshHostWorker:
             worker_nccl_util.recv_tile(self, uuid, device_id,
                                        indices_in_dst_tile, src_rank,
                                        src_gpu_idx, group_name)
-
-    def put_resharding_allgather_task(self, uuid, tasks):
-        all_gather_task = ReshardingAllGatherTask(tasks)
-        allgather_specs = all_gather_task.allgather_specs
-        for allgather_spec in allgather_specs:
-            device_ids = sorted(allgather_spec.device_ids)
-            if repr(device_ids) not in self.allgather_communicators:
-                self.allgather_communicators[repr(device_ids)] = (
-                    worker_nccl_util.init_local_comm(list(device_ids)))
-        self.allgather_tasks[uuid] = all_gather_task
-
-    def run_allgather_task(self, uuid, ary_uuid):
-        task: ReshardingAllGatherTask = self.allgather_tasks[uuid]
-        allgather_specs = task.allgather_specs
-        for allgather_spec in allgather_specs:
-            worker_nccl_util.allgather(self, ary_uuid,
-                                       allgather_spec.device_ids,
-                                       allgather_spec.tensor_slices,
-                                       allgather_spec.output_slice)
 
     def put_resharding_broadcast_task(self, uuid, tasks, group_name):
         self.broadcast_tasks[uuid] = ReshardingBroadcastTask(

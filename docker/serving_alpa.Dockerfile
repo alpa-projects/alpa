@@ -24,6 +24,6 @@ RUN . /opt/conda/etc/profile.d/conda.sh && \
     conda activate alpa && \
     apt install coinor-cbc -y && \
     pip3 install --upgrade pip && \
-    pip3 install cupy-cuda113 -i https://pypi.douban.com/simple && \
-    pip3 install alpa  -i https://pypi.douban.com/simple && \
-    pip3 install --trusted-host 169.229.48.123 -i http://169.229.48.123:8080/simple/ jaxlib==0.3.5+cuda113.cudnn820
+    pip3 install cupy-cuda113 && \
+    pip3 install alpa && \
+    pip3 install jaxlib==0.3.5+cuda113.cudnn820 -f https://alpa-projects.github.io/wheels.html

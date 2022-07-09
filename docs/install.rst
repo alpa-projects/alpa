@@ -96,7 +96,7 @@ Method 2: Install from Source
 
   .. code:: bash
 
-    git clone --recursive git@github.com:alpa-projects/alpa.git
+    git clone --recursive https://github.com/alpa-projects/alpa.git
 
 2. Install Alpa
 

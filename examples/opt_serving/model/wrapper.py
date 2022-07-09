@@ -61,6 +61,7 @@ class InferenceFuncConfig:
     forced_eos_token_id: int = None
     remove_invalid_values: bool = False
     exponential_decay_length_penalty: float = None
+    do_sample: bool = False
     top_k: int = 50
     top_p: int = 1.0
     typical_p: int = 1.0
@@ -265,6 +266,9 @@ def get_model(model_name: str,
 
     Args:
         model_name: "gpt", "facebook/opt-", or "alpa/opt-".
+        device: "cpu" or "gpu". This only controls the device used
+          by pytorch. Alpa always runs on GPU.
+        path: The path to opt weights.
     """
     if not model_name.startswith("alpa") and not autoregressive:
         raise NotImplementedError(
@@ -323,6 +327,7 @@ def get_model(model_name: str,
         assert "alpa/opt" in model_name
         assert is_power_of_two(num_beams), "num_beams must be a power of two"
         alpa.init()
+        alpa.global_config.xla_client_mem_fraction = 0.88
 
         print(
             f"Load model {model_name} ... (This can take several minutes for very large models)"

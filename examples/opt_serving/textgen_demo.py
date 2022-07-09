@@ -7,7 +7,7 @@ from opt_serving.model.wrapper import get_model
 tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", use_fast=False)
 tokenizer.add_bos_token = False
 
-generate_params = {'do_sample': True, 'num_beams': 4, 'num_return_sequences': 3}
+generate_params = {"do_sample": True, "num_beams": 4, "num_return_sequences": 3}
 
 # Load the model
 model = get_model(model_name="alpa/opt-2.7b",

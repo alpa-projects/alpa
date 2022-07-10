@@ -109,7 +109,7 @@ Method 2: Install from Source
 
   .. code:: bash
 
-    cd alpa/build_jaxlib
+    cd build_jaxlib
     python3 build/build.py --enable_cuda --dev_install --tf_path=$(pwd)/../third_party/tensorflow-alpa
     cd dist
 
@@ -125,12 +125,12 @@ Method 2: Install from Source
 
 Check Installation
 ------------------
-You can check the installation by running the following commands.
+You can check the installation by running the following commands from the root of the repository.
 
 .. code:: bash
 
   ray start --head
-  python3 -m alpa.test_install
+  python3 tests/test_install.py
 
 [Optional] PyTorch Frontend
 -------------------------------------

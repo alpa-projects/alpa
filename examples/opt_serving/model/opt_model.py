@@ -157,8 +157,6 @@ class OPTSelfAttention(nn.Module):
                     jnp.full((query_states.shape[1], key_states.shape[1]),
                              -1e10), 1), (0, 1))
         else:
-            # attention_bias = jnp.expand_dims(jnp.triu(jnp.full(
-            #     (query_states.shape[1], key_states.shape[1]), -1e10), 1), (0, 1))
             cache_key, cache_value, cache_index = attention_cache
             cache_index_ = cache_index[0]
             key_states = lax.dynamic_update_slice(cache_key, key_states,
@@ -167,10 +165,17 @@ class OPTSelfAttention(nn.Module):
                                                     (0, cache_index_, 0, 0))
             num_updated_cache_vectors = query_states.shape[1]
             max_length = key_states.shape[1]
-            attention_bias = (jnp.arange(max_length) >=
-                              cache_index_ + num_updated_cache_vectors).astype(
-                                  self.dtype) * -1e10
-            attention_bias = attention_bias[None, None, None, :]
+
+            # The following logic is equivalent to:
+            # attention_bias = jnp.expand_dims(
+            #     jnp.triu(jnp.full(
+            #         (num_updated_cache_vectors, max_length), -1e10), cache_index + 1), (0, 1))
+            # but "cache_index + 1" in jnp.triu results in non-static IR.
+            row_idxs = jnp.arange(num_updated_cache_vectors)
+            mask = jnp.arange(max_length) - (cache_index_ + 1)
+            attention_bias = jnp.expand_dims(
+                (row_idxs[:, None] <= mask).astype(self.dtype) * -1e10, (0, 1))
+
             attention_cache = key_states, value_states, cache_index + num_updated_cache_vectors
         attn_weights = nn.attention.dot_product_attention_weights(
             query_states,

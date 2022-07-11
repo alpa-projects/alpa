@@ -1,6 +1,4 @@
 """Test the correctness of cache implementation."""
-from functools import partial
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -21,7 +19,8 @@ def print_params(params, prefix=""):
             print(prefix + key, value.shape)
 
 
-def test_opt_125M():
+def test_opt_125M(decompose_input):
+    print("Testing cache with decompose_input=%s" % decompose_input)
     name = "125M"
     config = get_opt_config(name, dtype=jnp.float32)
     np_weights_folder = f"/home/ubuntu/opt_weights/{name}_np"
@@ -57,17 +56,29 @@ def test_opt_125M():
 
     cache = init_cache_np(config, input_ids.shape[0])
 
-    for i in range(input_ids.shape[1]):
-        input_ids_step = input_ids[:, i:i + 1]
-        position_ids_step = np.full_like(input_ids_step, i + config.pad + 1)
+    if decompose_input:
+        # Decompose input so that all input lengths are one.
+        for i in range(input_ids.shape[1]):
+            input_ids_step = input_ids[:, i:i + 1]
+            position_ids_step = np.full_like(input_ids_step, i + config.pad + 1)
+            logits_step, cache = inference_step_with_cache(
+                params, {
+                    "input_ids": input_ids_step,
+                    "position_ids": position_ids_step,
+                    "cache": cache
+                })
+            assert_allclose(logits_step, logits_no_cache[:, i:i + 1])
+    else:
+        # Same as inference_step_no_cache that has input length > 1.
         logits_step, cache = inference_step_with_cache(
             params, {
-                "input_ids": input_ids_step,
-                "position_ids": position_ids_step,
+                "input_ids": input_ids,
+                "position_ids": position_ids,
                 "cache": cache
             })
-        assert_allclose(logits_step, logits_no_cache[:, i:i + 1])
+        assert_allclose(logits_step, logits_no_cache)
 
 
 if __name__ == "__main__":
-    test_opt_125M()
+    test_opt_125M(False)
+    test_opt_125M(True)

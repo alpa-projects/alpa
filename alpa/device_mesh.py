@@ -1101,10 +1101,14 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def delete_remote_buffers(self, ary_refs: List["RemoteArrayRef"]):
         """Delete remote buffers."""
-        if (self.workers is None or not ray or not ray.worker or
-                not ray.is_initialized()):
-            return
-
+        try:
+            if (self.workers is None or not ray or not ray.worker or
+                    not ray.is_initialized()):
+                return
+        except:
+            if (self.workers is None or not ray or not ray._private.worker or
+                    not ray.is_initialized()):
+                return
         # Put delete requests into a buffer
         for ary_ref in ary_refs:
             self.to_delete_remote_refs.append(ary_ref.uuid)
@@ -1948,7 +1952,10 @@ class DeviceCluster:
 
     def __init__(self):
         # pylint: disable=import-outside-toplevel
-        from ray.worker import _global_node as ray_global_node
+        try:
+            from ray.worker import _global_node as ray_global_node
+        except:
+            from ray._private.worker import _global_node as ray_global_node
         try:
             self.head_info = ray_global_node.address_info
         except AttributeError as ae:

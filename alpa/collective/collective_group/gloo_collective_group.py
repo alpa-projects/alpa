@@ -37,8 +37,12 @@ class Rendezvous:
     def __init__(self, group_name, context, store_type, device_type):
         self._group_name = group_name
         self._context = context
-        self._redis_ip_address, self._redis_port = (
-            ray.worker._global_node.redis_address.split(":"))
+        try:
+            self._redis_ip_address, self._redis_port = (
+                ray.worker._global_node.redis_address.split(":"))
+        except:
+            self._redis_ip_address, self._redis_port = (
+                ray._private.worker._global_node.redis_address.split(":"))
         self._process_ip_address = (ray.util.get_node_ip_address())
         logger.debug(f"Redis address: {self._redis_ip_address}, "
                      f"port: {self._redis_port}, "

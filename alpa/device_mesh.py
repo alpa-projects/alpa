@@ -1105,7 +1105,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             if (self.workers is None or not ray or not ray.worker or
                     not ray.is_initialized()):
                 return
-        except:
+        except ModuleNotFoundError:
             if (self.workers is None or not ray or not ray._private.worker or
                     not ray.is_initialized()):
                 return
@@ -1954,7 +1954,7 @@ class DeviceCluster:
         # pylint: disable=import-outside-toplevel
         try:
             from ray.worker import _global_node as ray_global_node
-        except:
+        except ModuleNotFoundError:
             from ray._private.worker import _global_node as ray_global_node
         try:
             self.head_info = ray_global_node.address_info

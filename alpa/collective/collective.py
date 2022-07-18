@@ -738,7 +738,7 @@ def _check_and_get_group(group_name):
 
             try:
                 worker = ray.worker.global_worker
-            except:
+            except ModuleNotFoundError:
                 worker = ray._private.worker.global_worker
 
             id_ = worker.core_worker.get_actor_id()
@@ -794,7 +794,7 @@ def _check_inside_actor():
     """Check if currently it is inside a Ray actor/task."""
     try:
         worker = ray.worker.global_worker
-    except:
+    except ModuleNotFoundError:
         worker = ray._private.worker.global_worker
 
     if worker.mode == ray.WORKER_MODE:

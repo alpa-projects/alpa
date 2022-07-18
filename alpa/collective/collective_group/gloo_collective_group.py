@@ -40,7 +40,7 @@ class Rendezvous:
         try:
             self._redis_ip_address, self._redis_port = (
                 ray.worker._global_node.redis_address.split(":"))
-        except:
+        except ModuleNotFoundError:
             self._redis_ip_address, self._redis_port = (
                 ray._private.worker._global_node.redis_address.split(":"))
         self._process_ip_address = (ray.util.get_node_ip_address())

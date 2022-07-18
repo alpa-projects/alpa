@@ -11,7 +11,7 @@ tokenizer.add_bos_token = False
 generate_params = {"do_sample": False, "num_beams": 1, "num_return_sequences": 1}
 
 # Load the model
-model = get_model(model_name="alpa/opt-30b",
+model = get_model(model_name="alpa/opt-2.7b",
                   device="cuda",
                   path="/home/ubuntu/opt_weights",
                   batch_size=4,
@@ -31,7 +31,7 @@ input_ids_np = input_ids.cpu().numpy()
 pad_value = 1
 attention_mask = ((input_ids_np == pad_value) * -1e10) [:, None, None, :]
 # np.pad(attention_mask, )
-new_attention_mask = np.zeros([input_ids_np.shape[0], 1, 1, 2048], dtype=np.float16)
+new_attention_mask = np.zeros([input_ids_np.shape[0], 1, 1, 512], dtype=np.float16)
 new_attention_mask[:, :, :, :attention_mask.shape[-1]] = attention_mask
 
 print(new_attention_mask[:,:,:,:8])

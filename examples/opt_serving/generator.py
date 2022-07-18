@@ -727,7 +727,7 @@ class Generator:
         input_ids_np = input_ids.cpu().numpy()
         pad_value = 1
         attention_mask = ((input_ids_np == pad_value) * -1e10)[:, None, None, :]
-        new_attention_mask = np.zeros([input_ids_np.shape[0], 1, 1, 2048], dtype=np.float16)
+        new_attention_mask = np.zeros([input_ids_np.shape[0], 1, 1, 512], dtype=np.float16)
         new_attention_mask[:, :, :, :attention_mask.shape[-1]] = attention_mask
 
         # print(new_attention_mask[:, :, :, :8])

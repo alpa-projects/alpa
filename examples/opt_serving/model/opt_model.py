@@ -52,7 +52,7 @@ class OPTLMOutput(ModelOutput):
 class OPTConfig:
     # Inherited from OPT
     decoder_layers: int = 12
-    max_target_positions: int = 2048
+    max_target_positions: int = 512
     decoder_embed_dim: int = 768
     decoder_attention_heads: int = 12
     decoder_input_dim: int = 768
@@ -491,7 +491,8 @@ def get_opt_config(name, **kwargs):
         )
     elif name == "2.7B":
         config = OPTConfig(
-            max_target_positions=2048,
+            # max_target_positions=2048,
+            max_target_positions=512,
             decoder_layers=32,
             decoder_attention_heads=32,
             decoder_embed_dim=2560,
@@ -511,7 +512,8 @@ def get_opt_config(name, **kwargs):
         )
     elif name == "30B":
         config = OPTConfig(
-            max_target_positions=2048,
+            # max_target_positions=2048,
+            max_target_positions=512,
             decoder_layers=48,
             decoder_attention_heads=56,
             decoder_embed_dim=7168,
@@ -521,7 +523,8 @@ def get_opt_config(name, **kwargs):
         )
     elif name == "175B":
         config = OPTConfig(
-            max_target_positions=2048,
+            # max_target_positions=2048,
+            max_target_positions=512,
             decoder_layers=96,
             decoder_attention_heads=96,
             decoder_embed_dim=12288,
@@ -791,7 +794,13 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
             if self.mesh_id != mesh_ids[i][j]:
                 continue
 
-            assert shapes[i][j] == loaded_array.shape
+            # print(shapes[i][j])
+            # print(loaded_array.shape)
+            if shapes[i][j] != loaded_array.shape:
+                assert shapes[i][j][1] == loaded_array.shape[1]
+                loaded_array = loaded_array[:shapes[i][j][0], :]
+                # print(loaded_array.shape)
+            # assert shapes[i][j] == loaded_array.shape
             uuid = uuids[i][j]
             datas = []
             for k in range(len(self.local_devices)):

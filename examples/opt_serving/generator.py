@@ -14,6 +14,7 @@ from opt_serving.dataset.prepend_token_dataset import PrependTokenDataset
 from opt_serving.dataset.strip_token_dataset import StripTokenDataset
 from opt_serving.service.constants import MAX_SEQ_LEN
 from opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
+from opt_serving.service.constants import MAX_BS
 
 logger = build_logger()
 
@@ -118,7 +119,7 @@ class GeneratorInterface:
     def load_model(self):
         """Load model and return the model wrapper."""
         tic = time.time()
-        self.model_wrapper = get_model(self.model_name, "cuda", self.path, True)
+        self.model_wrapper = get_model(self.model_name, "cuda", self.path, True, batch_size=MAX_BS)
         load_time = time.time() - tic
 
         # Init tokenizer
@@ -341,6 +342,26 @@ class GeneratorInterface:
         """
         # if seed:
         #     utils.set_torch_seed(seed)
+        ori_bs = len(inputs)
+        def icml_pad(inputs, pad_value=1):
+            new_inputs = inputs
+            src_lens = [len(input) for input in inputs]
+            max_len = max(src_lens)
+            bs = len(inputs)
+
+            for new_input in new_inputs:
+                ori_len = len(new_input)
+                if len(new_input) < max_len:
+                    new_input.extend([pad_value for _ in range(max_len - ori_len)])
+            # pad to bs = MAX_BS
+            if bs < MAX_BS:
+                new_inputs.extend([[pad_value for _ in range(max_len)] for _ in range(MAX_BS - bs)])
+            return new_inputs
+
+
+        # pad the length
+        inputs = icml_pad(inputs)
+
         batch_request_uuid = next_serve_batch_uuid()
         if self.tokenizer is None or self.model_wrapper is None:
             raise RuntimeError("Model is not loaded.")
@@ -376,10 +397,11 @@ class GeneratorInterface:
         batches = self.get_batch_iterator(
             dataset=self.build_dataset_for_inference(tokens, lengths),
             max_tokens=None,
-            max_sentences=1,
+            max_sentences=MAX_BS,
             max_positions=None,
             ignore_invalid_inputs=False,
         ).next_epoch_itr(shuffle=False)
+        assert len(batches) == 1, "we have enforce inner bs = 1."
         logger.info(f"Serve batch {batch_request_uuid} with {len(batches)} compute batches.")
         for batch_idx, batch in enumerate(batches):
             src_tokens = batch["src_tokens"]
@@ -427,7 +449,8 @@ class GeneratorInterface:
             total_inference_time += inference_time
 
             # possibly cut off any bsz padding we did
-            translations = translations[:len(inputs)]
+            # translations = translations[:len(inputs)]
+            translations = translations[:ori_bs]
             # actually turn everything into strings
             for i in range(len(translations)):
                 decoding = translations[i]

@@ -17,7 +17,7 @@ from opt_serving.service.queue import PriorityQueueRingShard
 from opt_serving.service.responses import OAIResponse
 from opt_serving.service.utils import encode_fn, build_logger
 from opt_serving.service.workers import WorkItem
-from opt_serving.service.constants import MAX_SEQ_LEN, MAX_BATCH_TOKENS, DEFAULT_PORT, TIMEOUT_MS
+from opt_serving.service.constants import MAX_SEQ_LEN, MAX_BATCH_TOKENS, DEFAULT_PORT, TIMEOUT_MS, MAX_BS
 
 app = Flask(__name__)
 BATCH_QUEUE = PriorityQueueRingShard()
@@ -26,7 +26,7 @@ logger = build_logger()
 werkzeug_logger = logging.getLogger("werkzeug")
 
 
-def batching_loop(timeout=TIMEOUT_MS, max_tokens=MAX_BATCH_TOKENS):
+def batching_loop(timeout=TIMEOUT_MS, max_tokens=MAX_BATCH_TOKENS, max_bs=MAX_BS):
     """
     batching_loop is an infinite loop responsible for executing generations.
 
@@ -64,9 +64,10 @@ def batching_loop(timeout=TIMEOUT_MS, max_tokens=MAX_BATCH_TOKENS):
             item = target_queue.get(timeout=timeout / 1000)
             logger.debug(f"Get item: {item} into batch")
             # accumulate the batch until it gets too big
-            longest = max([item] + batch).cost
-            batch_cost = longest * (len(batch) + 1)
-            if batch and batch_cost > max_tokens:
+            # longest = max([item] + batch).cost
+            # batch_cost = longest * (len(batch) + 1)
+            bs = len(batch) + 1
+            if batch and bs > max_bs:
                 # we're over budget, put it back in the queue
                 target_queue.put(item)
                 raise queue.Empty

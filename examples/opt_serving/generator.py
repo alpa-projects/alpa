@@ -343,6 +343,7 @@ class GeneratorInterface:
         # if seed:
         #     utils.set_torch_seed(seed)
         ori_bs = len(inputs)
+
         def icml_pad(inputs, pad_value=1):
             new_inputs = inputs
             src_lens = [len(input) for input in inputs]
@@ -441,9 +442,9 @@ class GeneratorInterface:
             flops, speed, token_32_latency = self.estimate_performance(
                 translations, inference_time)
             logger.info(
-                "- Serve batch {} / compute batch {} | #batch_size: {}, max_len: {} shape: {}, args: {}, "
+                "- Serve batch {} / compute batch {} | #batch_size: {}, original bs: {}, max_len: {} shape: {}, args: {}, "
                 "batch latency (s): {:.2f}, flops: {:.4f}, speed: {:.4f}, 32-token latency: {:.2f}"
-                .format(batch_request_uuid, batch_idx, batchsize,
+                .format(batch_request_uuid, batch_idx, batchsize, ori_bs,
                         max(src_lengths), src_lengths, generator_args,
                         inference_time, flops, speed, token_32_latency))
             total_inference_time += inference_time
@@ -721,6 +722,15 @@ class Generator:
         assert temperature > 0, "--temperature must be greater than 0"
 
     def generate(self, input_ids):
+
+        # Make the attention mask
+        input_ids_np = input_ids.cpu().numpy()
+        pad_value = 1
+        attention_mask = ((input_ids_np == pad_value) * -1e10)[:, None, None, :]
+        new_attention_mask = np.zeros([input_ids_np.shape[0], 1, 1, 2048], dtype=np.float16)
+        new_attention_mask[:, :, :, :attention_mask.shape[-1]] = attention_mask
+
+        # print(new_attention_mask[:, :, :, :8])
         output = self.model_wrapper.generate(
             input_ids=input_ids,
             min_length=self.min_len,
@@ -735,6 +745,7 @@ class Generator:
             # no_repeat_ngram_size=2
             # return_dict_in_generate=True
             # output_hidden_states=True
+            alpa_attention_mask=new_attention_mask
         )
         generated_ids = output
         retvals = [[{} for _ in range(self.beam_size)] for _ in generated_ids]

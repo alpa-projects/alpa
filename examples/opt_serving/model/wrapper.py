@@ -97,11 +97,13 @@ class WrappedInferenceFunc(GenerationMixin):
         return {
             "input_ids": input_ids,
             "past_key_values": past,
+            "alpa_attention_mask": kwargs["alpa_attention_mask"]
         }
 
     def __call__(self,
                  input_ids,
                  past_key_values=None,
+                 alpa_attention_mask=None,
                  output_attentions=None,
                  output_hidden_states=None,
                  return_dict=None):
@@ -109,6 +111,7 @@ class WrappedInferenceFunc(GenerationMixin):
         for i in range(input_ids.shape[1]):
             ret = self.inference_func(input_ids[:, i:i + 1],
                                       past_key_values,
+                                      alpa_attention_mask,
                                       output_hidden_states=output_hidden_states,
                                       output_attentions=output_attentions)
             past_key_values = ret.past_key_values
@@ -375,29 +378,33 @@ def get_model(model_name: str,
 
     def inference_func(input_ids,
                        past_key_values,
+                       attention_mask,
                        output_attentions=False,
                        output_hidden_states=False):
         nonlocal step_ct
 
+        input_ids_step = input_ids.cpu().numpy()
         if past_key_values is None:
             past_key_values = init_cache
-            step_ct = 0
+            step_ct = np.zeros_like(input_ids_step)
 
-        input_ids_step = input_ids.cpu().numpy()
-        position_ids_step = np.full_like(input_ids_step,
-                                         step_ct + config.pad + 1)
+        # position_ids_step = np.full_like(input_ids_step,
+        #                                  step_ct + config.pad + 1)
+        position_ids_step = step_ct + config.pad + 1
 
         output = executable(
             params, {
                 "input_ids": input_ids_step,
                 "position_ids": position_ids_step,
                 "cache": past_key_values,
+                "mask": attention_mask,
             })
         set_skip_shard_args_check(output.attention_cache)
 
         logits_step = torch.from_numpy(np.array(output.logits)).to(device)
 
-        step_ct += 1
+        step_ct += (input_ids_step != config.pad)
+        # print(step_ct)
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)
 

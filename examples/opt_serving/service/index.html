@@ -33,7 +33,7 @@
                 "Human: What is your name?\nStatue: I am the Statue of Liberty.\n" +
                 "Human: Where do you live?\nStatue: New York City.\n" +
                 "Human: How long have you lived there?",
-            "length": 128
+            "length": 64
         },
         "airport": {
             "prompt": "Extract the airport codes from this text.\n\n" +
@@ -41,17 +41,17 @@
                 "Airport codes: JFK, SFO.\n\n" +
                 "Text: \"I want you to book a flight from Phoenix to Las Vegas.\"\n" +
                 "Airport codes:",
-            "length": 128
+            "length": 64
         },
         "translation": {
             "prompt": "English: I want to go home.\nChinese: 我想回家。\n\n" +
                       "English: I don't know.\nChinese: 我不知道。\n\n" +
                       "English: I am hungry.\nChinese:",
-            "length": 256
+            "length": 64
         },
         "cryptocurrency": {
             "prompt": "Every year, cryptocurrency experts prepare forecasts for the price of Dogecoin. In 2025, it is estimated that DOGE will",
-            "length": 128
+            "length": 32
         },
         "programming": {
             "prompt":
@@ -347,7 +347,7 @@
     <div class="form-group row" data-html2canvas-ignore="true">
     <label for="length_slider" class="col col-form-label text-end fw-bold" style="white-space: nowrap;">Response Length:</label>
     <div class="col my-2">
-        <input type="range" value="64" min="32" max="256" step="32" class="form-range"
+        <input type="range" value="64" min="32" max="128" step="32" class="form-range"
             oninput="this.parentNode.nextElementSibling.value = this.value" name="max_tokens"
             id='length_slider'>
     </div>

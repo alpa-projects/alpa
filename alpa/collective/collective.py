@@ -739,7 +739,7 @@ def _check_and_get_group(group_name):
             try:
                 worker = ray.worker.global_worker
             except ModuleNotFoundError:
-                worker = ray._private.worker.global_worker
+                worker = ray._private.worker.global_worker  # pylint: disable=protected-access
 
             id_ = worker.core_worker.get_actor_id()
             r = rank[ids.index(id_)]
@@ -795,7 +795,7 @@ def _check_inside_actor():
     try:
         worker = ray.worker.global_worker
     except ModuleNotFoundError:
-        worker = ray._private.worker.global_worker
+        worker = ray._private.worker.global_worker  # pylint: disable=protected-access
 
     if worker.mode == ray.WORKER_MODE:
         return

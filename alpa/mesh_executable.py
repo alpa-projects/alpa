@@ -1147,9 +1147,13 @@ class MemzeroWorkerExecutable(MeshWorkerExecutable):
         self.memzero.delete()
 
 
-class ConcatMeshWorkerExecutable(MeshWorkerExecutable):
-    """Temporary worker executable that concatenates tensors. It will be
-    deprecated when we move concat into apply_grad"""
+class UtilMeshWorkerExecutable(MeshWorkerExecutable):
+    """Worker executable that runs a manually generated function. It is lighter
+    than NoralMeshWorkerExecutable as it does not have a StagePlan.
+
+    Currently, it is used for concatenate(will be deprecated after we move it
+    to apply_grad) and allgather.
+    """
 
     def __init__(self, worker, uuid, hlo_proto):
         num_devices = len(worker.backend.devices())
@@ -1162,7 +1166,7 @@ class ConcatMeshWorkerExecutable(MeshWorkerExecutable):
             build_random_seed=global_config.compile_random_seed)
         xla_computation = xe.XlaComputation(hlo_proto)
 
-        self.concat = worker.backend.compile(xla_computation, compile_options)
+        self.exec = worker.backend.compile(xla_computation, compile_options)
 
         self.worker = worker
         self.timer_name = get_execution_timer_name(uuid)
@@ -1179,14 +1183,14 @@ class ConcatMeshWorkerExecutable(MeshWorkerExecutable):
 
         # Execute
         timers(self.timer_name).start(self.sync_func if sync_before else None)
-        output_bufs = self.concat.execute_sharded_on_local_devices(input_bufs)
+        output_bufs = self.exec.execute_sharded_on_local_devices(input_bufs)
         timers(self.timer_name).stop(self.sync_func if sync_after else None)
 
         for i in range(len(output_uuids)):
             buffer_dict[output_uuids[i]] = output_bufs[i]
 
     def __del__(self):
-        self.concat.delete()
+        self.exec.delete()
 
 
 def get_index_select_mesh_executable(avals, sharding_specs, index, dim,

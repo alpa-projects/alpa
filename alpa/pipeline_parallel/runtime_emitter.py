@@ -520,6 +520,12 @@ class PipelineInstEmitter:
                 if len(self.env.get_var_meshes(invar, batch_idx)) > 1:
                     raise NotImplementedError(
                         "Not support resharding replicated")
+                var_key = self.env.get_var_with_accumulate(invar, batch_idx)
+                src_idx = list(
+                    self.env.get_var_meshes(invar, batch_idx).keys())[0]
+                resharding = self._resharding_tasks[src_idx][mesh_idx][var_key]
+                if resharding.is_local_allgather_task:
+                    spec = resharding.task_spec.dst_sharding_spec
                 to_reshard_vars.append(invar)
                 reshard_sharding_specs.append(spec)
             self._compile_get_vars_from_mesh(to_reshard_vars,
@@ -1046,9 +1052,9 @@ class PipelineInstEmitter:
                 PipelineInstruction.send(task_uuid, [src_uuid]))
 
         # add recv task for each worker
+        allgather_uuid = (resharding_task.allgather_uuid
+                          if resharding_task.is_local_allgather_task else None)
         for w, task_uuid in resharding_task.recv_worker_task_ids.items():
-            allgather_uuid = (resharding_task.allgather_worker_task_ids[w] if
-                              resharding_task.is_local_allgather_task else None)
             instruction_lists[w].append(
                 PipelineInstruction.recv(task_uuid, [recv_uuid],
                                          set_empty_buffer, allgather_uuid))

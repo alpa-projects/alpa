@@ -32,30 +32,28 @@ def test_resharding(var,
                     src_sharding_spec,
                     dst_mesh,
                     dst_sharding_spec,
-                    use_scatter_gather,
+                    use_local_allgather,
                     resharding_mode,
                     src_loads=None,
                     dst_loads=None):
-    global_config.use_scatter_gather = use_scatter_gather
+    global_config.use_local_allgather = use_local_allgather
     global_config.resharding_mode = resharding_mode
 
     # Resharding task spec and send/recv strategy
     src_loads = src_loads or {src: 0 for src in src_mesh.device_strs}
     dst_loads = dst_loads or {dst: 0 for dst in dst_mesh.device_strs}
     if resharding_mode == "send_recv":
-        (rewrite_dst_sharding_spec,
-         local_chunks) = CrossMeshCommunicator._rewrite_allgather_spec(
-             dst_sharding_spec, dst_mesh, var.aval.shape)
+        rewrite_dst_sharding_spec = CrossMeshCommunicator._rewrite_allgather_spec(
+            dst_sharding_spec, dst_mesh, var.aval.shape)
     else:
         rewrite_dst_sharding_spec = dst_sharding_spec
-        local_chunks = None
     src_array = VirtualDistributedArray(device_mesh=src_mesh,
                                         aval=var.aval,
                                         sharding_spec=src_sharding_spec)
     dst_array = VirtualDistributedArray(device_mesh=dst_mesh,
                                         aval=var.aval,
                                         sharding_spec=rewrite_dst_sharding_spec)
-    task_spec = ReshardingTaskSpec(src_array, dst_array, local_chunks)
+    task_spec = ReshardingTaskSpec(src_array, dst_array, dst_sharding_spec)
     if resharding_mode == "send_recv":
         strategy = CrossMeshCommunicator._generate_send_recv_resharding_strategy_by_loads(
             task_spec, src_loads, dst_loads)
@@ -88,7 +86,7 @@ def test_resharding(var,
     # allocate the buffer
     exec_uuid = next_mesh_executable_uuid()
     config = AllocateZeroWorkerExecutableConfig(
-        exec_uuid, [get_shard_shape(var.aval, dst_sharding_spec)],
+        exec_uuid, [get_shard_shape(var.aval, rewrite_dst_sharding_spec)],
         [var.aval.dtype])
     output_uuids = [dst_uuid]
     for worker in dst_mesh.workers:
@@ -180,7 +178,7 @@ class ReshardingTest(unittest.TestCase):
                             src_sharding_spec,
                             dst_sharding_spec,
                             tensor_shape,
-                            use_scatter_gather=True,
+                            use_local_allgather=True,
                             resharding_mode="send_recv",
                             tensor_dtype=None):
         virtual_mesh = get_global_virtual_physical_mesh()
@@ -204,7 +202,7 @@ class ReshardingTest(unittest.TestCase):
         tensor_dtype = tensor_dtype or jnp.int32
         var = Var(0, "", ShapedArray(tensor_shape, tensor_dtype))
         test_resharding(var, src_mesh, src_sharding_spec, dst_mesh,
-                        dst_sharding_spec, use_scatter_gather, resharding_mode)
+                        dst_sharding_spec, use_local_allgather, resharding_mode)
         src_mesh.shutdown()
         dst_mesh.shutdown()
 
@@ -256,12 +254,16 @@ class ReshardingTest(unittest.TestCase):
              NoSharding()], [ShardedAxis(0)])
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
                                  tensor_shape)
+        # test allgather at the second dim
+        tensor_shape = (3, 8, 2)
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape)
 
     @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
     def test_8gpu_2_dim_allgather(self):
         src_shape = (1, 4)
         dst_shape = (1, 4)
-        tensor_shape = (2, 8, 16)
+        tensor_shape = (6, 8, 16)
         src_spec = ShardingSpec(
             [NoSharding(), NoSharding(),
              NoSharding()], [Replicated(4)])

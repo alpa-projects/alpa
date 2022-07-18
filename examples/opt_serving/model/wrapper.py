@@ -36,7 +36,7 @@ class InferenceFuncOutput(ModelOutput):
 class InferenceFuncConfig:
     """Implements a minimal config class for using huggingface's generator.
 
-    Note: these paramerers might be overwritten by model.generate(**kwargs).
+    Note: these parameters might be overwritten by model.generate(**kwargs).
     """
     bos_token_id: int = 0
     num_beams: int = 1
@@ -61,6 +61,7 @@ class InferenceFuncConfig:
     forced_eos_token_id: int = None
     remove_invalid_values: bool = False
     exponential_decay_length_penalty: float = None
+    do_sample: bool = False
     top_k: int = 50
     top_p: int = 1.0
     typical_p: int = 1.0
@@ -253,8 +254,10 @@ def get_model(model_name: str,
               autoregressive=True,
               dtype=jnp.float16,
               dummy=False,
+              do_sample=False,
               batch_size=1,
               num_beams=1,
+              num_return_sequences=1,
               decoding_length_per_step=1,
               num_micro_batches=1,
               support_output_attentions=False,
@@ -263,6 +266,9 @@ def get_model(model_name: str,
 
     Args:
         model_name: "gpt", "facebook/opt-", or "alpa/opt-".
+        device: "cpu" or "gpu". This only controls the device used
+          by pytorch. Alpa always runs on GPU.
+        path: The path to opt weights.
     """
     if not model_name.startswith("alpa") and not autoregressive:
         raise NotImplementedError(
@@ -287,6 +293,15 @@ def get_model(model_name: str,
     if not dummy:
         assert os.path.exists(path), f"No such file or directory: '{path}'"
 
+    # figure out the actual input size
+    if do_sample:
+        expand_size = batch_size * num_beams * num_return_sequences
+    else:
+        if num_return_sequences > num_beams:
+            raise ValueError(
+                "`num_return_sequences` has to be smaller or equal to `num_beams`.")
+        expand_size = batch_size * num_beams
+
     if "jax/opt" in model_name:
         config = get_opt_config(name,
                                 num_pp_stages=None,
@@ -306,12 +321,13 @@ def get_model(model_name: str,
 
         # load params
         params = load_params_np(params_aval, path, config, dummy)
-        init_cache = init_cache_np(config, batch_size=batch_size * num_beams)
+        init_cache = init_cache_np(config, batch_size=expand_size)
         params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
     else:
         assert "alpa/opt" in model_name
         assert is_power_of_two(num_beams), "num_beams must be a power of two"
         alpa.init()
+        alpa.global_config.xla_client_mem_fraction = 0.88
 
         print(
             f"Load model {model_name} ... (This can take several minutes for very large models)"
@@ -332,7 +348,7 @@ def get_model(model_name: str,
             assert batch_size == 1, "we only support batch_sie = 1 for autoregressive!"
         executable, params_aval = get_pipeshard_executable(
             config,
-            batch_size=batch_size * num_beams,
+            batch_size=expand_size,
             num_micro_batches=num_micro_batches,
             decoding_length_per_step=decoding_length_per_step,
             support_output_attentions=support_output_attentions,
@@ -345,7 +361,7 @@ def get_model(model_name: str,
         if autoregressive:
             init_cache = init_cache_dis_array(executable,
                                               config,
-                                              batch_size * num_beams,
+                                              expand_size,
                                               dummy=dummy)
             set_skip_shard_args_check(init_cache)
         executable.sync()

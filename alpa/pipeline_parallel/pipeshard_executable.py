@@ -12,7 +12,7 @@ from alpa.device_mesh import MeshHostWorker, RemoteArrayRef, next_array_uuids
 from alpa.global_env import global_config
 from alpa.device_mesh import PhysicalDeviceMeshGroup
 from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
-                                  ConcatMeshWorkerExecutable,
+                                  UtilMeshWorkerExecutable,
                                   MemzeroWorkerExecutable,
                                   PartialGradAccMeshWorkerExecutable,
                                   next_mesh_executable_uuid)
@@ -435,7 +435,7 @@ class PipeshardMeshWorkerExecuable:
                                            task_config.grad_shard_dtypes)
             elif isinstance(task_config, ConcatWorkerExecutableConfig):
                 self.worker.put_executable(task_config.exec_uuid,
-                                           ConcatMeshWorkerExecutable,
+                                           UtilMeshWorkerExecutable,
                                            *task_config[1:])
             else:
                 raise ValueError(f"Invalid task config {task_config}")
@@ -487,9 +487,10 @@ class PipeshardMeshWorkerExecuable:
                     instruction.opaques["set_empty_buffer"])
                 # TODO(lmzheng): move this to run_resharding_recv_task
                 if instruction.opaques["allgather_uuid"] is not None:
-                    self.worker.run_allgather_task(
-                        instruction.opaques["allgather_uuid"],
-                        instruction.output_uuids[0])
+                    task_uuid = instruction.opaques["allgather_uuid"]
+                    ary_uuid = instruction.output_uuids[0]
+                    self.worker.run_executable(task_uuid, [ary_uuid],
+                                               [ary_uuid], False, False)
                 timers("resharding_recv").suspend()
             elif instruction.opcode == PipelineInstType.BROADCAST:
                 timers("resharding_broadcast").start()

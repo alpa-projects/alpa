@@ -1,5 +1,4 @@
 """Cross mesh resharding for pipeline parallelism."""
-from itertools import chain
 import logging
 import math
 from typing import List, Any
@@ -10,15 +9,17 @@ import ray
 
 import alpa.collective as col
 from alpa.device_mesh import (DistributedArray, RemoteArrayRef,
-                              ReshardingAllGatherSpec, ReshardingRecvSpec,
-                              ReshardingSendSpec, ReshardingTileSpec,
-                              ReshardingBroadcastSpec, _device_mesh_put_dummy)
+                              ReshardingRecvSpec, ReshardingSendSpec,
+                              ReshardingTileSpec, ReshardingBroadcastSpec,
+                              _device_mesh_put_dummy)
 from alpa.global_env import global_config
+from alpa.mesh_executable import (UtilMeshWorkerExecutable,
+                                  next_mesh_executable_uuid)
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.pipeline_parallel.resharding_tensor import (VirtualDistributedArray,
                                                       TileSlice,
                                                       unflatten_tile_index)
-from alpa.util import OrderedSet
+from alpa.util import OrderedSet, compile_allgather
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -80,173 +81,6 @@ def _get_mesh_mapping(shardings, init_mesh_mapping, squeezed_mesh_mapping):
         if replicas > 1:
             mesh_mapping.append(pxla.Replicated(replicas))
     return mesh_mapping
-
-
-def _reduce_chunk(spec, tensor_dim, remove_last_chunks):
-    """
-    Rewrite the sharding spec on given dimension by removing the last n chunks
-    on that dimension.
-    """
-
-    def add_or_merge(mesh_mapping, replicas):
-        if (len(mesh_mapping) > 0 and
-                isinstance(mesh_mapping[-1], pxla.Replicated)):
-            replicas *= mesh_mapping[-1].replicas
-            mesh_mapping[-1] = pxla.Replicated(replicas)
-        else:
-            mesh_mapping.append(pxla.Replicated(replicas))
-
-    # get new chunks
-    cur_chunks = spec.sharding[tensor_dim].chunks
-    new_chunks = cur_chunks[:-1 * remove_last_chunks]
-    new_chunks = (pxla.Chunked(new_chunks)
-                  if len(new_chunks) > 0 else pxla.NoSharding())
-    shardings = list(spec.sharding)
-    shardings[tensor_dim] = new_chunks
-    # axis->(tensor dim, chunk idx)
-    chunk_axis_to_tensor_dim = []
-    for t_dim, dim_spec in enumerate(spec.sharding):
-        if isinstance(dim_spec, pxla.Chunked):
-            for chunk_idx in range(len(dim_spec.chunks)):
-                chunk_axis_to_tensor_dim.append((t_dim, chunk_idx))
-    # (tensor dim, chunk idx)->new axis
-    new_prefix_sum = _get_chunk_prefixsum(shardings)
-    remove_idx = len(spec.sharding[tensor_dim].chunks) - remove_last_chunks
-    mesh_mapping = []
-    for mapping in spec.mesh_mapping:
-        if isinstance(mapping, pxla.Replicated):
-            add_or_merge(mesh_mapping, mapping.replicas)
-            continue
-        assert isinstance(mapping, pxla.ShardedAxis)
-        t_dim, chunk_idx = chunk_axis_to_tensor_dim[mapping.axis]
-        if t_dim == tensor_dim and chunk_idx >= remove_idx:
-            replicas = spec.sharding[t_dim].chunks[chunk_idx]
-            add_or_merge(mesh_mapping, replicas)
-        else:
-            axis = new_prefix_sum[t_dim] + chunk_idx
-            mesh_mapping.append(pxla.ShardedAxis(axis))
-    # new spec
-    new_spec = pxla.ShardingSpec(shardings, mesh_mapping)
-    return new_spec
-
-
-def _allgather_logical_mesh_from_spec(sharding_spec):
-    chunks = list(
-        chain(*[
-            spec.chunks
-            for spec in sharding_spec.sharding
-            if isinstance(spec, pxla.Chunked)
-        ]))
-    return tuple(
-        chunks[m.axis] if isinstance(m, pxla.ShardedAxis) else m.replicas
-        for m in sharding_spec.mesh_mapping)
-
-
-def _allgather_dim_offset(length, offset, chunks, local_allgather_idx):
-    """
-    given length of the tensor dim, offset of each mesh dim and corresponding
-    chunk values(as well as mesh length), return offset of the allgather
-    """
-    assert len(offset) == len(chunks)
-    # TODO(yonghao): step should run only once for a dim
-    step = _suffix_prod(chunks)
-    assert length % step[0] == 0
-    atom_len = length // step[0]
-    allgather_offset = 0
-    for chunk_idx in range(local_allgather_idx, len(chunks)):
-        allgather_offset += step[chunk_idx + 1] * offset[chunk_idx]
-    return atom_len * allgather_offset
-
-
-def _signle_tensor_dim_allgather_groups(mesh_shape, allgather_dims):
-    """given an N-dim mesh shape, group all receivers into allgather groups."""
-
-    def iter_tool(depth, length, steps):
-        if len(steps) == 0:
-            yield 0
-            return
-        local_delta = [1] * (length[depth] - 1) + [-1 * (length[depth] - 1)]
-        offset = 0
-        for delta in local_delta:
-            if depth == len(steps) - 1:
-                yield offset
-            else:
-                sub_iter = iter_tool(depth + 1, length, steps)
-                for o in sub_iter:
-                    yield offset + o
-            offset += steps[depth] * delta
-
-    steps = _suffix_prod(mesh_shape)
-    offset_steps = []
-    offset_length = []
-    group_steps = []
-    group_length = []
-    for d, l in enumerate(mesh_shape):
-        if d in allgather_dims:
-            offset_steps.append(steps[d + 1])
-            offset_length.append(l)
-        else:
-            group_steps.append(steps[d + 1])
-            group_length.append(l)
-    group_iter = iter_tool(0, group_length, group_steps)
-    offsets = list(iter_tool(0, offset_length, offset_steps))
-    groups = []
-    for group_idx in group_iter:
-        receivers = []
-        for offset in offsets:
-            receivers.append(offset + group_idx)
-        groups.append(receivers)
-    return groups
-
-
-class _AllgatherSpec:
-    """Specification for optimized allgather tasks."""
-
-    def __init__(self, allgather_chunk_indices):
-        """allgather chunk indices: a list of (tensor_dim, chunk_index, _)"""
-        self._allgather_chunk_num = {}
-        allgather_chunk_indices = sorted(allgather_chunk_indices)
-        cur_tensor_dim = -1
-        cur_chunk_idx = -1
-        for (tensor_dim, chunk_idx, _) in allgather_chunk_indices:
-            if tensor_dim == cur_tensor_dim:
-                assert chunk_idx == cur_chunk_idx + 1
-                self._allgather_chunk_num[tensor_dim] += 1
-            else:
-                cur_tensor_dim = tensor_dim
-                assert tensor_dim not in self._allgather_chunk_num
-                self._allgather_chunk_num[tensor_dim] = 1
-            cur_chunk_idx = chunk_idx
-
-    def mapped_mesh_dim(self, tensor_dim, sharding_spec):
-        """Get the mapped mesh dim of a tensor dim's allgather chunks."""
-        shardings = sharding_spec.sharding
-        prefix_sum = _get_chunk_prefixsum(shardings)
-
-        allgather_chunks = self._allgather_chunk_num[tensor_dim]
-        start_idx = len(shardings[tensor_dim].chunks) - allgather_chunks
-        start_axis = prefix_sum[tensor_dim] + start_idx
-        mesh_dims = [None] * allgather_chunks
-        for d, mapping in enumerate(sharding_spec.mesh_mapping):
-            if isinstance(mapping, pxla.ShardedAxis):
-                idx = mapping.axis - start_axis
-                if 0 <= idx < allgather_chunks:
-                    mesh_dims[idx] = d
-        return mesh_dims
-
-    def start_idx(self, tensor_dim, sharding_spec):
-        dim_sharding = sharding_spec.sharding[tensor_dim]
-        return len(dim_sharding.chunks) - self._allgather_chunk_num[tensor_dim]
-
-    @property
-    def allgather_dims(self):
-        return list(self._allgather_chunk_num.keys())
-
-    def post_allgather(self, tensor_dim):
-        ret = _AllgatherSpec([])
-        ret._allgather_chunk_num = dict(self._allgather_chunk_num)  # pylint: disable=protected-access
-        ret._allgather_chunk_num.pop(tensor_dim)  # pylint: disable=protected-access
-        return ret
 
 
 class ReshardingTask:
@@ -359,12 +193,10 @@ class SymbolicReshardingTask(ReshardingTask):
         self._sender_tasks = {w: [] for w in self.src_mesh.workers}
         # Dict of worker -> ((indices, rank, gpu index))
         self._receiver_tasks = {w: [] for w in self.dst_mesh.workers}
-        # Dict of worker -> ((device_ids), (device_strs), (slices))
-        self._allgather_tasks = {host: [] for host in self.dst_mesh.workers}
+        self.allgather_uuid = None
 
         self.send_worker_task_ids = {}
         self.recv_worker_task_ids = {}
-        self.allgather_worker_task_ids = {}
 
         # generate the above states
         self._compile()
@@ -380,58 +212,6 @@ class SymbolicReshardingTask(ReshardingTask):
         """Return receiver sub-tasks."""
         return self._receiver_tasks
 
-    @property
-    def allgather_tasks(self):
-        """Return allgahter sub-tasks."""
-        return self._allgather_tasks
-
-    def _allgather_receiver_offset(self, receiver, logical_mesh_shape):
-        if not self.task_spec.allgather_spec:
-            return -1
-        host_idx, device_idx = self.collective_group.device_str_to_rank_map[
-            receiver]
-        if host_idx >= self.collective_group.src_mesh.num_hosts:
-            host_idx = host_idx - self.collective_group.src_mesh.num_hosts
-        flatten_idx = host_idx * self.dst_mesh.num_devices_per_host + device_idx
-        offsets = []
-        for mesh_dim in reversed(logical_mesh_shape):
-            offsets.append(flatten_idx % mesh_dim)
-            flatten_idx //= mesh_dim
-        return list(reversed(offsets))
-
-    def _indices_in_dst_post_allgather(self,
-                                       indices,
-                                       mesh_idx,
-                                       dst_spec=None,
-                                       allgather_spec=None):
-        if not self.task_spec.allgather_spec:
-            return indices
-        dst_spec = dst_spec or self.task_spec.dst_sharding_spec
-        allgather_spec = allgather_spec or self.task_spec.allgather_spec
-
-        indices = list(indices)
-        shape = self.task_spec.aval.shape
-        for tensor_dim in allgather_spec.allgather_dims:
-            allgather_start_idx = allgather_spec.start_idx(tensor_dim, dst_spec)
-            mapped_chunks = dst_spec.sharding[tensor_dim].chunks[
-                allgather_start_idx:]
-            mapped_offset = [
-                mesh_idx[idx]
-                for idx in allgather_spec.mapped_mesh_dim(tensor_dim, dst_spec)
-            ]
-            dim_offset = _allgather_dim_offset(shape[tensor_dim], mapped_offset,
-                                               mapped_chunks,
-                                               allgather_start_idx)
-            indices[tensor_dim] = slice(dim_offset + indices[tensor_dim].start,
-                                        dim_offset + indices[tensor_dim].stop,
-                                        None)
-
-        for idx, tensor_slice in enumerate(indices):
-            if tensor_slice.start is None:
-                assert tensor_slice.stop is None
-                indices[idx] = slice(0, shape[idx], None)
-        return indices
-
     def _compile(self):
         """
         Generate all send, recv, and allgather tasks.
@@ -442,8 +222,6 @@ class SymbolicReshardingTask(ReshardingTask):
         (3) pre-generate NCCL communicators for those tasks.
         """
         self._compile_send_recv_tasks()
-        if self.is_local_allgather_task:
-            self._compile_allgather_tasks()
 
         if not global_config.debug_with_pipeshard_runtime:
             self.put_all_tasks()
@@ -470,11 +248,18 @@ class SymbolicReshardingTask(ReshardingTask):
 
         # put allgather tasks
         task_dones = []
-        for worker, task in self.allgather_tasks.items():
-            uuid = next_resharding_task_uuid()
-            self.allgather_worker_task_ids[worker] = uuid
-            task_dones.append(
-                worker.put_resharding_allgather_task.remote(uuid, task))
+        if self.is_local_allgather_task:
+            self.allgather_uuid = uuid = next_mesh_executable_uuid()
+            task_spec = self.task_spec
+            hlo_proto = compile_allgather(task_spec.aval.shape,
+                                          task_spec.aval.dtype,
+                                          task_spec.dst_sharding_spec,
+                                          task_spec.final_dst_spec,
+                                          np.prod(self.dst_mesh.shape))
+            for worker in self.dst_mesh.workers:
+                task_dones.append(
+                    worker.put_executable.remote(uuid, UtilMeshWorkerExecutable,
+                                                 hlo_proto))
         ray.get(task_dones)
 
     def create_resharding_communicators(self):
@@ -512,8 +297,6 @@ class SymbolicReshardingTask(ReshardingTask):
 
     def _compile_send_recv_tasks(self):
         """Generate all send/recv tasks."""
-        logical_mesh_shape = _allgather_logical_mesh_from_spec(
-            self.task_spec.dst_sharding_spec)
         for i, (dst_tile, src_tiles, indices_in_dst_tiles) in enumerate(
                 self.task_spec.dst_tile_to_src_tiles_map):
             spec_plan = self.task_spec.strategy.per_spec_plans[i]
@@ -533,8 +316,6 @@ class SymbolicReshardingTask(ReshardingTask):
                 receiver_rank, receiver_gpu_idx = (
                     self.collective_group.device_str_to_rank_map[receiver])
                 recv_tile_specs = []
-                mesh_idx = self._allgather_receiver_offset(
-                    receiver, logical_mesh_shape)
                 for sender_idx, sender in enumerate(senders):
                     # Sender's task
                     sender_worker = (self.collective_group.
@@ -550,8 +331,7 @@ class SymbolicReshardingTask(ReshardingTask):
                     # Receiver's task
                     sender_rank, sender_gpu_idx = \
                         self.collective_group.device_str_to_rank_map[sender]
-                    indices_in_dst_tile = self._indices_in_dst_post_allgather(
-                        indices_in_dst_tiles[sender_idx], mesh_idx)
+                    indices_in_dst_tile = indices_in_dst_tiles[sender_idx]
                     recv_tile_specs.append(
                         ReshardingTileSpec(indices_in_dst_tile, sender_rank,
                                            sender_gpu_idx))
@@ -559,71 +339,6 @@ class SymbolicReshardingTask(ReshardingTask):
                                                    dst_tile.tile_shape, dtype,
                                                    recv_tile_specs)
                 self._receiver_tasks[receiver_worker].append(receiver_task)
-
-    def _compile_allgather_tasks(self):
-        """
-        Compile allgather tasks on destination mesh. Allgather tasks are
-        created with the order described below:
-
-        1. Iterate all tensor dimensions that has chunks inserted by
-        _rewrite_allgather_spec;
-        2. The rewritten sharding spec corresponds to a logical mesh shape, and
-        each receiver has its own index with respect to the mesh shape. Let the
-        index be (x_0,x_1,...,x_n) and the mesh shape is (l_0,l_1,...,l_n);
-        3. The iterated tensor dimension corresponds to some logical mesh
-        dimensions, assume these dimensions are D, a subset of [n]. The index is
-        categorized into two parts. The first is (x_{i_0},x_{i_1},...x_{i_m}),
-        where {i_0,i_1,...,i_m}=D while the second is the rest. The first part
-        is named group index while the second is allgather index.
-        4. Devices with the same group index forms an allgather group, and the
-        allgather index indicates their order inside the group.
-        """
-        dst_spec = self.task_spec.dst_sharding_spec
-        tensor_shape = self.task_spec.dst.tensor_shape
-        allgather_spec = self.task_spec.allgather_spec
-        tmp_allgather_spec = self.task_spec.allgather_spec
-        # use reverse order to keep the result always continuous.
-        for tensor_dim in reversed(allgather_spec.allgather_dims):
-            indices = pxla.spec_to_indices(tensor_shape, dst_spec)[0]
-            # The mesh shape is changed as a tensor dim's sharding is changed
-            mesh_shape = _allgather_logical_mesh_from_spec(dst_spec)
-            mesh_dims = allgather_spec.mapped_mesh_dim(tensor_dim, dst_spec)
-            # Get allgather groups
-            allgather_groups = _signle_tensor_dim_allgather_groups(
-                mesh_shape, mesh_dims)
-            post_dst_spec = _reduce_chunk(dst_spec, tensor_dim, len(mesh_dims))
-            # For each group, get device ids, tensor slices and other allgather
-            # config
-            for group_ids in allgather_groups:
-                host_idx = group_ids[0] // self.dst_mesh.num_devices_per_host
-                host = self.dst_mesh.workers[host_idx]
-                device_ids = [
-                    gid % self.dst_mesh.num_devices_per_host
-                    for gid in group_ids
-                ]
-                tensor_slices = []
-                for receiver_idx in group_ids:
-                    flatten_idx = receiver_idx
-                    mesh_idx = []
-                    for mesh_dim in reversed(mesh_shape):
-                        mesh_idx.append(flatten_idx % mesh_dim)
-                        flatten_idx //= mesh_dim
-                    mesh_idx = list(reversed(mesh_idx))
-                    tensor_slices.append(
-                        self._indices_in_dst_post_allgather(
-                            indices, mesh_idx, dst_spec, tmp_allgather_spec))
-                # the tensor dim's sharding is changed, use it for output slice.
-                output_slice = list(tensor_slices[0])
-                output_slice[tensor_dim] = slice(
-                    0, self.task_spec.aval.shape[tensor_dim] /
-                    _get_chunk_value(post_dst_spec.sharding[tensor_dim]), None)
-                self._allgather_tasks[host].append(
-                    ReshardingAllGatherSpec(device_ids, tensor_slices,
-                                            output_slice))
-            # change the tensor dim's sharding and the remained allgather spec.
-            dst_spec = _reduce_chunk(dst_spec, tensor_dim, len(mesh_dims))
-            tmp_allgather_spec = tmp_allgather_spec.post_allgather(tensor_dim)
-        return self._allgather_tasks
 
     # FIXME(Hao): test the function below; it might be buggy.
     def do_prepared(self, src_array, profiling=False):
@@ -970,14 +685,12 @@ class ReshardingTaskSpec:
             VirtualDistributedArray.
     """
 
-    def __init__(self, src_array, dst_array, local_chunks):
+    def __init__(self, src_array, dst_array, final_dst_spec):
         self.src = src_array
         self.dst = dst_array
         self._dst_tile_to_src_tiles_map = None
         self._strategy = None
-        self._local_chunks = local_chunks
-        self.allgather_spec = (_AllgatherSpec(local_chunks)
-                               if local_chunks else None)
+        self.final_dst_spec = final_dst_spec
 
     @property
     def src_sharding_spec(self):
@@ -1170,14 +883,10 @@ class ReshardingTaskSpec:
 
     def __str__(self):
         ret_str = ""
-        ret_str += f"{self.src_sharding_spec} -> {self.dst_sharding_spec};"
-        if self.allgather_spec:
-            ret_str += " allgather: "
-            for allgather_chunk_info in self._local_chunks:
-                shard_dim, shard_axis, extra_sharding = allgather_chunk_info
-                ret_str += (f"(shard at tensor dim {shard_dim}, "
-                            f"shard at mesh axis {shard_axis}, chunked value "
-                            f"{extra_sharding}), ")
+        ret_str += f"{self.src_sharding_spec} -> {self.dst_sharding_spec}"
+        if self.final_dst_spec != self.dst_sharding_spec:
+            ret_str += f" -(allgather)-> {self.final_dst_spec}"
+        ret_str += ";"
         return ret_str
 
 
@@ -1262,7 +971,7 @@ class CrossMeshCommunicator:
     def _rewrite_allgather_spec(sharding_spec: pxla.ShardingSpec, mesh,
                                 var_shape):
         """
-        Given a sharding spec, if use_scatter_gather is turned on and the tensor
+        Given a sharding spec, if use_local_allgather is on and the tensor
         corresponding to the spec is not fully sharded, the function rewrite the
         spec to a fully-sharded one, and return info of added chunks.
 
@@ -1275,10 +984,8 @@ class CrossMeshCommunicator:
         3. When there is no replicas on m_dim, the iteration terminates.
         """
 
-        local_chunks = []
-        if not global_config.use_scatter_gather:
-            return sharding_spec, local_chunks
-
+        if not global_config.use_local_allgather:
+            return sharding_spec
         # check whether the tensor is fully sharded.
         replicated_mesh_dim = []
         mesh_dim_to_chunk_axis = {}
@@ -1289,7 +996,7 @@ class CrossMeshCommunicator:
                 dim_mapping: pxla.ShardedAxis
                 mesh_dim_to_chunk_axis[mesh_dim] = dim_mapping.axis
         if len(replicated_mesh_dim) == 0:
-            return sharding_spec, local_chunks
+            return sharding_spec
         assert len(replicated_mesh_dim) == 1, "Only support 1D and 2D mesh"
 
         # create chunk axis to tensor dim mapping
@@ -1307,7 +1014,7 @@ class CrossMeshCommunicator:
             tensor_dim, _ = chunk_axis_to_tensor_dim[node_mesh_mapping.axis]
             node_chunk = _get_chunk_value(sharding_spec.sharding[tensor_dim])
         if node_chunk < mesh.num_hosts:
-            return sharding_spec, local_chunks
+            return sharding_spec
 
         sharding = list(sharding_spec.sharding)
         squeezed_mesh_mapping = [
@@ -1325,7 +1032,6 @@ class CrossMeshCommunicator:
                     continue
                 sharding[tensor_dim] = _add_chunk(dim_sharding, new_chunk)
                 chunk_idx = len(sharding[tensor_dim].chunks) - 1
-                local_chunks.append((tensor_dim, chunk_idx, new_chunk))
                 dim_local_mapping.append((tensor_dim, chunk_idx))
 
                 replica //= new_chunk
@@ -1342,7 +1048,7 @@ class CrossMeshCommunicator:
                                          squeezed_mesh_mapping)
         new_sharding_spec = pxla.ShardingSpec(sharding, mesh_mapping)
         # sorted by (tensor dim, chunk idx, mesh dim)
-        return new_sharding_spec, local_chunks
+        return new_sharding_spec
 
     def _create_resharding_specs(self):
         stages = self._sharded_stages
@@ -1393,15 +1099,11 @@ class CrossMeshCommunicator:
                                                         in_var_indices):
                 src_sharding_spec = out_sharding_specs[out_var_index]
                 dst_sharding_spec = in_sharding_specs[in_var_index]
-                # TODO(yonghao): to keep some consistency, record both
-                # dst sharding spec before and after allgather
 
+                final_dst_spec = dst_sharding_spec
                 if global_config.resharding_mode == "send_recv":
-                    dst_sharding_spec, local_chunks = (
-                        self._rewrite_allgather_spec(dst_sharding_spec,
-                                                     dst_mesh, var.aval.shape))
-                else:
-                    local_chunks = None
+                    dst_sharding_spec = self._rewrite_allgather_spec(
+                        dst_sharding_spec, dst_mesh, var.aval.shape)
 
                 src_array = VirtualDistributedArray(
                     device_mesh=src_mesh,
@@ -1412,7 +1114,7 @@ class CrossMeshCommunicator:
                     aval=var.aval,
                     sharding_spec=dst_sharding_spec)
                 task_spec = ReshardingTaskSpec(src_array, dst_array,
-                                               local_chunks)
+                                               final_dst_spec)
                 self.resharding_specs[src_mesh_index][dst_mesh_index][
                     var] = task_spec
 
@@ -1426,9 +1128,9 @@ class CrossMeshCommunicator:
 
     @staticmethod
     def _generate_send_recv_resharding_strategy_by_loads(
-            spec, src_loads, dst_loads):
+            spec: ReshardingTaskSpec, src_loads, dst_loads):
         """Generate the resharding strategy by balancing loads."""
-        is_local_allgather = spec.allgather_spec is not None
+        is_local_allgather = spec.final_dst_spec != spec.dst_sharding_spec
         per_spec_plans = []
         for dst_tile, src_tileslices, _ in spec.dst_tile_to_src_tiles_map:
             # plan is a 2D array

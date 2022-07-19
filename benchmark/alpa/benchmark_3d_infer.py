@@ -34,6 +34,7 @@ if __name__ == "__main__":
     parser.add_argument("--exp_name", type=str, default="default")
     parser.add_argument("--result_name", type=str, default="result")
     parser.add_argument("--disable-tqdm", action="store_true")
+    parser.add_argument("--stream-mode", action="store_true")
     args = parser.parse_args()
 
     # Get the benchmark suite
@@ -41,7 +42,7 @@ if __name__ == "__main__":
     num_gpus = num_hosts * num_devices_per_host
 
     try:
-        suite = benchmark_suites[args.suite][(num_hosts, num_gpus)]
+        suite = benchmark_suites[args.suite][(num_hosts, num_devices_per_host)]
     except KeyError:
         suite = None
     if not suite:
@@ -74,7 +75,8 @@ if __name__ == "__main__":
             num_hosts,
             num_devices_per_host,
             use_separate_process=args.use_separate_process,
-            disable_tqdm=args.disable_tqdm)
+            disable_tqdm=args.disable_tqdm,
+            stream_mode=args.stream_mode)
         (parameter_count, max_mem_allocated, overall_latency, e2e_latency,
          tflops, compilation_times, compute_cost_file_name,
          forward_stage_layer_ids, submesh_shapes, logical_mesh_shapes,
@@ -96,6 +98,7 @@ if __name__ == "__main__":
             "Overall Latency",
             "TFLOPs",
             "Peak Mem",
+            "niter",
         ]
         values = [
             model_type,
@@ -112,6 +115,7 @@ if __name__ == "__main__":
             f"{overall_latency:.3f}",
             f"{tflops:.2f}",
             f"{max_mem_allocated/GB:.3f}",
+            args.niter,
         ]
         write_tsv(heads, values, result_name)
 

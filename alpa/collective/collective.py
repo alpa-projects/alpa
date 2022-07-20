@@ -5,7 +5,6 @@ from typing import List
 
 import numpy as np
 import ray
-
 from jax._src.lib import xla_extension as xe
 
 from alpa.collective import types
@@ -740,7 +739,7 @@ def _check_and_get_group(group_name):
                     "broadcasted. The Info actor will go out of context and be "
                     "destroyed.")
 
-            worker = ray_worker.global_worker  # pylint: disable=protected-access
+            worker = ray_worker.global_worker
 
             id_ = worker.core_worker.get_actor_id()
             r = rank[ids.index(id_)]
@@ -793,7 +792,7 @@ def _check_backend_availability(backend: types.Backend):
 
 def _check_inside_actor():
     """Check if currently it is inside a Ray actor/task."""
-    worker = ray._worker.global_worker  # pylint: disable=protected-access
+    worker = ray_worker.global_worker
 
     if worker.mode == ray.WORKER_MODE:
         return

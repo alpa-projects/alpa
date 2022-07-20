@@ -109,7 +109,7 @@ Method 2: Install from Source
 
   .. code:: bash
 
-    cd alpa/build_jaxlib
+    cd build_jaxlib
     python3 build/build.py --enable_cuda --dev_install --tf_path=$(pwd)/../third_party/tensorflow-alpa
     cd dist
 

@@ -98,8 +98,6 @@ if __name__ == "__main__":
         if args.stream_mode: 
             heads += [
                 "niter",
-                "Ideal Latency",
-                "Overhead per Iter"
             ]
         else:
             heads += [
@@ -125,8 +123,6 @@ if __name__ == "__main__":
         if args.stream_mode:
             values += [
                 args.niter,
-                0.221*(args.niter + 3) / 4,
-                (e2e_latency - 0.221*(args.niter + 3) / 4) / args.niter,
             ]
         else:
             values += [   

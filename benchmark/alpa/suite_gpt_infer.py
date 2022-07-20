@@ -19,8 +19,8 @@ def get_solution_case(model_name, num_micro_batches, max_global_batch_size,
                       num_auto_layers, forward_stage_layer_ids,
                       submesh_physical_shapes, submesh_logical_shapes,
                       submesh_autosharding_option_dicts):
-    return [(model_name, no_embedding, max_global_batch_size, *gpt_specs[model_name],
-             num_micro_batches, "load_solution",
+    return [(model_name, no_embedding, max_global_batch_size,
+             *gpt_specs[model_name], num_micro_batches, "load_solution",
              (prefer_reduce_scatter, use_remat, num_auto_layers,
               (forward_stage_layer_ids, submesh_physical_shapes,
                submesh_logical_shapes, submesh_autosharding_option_dicts)))]
@@ -31,6 +31,8 @@ model_sizes = [
     "125M", "350M", "760M", "1.3B", "2.6B", "6.7B", "15B", "39B", "76B"
 ]
 model_size = model_sizes[4]
+
+
 def get_config(pp_list,
                dp_list,
                op_list,
@@ -75,7 +77,7 @@ def get_config(pp_list,
                                                     [{'force_batch_dim_to_mesh_dim': 0}] * stage_num)
 
 
-is_debug =  __name__ == "__main__"
+is_debug = __name__ == "__main__"
 # weak scaling experiments
 # get_config([2, 4, 8, 16], [1], [1], [1, 4, 16, 64, 256], [1, 4, 16, 64], True, is_debug)
 # get_config([1], [16], [1], [1], [1, 4, 16, 64], True, is_debug)

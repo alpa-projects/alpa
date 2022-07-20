@@ -1382,9 +1382,9 @@ class DistributedArray:
         self._one_replica_buffer_ids = None
         self._fetched_np_buffers = None
         self._fetched_np_buffers_ref = self.device_mesh.get_remote_buffers(
-                                        (self.remote_ref,), (self.one_replica_host_local_ids,), False, True)[0]
+            (self.remote_ref,), (self.one_replica_host_local_ids,), False,
+            True)[0]
         self.skip_shard_args_check = False
-
 
     def block_until_ready(self):
         """Block until all remote buffers of this array are ready."""

@@ -33,8 +33,12 @@ def benchmark_one_case(model,
 
         # Run benchmark
         if model in ["gpt", "bert"]:
-            result = benchmark_gpt_bert_internal(model, case, niter, num_hosts,
-                                                 num_devices_per_host, stream_mode=stream_mode)
+            result = benchmark_gpt_bert_internal(model,
+                                                 case,
+                                                 niter,
+                                                 num_hosts,
+                                                 num_devices_per_host,
+                                                 stream_mode=stream_mode)
         else:
             raise ValueError(f"Invalid model: {model}")
     else:

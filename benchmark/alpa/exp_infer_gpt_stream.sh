@@ -11,7 +11,7 @@ run_experiment () {
   python3 -u benchmark_3d_infer.py --suite gpt.infer_perf_test \
     --niter ${NITER} \
     --exp_name infer_${NUM_HOSTS}x${NUM_DEVICES_PER_HOST}_gpus \
-    --result_name "result_gpt_sync_stream" \
+    --result_name "result_gpt_async_stream" \
     --num-hosts ${NUM_HOSTS} \
     --num-devices-per-host ${NUM_DEVICES_PER_HOST} \
     --disable-tqdm \
@@ -24,7 +24,7 @@ run_experiment () {
 #run_experiment 1 2
 run_experiment 1 4 1
 run_experiment 1 4 2
-# run_experiment 1 4 4
+run_experiment 1 4 4
 run_experiment 1 4 8
 run_experiment 1 4 16
 # run_experiment 1 4 32

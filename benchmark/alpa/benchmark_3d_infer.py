@@ -95,7 +95,7 @@ if __name__ == "__main__":
             "#OP",
             "E2E Latency",
         ]
-        if args.stream_mode: 
+        if args.stream_mode:
             heads += [
                 "niter",
             ]
@@ -119,19 +119,18 @@ if __name__ == "__main__":
             *parallel_args[3][2][0],
             f"{e2e_latency:.3f}",
         ]
-            
+
         if args.stream_mode:
             values += [
                 args.niter,
             ]
         else:
-            values += [   
+            values += [
                 f"{(e2e_latency - overall_latency):.3f}",
                 f"{overall_latency:.3f}",
                 f"{tflops:.2f}",
                 f"{max_mem_allocated/GB:.3f}",
             ]
-
 
         write_tsv(heads, values, result_name)
 

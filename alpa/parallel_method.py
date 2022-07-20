@@ -167,7 +167,8 @@ class PipeshardParallel(ParallelMethod):
         stage_option: Options of grouping layers into pipeline stages.
           Possible choices are {"uniform", "auto", alpa.AutoStageOption,
                                  alpa.ManualStageOption}
-        TBA
+        input_sharding: Options of input sharding specs for each stage.
+          The shape should be [num_pipeline_stages, num_input_vars_in_hlo_module].
     """
 
     def __init__(

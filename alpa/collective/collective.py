@@ -740,7 +740,6 @@ def _check_and_get_group(group_name):
                     "destroyed.")
 
             worker = ray_worker.global_worker
-
             id_ = worker.core_worker.get_actor_id()
             r = rank[ids.index(id_)]
             _group_mgr.create_collective_group(backend, world_size, r,
@@ -793,7 +792,6 @@ def _check_backend_availability(backend: types.Backend):
 def _check_inside_actor():
     """Check if currently it is inside a Ray actor/task."""
     worker = ray_worker.global_worker
-
     if worker.mode == ray.WORKER_MODE:
         return
     else:

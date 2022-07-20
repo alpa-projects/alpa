@@ -1104,14 +1104,10 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def delete_remote_buffers(self, ary_refs: List["RemoteArrayRef"]):
         """Delete remote buffers."""
-        try:
-            if (self.workers is None or not ray or not ray.worker or
-                    not ray.is_initialized()):
-                return
-        except ModuleNotFoundError:
-            if (self.workers is None or not ray or not ray_worker or
-                    not ray.is_initialized()):
-                return
+        if (self.workers is None or not ray or not ray_worker or
+                not ray.is_initialized()):
+            return
+
         # Put delete requests into a buffer
         for ary_ref in ary_refs:
             self.to_delete_remote_refs.append(ary_ref.uuid)

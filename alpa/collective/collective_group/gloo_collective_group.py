@@ -8,7 +8,6 @@ import shutil
 import numpy
 import ray
 from ray import ray_constants
-
 import pygloo
 
 from alpa.collective.collective_group import gloo_util

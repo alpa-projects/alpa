@@ -168,7 +168,7 @@ class PipeshardParallel(ParallelMethod):
           Possible choices are {"uniform", "auto", alpa.AutoStageOption,
                                  alpa.ManualStageOption}
         input_sharding: Options of input sharding specs for each stage.
-          The shape should be [num_pipeline_stages, num_input_vars_in_hlo_module].
+          Shape: [num_pipeline_stages, num_input_vars_in_hlo_module].
     """
 
     def __init__(

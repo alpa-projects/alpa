@@ -23,7 +23,6 @@ app = Flask(__name__)
 BATCH_QUEUE = PriorityQueueRingShard()
 
 logger = build_logger()
-werkzeug_logger = logging.getLogger("werkzeug")
 
 
 def batching_loop(timeout=TIMEOUT_MS, max_tokens=MAX_BATCH_TOKENS, max_bs=MAX_BS):
@@ -160,12 +159,10 @@ def completions(engine=None):
     # - list of ints. Pretokenized. Return one generation
     # - list of str. Multiple generations, one per prompt
     # - list of list of ints. Pretokenized multiple generations.
-    werkzeug_logger.info("Received new serving request.")
     # our approach is to turn everything into the last case
     prompts = request.json["prompt"]
     del request.json["prompt"]
     generation_args = request.json
-
     if isinstance(prompts, str):
         # single string. tokenize and turn it to the single pre-tokenized case
         prompts = [encode_fn(generator, prompts)]
@@ -208,7 +205,15 @@ def completions(engine=None):
         generation_args["n"] = int(generation_args["n"])
     else:
         generation_args["n"] = 1
-
+    logger.info(f"Received new request: prompt length {len(prompts[0])}, "
+                f"max_len: {generation_args.get('max_tokens', 0)}, "
+                f"temperature: {generation_args['temperature']}, "
+                f"top_p: {generation_args['top_p']}.")
+    if len(prompts[0]) + generation_args.get("max_tokens", 0) > MAX_SEQ_LEN:
+        logger.info(f"Rejected a prompt with prompt length {len(prompts[0])}.")
+        raise Exception("Your prompt length is too long. Please make sure len(prompt) + response length <= 512. "
+                        "Since this is a public service, we have limited the max length supported. "
+                        "If you want to try longer sequence length, please consider hosting your own service using Alpa.")
     ret_queue = queue.Queue()
     for i, prompt in enumerate(prompts):
         request_object = {"input": prompt, **generation_args}

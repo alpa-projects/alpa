@@ -429,9 +429,11 @@ class GeneratorInterface:
                 "sampling": sampling,
                 "top_p": sampling_topp,
             }
-            logger.debug(generator_args)
+            logger.info(
+                "+ Serve batch {} / compute batch {} | #batch_size: {}, original bs: {}, max_len: {}, shape: {}, args: {}."
+                .format(batch_request_uuid, batch_idx, batchsize, ori_bs,
+                        max(src_lengths), src_lengths, generator_args))
             generator = Generator(self.model_wrapper, **generator_args)
-
             # okay actually generate
             if use_cuda:
                 batch = move_to_cuda(batch)
@@ -442,8 +444,8 @@ class GeneratorInterface:
             flops, speed, token_32_latency = self.estimate_performance(
                 translations, inference_time)
             logger.info(
-                "- Serve batch {} / compute batch {} | #batch_size: {}, original bs: {}, max_len: {} shape: {}, args: {}, "
-                "batch latency (s): {:.2f}, flops: {:.4f}, speed: {:.4f}, 32-token latency: {:.2f}"
+                "- Serve batch {} / compute batch {} | #batch_size: {}, original bs: {}, max_len: {}, shape: {}, args: {}, "
+                "batch latency (s): {:.2f}, flops: {:.4f}, speed: {:.4f}, 32-token latency: {:.2f}."
                 .format(batch_request_uuid, batch_idx, batchsize, ori_bs,
                         max(src_lengths), src_lengths, generator_args,
                         inference_time, flops, speed, token_32_latency))

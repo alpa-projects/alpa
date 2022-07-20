@@ -481,7 +481,7 @@ class OPTForLMModule(nn.Module):
 def get_opt_config(name, **kwargs):
     if name == "125M":
         config = OPTConfig(
-            max_target_positions=2048,
+            max_target_positions=512,
             decoder_layers=12,
             decoder_attention_heads=12,
             decoder_embed_dim=768,

@@ -78,6 +78,10 @@ def benchmark_gpt_bert_internal(model_type,
                                 stream_mode=False):
     print_used_time(None)
 
+    # stream mode configs
+    if stream_mode:
+        global_config.pipeline_check_alive = False
+
     # Model configs
     (_, no_embedding, batch_size, seq_len, hidden_size, num_layers, num_heads,
      vocab_size, num_micro_batches, parallel_mode,
@@ -209,17 +213,25 @@ def benchmark_gpt_bert_internal(model_type,
     executable.sync()
 
     # Benchmark latency
+    losses = []
     tic = time.time()
+    times = {"start": tic}
     for i in range(niter):
         print(f"Iteration {i} ...")
-        _ = infer_step(params, batch, rngkey)
+        loss = infer_step(params, batch, rngkey)
+        losses.append(loss)
         if not stream_mode:
             executable.sync()
+    for i, loss in enumerate(losses):
+        print(loss._value)
+        times[f"iter{i}"] = time.time() - tic
     if stream_mode:
         executable.sync()
+        times["end"] = time.time() - tic
         e2e_latency = time.time() - tic
     else:
         e2e_latency = (time.time() - tic) / niter
+    print(times)
 
     overall_latency = np.mean(executable.get_execution_time_costs())
 

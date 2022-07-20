@@ -94,12 +94,21 @@ if __name__ == "__main__":
             "#DP",
             "#OP",
             "E2E Latency",
-            "Ray Overhead",
-            "Overall Latency",
-            "TFLOPs",
-            "Peak Mem",
-            "niter",
         ]
+        if args.stream_mode: 
+            heads += [
+                "niter",
+                "Ideal Latency",
+                "Overhead per Iter"
+            ]
+        else:
+            heads += [
+                "Ray Overhead",
+                "Overall Latency",
+                "TFLOPs",
+                "Peak Mem",
+            ]
+
         values = [
             model_type,
             model_name,
@@ -111,12 +120,23 @@ if __name__ == "__main__":
             parallel_args[2],
             *parallel_args[3][2][0],
             f"{e2e_latency:.3f}",
-            f"{(e2e_latency - overall_latency):.3f}",
-            f"{overall_latency:.3f}",
-            f"{tflops:.2f}",
-            f"{max_mem_allocated/GB:.3f}",
-            args.niter,
         ]
+            
+        if args.stream_mode:
+            values += [
+                args.niter,
+                0.221*(args.niter + 3) / 4,
+                (e2e_latency - 0.221*(args.niter + 3) / 4) / args.niter,
+            ]
+        else:
+            values += [   
+                f"{(e2e_latency - overall_latency):.3f}",
+                f"{overall_latency:.3f}",
+                f"{tflops:.2f}",
+                f"{max_mem_allocated/GB:.3f}",
+            ]
+
+
         write_tsv(heads, values, result_name)
 
         time.sleep(0.1)  # for ctrl+c to work

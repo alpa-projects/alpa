@@ -12,7 +12,7 @@ auto_stage_option = {
 
 prefer_reduce_scatter = True
 use_remat = False
-no_embedding = True
+no_embedding = False
 
 
 def get_solution_case(model_name, num_micro_batches, max_global_batch_size,
@@ -80,4 +80,4 @@ is_debug =  __name__ == "__main__"
 # get_config([2, 4, 8, 16], [1], [1], [1, 4, 16, 64, 256], [1, 4, 16, 64], True, is_debug)
 # get_config([1], [16], [1], [1], [1, 4, 16, 64], True, is_debug)
 # get_config([1], [1], [16], [1], [1, 4, 16, 64], True, is_debug)
-get_config([4], [1], [1], [1], [1, 4, 16, 64], True, is_debug)
+get_config([4], [1], [1], [1], [1, 4, 16], True, is_debug)

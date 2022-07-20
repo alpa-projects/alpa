@@ -134,7 +134,7 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
             new_jaxpr, None, 1, [False] * len(avals), [False] * len(avals),
             executable.mesh_group.parent, 1, "inference",
             AutoShardingOption(enable_auto_sharding=False),
-            UniformStageOption(), name, output_shardings)
+            UniformStageOption(), name, output_shardings, None)
 
         return CreateStateExecutable(mesh_group=executable.mesh_group,
                                      pipeshard_config=pipeshard_config,

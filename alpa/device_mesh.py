@@ -52,7 +52,10 @@ from alpa.shard_parallel.auto_sharding import (LogicalDeviceMesh)
 from alpa.parallel_plan import PlacementSpec
 from alpa.timer import timers
 from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
-                       update_jax_platform, is_ray_node_resource)
+                       update_jax_platform, is_ray_node_resource,
+                       try_import_ray_worker)
+
+ray_worker = try_import_ray_worker()
 
 if global_config.nccl_mode == "cupy":
     import alpa.collective.worker_nccl_util_cupy as worker_nccl_util
@@ -1106,7 +1109,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                     not ray.is_initialized()):
                 return
         except ModuleNotFoundError:
-            if (self.workers is None or not ray or not ray._private.worker or
+            if (self.workers is None or not ray or not ray_worker or
                     not ray.is_initialized()):
                 return
         # Put delete requests into a buffer
@@ -1952,10 +1955,7 @@ class DeviceCluster:
 
     def __init__(self):
         # pylint: disable=import-outside-toplevel
-        try:
-            from ray.worker import _global_node as ray_global_node
-        except ModuleNotFoundError:
-            from ray._private.worker import _global_node as ray_global_node
+        ray_global_node = ray_worker._global_node
         try:
             self.head_info = ray_global_node.address_info
         except AttributeError as ae:

@@ -8,6 +8,8 @@ import shutil
 import numpy
 import ray
 from ray import ray_constants
+from alpa.util import try_import_ray_worker
+ray_worker = try_import_ray_worker()
 import pygloo
 
 from alpa.collective.collective_group import gloo_util
@@ -37,12 +39,8 @@ class Rendezvous:
     def __init__(self, group_name, context, store_type, device_type):
         self._group_name = group_name
         self._context = context
-        try:
-            self._redis_ip_address, self._redis_port = (
-                ray.worker._global_node.redis_address.split(":"))
-        except ModuleNotFoundError:
-            self._redis_ip_address, self._redis_port = (
-                ray._private.worker._global_node.redis_address.split(":"))
+        self._redis_ip_address, self._redis_port = (
+            ray_worker._global_node.redis_address.split(":"))
         self._process_ip_address = (ray.util.get_node_ip_address())
         logger.debug(f"Redis address: {self._redis_ip_address}, "
                      f"port: {self._redis_port}, "

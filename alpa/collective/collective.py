@@ -6,6 +6,7 @@ from typing import List
 import numpy as np
 import ray
 from alpa.util import try_import_ray_worker
+
 ray_worker = try_import_ray_worker()
 from jax._src.lib import xla_extension as xe
 

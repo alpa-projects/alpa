@@ -9,6 +9,7 @@ import numpy
 import ray
 from ray import ray_constants
 from alpa.util import try_import_ray_worker
+
 ray_worker = try_import_ray_worker()
 import pygloo
 

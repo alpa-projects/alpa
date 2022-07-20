@@ -1381,10 +1381,13 @@ class DistributedArray:
         self._one_replica_host_local_ids = None
         self._one_replica_buffer_ids = None
         self._fetched_np_buffers = None
+        self._fetched_np_buffers_ref = None
+        self.skip_shard_args_check = False
+
+    def get_remote_buffers_async(self):
         self._fetched_np_buffers_ref = self.device_mesh.get_remote_buffers(
             (self.remote_ref,), (self.one_replica_host_local_ids,), False,
             True)[0]
-        self.skip_shard_args_check = False
 
     def block_until_ready(self):
         """Block until all remote buffers of this array are ready."""
@@ -1495,7 +1498,12 @@ class DistributedArray:
         if self._npy_value is None:
             npy_value = np.empty(self.aval.shape, self.aval.dtype)
             if not self._fetched_np_buffers:
-                fetched_np_buffers = ray.get(self._fetched_np_buffers_ref)
+                if not self._fetched_np_buffers_ref:
+                    fetched_np_buffers = self.device_mesh.get_remote_buffers(
+                        (self.remote_ref,),
+                        (self.one_replica_host_local_ids,))[0]
+                else:
+                    fetched_np_buffers = ray.get(self._fetched_np_buffers_ref)
             else:
                 fetched_np_buffers = self._fetched_np_buffers
             for ct, i in enumerate(self.one_replica_buffer_ids):

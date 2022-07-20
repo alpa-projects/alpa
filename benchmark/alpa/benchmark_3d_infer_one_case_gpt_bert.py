@@ -219,6 +219,7 @@ def benchmark_gpt_bert_internal(model_type,
     for i in range(niter):
         print(f"Iteration {i} ...")
         loss = infer_step(params, batch, rngkey)
+        loss.get_remote_buffers_async()  # unstable API
         losses.append(loss)
         if not stream_mode:
             executable.sync()

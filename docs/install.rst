@@ -125,7 +125,7 @@ Method 2: Install from Source
 
 Check Installation
 ------------------
-You can check the installation by running the following commands from the root of the repository.
+You can check the installation by running the following commands.
 
 .. code:: bash
 

@@ -130,7 +130,7 @@ You can check the installation by running the following commands from the root o
 .. code:: bash
 
   ray start --head
-  python3 tests/test_install.py
+  python3 -m alpa.test_install
 
 [Optional] PyTorch Frontend
 -------------------------------------

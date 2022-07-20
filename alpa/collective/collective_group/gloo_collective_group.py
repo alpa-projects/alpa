@@ -8,9 +8,7 @@ import shutil
 import numpy
 import ray
 from ray import ray_constants
-from alpa.util import try_import_ray_worker
 
-ray_worker = try_import_ray_worker()
 import pygloo
 
 from alpa.collective.collective_group import gloo_util
@@ -20,6 +18,9 @@ from alpa.collective.types import (AllReduceOptions, BarrierOptions, Backend,
                                    AllGatherOptions, ReduceScatterOptions,
                                    SendOptions, RecvOptions)
 from alpa.collective.const import get_store_name
+from alpa.util import try_import_ray_worker
+
+ray_worker = try_import_ray_worker()
 
 logger = logging.getLogger(__name__)
 

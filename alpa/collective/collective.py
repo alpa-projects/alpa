@@ -5,13 +5,14 @@ from typing import List
 
 import numpy as np
 import ray
-from alpa.util import try_import_ray_worker
 
-ray_worker = try_import_ray_worker()
 from jax._src.lib import xla_extension as xe
 
 from alpa.collective import types
 from alpa.global_env import global_config
+from alpa.util import try_import_ray_worker
+
+ray_worker = try_import_ray_worker()
 
 _NCCL_AVAILABLE = True
 _GLOO_AVAILABLE = True

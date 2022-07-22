@@ -9,6 +9,9 @@ from jax._src.lib import xla_extension as xe
 
 from alpa.collective import types
 from alpa.global_env import global_config
+from alpa.util import try_import_ray_worker
+
+ray_worker = try_import_ray_worker()
 
 _NCCL_AVAILABLE = True
 _GLOO_AVAILABLE = True
@@ -736,7 +739,7 @@ def _check_and_get_group(group_name):
                     "broadcasted. The Info actor will go out of context and be "
                     "destroyed.")
 
-            worker = ray.worker.global_worker
+            worker = ray_worker.global_worker
             id_ = worker.core_worker.get_actor_id()
             r = rank[ids.index(id_)]
             _group_mgr.create_collective_group(backend, world_size, r,
@@ -788,7 +791,7 @@ def _check_backend_availability(backend: types.Backend):
 
 def _check_inside_actor():
     """Check if currently it is inside a Ray actor/task."""
-    worker = ray.worker.global_worker
+    worker = ray_worker.global_worker
     if worker.mode == ray.WORKER_MODE:
         return
     else:

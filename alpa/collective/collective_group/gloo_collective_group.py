@@ -17,6 +17,9 @@ from alpa.collective.types import (AllReduceOptions, BarrierOptions, Backend,
                                    AllGatherOptions, ReduceScatterOptions,
                                    SendOptions, RecvOptions)
 from alpa.collective.const import get_store_name
+from alpa.util import try_import_ray_worker
+
+ray_worker = try_import_ray_worker()
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +41,7 @@ class Rendezvous:
         self._group_name = group_name
         self._context = context
         self._redis_ip_address, self._redis_port = (
-            ray.worker._global_node.redis_address.split(":"))
+            ray_worker._global_node.redis_address.split(":"))
         self._process_ip_address = (ray.util.get_node_ip_address())
         logger.debug(f"Redis address: {self._redis_ip_address}, "
                      f"port: {self._redis_port}, "

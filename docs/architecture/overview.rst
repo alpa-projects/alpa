@@ -11,17 +11,9 @@ This document is organized as follows:
 
 You are recommended to read the the following materials as well:
 
-- `Alpa research paper`_.
-- `Alpa talk slides`_.
-- `12-min introductory talk`_ about Alpa.
-- `Talk @ Stanford MLSys Seminar`_.
-- `Talk @ UW SAMPL`_.
-
-.. _Alpa research paper: https://arxiv.org/pdf/2201.12023.pdf 
-.. _Alpa talk slides: https://docs.google.com/presentation/d/1CQ4S1ff8yURk9XmL5lpQOoMMlsjw4m0zPS6zYDcyp7Y/edit?usp=sharing 
-.. _12-min introductory talk: https://youtu.be/Jqz34CV-UqU
-.. _Talk @ Stanford MLSys Seminar: https://youtu.be/y1NXHjcl6V0
-.. _Talk @ UW SAMPL: https://youtu.be/g_E7UfpXusk
+- `Alpa paper <https://arxiv.org/pdf/2201.12023.pdf>`_ (OSDI'22)
+- `Google AI blog <https://ai.googleblog.com/2022/05/alpa-automated-model-parallel-deep.html>`_
+- `Alpa talk slides <https://docs.google.com/presentation/d/1CQ4S1ff8yURk9XmL5lpQOoMMlsjw4m0zPS6zYDcyp7Y/edit?usp=sharing>`_
 
 Overview
 ========

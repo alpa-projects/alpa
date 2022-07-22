@@ -44,12 +44,13 @@ Check out the [Alpa Documentation](https://alpa-projects.github.io) site for ins
 
 ## More Information
 - [Alpa paper](https://arxiv.org/pdf/2201.12023.pdf) (OSDI'22)
-- [Google AI Blog](https://ai.googleblog.com/2022/05/alpa-automated-model-parallel-deep.html)
+- [Google AI blog](https://ai.googleblog.com/2022/05/alpa-automated-model-parallel-deep.html)
 - [Alpa talk slides](https://docs.google.com/presentation/d/1CQ4S1ff8yURk9XmL5lpQOoMMlsjw4m0zPS6zYDcyp7Y/edit?usp=sharing)
+- [Big model tutorial](https://sites.google.com/view/icml-2022-big-model/home) (ICML'22)
 
 ## Getting Involved
 - Please read the [contributor guide](https://alpa-projects.github.io/developer/developer_guide.html) if you are interested in contributing to Alpa. 
-- Please connect to Alpa contributors via the [Alpa slack](https://forms.gle/YEZTCrtZD6EAVNBQ7).
+- Connect to Alpa contributors via the [Alpa slack](https://forms.gle/YEZTCrtZD6EAVNBQ7).
 
 ## License
 Alpa is licensed under the [Apache-2.0 license](https://github.com/alpa-projects/alpa/blob/main/LICENSE).

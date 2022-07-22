@@ -52,7 +52,7 @@ class OPTLMOutput(ModelOutput):
 class OPTConfig:
     # Inherited from OPT
     decoder_layers: int = 12
-    max_target_positions: int = 512
+    max_target_positions: int = 2048
     decoder_embed_dim: int = 768
     decoder_attention_heads: int = 12
     decoder_input_dim: int = 768
@@ -133,8 +133,7 @@ class OPTSelfAttention(nn.Module):
     def __call__(self,
                  hidden_states,
                  output_attentions: bool = False,
-                 attention_cache=None,
-                 attention_mask=None):
+                 attention_cache=None):
         head_dim = self.config.decoder_embed_dim // self.config.decoder_attention_heads
 
         qvk_combined_states = self.qvk_combined(hidden_states)
@@ -158,6 +157,8 @@ class OPTSelfAttention(nn.Module):
                     jnp.full((query_states.shape[1], key_states.shape[1]),
                              -1e10), 1), (0, 1))
         else:
+            # attention_bias = jnp.expand_dims(jnp.triu(jnp.full(
+            #     (query_states.shape[1], key_states.shape[1]), -1e10), 1), (0, 1))
             cache_key, cache_value, cache_index = attention_cache
             cache_index_ = cache_index[0]
             key_states = lax.dynamic_update_slice(cache_key, key_states,
@@ -166,19 +167,10 @@ class OPTSelfAttention(nn.Module):
                                                     (0, cache_index_, 0, 0))
             num_updated_cache_vectors = query_states.shape[1]
             max_length = key_states.shape[1]
-
-            # The following logic is equivalent to:
-            # attention_bias = jnp.expand_dims(
-            #     jnp.triu(jnp.full(
-            #         (num_updated_cache_vectors, max_length), -1e10), cache_index + 1), (0, 1))
-            # but "cache_index + 1" in jnp.triu results in non-static IR.
-            row_idxs = jnp.arange(num_updated_cache_vectors)
-            mask = jnp.arange(max_length) - (cache_index_ + 1)
-            attention_bias = jnp.expand_dims(
-                (row_idxs[:, None] <= mask).astype(self.dtype) * -1e10, (0, 1))
-            if attention_mask is not None:
-                attention_bias += attention_mask
-
+            attention_bias = (jnp.arange(max_length) >=
+                              cache_index_ + num_updated_cache_vectors).astype(
+                                  self.dtype) * -1e10
+            attention_bias = attention_bias[None, None, None, :]
             attention_cache = key_states, value_states, cache_index + num_updated_cache_vectors
         attn_weights = nn.attention.dot_product_attention_weights(
             query_states,
@@ -215,14 +207,12 @@ class OPTAttention(nn.Module):
     def __call__(self,
                  hidden_states,
                  output_attentions: bool = False,
-                 attention_cache=None,
-                 attention_mask=None):
+                 attention_cache=None):
         residual = hidden_states
         hidden_states = self.layer_norm(hidden_states)
         attn_outputs = self.self(hidden_states,
                                  output_attentions=output_attentions,
-                                 attention_cache=attention_cache,
-                                 attention_mask=attention_mask)
+                                 attention_cache=attention_cache)
         attn_output = attn_outputs[0]
         attention_cache = attn_outputs[1]
         hidden_states = self.dense(attn_output)
@@ -277,13 +267,11 @@ class OPTTransformerLayer(nn.Module):
     def __call__(self,
                  hidden_states,
                  output_attentions: bool = False,
-                 attention_cache=None,
-                 attention_mask=None):
+                 attention_cache=None):
 
         attention_outputs = self.attention(hidden_states,
                                            output_attentions=output_attentions,
-                                           attention_cache=attention_cache,
-                                           attention_mask=attention_mask)
+                                           attention_cache=attention_cache)
         attention_output = attention_outputs[0]
         attention_cache = attention_outputs[1]
 
@@ -313,7 +301,6 @@ class OPTTransformerLayerCollection(nn.Module):
         output_hidden_states: bool = False,
         return_dict: bool = True,
         attention_cache=None,
-        attention_mask=None
     ):
         all_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
@@ -337,8 +324,7 @@ class OPTTransformerLayerCollection(nn.Module):
                 layer_attention_cache = attention_cache[i]
             layer_outputs = layer(hidden_states,
                                   output_attentions=output_attentions,
-                                  attention_cache=layer_attention_cache,
-                                  attention_mask=attention_mask)
+                                  attention_cache=layer_attention_cache)
             hidden_states = layer_outputs[0]
             if attention_cache is not None:
                 new_attention_cache += (layer_outputs[1],)
@@ -380,7 +366,6 @@ class OPTTransformerModule(nn.Module):
         output_hidden_states: bool = False,
         return_dict: bool = True,
         attention_cache=None,
-        attention_mask=None
     ):
         hidden_states = self.embeddings(input_ids, position_ids)
         outputs = self.encoder(
@@ -389,7 +374,6 @@ class OPTTransformerModule(nn.Module):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             attention_cache=attention_cache,
-            attention_mask=attention_mask
         )
         hidden_states = outputs[0]
         if self.config.version > 2:
@@ -436,7 +420,6 @@ class OPTForLMModule(nn.Module):
         output_hidden_states: bool = False,
         return_dict: bool = True,
         attention_cache=None,
-        attention_mask=None
     ):
         # Model
         outputs = self.transformers(
@@ -446,7 +429,6 @@ class OPTForLMModule(nn.Module):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             attention_cache=attention_cache,
-            attention_mask=attention_mask
         )
 
         hidden_states = outputs[0]
@@ -481,7 +463,7 @@ class OPTForLMModule(nn.Module):
 def get_opt_config(name, **kwargs):
     if name == "125M":
         config = OPTConfig(
-            max_target_positions=512,
+            max_target_positions=2048,
             decoder_layers=12,
             decoder_attention_heads=12,
             decoder_embed_dim=768,
@@ -491,8 +473,7 @@ def get_opt_config(name, **kwargs):
         )
     elif name == "2.7B":
         config = OPTConfig(
-            # max_target_positions=2048,
-            max_target_positions=512,
+            max_target_positions=2048,
             decoder_layers=32,
             decoder_attention_heads=32,
             decoder_embed_dim=2560,
@@ -512,8 +493,7 @@ def get_opt_config(name, **kwargs):
         )
     elif name == "30B":
         config = OPTConfig(
-            # max_target_positions=2048,
-            max_target_positions=512,
+            max_target_positions=2048,
             decoder_layers=48,
             decoder_attention_heads=56,
             decoder_embed_dim=7168,
@@ -523,8 +503,7 @@ def get_opt_config(name, **kwargs):
         )
     elif name == "175B":
         config = OPTConfig(
-            # max_target_positions=2048,
-            max_target_positions=512,
+            max_target_positions=2048,
             decoder_layers=96,
             decoder_attention_heads=96,
             decoder_embed_dim=12288,
@@ -569,9 +548,6 @@ def init_cache_aval(config, batch_size):
         all_cache.append(layer_cache)
     return tuple(all_cache)
 
-def init_mask_aval(config, batch_size):
-    mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_target_positions), dtype=config.dtype)
-    return mask
 
 def init_cache_np(config, batch_size):
     """Init cache with numpy arrays."""
@@ -734,7 +710,6 @@ def get_pipeshard_executable(config,
                 batch["input_ids"],
                 batch["position_ids"],
                 attention_cache=batch["cache"],
-                attention_mask=batch["mask"],
                 output_attentions=support_output_attentions,
                 output_hidden_states=support_output_hidden_states)
             return output
@@ -748,8 +723,6 @@ def get_pipeshard_executable(config,
                     jax.core.ShapedArray((batch_size, 1), jnp.int32),
                 "cache":
                     init_cache_aval(config, batch_size),
-                "mask":
-                    init_mask_aval(config, batch_size),
             })
     else:
 
@@ -794,13 +767,7 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
             if self.mesh_id != mesh_ids[i][j]:
                 continue
 
-            # print(shapes[i][j])
-            # print(loaded_array.shape)
-            if shapes[i][j] != loaded_array.shape:
-                assert shapes[i][j][1] == loaded_array.shape[1]
-                loaded_array = loaded_array[:shapes[i][j][0], :]
-                # print(loaded_array.shape)
-            # assert shapes[i][j] == loaded_array.shape
+            assert shapes[i][j] == loaded_array.shape
             uuid = uuids[i][j]
             datas = []
             for k in range(len(self.local_devices)):

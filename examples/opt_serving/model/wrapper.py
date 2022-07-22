@@ -36,7 +36,7 @@ class InferenceFuncOutput(ModelOutput):
 class InferenceFuncConfig:
     """Implements a minimal config class for using huggingface's generator.
 
-    Note: these parameters might be overwritten by model.generate(**kwargs).
+    Note: these paramerers might be overwritten by model.generate(**kwargs).
     """
     bos_token_id: int = 0
     num_beams: int = 1
@@ -61,7 +61,6 @@ class InferenceFuncConfig:
     forced_eos_token_id: int = None
     remove_invalid_values: bool = False
     exponential_decay_length_penalty: float = None
-    do_sample: bool = False
     top_k: int = 50
     top_p: int = 1.0
     typical_p: int = 1.0
@@ -97,13 +96,11 @@ class WrappedInferenceFunc(GenerationMixin):
         return {
             "input_ids": input_ids,
             "past_key_values": past,
-            "alpa_attention_mask": kwargs["alpa_attention_mask"]
         }
 
     def __call__(self,
                  input_ids,
                  past_key_values=None,
-                 alpa_attention_mask=None,
                  output_attentions=None,
                  output_hidden_states=None,
                  return_dict=None):
@@ -111,7 +108,6 @@ class WrappedInferenceFunc(GenerationMixin):
         for i in range(input_ids.shape[1]):
             ret = self.inference_func(input_ids[:, i:i + 1],
                                       past_key_values,
-                                      alpa_attention_mask,
                                       output_hidden_states=output_hidden_states,
                                       output_attentions=output_attentions)
             past_key_values = ret.past_key_values
@@ -257,10 +253,8 @@ def get_model(model_name: str,
               autoregressive=True,
               dtype=jnp.float16,
               dummy=False,
-              do_sample=False,
               batch_size=1,
               num_beams=1,
-              num_return_sequences=1,
               decoding_length_per_step=1,
               num_micro_batches=1,
               support_output_attentions=False,
@@ -269,9 +263,6 @@ def get_model(model_name: str,
 
     Args:
         model_name: "gpt", "facebook/opt-", or "alpa/opt-".
-        device: "cpu" or "gpu". This only controls the device used
-          by pytorch. Alpa always runs on GPU.
-        path: The path to opt weights.
     """
     if not model_name.startswith("alpa") and not autoregressive:
         raise NotImplementedError(
@@ -296,15 +287,6 @@ def get_model(model_name: str,
     if not dummy:
         assert os.path.exists(path), f"No such file or directory: '{path}'"
 
-    # figure out the actual input size
-    if do_sample:
-        expand_size = batch_size * num_beams * num_return_sequences
-    else:
-        if num_return_sequences > num_beams:
-            raise ValueError(
-                "`num_return_sequences` has to be smaller or equal to `num_beams`.")
-        expand_size = batch_size * num_beams
-
     if "jax/opt" in model_name:
         config = get_opt_config(name,
                                 num_pp_stages=None,
@@ -324,13 +306,12 @@ def get_model(model_name: str,
 
         # load params
         params = load_params_np(params_aval, path, config, dummy)
-        init_cache = init_cache_np(config, batch_size=expand_size)
+        init_cache = init_cache_np(config, batch_size=batch_size * num_beams)
         params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
     else:
         assert "alpa/opt" in model_name
         assert is_power_of_two(num_beams), "num_beams must be a power of two"
         alpa.init()
-        alpa.global_config.xla_client_mem_fraction = 0.88
 
         print(
             f"Load model {model_name} ... (This can take several minutes for very large models)"
@@ -347,12 +328,11 @@ def get_model(model_name: str,
             seq_len=config.max_target_positions,
             vocab_size=config.vocab_size)
 
-        if autoregressive and batch_size > 1:
-            # assert batch_size == 1, "we only support batch_sie = 1 for autoregressive!"
-            print(f"autoregressive and batch size is {batch_size}")
+        if autoregressive:
+            assert batch_size == 1, "we only support batch_sie = 1 for autoregressive!"
         executable, params_aval = get_pipeshard_executable(
             config,
-            batch_size=expand_size,
+            batch_size=batch_size * num_beams,
             num_micro_batches=num_micro_batches,
             decoding_length_per_step=decoding_length_per_step,
             support_output_attentions=support_output_attentions,
@@ -365,7 +345,7 @@ def get_model(model_name: str,
         if autoregressive:
             init_cache = init_cache_dis_array(executable,
                                               config,
-                                              expand_size,
+                                              batch_size * num_beams,
                                               dummy=dummy)
             set_skip_shard_args_check(init_cache)
         executable.sync()
@@ -378,33 +358,29 @@ def get_model(model_name: str,
 
     def inference_func(input_ids,
                        past_key_values,
-                       attention_mask,
                        output_attentions=False,
                        output_hidden_states=False):
         nonlocal step_ct
 
-        input_ids_step = input_ids.cpu().numpy()
         if past_key_values is None:
             past_key_values = init_cache
-            step_ct = np.zeros_like(input_ids_step)
+            step_ct = 0
 
-        # position_ids_step = np.full_like(input_ids_step,
-        #                                  step_ct + config.pad + 1)
-        position_ids_step = step_ct + config.pad + 1
+        input_ids_step = input_ids.cpu().numpy()
+        position_ids_step = np.full_like(input_ids_step,
+                                         step_ct + config.pad + 1)
 
         output = executable(
             params, {
                 "input_ids": input_ids_step,
                 "position_ids": position_ids_step,
                 "cache": past_key_values,
-                "mask": attention_mask,
             })
         set_skip_shard_args_check(output.attention_cache)
 
         logits_step = torch.from_numpy(np.array(output.logits)).to(device)
 
-        step_ct += (input_ids_step != config.pad)
-        # print(step_ct)
+        step_ct += 1
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)
 

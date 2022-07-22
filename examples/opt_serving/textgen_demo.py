@@ -11,15 +11,14 @@ tokenizer.add_bos_token = False
 generate_params = {"do_sample": False, "num_beams": 1, "num_return_sequences": 1}
 
 # Load the model
-model = get_model(model_name="alpa/opt-2.7b",
+model = get_model(model_name="facebook/opt-2.7b",
                   device="cuda",
-                  path="/home/ubuntu/opt_weights",
+                  path="/home/ubuntu/efs/parax-proj",
                   batch_size=4,
                   **generate_params)
 
 # Generate
-prompt = [
-    "Paris is the capital city of",
+prompt = ["Paris is the capital city of",
           "Today is a good day and I'd like to",
           "Computer Science studies the area of",
           "University of California Berkeley is a public university"]
@@ -31,14 +30,10 @@ input_ids_np = input_ids.cpu().numpy()
 pad_value = 1
 attention_mask = ((input_ids_np == pad_value) * -1e10) [:, None, None, :]
 # np.pad(attention_mask, )
-new_attention_mask = np.zeros([input_ids_np.shape[0], 1, 1, 512], dtype=np.float16)
-new_attention_mask[:, :, :, :attention_mask.shape[-1]] = attention_mask
-
-print(new_attention_mask[:,:,:,:8])
 
 outputs = model.generate(input_ids=input_ids,
+                         pad_token_id=1,
                          max_length=32,
-                         alpa_attention_mask=new_attention_mask,
                          **generate_params)
 
 # Print results

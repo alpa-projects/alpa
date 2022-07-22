@@ -549,13 +549,6 @@ class Generator:
 
     def generate(self, input_ids):
 
-        # Make the attention mask
-        input_ids_np = input_ids.cpu().numpy()
-        pad_value = 1
-        attention_mask = ((input_ids_np == pad_value) * -1e10)[:, None, None, :]
-        new_attention_mask = np.zeros([input_ids_np.shape[0], 1, 1, 512], dtype=np.float16)
-        new_attention_mask[:, :, :, :attention_mask.shape[-1]] = attention_mask
-
         # print(new_attention_mask[:, :, :, :8])
         output = self.model_wrapper.generate(
             input_ids=input_ids,
@@ -571,7 +564,6 @@ class Generator:
             # no_repeat_ngram_size=2
             # return_dict_in_generate=True
             # output_hidden_states=True
-            alpa_attention_mask=new_attention_mask
         )
         generated_ids = output
         retvals = [[{} for _ in range(self.beam_size)] for _ in generated_ids]

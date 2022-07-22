@@ -16,12 +16,13 @@ import torch
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
 from transformers import OPTForCausalLM, GPT2LMHeadModel
 
-from opt_serving.model.opt_model import (
-    get_opt_config, get_pipeshard_executable, load_params_dis_array,
-    init_cache_dis_array, load_params_np, init_cache_np, get_jax_executable)
+from opt_serving.model.opt_model import (get_opt_config,
+                                         get_pipeshard_executable,
+                                         load_params_dis_array,
+                                         init_cache_dis_array, load_params_np,
+                                         init_cache_np, get_jax_executable)
 from opt_serving.model.opt_utils import (TransformerModelConfig,
-                                                  jax_index_select,
-                                                  is_power_of_two)
+                                         jax_index_select, is_power_of_two)
 
 
 @dataclass
@@ -94,24 +95,27 @@ class WrappedInferenceFunc(GenerationMixin):
         if past:
             input_ids = input_ids[:, -1].unsqueeze(-1)
 
-        return {
-            "input_ids": input_ids,
-            "past_key_values": past,
-            "alpa_attention_mask": kwargs["alpa_attention_mask"]
-        }
+        ret = {"input_ids": input_ids, "past_key_values": past}
+        if "attention_mask" in kwargs:
+            ret["attention_mask"] = self._process_attention_mask(
+                kwargs["attention_mask"])
+        return ret
+
+    def _process_attention_mask(self, attention_mask):
+        return attention_mask
 
     def __call__(self,
                  input_ids,
                  past_key_values=None,
-                 alpa_attention_mask=None,
                  output_attentions=None,
                  output_hidden_states=None,
+                 attention_mask=None,
                  return_dict=None):
         # Decompose the call to token by token
         for i in range(input_ids.shape[1]):
             ret = self.inference_func(input_ids[:, i:i + 1],
                                       past_key_values,
-                                      alpa_attention_mask,
+                                      attention_mask=attention_mask,
                                       output_hidden_states=output_hidden_states,
                                       output_attentions=output_attentions)
             past_key_values = ret.past_key_values
@@ -187,6 +191,28 @@ class WrappedInferenceFunc(GenerationMixin):
             for layer_loc in self.cache_location)
 
 
+class AlpaInferenceFunc(WrappedInferenceFunc):
+
+    def __init__(self, *args, max_target_positions):
+        super().__init__(*args)
+        self._max_target_positions = max_target_positions
+
+    def _process_attention_mask(self, attention_mask):
+        if isinstance(attention_mask, torch.Tensor):
+            attention_mask = attention_mask.cpu().numpy()
+
+        batch_size = attention_mask.shape[0]
+        # flip
+        flipped = (attention_mask == 0) * -1e10
+        # extend
+        attention_mask = np.zeros((batch_size, self._max_target_positions),
+                                  dtype=np.float16)
+        attention_mask[:, :flipped.shape[-1]] = flipped
+        # reshape
+        attention_mask = attention_mask[:, np.newaxis, np.newaxis, :]
+        return attention_mask
+
+
 def get_hf_gpt_model(model_name, device, num_beams):
     raw_model = GPT2LMHeadModel.from_pretrained(model_name)
     raw_model = raw_model.to(device)
@@ -222,14 +248,22 @@ def get_hf_opt_model(model_name, device, num_beams):
 
     def inference_func(input_ids,
                        past_key_values,
+                       attention_mask,
                        output_attentions=False,
                        output_hidden_states=False):
+        attention_length = attention_mask.size()[-1]
         if past_key_values is None:
-            attention_mask = None
+            past_length = 0
         else:
             past_length = past_key_values[0][0].shape[2]
-            attention_mask = torch.ones(
-                (input_ids.shape[0], past_length + 1)).to(device)
+        if past_length >= attention_length:
+            attention_mask = torch.cat(
+                (attention_mask,
+                 torch.ones((input_ids.shape[0],
+                             past_length + 1 - attention_length)).to(device)),
+                dim=1)
+        elif attention_mask != None:
+            attention_mask = attention_mask[:, :past_length + 1]
         out = raw_model(input_ids=input_ids,
                         attention_mask=attention_mask,
                         past_key_values=past_key_values,
@@ -302,7 +336,8 @@ def get_model(model_name: str,
     else:
         if num_return_sequences > num_beams:
             raise ValueError(
-                "`num_return_sequences` has to be smaller or equal to `num_beams`.")
+                "`num_return_sequences` has to be smaller or equal to `num_beams`."
+            )
         expand_size = batch_size * num_beams
 
     if "jax/opt" in model_name:
@@ -409,8 +444,11 @@ def get_model(model_name: str,
                                    output.hidden_states, output.attentions)
 
     inference_func_config = InferenceFuncConfig(num_beams=num_beams)
-    return WrappedInferenceFunc(inference_func, inference_func_config,
-                                executable, transformer_config)
+    return AlpaInferenceFunc(inference_func,
+                             inference_func_config,
+                             executable,
+                             transformer_config,
+                             max_target_positions=config.max_target_positions)
 
 
 def set_skip_shard_args_check(attention_cache):

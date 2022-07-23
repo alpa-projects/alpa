@@ -1388,6 +1388,9 @@ class DistributedArray:
         self.skip_shard_args_check = False
 
     def get_remote_buffers_async(self):
+        # TODO (yinmin): Move this function out of DistributedArray
+        #  and batch different requests. Also need to add another
+        #  function to `ray.wait` for the remote references.
         self._fetched_np_buffers_ref = self.device_mesh.get_remote_buffers(
             (self.remote_ref,), (self.one_replica_host_local_ids,), False,
             True)[0]

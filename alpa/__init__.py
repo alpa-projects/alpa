@@ -26,6 +26,7 @@ from alpa.pipeline_parallel.stage_construction import (ManualStageOption,
 from alpa.shard_parallel.auto_sharding import AutoShardingOption
 from alpa.serialization import save_checkpoint, restore_checkpoint
 from alpa.timer import timers
+from alpa.version import __version__
 
 from . import api
 from . import collective

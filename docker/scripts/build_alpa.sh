@@ -50,7 +50,7 @@ git fetch origin +${ALPA_BRANCH}
 git checkout -qf FETCH_HEAD
 
 # install jaxlib and jax
-export VERSION=$(bash GENVER --pep440)
+python3 update_version.py --git-describe
 python3 setup.py bdist_wheel
 
 if ! python3 -m auditwheel show dist/alpa-*.whl  | egrep 'platform tag: "(manylinux2014_x86_64|manylinux_2_17_x86_64)"' > /dev/null; then

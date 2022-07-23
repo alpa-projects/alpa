@@ -61,34 +61,3 @@ jobs:
           echo "Publish to PyPI"
           ls -ltr dist/
           python -m twine upload --verbose dist/*
-
-  update-version:
-    runs-on: [ubuntu-latest]
-    needs: [release-alpa]
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Bump VERSION and commit
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git checkout -b actions/version-bump
-          cat VERSION | awk -F. -v OFS=. 'NF==1{print ++$NF}; NF>1{$NF=sprintf("%0*d", length($NF), ($NF+1)); print}' > VERSION.tmp && mv VERSION.tmp VERSION
-          git add VERSION
-          git commit -m "Bump candidate version [skip ci]"
-
-      - name: Push branch
-        uses: ad-m/github-push-action@master
-        with:
-          github_token: ${{ secrets.PAT_TOKEN }}
-          branch: actions/version-bump
-          force: true
-
-      - name: Create version-bump PR
-        uses: repo-sync/pull-request@v2
-        with:
-          github_token: ${{ secrets.PAT_TOKEN }}
-          source_branch: "actions/version-bump"
-          destination_branch: "main"
-          pr_title: "Bumping VERSION file due to recent release"
-          pr_body: "*Automated PR*: This should update the candidate version. Please delete source branch upon merge"

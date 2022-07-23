@@ -1049,7 +1049,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             self,
             ary_refs: Union[List["RemoteArrayRef"], "RemoteArrayRef"],
             host_local_ids: Sequence[Sequence[Tuple[int, int]]] = None,
-            batching=False):
+            batching=False,
+            asynchronize=False):
         """Get values of remote buffers."""
 
         return_list = True
@@ -1099,7 +1100,10 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                         self.workers[host_id].get_buffers.remote(
                             ary_ref.uuid, local_id))
                 obj_refs.append(ary_obj_refs)
-            ret = [ray.get(refs) for refs in obj_refs]
+            if asynchronize:
+                ret = obj_refs
+            else:
+                ret = [ray.get(refs) for refs in obj_refs]
         return ret if return_list else ret[0]
 
     def delete_remote_buffers(self, ary_refs: List["RemoteArrayRef"]):
@@ -1380,7 +1384,16 @@ class DistributedArray:
         self._one_replica_host_local_ids = None
         self._one_replica_buffer_ids = None
         self._fetched_np_buffers = None
+        self._fetched_np_buffers_ref = None
         self.skip_shard_args_check = False
+
+    def get_remote_buffers_async(self):
+        # TODO (yinmin): Move this function out of DistributedArray
+        #  and batch different requests. Also need to add another
+        #  function to `ray.wait` for the remote references.
+        self._fetched_np_buffers_ref = self.device_mesh.get_remote_buffers(
+            (self.remote_ref,), (self.one_replica_host_local_ids,), False,
+            True)[0]
 
     def block_until_ready(self):
         """Block until all remote buffers of this array are ready."""
@@ -1491,8 +1504,12 @@ class DistributedArray:
         if self._npy_value is None:
             npy_value = np.empty(self.aval.shape, self.aval.dtype)
             if not self._fetched_np_buffers:
-                fetched_np_buffers = self.device_mesh.get_remote_buffers(
-                    (self.remote_ref,), (self.one_replica_host_local_ids,))[0]
+                if not self._fetched_np_buffers_ref:
+                    fetched_np_buffers = self.device_mesh.get_remote_buffers(
+                        (self.remote_ref,),
+                        (self.one_replica_host_local_ids,))[0]
+                else:
+                    fetched_np_buffers = ray.get(self._fetched_np_buffers_ref)
             else:
                 fetched_np_buffers = self._fetched_np_buffers
             for ct, i in enumerate(self.one_replica_buffer_ids):

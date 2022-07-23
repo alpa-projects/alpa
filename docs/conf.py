@@ -16,11 +16,22 @@ import sys
 # -- Project information -----------------------------------------------------
 
 project = 'Alpa'
-#copyright = '2022, <Author>'
-#author = '<Author>'
+author = 'Alpa Developers'
+copyright = f'2022, {author}'
 
-# The full version, including alpha/beta/rc tags
-release = '0.1.4'
+
+def git_describe_version():
+    """Get git describe version."""
+    ver_py = os.path.join("..", "update_version.py")
+    libver = {"__file__": ver_py}
+    exec(compile(open(ver_py, "rb").read(), ver_py, "exec"), libver, libver)
+    gd_version, _ = libver["git_describe_version"]()
+    return gd_version
+
+
+import alpa
+version = git_describe_version()
+release = version
 
 
 # -- General configuration ---------------------------------------------------

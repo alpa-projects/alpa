@@ -1,5 +1,6 @@
 import glob
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -7,6 +8,7 @@ import sys
 from setuptools import setup, find_packages
 
 IS_WINDOWS = sys.platform == "win32"
+ROOT_DIR = os.path.dirname(__file__)
 
 
 def get_cuda_version(cuda_home):
@@ -98,6 +100,16 @@ doc_require_list = [
 ]
 
 
+def get_alpa_version():
+    with open(os.path.join(ROOT_DIR, "alpa", "version.py")) as fp:
+        version_match = re.search(
+            r"^__version__ = ['\"]([^'\"]*)['\"]", fp.read(), re.M
+        )
+        if version_match:
+            return version_match.group(1)
+    raise RuntimeError("Unable to find version string.")
+
+
 def build():
     """Build the custom pipeline marker API."""
     # Check cuda version
@@ -169,13 +181,13 @@ if __name__ == "__main__":
             if self.distribution.has_ext_modules():
                 self.install_lib = self.install_platlib
 
-    with open(os.path.join("README.md"), encoding="utf-8") as f:
+    with open("README.md", encoding="utf-8") as f:
         long_description = f.read()
 
     setup(
         name="alpa",
-        version=os.environ.get("VERSION"),
-        author="Alpa team",
+        version=get_alpa_version(),
+        author="Alpa Developers",
         author_email="",
         description=
         "Alpa automatically parallelizes large tensor computation graphs and "

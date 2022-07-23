@@ -58,6 +58,7 @@ def get_search_cases(model_name, max_global_batch_size, num_micro_batches_list):
         for num_micro_batches in num_micro_batches_list
     ]
 
+
 def get_solution_case(model_name, max_global_batch_size, num_micro_batches,
                       forward_stage_layer_ids, submesh_physical_shapes,
                       submesh_logical_shapes,

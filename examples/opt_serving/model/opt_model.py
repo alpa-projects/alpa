@@ -481,7 +481,7 @@ class OPTForLMModule(nn.Module):
 def get_opt_config(name, **kwargs):
     if name == "125M":
         config = OPTConfig(
-            max_target_positions=512,
+            max_target_positions=2048,
             decoder_layers=12,
             decoder_attention_heads=12,
             decoder_embed_dim=768,
@@ -491,8 +491,7 @@ def get_opt_config(name, **kwargs):
         )
     elif name == "2.7B":
         config = OPTConfig(
-            # max_target_positions=2048,
-            max_target_positions=512,
+            max_target_positions=2048,
             decoder_layers=32,
             decoder_attention_heads=32,
             decoder_embed_dim=2560,
@@ -512,8 +511,7 @@ def get_opt_config(name, **kwargs):
         )
     elif name == "30B":
         config = OPTConfig(
-            # max_target_positions=2048,
-            max_target_positions=512,
+            max_target_positions=2048,
             decoder_layers=48,
             decoder_attention_heads=56,
             decoder_embed_dim=7168,
@@ -523,8 +521,7 @@ def get_opt_config(name, **kwargs):
         )
     elif name == "175B":
         config = OPTConfig(
-            # max_target_positions=2048,
-            max_target_positions=512,
+            max_target_positions=2048,
             decoder_layers=96,
             decoder_attention_heads=96,
             decoder_embed_dim=12288,

@@ -297,6 +297,7 @@ def get_model(model_name: str,
               num_return_sequences=1,
               decoding_length_per_step=1,
               num_micro_batches=1,
+              max_target_positions=2048,
               support_output_attentions=False,
               support_output_hidden_states=False):
     """Get and load model and return a WrappedInferenceFunc compatible with HuggingFace.
@@ -344,7 +345,8 @@ def get_model(model_name: str,
         config = get_opt_config(name,
                                 num_pp_stages=None,
                                 mark_boundary=False,
-                                dtype=dtype)
+                                dtype=dtype,
+                                max_target_positions=max_target_positions)
         transformer_config = TransformerModelConfig(
             H=config.decoder_embed_dim,
             L=config.decoder_layers,
@@ -374,7 +376,10 @@ def get_model(model_name: str,
         num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
         num_pp_stages = min(num_pp_stages,
                             alpa.get_global_cluster().num_devices)
-        config = get_opt_config(name, num_pp_stages=num_pp_stages, dtype=dtype)
+        config = get_opt_config(name,
+                                num_pp_stages=num_pp_stages,
+                                dtype=dtype,
+                                max_target_positions=max_target_positions)
         transformer_config = TransformerModelConfig(
             H=config.decoder_embed_dim,
             L=config.decoder_layers,

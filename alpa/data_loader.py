@@ -30,7 +30,7 @@ class DataLoader:
             self.avals.append(ps.aval)
             self.sharding_specs.append(ps.sharding_specs[0])
             self.indices.append(
-                tuple(ps.sharding_specs[0].indices(ps.aval.shape)))
+                tuple(ps.sharding_specs[0].indices(ps.aval.shape).flatten()))
 
         self.queue = collections.deque()
 

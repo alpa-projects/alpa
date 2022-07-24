@@ -11,7 +11,7 @@ from jax.interpreters import pxla
 import numpy as np
 import ray
 
-from alpa import init, parallelize, DistributedArray
+from alpa import init, parallelize, fetch, DistributedArray
 from alpa.device_mesh import get_global_physical_mesh
 from alpa.testing import assert_allclose
 
@@ -37,7 +37,7 @@ class DeviceMeshTest(unittest.TestCase):
         out = multiply_two(out)
 
         # Check results
-        assert_allclose(out._value, (np.ones_like(a) + 1) * 2)
+        assert_allclose(np.array(out), (np.ones_like(a) + 1) * 2)
 
     def test_distributed_array(self):
         physical_mesh = get_global_physical_mesh(create_if_not_exist=True)

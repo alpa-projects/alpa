@@ -53,7 +53,9 @@ def benchmark_one_case_new_process(*args, **kwargs):
         result = benchmark_one_case(*args, **kwargs)
         result_namespace.result = result
 
-    p = Process(target=benchmark_and_write_to_namespace, args=(result_namespace, *args), kwargs=kwargs)
+    p = Process(target=benchmark_and_write_to_namespace,
+                args=(result_namespace, *args),
+                kwargs=kwargs)
     p.start()
     p.join()
     if p.exitcode != 0:

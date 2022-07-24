@@ -1,18 +1,14 @@
 """Benchmark one case of inter-op + intra-op parallelism."""
+import os
 import argparse
-import pickle
-
-import jax
-import ray
+from multiprocessing import Process, Manager
 
 from alpa import init, global_config
-from alpa.util import run_cmd, disable_tqdm_globally
+from alpa.util import disable_tqdm_globally
 
 from benchmark_3d_one_case_gpt_bert import benchmark_gpt_bert_internal
 from benchmark_3d_one_case_moe import benchmark_moe_internal
 from benchmark_3d_one_case_wresnet import benchmark_wresnet_internal
-
-TMP_PICKLE_FILE_NAME = "/tmp/tmp_transfer.pkl"
 
 
 def benchmark_one_case(model,
@@ -20,57 +16,49 @@ def benchmark_one_case(model,
                        niter,
                        num_hosts,
                        num_devices_per_host,
-                       use_separate_process=False,
-                       dump_result=False,
                        disable_tqdm=False):
     if disable_tqdm:
         disable_tqdm_globally()
 
-    if not use_separate_process:
-        init(cluster="ray")
+    init(cluster="ray")
 
-        global_config.use_dummy_value_for_benchmarking = True
-        global_config.pipeline_sync_for_timer = True
+    global_config.use_dummy_value_for_benchmarking = True
+    global_config.pipeline_sync_for_timer = True
 
-        # Run benchmark
-        if model in ["gpt", "bert"]:
-            result = benchmark_gpt_bert_internal(model, case, niter, num_hosts,
-                                                 num_devices_per_host)
-        elif model == "moe":
-            result = benchmark_moe_internal(case, niter, num_hosts,
+    # Run benchmark
+    if model in ["gpt", "bert"]:
+        result = benchmark_gpt_bert_internal(model, case, niter, num_hosts,
+                                             num_devices_per_host)
+    elif model == "moe":
+        result = benchmark_moe_internal(case, niter, num_hosts,
+                                        num_devices_per_host)
+    elif model == "wresnet":
+        global_config.xla_client_mem_fraction = 0.88
+        # Due to legacy issues, we turn off auto-tuning. Although the
+        # performance will be much better if we turn it on
+        global_config.xla_gpu_autotune_level = 0
+        result = benchmark_wresnet_internal(case, niter, num_hosts,
                                             num_devices_per_host)
-        elif model == "wresnet":
-            global_config.xla_client_mem_fraction = 0.88
-            # Due to legacy issues, we turn off auto-tuning. Although the performance
-            # will be much better if we turn it on
-            global_config.xla_gpu_autotune_level = 0
-            result = benchmark_wresnet_internal(case, niter, num_hosts,
-                                                num_devices_per_host)
-        else:
-            raise ValueError(f"Invalid model: {model}")
     else:
-        # Launch a new process for benchmark to isolate errors.
-        # Get the return data via pickle.
-        run_cmd(f"rm -rf {TMP_PICKLE_FILE_NAME}")
-        cmd = (f"python3 -u benchmark_3d_one_case.py "
-               f"--model {model} "
-               f"--niter {niter} "
-               f'--case "{case}" '
-               f"--num-hosts {num_hosts} "
-               f"--num-devices-per-host {num_devices_per_host} "
-               f"--dump-result ")
-        if disable_tqdm:
-            cmd += "--disable-tqdm "
-        ret = run_cmd(cmd)
-        if ret == 0:
-            result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
-        else:
-            result = -1, -1, [-1], -1, -1, None, None, None, None, None, None
-
-    if dump_result:
-        pickle.dump(result, open(TMP_PICKLE_FILE_NAME, "wb"))
+        raise ValueError(f"Invalid model: {model}")
 
     return result
+
+
+def benchmark_one_case_new_process(*args, **kwargs):
+    manager = Manager()
+    result_namespace = manager.Namespace()
+
+    def benchmark_and_write_to_namespace(result_namespace, *args, **kwargs):
+        result = benchmark_one_case(*args, **kwargs)
+        result_namespace.result = result
+
+    p = Process(target=benchmark_and_write_to_namespace, args=(result_namespace, *args), kwargs=kwargs)
+    p.start()
+    p.join()
+    if p.exitcode != 0:
+        return -1, -1, [-1], -1, -1, None, None, None, None, None, None
+    return result_namespace.result
 
 
 if __name__ == "__main__":
@@ -86,13 +74,18 @@ if __name__ == "__main__":
     parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
 
-    run_cmd("mkdir -p tmp")
+    os.makedirs("tmp", exist_ok=True)
+
+    # Make eval work smoothly
+    from parallel_option import *
+    from suite_manual_gpt import GPTModelConfig
+    from suite_manual_moe import MoEModelConfig
+    from suite_wresnet import WResNetModelConfig
     case = eval(args.case)
+
     benchmark_one_case(args.model,
                        case,
                        args.niter,
                        args.num_hosts,
                        args.num_devices_per_host,
-                       use_separate_process=False,
-                       dump_result=args.dump_result,
                        disable_tqdm=args.disable_tqdm)

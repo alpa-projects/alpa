@@ -46,6 +46,7 @@ def prepare_moe_input_and_model(benchmark_case,
                                 add_manual_remat=None,
                                 add_manual_layer_marker=None,
                                 num_manual_pipeline_stages=None):
+    print_used_time(None)
     (batch_size, model_config, num_micro_batches, parallel_mode,
      parallel_args) = benchmark_case
     (seq_len, hidden_size, num_layers, num_heads, vocab_size, num_experts,

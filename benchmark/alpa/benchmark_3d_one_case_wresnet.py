@@ -143,6 +143,7 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_remat_layers,
 
 
 def prepare_wresnet_input_and_model(benchmark_case):
+    print_used_time(None)
     # Model configs
     (batch_size, model_config, num_micro_batches, parallel_mode,
      parallel_args) = benchmark_case
@@ -177,8 +178,6 @@ def prepare_wresnet_input_and_model(benchmark_case):
 
 def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
                                num_devices_per_host):
-    print_used_time(None)
-
     # Connect to the cluster
     virtual_mesh = get_global_cluster().get_virtual_physical_mesh(
         host_ids=list(range(num_hosts)),

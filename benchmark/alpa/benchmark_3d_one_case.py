@@ -11,12 +11,12 @@ from benchmark_3d_one_case_moe import benchmark_moe_internal
 from benchmark_3d_one_case_wresnet import benchmark_wresnet_internal
 
 
-def benchmark_one_case(model,
-                       case,
-                       niter,
-                       num_hosts,
-                       num_devices_per_host,
-                       disable_tqdm=False):
+def benchmark_one_case_internal(model,
+                                case,
+                                niter,
+                                num_hosts,
+                                num_devices_per_host,
+                                disable_tqdm=False):
     if disable_tqdm:
         disable_tqdm_globally()
 
@@ -45,12 +45,13 @@ def benchmark_one_case(model,
     return result
 
 
-def benchmark_one_case_new_process(*args, **kwargs):
+def benchmark_one_case(*args, use_separate_process=False, **kwargs):
+    if not use_separate_process:
+        return benchmark_one_case_internal(*args, **kwargs)
     manager = Manager()
     result_namespace = manager.Namespace()
-
     def benchmark_and_write_to_namespace(result_namespace, *args, **kwargs):
-        result = benchmark_one_case(*args, **kwargs)
+        result = benchmark_one_case_internal(*args, **kwargs)
         result_namespace.result = result
 
     p = Process(target=benchmark_and_write_to_namespace,

@@ -16,8 +16,10 @@ from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.timer import timers
 from alpa.util import print_used_time, to_str_round, GB
 
-from benchmark_3d_one_case_gpt_bert import get_train_step
+from benchmark_3d_one_case_gpt_bert import (get_train_step,
+                                            compile_and_benchmark_executable)
 from benchmark.util import compute_moe_parameter_count, compute_moe_tflops
+from parallel_option import get_parallel_method
 
 
 def create_train_state(rngkey, model, dtype, batch):
@@ -40,14 +42,13 @@ def create_train_state(rngkey, model, dtype, batch):
     return state
 
 
-def benchmark_moe_internal(benchmark_case, niter, num_hosts,
-                           num_devices_per_host):
-    print_used_time(None)
-
-    # Model configs
-    (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
-     num_experts, expert_group_size, num_micro_batches, parallel_mode,
-     parallel_args) = benchmark_case
+def prepare_moe_input_and_model(benchmark_case,
+                                add_manual_remat=None,
+                                add_manual_layer_marker=None,
+                                num_manual_pipeline_stages=None):
+    (batch_size, model_config, num_micro_batches, parallel_mode, parallel_args) = benchmark_case
+    (seq_len, hidden_size, num_layers, num_heads, vocab_size,
+     num_experts, expert_group_size) = model_config
     dtype = jnp.float16
     tie_word_embeddings = False
 
@@ -56,79 +57,10 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts,
         expert_group_size,
         batch_size * seq_len // num_micro_batches // 1 // rang_factor)
     if expected_expert_group_size != expert_group_size:
-        print(
-            "- Expected expert group size should be {}, but got {}. Will reset it"
-            .format(expected_expert_group_size, expert_group_size))
+        print("- Expected expert group size should be {}, "
+              "but got {}. Will reset it".format(expected_expert_group_size,
+                                                 expert_group_size))
         expert_group_size = expected_expert_group_size
-
-    # Connect to the cluster
-    virtual_mesh = get_global_cluster().get_virtual_physical_mesh(
-        host_ids=list(range(num_hosts)),
-        num_devices_per_host=num_devices_per_host)
-    set_global_virtual_physical_mesh(virtual_mesh)
-
-    # Parallel configs
-    if parallel_mode == "search":
-        prefer_reduce_scatter, use_remat, num_auto_layers, auto_stage_option = parallel_args
-        add_manual_layer_marker = num_manual_pipeline_stages = add_manual_remat = None
-        use_fine_grained_remat = fine_grained_remat_num_layers = None
-        auto_stage_option["cached_compute_cost"] = None
-        method = PipeshardParallel(
-            num_micro_batches=num_micro_batches,
-            default_auto_sharding_option=AutoShardingOption(
-                prefer_reduce_scatter=prefer_reduce_scatter,
-                allow_mixed_mesh_shape=True,
-            ),
-            layer_option=AutoLayerOption(layer_num=num_auto_layers,
-                                         remat_layer=use_remat),
-            stage_option=AutoStageOption(**auto_stage_option))
-    elif parallel_mode == "load_solution":
-        prefer_reduce_scatter, use_remat, num_auto_layers, manual_stage_option = parallel_args
-        add_manual_layer_marker = num_manual_pipeline_stages = add_manual_remat = None
-        use_fine_grained_remat = use_remat
-        fine_grained_remat_num_layers = num_layers
-        method = PipeshardParallel(
-            num_micro_batches=num_micro_batches,
-            default_auto_sharding_option=AutoShardingOption(
-                prefer_reduce_scatter=prefer_reduce_scatter,
-                allow_mixed_mesh_shape=True,
-            ),
-            layer_option=AutoLayerOption(layer_num=num_auto_layers),
-            stage_option=ManualStageOption(*manual_stage_option))
-    elif parallel_mode == "uniform":
-        (prefer_reduce_scatter, use_remat, (dp, op, pp),
-         force_batch_dim_mapping) = parallel_args
-        as_option = AutoShardingOption(
-            prefer_reduce_scatter=prefer_reduce_scatter,
-            allow_mixed_mesh_shape=True)
-        if force_batch_dim_mapping:
-            as_option.force_batch_dim_to_mesh_dim = 0
-        add_manual_layer_marker = True
-        add_manual_remat = use_remat
-        use_fine_grained_remat = fine_grained_remat_num_layers = None
-
-        logical_mesh_shape = (dp, op)
-        num_manual_pipeline_stages = pp
-        num_mesh_devices = np.prod(logical_mesh_shape)
-        num_devices_per_host = virtual_mesh.num_devices_per_host
-        if num_mesh_devices <= num_devices_per_host:
-            physical_mesh_shape = (1, num_mesh_devices)
-        else:
-            assert num_mesh_devices % num_devices_per_host == 0
-            physical_mesh_shape = (num_mesh_devices // num_devices_per_host,
-                                   num_devices_per_host)
-
-        method = PipeshardParallel(
-            num_micro_batches=num_micro_batches,
-            default_auto_sharding_option=as_option,
-            layer_option="manual",
-            stage_option=ManualStageOption(
-                forward_stage_layer_ids=[[i] for i in range(pp)],
-                submesh_physical_shapes=[physical_mesh_shape] * pp,
-                submesh_logical_shapes=[logical_mesh_shape] * pp,
-                submesh_autosharding_option_dicts=[{}] * pp))
-    else:
-        raise ValueError(f"Invalid model: {parallel_mode}")
 
     # Prepare input batch
     batch = {
@@ -161,43 +93,16 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts,
     rngkey = jax.random.PRNGKey(0)
     state = create_train_state(rngkey, model, dtype, batch)
     print_used_time("Create train state")
+    return state, batch, rngkey
 
-    # Compile executable
-    train_step = get_train_step(method, use_fine_grained_remat,
-                                fine_grained_remat_num_layers)
-    executable = train_step.get_executable(state, batch, rngkey)
-    print_used_time("Compile (driver)")
 
-    if parallel_mode == "search":
-        compilation_times = {
-            k: timers(k).elapsed() for k in [
-                "stage-construction", "stage-construction-dp",
-                "stage-construction-compilation", "stage-construction-profiling"
-            ]
-        }
-        print(
-            f"compilation time breakdown: {to_str_round(compilation_times, 2)}")
-    else:
-        compilation_times = None
-
-    executable.dump_debug_info("tmp")
-    executable.sync()
-    print_used_time("Compile (worker)")
-
-    # Benchmark step time
-    for i in range(niter):
-        print(f"Iteration: {i} ...")
-        state = train_step(state, batch, rngkey)
-        executable.sync()
-
-    latencies = executable.get_execution_time_costs()[1:]
-    max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
-    print_used_time("Benchmark")
-
-    # Compute statistics
+def compute_moe_statistics(benchmark_case, latencies, num_devices):
+    (batch_size, model_config, num_micro_batches, parallel_mode, parallel_args) = benchmark_case
+    (seq_len, hidden_size, num_layers, num_heads, vocab_size,
+     num_experts, expert_group_size) = model_config
     tflops = compute_moe_tflops(batch_size, seq_len, num_layers, hidden_size,
                                 expert_group_size, vocab_size, num_experts,
-                                virtual_mesh.num_devices, np.mean(latencies))
+                                num_devices, np.mean(latencies))
     tflops_ckpt = compute_moe_tflops(batch_size,
                                      seq_len,
                                      num_layers,
@@ -205,7 +110,7 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts,
                                      expert_group_size,
                                      vocab_size,
                                      num_experts,
-                                     virtual_mesh.num_devices,
+                                     num_devices,
                                      np.mean(latencies),
                                      checkpoint_activations=True)
     parameter_count = compute_moe_parameter_count(num_layers,
@@ -213,6 +118,47 @@ def benchmark_moe_internal(benchmark_case, niter, num_hosts,
                                                   vocab_size,
                                                   num_experts,
                                                   mlp_factor=8)
+    return tflops, tflops_ckpt, parameter_count
+
+
+def benchmark_moe_internal(benchmark_case, niter, num_hosts,
+                           num_devices_per_host):
+    # Connect to the cluster
+    virtual_mesh = get_global_cluster().get_virtual_physical_mesh(
+        host_ids=list(range(num_hosts)),
+        num_devices_per_host=num_devices_per_host)
+    set_global_virtual_physical_mesh(virtual_mesh)
+
+    # Parallel configs
+    if benchmark_case.parallel_mode == "load_solution":
+        use_fine_grained_remat = benchmark_case.parallel_args.use_remat
+        fine_grained_remat_num_layers = benchmark_case.model_config.num_layers
+    else:
+        use_fine_grained_remat = None
+        fine_grained_remat_num_layers = None
+    (method, add_manual_remat, add_manual_layer_marker,
+     num_manual_pipeline_stages) = get_parallel_method(
+         benchmark_case,
+         virtual_mesh.num_devices_per_host,
+         allow_mixed_mesh_shape=True,
+         use_fine_grained_remat=use_fine_grained_remat)
+
+    state, batch, rngkey = prepare_moe_input_and_model(
+        benchmark_case,
+        add_manual_remat=add_manual_remat,
+        add_manual_layer_marker=add_manual_layer_marker,
+        num_manual_pipeline_stages=num_manual_pipeline_stages)
+
+    train_step = get_train_step(method, use_fine_grained_remat,
+                                fine_grained_remat_num_layers)
+
+    (latencies, max_mem_allocated, compilation_times,
+     executable) = compile_and_benchmark_executable(
+         benchmark_case.parallel_mode, niter, train_step, state,
+         (batch, rngkey))
+
+    tflops, tflops_ckpt, parameter_count = compute_moe_statistics(
+        benchmark_case, latencies, virtual_mesh.num_devices)
 
     return (parameter_count, max_mem_allocated, latencies, tflops, tflops_ckpt,
             compilation_times) + get_last_dp_result()

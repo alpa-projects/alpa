@@ -19,6 +19,8 @@ from alpa.timer import timers
 from alpa.util import print_used_time, to_str_round, GB
 
 from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops
+from parallel_option import (get_parallel_method,
+                             compile_and_benchmark_executable)
 
 
 def report_pipeline_breakdown(executable, timer_names, niter):
@@ -128,84 +130,17 @@ def get_train_step(parallel_method, use_fine_grained_remat,
     return train_step
 
 
-def benchmark_gpt_bert_internal(model_type,
-                                benchmark_case,
-                                niter,
-                                num_hosts,
-                                num_devices_per_host,
-                                aval_train_state=True):
+def prepare_gpt_bert_input_and_model(model_type,
+                                     benchmark_case,
+                                     add_manual_remat=None,
+                                     add_manual_layer_marker=None,
+                                     num_manual_pipeline_stages=None,
+                                     aval_train_state=True):
     print_used_time(None)
-
-    # Model configs
-    (batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size,
-     num_micro_batches, parallel_mode, parallel_args) = benchmark_case
+    batch_size = benchmark_case.batch_size
+    (seq_len, hidden_size, num_layers, num_heads, vocab_size) = benchmark_case.model_config
     dtype = jnp.float16
     tie_word_embeddings = False
-
-    # Connect to the cluster
-    virtual_mesh = get_global_cluster().get_virtual_physical_mesh(
-        host_ids=list(range(num_hosts)),
-        num_devices_per_host=num_devices_per_host)
-    set_global_virtual_physical_mesh(virtual_mesh)
-
-    # Parallel configs
-    if parallel_mode == "search":
-        prefer_reduce_scatter, use_remat, num_auto_layers, auto_stage_option = parallel_args
-        add_manual_layer_marker = num_manual_pipeline_stages = add_manual_remat = None
-        use_fine_grained_remat = fine_grained_remat_num_layers = None
-        auto_stage_option["cached_compute_cost"] = None
-        method = PipeshardParallel(
-            num_micro_batches=num_micro_batches,
-            default_auto_sharding_option=AutoShardingOption(
-                prefer_reduce_scatter=prefer_reduce_scatter),
-            layer_option=AutoLayerOption(layer_num=num_auto_layers,
-                                         remat_layer=use_remat),
-            stage_option=AutoStageOption(**auto_stage_option))
-    elif parallel_mode == "load_solution":
-        prefer_reduce_scatter, use_remat, num_auto_layers, manual_stage_option = parallel_args
-        add_manual_layer_marker = num_manual_pipeline_stages = add_manual_remat = None
-        use_fine_grained_remat = use_remat
-        fine_grained_remat_num_layers = num_layers
-        method = PipeshardParallel(
-            num_micro_batches=num_micro_batches,
-            default_auto_sharding_option=AutoShardingOption(
-                prefer_reduce_scatter=prefer_reduce_scatter),
-            layer_option=AutoLayerOption(layer_num=num_auto_layers),
-            stage_option=ManualStageOption(*manual_stage_option))
-    elif parallel_mode == "uniform":
-        (prefer_reduce_scatter, use_remat, (dp, op, pp),
-         force_batch_dim_mapping) = parallel_args
-        as_option = AutoShardingOption(
-            prefer_reduce_scatter=prefer_reduce_scatter)
-        if force_batch_dim_mapping:
-            as_option.force_batch_dim_to_mesh_dim = 0
-        add_manual_layer_marker = True
-        add_manual_remat = use_remat
-        use_fine_grained_remat = fine_grained_remat_num_layers = None
-
-        logical_mesh_shape = (dp, op)
-        num_manual_pipeline_stages = pp
-        num_mesh_devices = np.prod(logical_mesh_shape)
-        num_devices_per_host = virtual_mesh.num_devices_per_host
-        if num_mesh_devices <= num_devices_per_host:
-            physical_mesh_shape = (1, num_mesh_devices)
-        else:
-            assert num_mesh_devices % num_devices_per_host == 0
-            physical_mesh_shape = (num_mesh_devices // num_devices_per_host,
-                                   num_devices_per_host)
-
-        method = PipeshardParallel(
-            num_micro_batches=num_micro_batches,
-            default_auto_sharding_option=as_option,
-            layer_option="manual",
-            stage_option=ManualStageOption(
-                forward_stage_layer_ids=[[i] for i in range(pp)],
-                submesh_physical_shapes=[physical_mesh_shape] * pp,
-                submesh_logical_shapes=[logical_mesh_shape] * pp,
-                submesh_autosharding_option_dicts=[{}] * pp))
-    else:
-        raise ValueError(f"Invalid model: {parallel_mode}")
-
     # Prepare input batch
     batch = {
         "input_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
@@ -254,62 +189,71 @@ def benchmark_gpt_bert_internal(model_type,
     else:
         state = create_train_state(rngkey, model, batch, dtype)
     print_used_time("Create train state")
+    return state, batch, rngkey
 
-    # Compile executable
-    train_step = get_train_step(method, use_fine_grained_remat,
-                                fine_grained_remat_num_layers)
-    executable = train_step.get_executable(state, batch, rngkey)
-    print_used_time("Compile (driver)")
 
-    if parallel_mode == "search":
-        compilation_times = {
-            k: timers(k).elapsed() for k in [
-                "stage-construction", "stage-construction-dp",
-                "stage-construction-compilation", "stage-construction-profiling"
-            ]
-        }
-        print(
-            f"compilation time breakdown: {to_str_round(compilation_times, 2)}")
-    else:
-        compilation_times = None
+def compute_gpt_bert_statistics(benchmark_case, latencies, num_devices):
+    batch_size = benchmark_case.batch_size
+    (seq_len, hidden_size, num_layers, num_heads, vocab_size) = benchmark_case.model_config
 
-    executable.dump_debug_info("tmp")
-    executable.sync()
-    print_used_time("Compile (worker)")
-
-    # Benchmark latency without driver overhead
-    for i in range(niter):
-        print(f"Iteration {i} ...")
-        state = train_step(state, batch, rngkey)
-        executable.sync()
-
-    latencies = executable.get_execution_time_costs()[1:]
-    max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
-
-    # Benchmark latency with driver overhead
-    if False:
-        global_config.use_dummy_value_for_benchmarking = False
-        global_config.pipeline_sync_for_timer = False
-        number = niter
-        executable.sync()
-        tic = time.time()
-        for i in range(number):
-            state = train_step(state, batch, rngkey)
-        executable.sync()
-        e2e_latency = (time.time() - tic) / number
-        print(f"latency with dirver overhead: {e2e_latency:.3f}")
-    print_used_time("Benchmark")
-
-    # Compute statistics
     tflops = compute_gpt_tflops(batch_size, seq_len, num_layers, hidden_size,
-                                vocab_size, virtual_mesh.num_devices,
-                                np.mean(latencies))
+                                vocab_size, num_devices, np.mean(latencies))
     tflops_ckpt = compute_gpt_tflops(batch_size, seq_len, num_layers,
-                                     hidden_size,
-                                     vocab_size, virtual_mesh.num_devices,
+                                     hidden_size, vocab_size, num_devices,
                                      np.mean(latencies), True)
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size,
                                                   vocab_size)
-    #report_pipeline_breakdown(executable, ["resharding_send", "resharding_recv", "compute"], niter)
+    return tflops, tflops_ckpt, parameter_count
+
+
+def benchmark_gpt_bert_internal(model_type,
+                                benchmark_case,
+                                niter,
+                                num_hosts,
+                                num_devices_per_host,
+                                aval_train_state=True):
+    # Connect to the cluster
+    virtual_mesh = get_global_cluster().get_virtual_physical_mesh(
+        host_ids=list(range(num_hosts)),
+        num_devices_per_host=num_devices_per_host)
+    set_global_virtual_physical_mesh(virtual_mesh)
+
+    # Parallel configs
+    if benchmark_case.parallel_mode == "load_solution":
+        use_fine_grained_remat = benchmark_case.parallel_args.use_remat
+        fine_grained_remat_num_layers = benchmark_case.model_config.num_layers
+    else:
+        use_fine_grained_remat = None
+        fine_grained_remat_num_layers = None
+    (method, add_manual_remat, add_manual_layer_marker,
+     num_manual_pipeline_stages) = get_parallel_method(
+         benchmark_case,
+         virtual_mesh.num_devices_per_host,
+         use_fine_grained_remat=use_fine_grained_remat)
+
+    state, batch, rngkey = prepare_gpt_bert_input_and_model(
+        model_type,
+        benchmark_case,
+        add_manual_remat=add_manual_remat,
+        add_manual_layer_marker=add_manual_layer_marker,
+        num_manual_pipeline_stages=num_manual_pipeline_stages,
+        aval_train_state=aval_train_state)
+
+    train_step = get_train_step(method, use_fine_grained_remat,
+                                fine_grained_remat_num_layers)
+
+    (latencies, max_mem_allocated, compilation_times,
+     executable) = compile_and_benchmark_executable(
+         benchmark_case.parallel_mode, niter, train_step, state,
+         (batch, rngkey))
+
+    tflops, tflops_ckpt, parameter_count = compute_gpt_bert_statistics(
+        benchmark_case, latencies, virtual_mesh.num_devices)
+
+    # report_pipeline_breakdown(executable,
+    #                           ["resharding_send", "resharding_recv",
+    #                            "compute"],
+    #                           niter)
+
     return (parameter_count, max_mem_allocated, latencies, tflops, tflops_ckpt,
             compilation_times) + get_last_dp_result()

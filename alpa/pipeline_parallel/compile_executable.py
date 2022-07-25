@@ -297,7 +297,8 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         if distributed_compile:
             module, flops = (generate_sharded_xla_computations_arguments(
                 f"{name_base}_mesh_{mesh_idx}", stage_dict[mesh_idx],
-                stage_donate_invars, output_sharding_dict, stage_input_sharding))
+                stage_donate_invars, output_sharding_dict,
+                stage_input_sharding))
             other_kwargs = {
                 "logical_mesh": logical_mesh,
                 "return_mode": "stages",

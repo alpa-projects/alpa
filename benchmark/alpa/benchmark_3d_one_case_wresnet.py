@@ -144,8 +144,8 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_remat_layers,
 
 def prepare_wresnet_input_and_model(benchmark_case):
     # Model configs
-    (batch_size, model_config,
-     num_micro_batches, parallel_mode, parallel_args) = benchmark_case
+    (batch_size, model_config, num_micro_batches, parallel_mode,
+     parallel_args) = benchmark_case
     (image_size, num_layers, num_channels, width_factor, dtype) = model_config
     if dtype == "fp32":
         dtype = jnp.float32

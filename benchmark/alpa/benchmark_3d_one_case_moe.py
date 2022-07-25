@@ -46,9 +46,10 @@ def prepare_moe_input_and_model(benchmark_case,
                                 add_manual_remat=None,
                                 add_manual_layer_marker=None,
                                 num_manual_pipeline_stages=None):
-    (batch_size, model_config, num_micro_batches, parallel_mode, parallel_args) = benchmark_case
-    (seq_len, hidden_size, num_layers, num_heads, vocab_size,
-     num_experts, expert_group_size) = model_config
+    (batch_size, model_config, num_micro_batches, parallel_mode,
+     parallel_args) = benchmark_case
+    (seq_len, hidden_size, num_layers, num_heads, vocab_size, num_experts,
+     expert_group_size) = model_config
     dtype = jnp.float16
     tie_word_embeddings = False
 
@@ -97,9 +98,10 @@ def prepare_moe_input_and_model(benchmark_case,
 
 
 def compute_moe_statistics(benchmark_case, latencies, num_devices):
-    (batch_size, model_config, num_micro_batches, parallel_mode, parallel_args) = benchmark_case
-    (seq_len, hidden_size, num_layers, num_heads, vocab_size,
-     num_experts, expert_group_size) = model_config
+    (batch_size, model_config, num_micro_batches, parallel_mode,
+     parallel_args) = benchmark_case
+    (seq_len, hidden_size, num_layers, num_heads, vocab_size, num_experts,
+     expert_group_size) = model_config
     tflops = compute_moe_tflops(batch_size, seq_len, num_layers, hidden_size,
                                 expert_group_size, vocab_size, num_experts,
                                 num_devices, np.mean(latencies))

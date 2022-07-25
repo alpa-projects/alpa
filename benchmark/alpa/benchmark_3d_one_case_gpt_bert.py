@@ -138,7 +138,8 @@ def prepare_gpt_bert_input_and_model(model_type,
                                      aval_train_state=True):
     print_used_time(None)
     batch_size = benchmark_case.batch_size
-    (seq_len, hidden_size, num_layers, num_heads, vocab_size) = benchmark_case.model_config
+    (seq_len, hidden_size, num_layers, num_heads,
+     vocab_size) = benchmark_case.model_config
     dtype = jnp.float16
     tie_word_embeddings = False
     # Prepare input batch
@@ -194,7 +195,8 @@ def prepare_gpt_bert_input_and_model(model_type,
 
 def compute_gpt_bert_statistics(benchmark_case, latencies, num_devices):
     batch_size = benchmark_case.batch_size
-    (seq_len, hidden_size, num_layers, num_heads, vocab_size) = benchmark_case.model_config
+    (seq_len, hidden_size, num_layers, num_heads,
+     vocab_size) = benchmark_case.model_config
 
     tflops = compute_gpt_tflops(batch_size, seq_len, num_layers, hidden_size,
                                 vocab_size, num_devices, np.mean(latencies))

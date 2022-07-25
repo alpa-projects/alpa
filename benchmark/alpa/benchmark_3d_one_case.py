@@ -1,7 +1,7 @@
 """Benchmark one case of inter-op + intra-op parallelism."""
 import os
 import argparse
-from multiprocessing import Process, Manager
+import multiprocessing as mp
 
 from alpa import init, global_config
 from alpa.util import disable_tqdm_globally
@@ -45,18 +45,20 @@ def benchmark_one_case_internal(model,
     return result
 
 
+def benchmark_and_write_to_namespace(result_namespace, *args, **kwargs):
+    result = benchmark_one_case_internal(*args, **kwargs)
+    result_namespace.result = result
+
+
 def benchmark_one_case(*args, use_separate_process=False, **kwargs):
     if not use_separate_process:
         return benchmark_one_case_internal(*args, **kwargs)
-    manager = Manager()
+    ctx = mp.get_context("spawn")
+    manager = ctx.Manager()
     result_namespace = manager.Namespace()
-    def benchmark_and_write_to_namespace(result_namespace, *args, **kwargs):
-        result = benchmark_one_case_internal(*args, **kwargs)
-        result_namespace.result = result
-
-    p = Process(target=benchmark_and_write_to_namespace,
-                args=(result_namespace, *args),
-                kwargs=kwargs)
+    p = ctx.Process(target=benchmark_and_write_to_namespace,
+                    args=(result_namespace, *args),
+                    kwargs=kwargs)
     p.start()
     p.join()
     if p.exitcode != 0:

@@ -56,7 +56,7 @@ if __name__ == "__main__":
     num_hosts, num_devices_per_host = get_num_hosts_and_num_devices(args)
     num_gpus = num_hosts * num_devices_per_host
 
-    assert args.suite in benchmark_suites[args.suite], (
+    assert num_gpus in benchmark_suites[args.suite], (
         f"No available benchmark suite for {args.suite} on {num_gpus} GPUs")
     suite = benchmark_suites[args.suite][num_gpus]
 

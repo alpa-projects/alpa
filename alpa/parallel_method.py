@@ -167,7 +167,7 @@ class PipeshardParallel(ParallelMethod):
         stage_option: Options of grouping layers into pipeline stages.
           Possible choices are {"uniform", "auto", alpa.AutoStageOption,
                                  alpa.ManualStageOption}
-        input_sharding: Options of input sharding specs for each stage.
+        stage_input_sharing: Options of input sharding specs for each stage.
           Shape: [num_pipeline_stages, num_input_vars_in_hlo_module].
     """
 
@@ -179,7 +179,7 @@ class PipeshardParallel(ParallelMethod):
             pipeline_schedule: str = "1f1b",
             layer_option: Optional[Union[LayerOption, str]] = None,
             stage_option: Optional[Union[StageOption, str]] = None,
-            input_sharding: Optional[Sequence[Sequence[
+            stage_input_sharing: Optional[Sequence[Sequence[
                 pxla.ShardingSpec]]] = None):
         self.devices = devices
         self.num_micro_batches = num_micro_batches
@@ -201,7 +201,7 @@ class PipeshardParallel(ParallelMethod):
         elif stage_option == "uniform":
             stage_option = UniformStageOption()
         self.stage_option = stage_option or UniformStageOption()
-        self.input_sharding = input_sharding
+        self.stage_input_sharing = stage_input_sharing
 
     def compile_executable(
         self,
@@ -227,7 +227,7 @@ class PipeshardParallel(ParallelMethod):
             fun, in_tree, out_tree_thunk, static_argnums, donated_invars,
             batch_invars, mesh, self.num_micro_batches, self.pipeline_schedule,
             self.as_option, self.layer_option, self.stage_option,
-            self.input_sharding, *avals)
+            self.stage_input_sharing, *avals)
 
 
 class LocalPipelineParallel(ParallelMethod):

@@ -828,7 +828,7 @@ def generate_sharded_xla_computations_arguments(
         name: str, jax_computations: Sequence[JaxPipelineComputation],
         computation_donate_invars: Sequence[bool],
         output_sharding_dict: Dict[Var, pxla.ShardingSpec],
-        input_sharding: Optional[Sequence[pxla.ShardingSpec]]):
+        stage_input_sharing: Optional[Sequence[pxla.ShardingSpec]]):
     """
     Generates the arguments for distributed compilation.
 
@@ -874,9 +874,9 @@ def generate_sharded_xla_computations_arguments(
         ]
         xe.set_hlo_module_output_shardings(hlo_module, sharding_protos)
 
-    if input_sharding:
+    if stage_input_sharing:
         sharding_protos = [
-            sharding_spec.sharding_proto() for sharding_spec in input_sharding
+            sharding_spec.sharding_proto() for sharding_spec in stage_input_sharing
         ]
         xe.set_hlo_module_input_shardings(hlo_module, sharding_protos)
 
@@ -888,7 +888,7 @@ def generate_sharded_xla_computations(
         name: str, jax_computations: Sequence[JaxPipelineComputation],
         computation_donate_invars, donatable_lists, acc_grad_outvars,
         num_micro_batches, logical_mesh, autosharding_option,
-        output_sharding_dict, input_sharding):
+        output_sharding_dict, stage_input_sharing):
     """
     Generate sharded XLA computations.
 
@@ -898,7 +898,7 @@ def generate_sharded_xla_computations(
     """
     hlo_module, flops = generate_sharded_xla_computations_arguments(
         name, jax_computations, computation_donate_invars, output_sharding_dict,
-        input_sharding)
+        stage_input_sharing)
 
     #  pylint: disable=unbalanced-tuple-unpacking
     (computation_names, computation_modules,

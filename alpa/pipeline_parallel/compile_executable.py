@@ -46,7 +46,7 @@ def compile_pipeshard_executable(
         virtual_mesh: VirtualPhysicalMesh, num_microbatch: int,
         pipeline_schedule: str, default_as_option: AutoShardingOption,
         layer_option: LayerOption, stage_option: StageOption,
-        input_sharding: Optional[Sequence[Sequence[pxla.ShardingSpec]]],
+        stage_input_sharings: Optional[Sequence[Sequence[pxla.ShardingSpec]]],
         *avals: Sequence[AbstractValue]):
     """
     Compile a callable for pipeshard parallel which combines
@@ -77,7 +77,7 @@ def compile_pipeshard_executable(
     pipeshard_config = compile_pipeshard_executable_internal(
         closed_jaxpr, full_batch_closed_jaxpr, micro_batch_size, donated_invars,
         batch_invars, virtual_mesh, num_microbatch, pipeline_schedule,
-        default_as_option, stage_option, name_base, None, input_sharding)
+        default_as_option, stage_option, name_base, None, stage_input_sharings)
 
     executable = PipeshardDriverExecutable(
         mesh_group=virtual_mesh.launched_physical_mesh_group,
@@ -99,7 +99,7 @@ def compile_pipeshard_executable_internal(
         pipeline_schedule: str, default_as_option: AutoShardingOption,
         stage_option: StageOption, name_base: str,
         output_shardings: Optional[Sequence[pxla.ShardingSpec]],
-        input_shardings: Optional[Sequence[Sequence[pxla.ShardingSpec]]]):
+        stage_input_sharing: Optional[Sequence[Sequence[pxla.ShardingSpec]]]):
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     gensym_func = gensym([closed_jaxpr.jaxpr])
@@ -240,7 +240,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                      num_meshes, grad_in_to_out, global_invars,
                      acc_grad_outvars, donate_invars_dict, num_microbatch,
                      logical_mesh_shapes, autosharding_option_dicts,
-                     default_as_option, output_sharding_dict, input_shardings,
+                     default_as_option, output_sharding_dict, stage_input_sharings,
                      name_base, gensym_func):
     """Run intra-op parallelism compilation for a stage."""
     # Initialize donation mapping
@@ -283,7 +283,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
             logical_mesh_shapes[mesh_idx])
         autosharding_option = dataclasses.replace(
             default_as_option, **autosharding_option_dicts[mesh_idx])
-        input_sharding = input_shardings[mesh_idx]
+        stage_input_sharing = stage_input_sharings[mesh_idx]
 
         # Setup dummy stages
         for i in dummy_stage_id_dict[mesh_idx]:
@@ -297,7 +297,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         if distributed_compile:
             module, flops = (generate_sharded_xla_computations_arguments(
                 f"{name_base}_mesh_{mesh_idx}", stage_dict[mesh_idx],
-                stage_donate_invars, output_sharding_dict, input_sharding))
+                stage_donate_invars, output_sharding_dict, stage_input_sharing))
             other_kwargs = {
                 "logical_mesh": logical_mesh,
                 "return_mode": "stages",
@@ -314,7 +314,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                 f"{name_base}_mesh_{mesh_idx}", stage_dict[mesh_idx],
                 stage_donate_invars, donatable_dict[mesh_idx], acc_grad_outvars,
                 num_microbatch, logical_mesh, autosharding_option,
-                output_sharding_dict, input_sharding)
+                output_sharding_dict, stage_input_sharing)
             total_flops += flops
             for i, xla_stage in zip(stage_id_dict[mesh_idx],
                                     sharded_xla_stages):

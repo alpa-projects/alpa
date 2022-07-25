@@ -92,32 +92,33 @@ if __name__ == "__main__":
 
         # forward mode
         tic = time.time()
-        model = get_model(
-            args.model,
-            args.device,
-            args.path,
-            autoregressive,
-            dtype=dtype,
-            dummy=args.dummy,
-            batch_size=batch_size,
-            decoding_length_per_step=decoder_length_per_step,
-            num_micro_batches=num_micro_batches)
+        model = get_model(args.model,
+                          args.device,
+                          args.path,
+                          autoregressive,
+                          dtype=dtype,
+                          dummy=args.dummy,
+                          batch_size=batch_size,
+                          decoding_length_per_step=decoder_length_per_step,
+                          num_micro_batches=num_micro_batches)
         load_time = time.time() - tic
 
-        # use existing batch if decoder length is matched
-        test_prompt = None
+        # use existing batch if decoder length is matched; otherwise use a random batch
+        input_ids = None
         for prompt in test_prompts:
-            if decoder_length_per_step == len(prompt.split()):
+            tokens = tokenizer(prompt, return_tensors="pt").input_ids.to(args.device)
+            if decoder_length_per_step == len(tokens[0]):
                 print("Using prompt \"%s\" for benchmarking" % prompt)
-                test_prompt = prompt
+                input_ids = tokens
                 break
-        if test_prompt is None:
+        if input_ids is None:
             # create batch
             print("Using random prompt for benchmarking")
-            test_prompt = " ".join(["we" for _ in range(decoder_length_per_step)])
-
-        input_ids = tokenizer(test_prompt, return_tensors="pt").input_ids.to(args.device)
-        assert input_ids.shape[1] == decoder_length_per_step
+            test_prompt = " ".join(
+                ["we" for _ in range(decoder_length_per_step)])
+            input_ids = tokenizer(test_prompt,
+                                  return_tensors="pt").input_ids.to(args.device)
+            assert input_ids.shape[1] == decoder_length_per_step
 
         # get model config
         H = model.transformer_config.H
@@ -145,7 +146,8 @@ if __name__ == "__main__":
             compute_latency = model.executable.get_execution_time_costs()[-1]
             assert decoder_length_per_step == input_ids.shape[1]
 
-            memory_allocated = model.executable.mesh_group.get_memory_allocated() / 1e9
+            memory_allocated = model.executable.mesh_group.get_memory_allocated(
+            ) / 1e9
             max_memory_allocated = model.executable.mesh_group.get_max_memory_allocated(
             ) / 1e9
 

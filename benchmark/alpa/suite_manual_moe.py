@@ -9,7 +9,7 @@ from parallel_option import BenchmarkCase, UniformParallelArgs
 # RS = prefer_reduce_scatter, Remat = use_rematerialization,
 # FM = force_batch_dim_mapping,
 
-MoEModelConfig = namedtuple("GPTModelConfig", [
+MoEModelConfig = namedtuple("MoEModelConfig", [
     "seq_len", "hidden_size", "num_layers", "num_heads", "vocab_size",
     "num_experts", "expert_group_size"
 ])

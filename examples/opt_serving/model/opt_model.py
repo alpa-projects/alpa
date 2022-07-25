@@ -52,7 +52,7 @@ class OPTLMOutput(ModelOutput):
 class OPTConfig:
     # Inherited from OPT
     decoder_layers: int = 12
-    max_target_positions: int = 512
+    max_target_positions: int = 2048
     decoder_embed_dim: int = 768
     decoder_attention_heads: int = 12
     decoder_input_dim: int = 768

@@ -171,7 +171,7 @@ class GeneratorInterface:
         ori_bs = len(inputs)
 
         # FIXME(Hao): the current batch uses the topp, reponse_length of the first sentence.
-        def icml_pad(inputs, pad_value=1):
+        def pad_batch(inputs, pad_value=1):
             new_inputs = inputs
             src_lens = [len(input) for input in inputs]
             max_len = max(src_lens)
@@ -188,7 +188,7 @@ class GeneratorInterface:
 
 
         # pad the length
-        inputs = icml_pad(inputs)
+        inputs = pad_batch(inputs)
 
         batch_request_uuid = next_serve_batch_uuid()
         if self.tokenizer is None or self.model_wrapper is None:
@@ -551,8 +551,6 @@ class Generator:
         assert temperature > 0, "--temperature must be greater than 0"
 
     def generate(self, input_ids):
-
-        # print(new_attention_mask[:, :, :, :8])
         output = self.model_wrapper.generate(
             input_ids=input_ids,
             min_length=self.min_len,
@@ -564,7 +562,6 @@ class Generator:
             early_stopping=True,
             repetition_penalty=1.0,
             no_repeat_ngram_size=8,
-            # no_repeat_ngram_size=2
             # return_dict_in_generate=True
             # output_hidden_states=True
         )

@@ -99,7 +99,7 @@ def compile_pipeshard_executable_internal(
         pipeline_schedule: str, default_as_option: AutoShardingOption,
         stage_option: StageOption, name_base: str,
         output_shardings: Optional[Sequence[pxla.ShardingSpec]],
-        stage_input_sharing: Optional[Sequence[Sequence[pxla.ShardingSpec]]]):
+        stage_input_sharings: Optional[Sequence[Sequence[pxla.ShardingSpec]]]):
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     gensym_func = gensym([closed_jaxpr.jaxpr])
@@ -206,8 +206,8 @@ def compile_pipeshard_executable_internal(
         grad_in_to_out, global_invars, acc_grad_outvars, donate_invars_dict,
         num_microbatch, manual_stage_option.submesh_logical_shapes,
         manual_stage_option.submesh_autosharding_option_dicts,
-        default_as_option, output_sharding_dict, input_shardings, name_base,
-        gensym_func)
+        default_as_option, output_sharding_dict, stage_input_sharings,
+        name_base, gensym_func)
     total_flops *= num_microbatch
     debug_compilation_time("shard stages")
 

@@ -23,10 +23,16 @@ def create_infer_params_aval(rngkey, model, batch, no_embedding):
     if no_embedding:
         params = jax.eval_shape(model.init, rngkey, batch["x"],
                                 batch["attention_mask"])
+        params = jax.eval_shape(
+            lambda p: jax.tree_util.tree_map(
+                lambda x: jnp.asarray(x, dtype=jnp.float16), p), params)
     else:
         params = jax.eval_shape(model.init, rngkey, batch["input_ids"],
                                 batch["attention_mask"],
                                 batch["token_type_ids"], batch["position_ids"])
+        params = jax.eval_shape(
+            lambda p: jax.tree_util.tree_map(
+                lambda x: jnp.asarray(x, dtype=jnp.float16), p), params)
     return params
 
 
@@ -68,8 +74,13 @@ def benchmark_gpt_bert_internal(model_type,
                                 niter,
                                 num_hosts,
                                 num_devices_per_host,
-                                aval_infer_state=True):
+                                aval_infer_state=True,
+                                stream_mode=False):
     print_used_time(None)
+
+    # stream mode configs
+    if stream_mode:
+        global_config.pipeline_check_alive = False
 
     # Model configs
     (_, no_embedding, batch_size, seq_len, hidden_size, num_layers, num_heads,
@@ -127,15 +138,18 @@ def benchmark_gpt_bert_internal(model_type,
     if model_type == "gpt":
         if no_embedding:
             model = FlaxBertLayerCollection(BertConfig(
+                vocab_size=vocab_size,
                 hidden_size=hidden_size,
-                intermediate_size=hidden_size * 4,
                 num_attention_heads=num_heads,
+                intermediate_size=hidden_size * 4,
                 num_hidden_layers=num_layers,
+                type_vocab_size=0,
+                tie_word_embeddings=tie_word_embeddings,
                 gradient_checkpointing=add_manual_remat,
                 add_manual_pipeline_markers=add_manual_layer_marker,
-                pipeline_mp_size=num_manual_pipeline_stages),
+                pipeline_mp_size=num_manual_pipeline_stages,
+            ),
                                             dtype=dtype)
-
         else:
             model = FlaxGPTForLMModule(BertConfig(
                 vocab_size=vocab_size,
@@ -199,12 +213,26 @@ def benchmark_gpt_bert_internal(model_type,
     executable.sync()
 
     # Benchmark latency
+    losses = []
     tic = time.time()
+    times = {"start": tic}
     for i in range(niter):
         print(f"Iteration {i} ...")
-        _ = infer_step(params, batch, rngkey)
+        loss = infer_step(params, batch, rngkey)
+        loss.get_remote_buffers_async()  # unstable API
+        losses.append(loss)
+        if not stream_mode:
+            executable.sync()
+    for i, loss in enumerate(losses):
+        print(loss._value)
+        times[f"iter{i}"] = time.time() - tic
+    if stream_mode:
         executable.sync()
-    e2e_latency = (time.time() - tic) / niter
+        times["end"] = time.time() - tic
+        e2e_latency = time.time() - tic
+    else:
+        e2e_latency = (time.time() - tic) / niter
+    print(times)
 
     overall_latency = np.mean(executable.get_execution_time_costs())
 

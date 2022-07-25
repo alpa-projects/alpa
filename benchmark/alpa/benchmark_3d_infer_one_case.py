@@ -20,7 +20,8 @@ def benchmark_one_case(model,
                        num_devices_per_host,
                        use_separate_process=False,
                        dump_result=False,
-                       disable_tqdm=False):
+                       disable_tqdm=False,
+                       stream_mode=False):
     if disable_tqdm:
         disable_tqdm_globally()
 
@@ -32,8 +33,12 @@ def benchmark_one_case(model,
 
         # Run benchmark
         if model in ["gpt", "bert"]:
-            result = benchmark_gpt_bert_internal(model, case, niter, num_hosts,
-                                                 num_devices_per_host)
+            result = benchmark_gpt_bert_internal(model,
+                                                 case,
+                                                 niter,
+                                                 num_hosts,
+                                                 num_devices_per_host,
+                                                 stream_mode=stream_mode)
         else:
             raise ValueError(f"Invalid model: {model}")
     else:
@@ -49,6 +54,8 @@ def benchmark_one_case(model,
                f"--dump-result ")
         if disable_tqdm:
             cmd += "--disable-tqdm "
+        if stream_mode:
+            cmd += "--stream-mode "
         ret = run_cmd(cmd)
         if ret == 0:
             result = pickle.load(open(TMP_PICKLE_FILE_NAME, "rb"))
@@ -72,6 +79,7 @@ if __name__ == "__main__":
                         action="store_true",
                         help="Dump results into a temporary pickle file")
     parser.add_argument("--disable-tqdm", action="store_true")
+    parser.add_argument("--stream-mode", action="store_true")
     args = parser.parse_args()
 
     run_cmd("mkdir -p tmp")
@@ -83,4 +91,5 @@ if __name__ == "__main__":
                        args.num_devices_per_host,
                        use_separate_process=False,
                        dump_result=args.dump_result,
-                       disable_tqdm=args.disable_tqdm)
+                       disable_tqdm=args.disable_tqdm,
+                       stream_mode=args.stream_mode)

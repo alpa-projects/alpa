@@ -240,8 +240,8 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                      num_meshes, grad_in_to_out, global_invars,
                      acc_grad_outvars, donate_invars_dict, num_microbatch,
                      logical_mesh_shapes, autosharding_option_dicts,
-                     default_as_option, output_sharding_dict, stage_input_sharings,
-                     name_base, gensym_func):
+                     default_as_option, output_sharding_dict,
+                     stage_input_sharings, name_base, gensym_func):
     """Run intra-op parallelism compilation for a stage."""
     # Initialize donation mapping
     stage_dict = [[] for _ in range(num_meshes)]

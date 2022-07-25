@@ -876,7 +876,8 @@ def generate_sharded_xla_computations_arguments(
 
     if stage_input_sharing:
         sharding_protos = [
-            sharding_spec.sharding_proto() for sharding_spec in stage_input_sharing
+            sharding_spec.sharding_proto()
+            for sharding_spec in stage_input_sharing
         ]
         xe.set_hlo_module_input_shardings(hlo_module, sharding_protos)
 

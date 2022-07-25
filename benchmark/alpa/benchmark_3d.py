@@ -6,8 +6,8 @@ import time
 
 import numpy as np
 
-from alpa.util import (write_tsv, run_cmd, get_num_hosts_and_num_devices,
-                       to_str_round, GB)
+from alpa.util import (write_tsv, get_num_hosts_and_num_devices, to_str_round,
+                       GB)
 
 from benchmark_3d_one_case import benchmark_one_case
 import suite_auto_gpt

@@ -2,19 +2,12 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
-import optax
-import ray
 
-import alpa
-from alpa import (parallelize, global_config, get_global_cluster,
-                  set_global_virtual_physical_mesh, AutoShardingOption,
-                  PipeshardParallel, ManualStageOption, AutoStageOption,
-                  AutoLayerOption)
+from alpa import (get_global_cluster, set_global_virtual_physical_mesh)
 from alpa.model.model_util import optax_adafactor
 from alpa.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
-from alpa.timer import timers
-from alpa.util import print_used_time, to_str_round, GB
+from alpa.util import print_used_time
 
 from benchmark_3d_one_case_gpt_bert import (get_train_step,
                                             compile_and_benchmark_executable)

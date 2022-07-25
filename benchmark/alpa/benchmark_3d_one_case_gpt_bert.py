@@ -3,20 +3,15 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-import ray
-import time
 
 import alpa
-from alpa import (parallelize, global_config, get_global_cluster,
-                  set_global_virtual_physical_mesh, AutoShardingOption,
-                  PipeshardParallel, ManualStageOption, AutoStageOption,
-                  AutoLayerOption, automatic_remat)
+from alpa import (parallelize, get_global_cluster,
+                  set_global_virtual_physical_mesh, automatic_remat)
 from alpa.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from alpa.model.model_util import TrainState
 from alpa.model.gpt_model import FlaxGPTForLMModule
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
-from alpa.timer import timers
-from alpa.util import print_used_time, to_str_round, GB
+from alpa.util import print_used_time
 
 from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops
 from parallel_option import (get_parallel_method,

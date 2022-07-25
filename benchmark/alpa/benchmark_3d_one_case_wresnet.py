@@ -10,12 +10,10 @@ import optax
 import alpa
 from alpa import (parallelize, get_global_cluster,
                   set_global_virtual_physical_mesh, ShardParallel,
-                  PipeshardParallel, AutoShardingOption, ManualStageOption,
-                  AutoStageOption, AutoLayerOption, automatic_remat)
+                  automatic_remat)
 from alpa.model.wide_resnet import get_wide_resnet, TrainState
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
-from alpa.timer import timers
-from alpa.util import print_used_time, compute_param_number, to_str_round
+from alpa.util import print_used_time, compute_param_number
 from parallel_option import (get_parallel_method,
                              compile_and_benchmark_executable)
 

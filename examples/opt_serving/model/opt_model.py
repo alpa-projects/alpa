@@ -176,13 +176,14 @@ class OPTSelfAttention(nn.Module):
             mask = jnp.arange(max_length) - (cache_index_ + 1)
             attention_bias = jnp.expand_dims(
                 (row_idxs[:, None] <= mask).astype(self.dtype) * -1e10, (0, 1))
-            if attention_mask is not None:
-                attention_bias += attention_mask
+            # if attention_mask is not None:
+            #     attention_bias += attention_mask
 
             attention_cache = key_states, value_states, cache_index + num_updated_cache_vectors
         attn_weights = nn.attention.dot_product_attention_weights(
             query_states,
             key_states,
+            mask=attention_mask,
             bias=attention_bias,
             dtype=self.dtype,
             precision=None,
@@ -567,7 +568,7 @@ def init_cache_aval(config, batch_size):
     return tuple(all_cache)
 
 def init_mask_aval(config, batch_size):
-    mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_target_positions), dtype=config.dtype)
+    mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_target_positions), dtype=np.bool)
     return mask
 
 def init_cache_np(config, batch_size):

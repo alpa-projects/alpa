@@ -25,9 +25,7 @@ prompt = [
     "Computer Science studies the area of",
     "University of California Berkeley is a public university"
 ]
-# prompt = "Paris is the capital city of"
 input_ids = tokenizer(prompt, return_tensors="pt", padding="longest").input_ids.to("cuda")
-print(input_ids)
 
 outputs = model.generate(input_ids=input_ids,
                          pad_token_id=tokenizer.pad_token_id,

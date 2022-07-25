@@ -201,16 +201,18 @@ class AlpaInferenceFunc(WrappedInferenceFunc):
         if isinstance(attention_mask, torch.Tensor):
             attention_mask = attention_mask.cpu().numpy()
 
+        # attention_mask =  attention_mask == 1
         batch_size = attention_mask.shape[0]
-        # flip
-        flipped = (attention_mask == 0) * -1e10
-        # extend
-        attention_mask = np.zeros((batch_size, self._max_target_positions),
-                                  dtype=np.float16)
-        attention_mask[:, :flipped.shape[-1]] = flipped
-        # reshape
-        attention_mask = attention_mask[:, np.newaxis, np.newaxis, :]
-        return attention_mask
+        # # flip
+        # big_neg = jnp.finfo(dtype).min
+        # flipped = (attention_mask == 0) * big_neg
+        # # extend
+        ret_mask = np.ones((batch_size, self._max_target_positions),
+                                  dtype=np.bool)
+        ret_mask[:, :attention_mask.shape[-1]] = attention_mask
+        # # reshape
+        ret_mask = ret_mask[:, np.newaxis, np.newaxis, :]
+        return ret_mask
 
 
 def get_hf_gpt_model(model_name, device, num_beams):
@@ -415,6 +417,7 @@ def get_model(model_name: str,
             return executable, params, transformer_config
 
     step_ct = 0
+    last_token = None
 
     def inference_func(input_ids,
                        past_key_values,
@@ -422,19 +425,23 @@ def get_model(model_name: str,
                        output_attentions=False,
                        output_hidden_states=False):
         nonlocal step_ct
+        nonlocal last_token
 
         input_ids_step = input_ids.cpu().numpy()
         if past_key_values is None:
             past_key_values = init_cache
             step_ct = np.zeros_like(input_ids_step)
+            last_token = np.copy(input_ids_step)
 
-        # position_ids_step = np.full_like(input_ids_step,
-        #                                  step_ct + config.pad + 1)
-        position_ids_step = step_ct + config.pad + 1
+        # print(f"before: {last_token}")
+        last_token = input_ids_step * (input_ids_step != config.pad) + last_token * (input_ids_step == config.pad)
+        # print(f"after: {last_token}")
+
+        position_ids_step = step_ct  + config.pad + 1
 
         output = executable(
             params, {
-                "input_ids": input_ids_step,
+                "input_ids": last_token,
                 "position_ids": position_ids_step,
                 "cache": past_key_values,
                 "mask": attention_mask,
@@ -444,7 +451,7 @@ def get_model(model_name: str,
         logits_step = torch.from_numpy(np.array(output.logits)).to(device)
 
         step_ct += (input_ids_step != config.pad)
-        # print(step_ct)
+
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)
 
@@ -454,7 +461,6 @@ def get_model(model_name: str,
                              executable,
                              transformer_config,
                              max_target_positions=config.max_target_positions)
-
 
 def set_skip_shard_args_check(attention_cache):
     """

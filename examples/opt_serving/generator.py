@@ -119,7 +119,9 @@ class GeneratorInterface:
     def load_model(self):
         """Load model and return the model wrapper."""
         tic = time.time()
-        self.model_wrapper = get_model(self.model_name, "cuda", self.path, True, batch_size=MAX_BS)
+        self.model_wrapper = get_model(self.model_name, "cuda", self.path, True,
+                                       batch_size=MAX_BS,
+                                       max_target_positions=MAX_SEQ_LEN)
         load_time = time.time() - tic
 
         # Init tokenizer
@@ -168,6 +170,7 @@ class GeneratorInterface:
         #     utils.set_torch_seed(seed)
         ori_bs = len(inputs)
 
+        # FIXME(Hao): the current batch uses the topp, reponse_length of the first sentence.
         def icml_pad(inputs, pad_value=1):
             new_inputs = inputs
             src_lens = [len(input) for input in inputs]
@@ -205,7 +208,7 @@ class GeneratorInterface:
         assert best_of >= n
         beam_size = best_of
 
-        # TODO (Hao & Yonghao): support beam search
+        # TODO (Hao & Yonghao): support beam search in web server
         if beam_size > 1:
             raise NotImplementedError("We only support beam = 1 now.")
 

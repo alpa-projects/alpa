@@ -252,7 +252,7 @@ class PipeshardConfig:
     output_local_uuid_list: Sequence[Sequence[int]]
     outs_handler: Callable
     # Others (debug info)
-    input_shard_specs: Sequence[Sequence[pxla.ShardingSpec]]
+    stage_input_shard_specs: Sequence[Sequence[pxla.ShardingSpec]]
     input_placement_specs: Sequence[PlacementSpec]
     output_placement_specs: Sequence[PlacementSpec]
     default_auto_sharding_option: AutoShardingOption

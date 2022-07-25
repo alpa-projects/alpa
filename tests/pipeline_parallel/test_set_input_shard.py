@@ -54,7 +54,7 @@ class SetInputShardSpecTest(unittest.TestCase):
                 allow_all_to_all=False,
                 allow_all_gather=False,
             ),
-            input_sharding=executable_1.input_shard_specs)
+            stage_input_shardings=executable_1.stage_input_shard_specs)
 
         # Compile with a different batch size
         executable_2 = parallelize(
@@ -69,8 +69,8 @@ class SetInputShardSpecTest(unittest.TestCase):
                 params,
                 {"x": jax.core.ShapedArray((8, hidden_size), jnp.float32)})
 
-        assert executable_2.input_shard_specs != executable_3.input_shard_specs
-        assert executable_1.input_shard_specs == executable_3.input_shard_specs
+        assert executable_2.stage_input_shard_specs != executable_3.stage_input_shard_specs
+        assert executable_1.stage_input_shard_specs == executable_3.stage_input_shard_specs
 
     def test_set_input_shard_spec(self):
         self.run_set_input_shard_spec()

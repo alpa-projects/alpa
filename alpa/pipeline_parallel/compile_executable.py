@@ -253,9 +253,9 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         jax_all_stages, mesh_stage_mapping,
         OrderedSet(global_invars).union(grad_in_to_out.keys()))
 
-    if input_shardings is None:
-        input_shardings = [None for _ in range(num_meshes)]
-    assert len(input_shardings) == num_meshes
+    if stage_input_sharings is None:
+        stage_input_sharings = [None for _ in range(num_meshes)]
+    assert len(stage_input_sharings) == num_meshes
 
     for i, stage in enumerate(jax_all_stages):
         mesh_indices = list(schedule.stage_placement(i))

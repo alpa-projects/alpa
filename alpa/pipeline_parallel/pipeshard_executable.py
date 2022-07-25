@@ -62,6 +62,7 @@ class PipeshardDriverExecutable:
         self.stages = pipeshard_config.xla_stages
         self.schedule = pipeshard_config.schedule
         self.flop_count = pipeshard_config.flop_count
+        self.stage_input_shard_specs = pipeshard_config.stage_input_shard_specs
         self.input_placement_specs = pipeshard_config.input_placement_specs
         self.output_placement_specs = pipeshard_config.output_placement_specs
         # List[stage_idx -> str]

@@ -38,13 +38,14 @@ import numpy as np
 from datasets import Dataset, load_dataset
 from tqdm import tqdm
 
+import alpa
 import jax
 import jax.numpy as jnp
 import optax
 import transformers
 from flax import jax_utils, traverse_util
 from flax.training import train_state
-from flax.training.common_utils import get_metrics, onehot, shard, shard_prng_key
+from flax.training.common_utils import onehot, shard, shard_prng_key
 from huggingface_hub import Repository
 from transformers import (
     CONFIG_MAPPING,
@@ -58,8 +59,6 @@ from transformers import (
 )
 from transformers.testing_utils import CaptureLogger
 from transformers.utils import get_full_repo_name, send_example_telemetry
-
-import alpa
 
 
 logger = logging.getLogger(__name__)
@@ -287,7 +286,7 @@ def data_loader(rng: jax.random.PRNGKey, dataset: Dataset, batch_size: int, shuf
 def write_train_metric(summary_writer, train_metrics, train_time, step):
     summary_writer.scalar("train_time", train_time, step)
 
-    train_metrics = get_metrics(train_metrics)
+    train_metrics = alpa.util.get_metrics(train_metrics)
     for key, vals in train_metrics.items():
         tag = f"train_{key}"
         for i, val in enumerate(vals):
@@ -523,6 +522,7 @@ def main():
             )
         return output
 
+    logger.info("***** Tokenize dataset *****")
     tokenized_datasets = dataset.map(
         tokenize_function,
         batched=True,
@@ -571,6 +571,7 @@ def main():
     # To speed up this part, we use multiprocessing. See the documentation of the map method for more information:
     # https://huggingface.co/docs/datasets/package_reference/main_classes.html#datasets.Dataset.map
 
+    logger.info("***** Build dataset *****")
     lm_datasets = tokenized_datasets.map(
         group_texts,
         batched=True,
@@ -675,7 +676,10 @@ def main():
 
     # Define gradient update step fn
     def train_step(state, batch):
-        dropout_rng = state.dropout_rng
+        # Alpa uses stateful rng generators so there is no need
+        # to explicitly manage rng seeds. Here we just copy them
+        # to make the code below runnable
+        new_dropout_rng = dropout_rng = state.dropout_rng
 
         def compute_loss(params):
             labels = batch.pop("labels")
@@ -706,6 +710,8 @@ def main():
     p_train_step = alpa.parallelize(train_step, donate_argnums=(0,))
     p_eval_step = alpa.parallelize(eval_step)
 
+    dump_debug_info_train_step = dump_debug_info_eval_step = True
+
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {num_epochs}")
@@ -720,6 +726,9 @@ def main():
         # ======================== Training ================================
         train_start = time.time()
 
+        last_step = -1
+        last_time = time.time()
+
         # Create sampling rng
         rng, input_rng = jax.random.split(rng)
 
@@ -729,21 +738,32 @@ def main():
         # train
         for step in tqdm(range(steps_per_epoch), desc="Training...", position=1, leave=False):
             batch = next(train_loader)
-            batch = shard(batch)
             state, train_metric = p_train_step(state, batch)
             train_metrics.append(train_metric)
 
             cur_step = epoch * (len(train_dataset) // train_batch_size) + step
 
+            if dump_debug_info_train_step:
+                dump_debug_info_train_step = False
+                executable = p_train_step.get_last_executable()
+                executable.dump_debug_info("alpa_debug_info")
+
             if cur_step % training_args.logging_steps == 0 and cur_step > 0:
+                throughput = np.prod(batch["input_ids"].shape) * (cur_step - last_step) /\
+                      (time.time() - last_time)
+                last_step = step
+                last_time = time.time()
+
                 # Save metrics
                 train_time += time.time() - train_start
                 if has_tensorboard and jax.process_index() == 0:
                     write_train_metric(summary_writer, train_metrics, train_time, cur_step)
 
                 epochs.write(
-                    f"Step... ({cur_step} | Loss: {train_metric['loss'].mean()}, Learning Rate:"
-                    f" {train_metric['learning_rate'].mean()})"
+                    f"Step... {cur_step} | "\
+                    f"Loss: {train_metric['loss'].mean():.4f}, "\
+                    f"Learning Rate: {train_metric['learning_rate'].mean():.4f}, "\
+                    f"Throughput: {throughput:.2f} token/s"
                 )
 
                 train_metrics = []
@@ -756,12 +776,16 @@ def main():
                 for _ in tqdm(range(eval_steps), desc="Evaluating...", position=2, leave=False):
                     # Model forward
                     batch = next(eval_loader)
-                    batch = shard(batch)
                     metrics = p_eval_step(state.params, batch)
                     eval_metrics.append(metrics)
 
+                    if dump_debug_info_eval_step:
+                        dump_debug_info_eval_step = False
+                        executable = p_eval_step.get_last_executable()
+                        executable.dump_debug_info("alpa_debug_info")
+
                 # normalize eval metrics
-                eval_metrics = get_metrics(eval_metrics)
+                eval_metrics = alpa.util.get_metrics(eval_metrics)
                 eval_metrics = jax.tree_map(jnp.mean, eval_metrics)
 
                 try:
@@ -784,7 +808,7 @@ def main():
             if cur_step % training_args.save_steps == 0 and cur_step > 0:
                 # save checkpoint after each epoch and push checkpoint to the hub
                 if jax.process_index() == 0:
-                    params = jax.device_get(unreplicate(state.params))
+                    params = state.params
                     model.save_pretrained(training_args.output_dir, params=params)
                     tokenizer.save_pretrained(training_args.output_dir)
                     if training_args.push_to_hub:
@@ -802,7 +826,7 @@ def main():
             eval_metrics.append(metrics)
 
         # normalize eval metrics
-        eval_metrics = get_metrics(eval_metrics)
+        eval_metrics = alpa.util.get_metrics(eval_metrics)
         eval_metrics = jax.tree_map(lambda x: jnp.mean(x).item(), eval_metrics)
 
         try:

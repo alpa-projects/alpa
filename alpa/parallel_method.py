@@ -88,6 +88,8 @@ class ShardParallel(ParallelMethod):
         # Resolve the polymorphism in arguments
         if self.devices is None:
             mesh = get_global_physical_mesh(create_if_not_exist=True)
+            # Use 1d mesh by default
+            mesh = mesh.get_logical_mesh().flatten()
         elif isinstance(self.devices, (list, tuple)):
             mesh = LocalPhysicalDeviceMesh(self.devices)
         else:

@@ -3,12 +3,15 @@ import os
 import argparse
 import multiprocessing as mp
 
-from alpa import init, global_config
+import jax
+
+from alpa import (init, global_config, get_global_cluster,
+                  LocalPhysicalDeviceMesh)
 from alpa.util import disable_tqdm_globally
 
-from benchmark_3d_one_case_gpt_bert import benchmark_gpt_bert_internal
-from benchmark_3d_one_case_moe import benchmark_moe_internal
-from benchmark_3d_one_case_wresnet import benchmark_wresnet_internal
+from benchmark_3d_one_case_gpt_bert import (benchmark_gpt_bert_3d_internal, benchmark_gpt_bert_2d_internal)
+from benchmark_3d_one_case_moe import (benchmark_moe_3d_internal, benchmark_moe_2d_internal)
+from benchmark_3d_one_case_wresnet import (benchmark_wresnet_3d_internal, benchmark_wresnet_2d_internal)
 
 
 def benchmark_one_case_internal(model,
@@ -16,31 +19,60 @@ def benchmark_one_case_internal(model,
                                 niter,
                                 num_hosts,
                                 num_devices_per_host,
+                                shard_only=False,
+                                local=False,
                                 disable_tqdm=False):
     if disable_tqdm:
         disable_tqdm_globally()
 
-    init(cluster="ray")
-
     global_config.use_dummy_value_for_benchmarking = True
     global_config.pipeline_sync_for_timer = True
 
-    # Run benchmark
-    if model in ["gpt", "bert"]:
-        result = benchmark_gpt_bert_internal(model, case, niter, num_hosts,
-                                             num_devices_per_host)
-    elif model == "moe":
-        result = benchmark_moe_internal(case, niter, num_hosts,
-                                        num_devices_per_host)
-    elif model == "wresnet":
-        global_config.xla_client_mem_fraction = 0.88
-        # Due to legacy issues, we turn off auto-tuning. Although the
-        # performance will be much better if we turn it on
-        global_config.xla_gpu_autotune_level = 0
-        result = benchmark_wresnet_internal(case, niter, num_hosts,
-                                            num_devices_per_host)
+    if shard_only:
+        if local:
+            assert num_hosts == 1
+            physical_mesh = LocalPhysicalDeviceMesh(
+                jax.local_devices()[:num_devices_per_host])
+        else:
+            init(cluster="ray")
+            physical_mesh = get_global_cluster().get_physical_mesh(
+                list(range(num_hosts)), num_devices_per_host)
+
+        # Run benchmark
+        if model in ["gpt", "bert"]:
+            result = benchmark_gpt_bert_2d_internal(physical_mesh, model, case,
+                                                    niter)
+        elif model == "moe":
+            result = benchmark_moe_2d_internal(physical_mesh, case, niter)
+        elif model == "wresnet":
+            global_config.xla_client_mem_fraction = 0.88
+            # Due to legacy issues, we turn off auto-tuning. Although the
+            # performance will be much better if we turn it on
+            global_config.xla_gpu_autotune_level = 0
+            result = benchmark_wresnet_2d_internal(physical_mesh, case, niter)
+        else:
+            raise ValueError(f"Invalid model: {model}")
+
     else:
-        raise ValueError(f"Invalid model: {model}")
+        init(cluster="ray")
+
+        # Run benchmark
+        if model in ["gpt", "bert"]:
+            result = benchmark_gpt_bert_3d_internal(model, case, niter,
+                                                    num_hosts,
+                                                    num_devices_per_host)
+        elif model == "moe":
+            result = benchmark_moe_3d_internal(case, niter, num_hosts,
+                                               num_devices_per_host)
+        elif model == "wresnet":
+            global_config.xla_client_mem_fraction = 0.88
+            # Due to legacy issues, we turn off auto-tuning. Although the
+            # performance will be much better if we turn it on
+            global_config.xla_gpu_autotune_level = 0
+            result = benchmark_wresnet_3d_internal(case, niter, num_hosts,
+                                                   num_devices_per_host)
+        else:
+            raise ValueError(f"Invalid model: {model}")
 
     return result
 

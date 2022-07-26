@@ -6,7 +6,8 @@ import optax
 
 import alpa
 from alpa import (parallelize, get_global_cluster,
-                  set_global_virtual_physical_mesh, automatic_remat)
+                  set_global_virtual_physical_mesh, automatic_remat,
+                  global_config)
 from alpa.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from alpa.model.model_util import TrainState
 from alpa.model.gpt_model import FlaxGPTForLMModule
@@ -14,8 +15,10 @@ from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.util import print_used_time
 
 from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops
-from parallel_option import (get_parallel_method,
-                             compile_and_benchmark_executable)
+from parallel_option import (get_pipeshard_parallel_method,
+                             get_shard_parallel_method,
+                             compile_and_benchmark_pipeshard_executable,
+                             compile_and_benchmark_shard_executable)
 
 
 def report_pipeline_breakdown(executable, timer_names, niter):
@@ -91,8 +94,13 @@ def create_train_state_aval(rngkey, model, batch, dtype):
     return state
 
 
-def get_train_step(parallel_method, use_fine_grained_remat,
-                   fine_grained_remat_num_layers):
+def get_train_step(parallel_method,
+                   use_fine_grained_remat=False,
+                   fine_grained_remat_num_layers=None,
+                   grad_func=None):
+
+    if grad_func is None:
+        grad_func = alpa.grad
 
     @parallelize(method=parallel_method)
     def train_step(state, batch, rng_key):
@@ -117,7 +125,7 @@ def get_train_step(parallel_method, use_fine_grained_remat,
             loss_func = automatic_remat(loss_func,
                                         layer_num=fine_grained_remat_num_layers)
 
-        grads = alpa.grad(loss_func)(state.params)
+        grads = grad_func(loss_func)(state.params)
         new_state = state.apply_gradients(grads=grads)
         # TODO(lmzheng): add dynamic scaling for mixed-precision training
         return new_state
@@ -130,13 +138,13 @@ def prepare_gpt_bert_input_and_model(model_type,
                                      add_manual_remat=None,
                                      add_manual_layer_marker=None,
                                      num_manual_pipeline_stages=None,
-                                     aval_train_state=True):
+                                     aval_train_state=True,
+                                     tie_word_embeddings=False):
     print_used_time(None)
     batch_size = benchmark_case.batch_size
     (seq_len, hidden_size, num_layers, num_heads,
      vocab_size) = benchmark_case.model_config
     dtype = jnp.float16
-    tie_word_embeddings = False
     # Prepare input batch
     batch = {
         "input_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),
@@ -203,12 +211,12 @@ def compute_gpt_bert_statistics(benchmark_case, latencies, num_devices):
     return tflops, tflops_ckpt, parameter_count
 
 
-def benchmark_gpt_bert_internal(model_type,
-                                benchmark_case,
-                                niter,
-                                num_hosts,
-                                num_devices_per_host,
-                                aval_train_state=True):
+def benchmark_gpt_bert_3d_internal(model_type,
+                                   benchmark_case,
+                                   niter,
+                                   num_hosts,
+                                   num_devices_per_host,
+                                   aval_train_state=True):
     # Connect to the cluster
     virtual_mesh = get_global_cluster().get_virtual_physical_mesh(
         host_ids=list(range(num_hosts)),
@@ -223,7 +231,7 @@ def benchmark_gpt_bert_internal(model_type,
         use_fine_grained_remat = None
         fine_grained_remat_num_layers = None
     (method, add_manual_remat, add_manual_layer_marker,
-     num_manual_pipeline_stages) = get_parallel_method(
+     num_manual_pipeline_stages) = get_pipeshard_parallel_method(
          benchmark_case,
          virtual_mesh.num_devices_per_host,
          use_fine_grained_remat=use_fine_grained_remat)
@@ -240,7 +248,7 @@ def benchmark_gpt_bert_internal(model_type,
                                 fine_grained_remat_num_layers)
 
     (latencies, max_mem_allocated, compilation_times,
-     executable) = compile_and_benchmark_executable(
+     executable) = compile_and_benchmark_pipeshard_executable(
          benchmark_case.parallel_mode, niter, train_step, state,
          (batch, rngkey))
 
@@ -254,3 +262,31 @@ def benchmark_gpt_bert_internal(model_type,
 
     return (parameter_count, max_mem_allocated, latencies, tflops, tflops_ckpt,
             compilation_times) + get_last_dp_result()
+
+
+def benchmark_gpt_bert_2d_internal(physical_mesh, model_type, benchmark_case,
+                                   niter):
+    # Model configs
+    method, grad_func, use_remat = get_shard_parallel_method(
+        benchmark_case, physical_mesh)
+
+    state, batch, rngkey = prepare_gpt_bert_input_and_model(
+        model_type,
+        benchmark_case,
+        add_manual_remat=use_remat,
+        aval_train_state=global_config.use_dummy_value_for_benchmarking)
+
+    # Compile executable
+    train_step = get_train_step(method, grad_func=grad_func)
+
+    (latencies, ilp_objective,
+     alloc_mem, executable) = compile_and_benchmark_shard_executable(
+         physical_mesh, niter, train_step, state, (batch, rngkey))
+
+    # Compute statistics
+    tflops, tflops_ckpt, parameter_count = compute_gpt_bert_statistics(
+        benchmark_case, latencies, physical_mesh.num_devices)
+    if use_remat:
+        tflops = tflops_ckpt
+    peak_mem = max(physical_mesh.get_max_memory_allocated(), alloc_mem)
+    return parameter_count, ilp_objective, peak_mem, latencies, tflops

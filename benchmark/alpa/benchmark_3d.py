@@ -19,14 +19,17 @@ import suite_wresnet
 benchmark_suites = {
     "gpt.tmp": suite_manual_gpt.tmp_suite,
     "gpt.tmp_auto": suite_auto_gpt.tmp_suite,
+    "gpt.perf_test_fast_2d": suite_manual_gpt.perf_test_fast_2d_suite,
     "gpt.perf_test_manual": suite_manual_gpt.perf_test_suite,
     "gpt.perf_test_auto": suite_auto_gpt.perf_test_suite,
     "gpt.grid_search_auto": suite_auto_gpt.grid_search_suite,
     "gpt.correctness_test_auto": suite_auto_gpt.correctness_test_suite,
     "moe.tmp": suite_manual_moe.tmp_suite,
     "moe.tmp_auto": suite_auto_moe.tmp_suite,
+    "moe.perf_test_fast_2d": suite_manual_moe.perf_test_fast_2d_suite,
     "moe.perf_test_auto": suite_auto_moe.perf_test_suite,
     "moe.grid_search_auto": suite_auto_moe.grid_search_suite,
+    "wresnet.perf_test_2d": suite_wresnet.perf_test_2d_suite,
     "wresnet.perf_test_auto": suite_wresnet.perf_test_auto_suite,
     "wresnet.grid_search_auto": suite_wresnet.grid_search_auto_suite,
 }
@@ -43,11 +46,19 @@ if __name__ == "__main__":
                         help="The number of benchmark iterations")
     parser.add_argument("--num-hosts", type=int, default=None)
     parser.add_argument("--num-devices-per-host", type=int, default=None)
+    parser.add_argument("--shard-only",
+                        action="store_true",
+                        help="Only profile the 2D case. No pipeline "
+                        "parallelism.")
+    parser.add_argument("--local",
+                        action="store_true",
+                        help="Run on local GPUs. Do not use ray actors.")
     parser.add_argument("--no-separate-process",
-                        action='store_false',
-                        help="Do not launch separate processes for benchmark."
-                        "Errors in a single case will terminate this script.",
-                        dest='use_separate_process')
+                        action="store_false",
+                        help="Do not launch separate processes for benchmark. "
+                        "Errors in a single case will terminate this "
+                        "script.",
+                        dest="use_separate_process")
     parser.add_argument("--exp_name", type=str, default="default")
     parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
@@ -80,6 +91,8 @@ if __name__ == "__main__":
             args.niter,
             num_hosts,
             num_devices_per_host,
+            shard_only=args.shard_only,
+            local=args.local,
             use_separate_process=args.use_separate_process,
             disable_tqdm=args.disable_tqdm)
         (parameter_count, max_mem_allocated, latencies, tflops, tflops_ckpt,

@@ -10,8 +10,7 @@ from alpa.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.util import print_used_time
 
-from benchmark_3d_one_case_gpt_bert import (
-    get_train_step)
+from benchmark_3d_one_case_gpt_bert import (get_train_step)
 from benchmark.util import compute_moe_parameter_count, compute_moe_tflops
 from parallel_option import (get_pipeshard_parallel_method,
                              get_shard_parallel_method,
@@ -124,7 +123,7 @@ def compute_moe_statistics(benchmark_case, latencies, num_devices):
 
 
 def benchmark_moe_3d_internal(benchmark_case, niter, num_hosts,
-                           num_devices_per_host):
+                              num_devices_per_host):
     # Connect to the cluster
     virtual_mesh = get_global_cluster().get_virtual_physical_mesh(
         host_ids=list(range(num_hosts)),
@@ -179,8 +178,8 @@ def benchmark_moe_2d_internal(physical_mesh, benchmark_case, niter):
     # Compile executable
     train_step = get_train_step(method, grad_func=grad_func)
 
-    (latencies, ilp_objective,
-     alloc_mem, executable) = compile_and_benchmark_shard_executable(
+    (latencies, ilp_objective, alloc_mem,
+     executable) = compile_and_benchmark_shard_executable(
          physical_mesh, niter, train_step, state, (batch, rngkey))
 
     # Compute statistics

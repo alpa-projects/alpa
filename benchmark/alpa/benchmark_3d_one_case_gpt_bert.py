@@ -279,8 +279,8 @@ def benchmark_gpt_bert_2d_internal(physical_mesh, model_type, benchmark_case,
     # Compile executable
     train_step = get_train_step(method, grad_func=grad_func)
 
-    (latencies, ilp_objective,
-     alloc_mem, executable) = compile_and_benchmark_shard_executable(
+    (latencies, ilp_objective, alloc_mem,
+     executable) = compile_and_benchmark_shard_executable(
          physical_mesh, niter, train_step, state, (batch, rngkey))
 
     # Compute statistics

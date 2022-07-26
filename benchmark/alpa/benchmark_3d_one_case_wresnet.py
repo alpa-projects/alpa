@@ -76,8 +76,11 @@ def create_train_state(rngkey, model, input_images, learning_rate_fn):
     return state
 
 
-def get_train_step(learning_rate_fn, use_remat, num_remat_layers,
-                   method, grad_func=None):
+def get_train_step(learning_rate_fn,
+                   use_remat,
+                   num_remat_layers,
+                   method,
+                   grad_func=None):
 
     if grad_func is None:
         grad_func = alpa.grad
@@ -175,7 +178,7 @@ def prepare_wresnet_input_and_model(benchmark_case):
 
 
 def benchmark_wresnet_3d_internal(benchmark_case, niter, num_hosts,
-                               num_devices_per_host):
+                                  num_devices_per_host):
     # Connect to the cluster
     virtual_mesh = get_global_cluster().get_virtual_physical_mesh(
         host_ids=list(range(num_hosts)),
@@ -193,8 +196,11 @@ def benchmark_wresnet_3d_internal(benchmark_case, niter, num_hosts,
     grad_func = alpa.grad if use_grad_acc else jax.grad
     state, batch, learning_rate_fn = prepare_wresnet_input_and_model(
         benchmark_case)
-    train_step = get_train_step(learning_rate_fn, False, None,
-                                method, grad_func=grad_func)
+    train_step = get_train_step(learning_rate_fn,
+                                False,
+                                None,
+                                method,
+                                grad_func=grad_func)
 
     (latencies, max_mem_allocated, compilation_times,
      executable) = compile_and_benchmark_pipeshard_executable(
@@ -220,18 +226,21 @@ def benchmark_wresnet_3d_internal(benchmark_case, niter, num_hosts,
 
 def benchmark_wresnet_2d_internal(physical_mesh, benchmark_case, niter):
     # Model configs
-    method, grad_func, _ = get_shard_parallel_method(
-        benchmark_case, physical_mesh)
+    method, grad_func, _ = get_shard_parallel_method(benchmark_case,
+                                                     physical_mesh)
 
     use_grad_acc = benchmark_case.num_micro_batches > 1
     grad_func = alpa.grad if use_grad_acc else jax.grad
     state, batch, learning_rate_fn = prepare_wresnet_input_and_model(
         benchmark_case)
-    train_step = get_train_step(learning_rate_fn, False, None,
-                                method, grad_func=grad_func)
+    train_step = get_train_step(learning_rate_fn,
+                                False,
+                                None,
+                                method,
+                                grad_func=grad_func)
 
-    (latencies, ilp_objective,
-     alloc_mem, executable) = compile_and_benchmark_shard_executable(
+    (latencies, ilp_objective, alloc_mem,
+     executable) = compile_and_benchmark_shard_executable(
          physical_mesh, niter, train_step, state, (batch,))
 
     # Compute statistics

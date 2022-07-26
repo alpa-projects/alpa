@@ -97,7 +97,7 @@ def benchmark_one_case(*args, use_separate_process=False, **kwargs):
     p.start()
     p.join()
     if p.exitcode != 0:
-        return -1, -1, [-1], -1, -1, None, None, None, None, None, None
+        return -1, -1, [-1], -1, None
     return result_namespace.result
 
 

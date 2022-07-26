@@ -258,14 +258,15 @@ def benchmark_gpt_bert_3d_internal(model_type,
     #                            "compute"],
     #                           niter)
 
-    (compute_cost_file_name, forward_stage_layer_ids,
-     submesh_shapes, logical_mesh_shapes) = get_last_dp_result()
+    (compute_cost_file_name, forward_stage_layer_ids, submesh_shapes,
+     logical_mesh_shapes, autosharding_option_dicts) = get_last_dp_result()
     metadata = {
         "compilation_times": compilation_times,
         "compute_cost_file_name": compute_cost_file_name,
         "forward_stage_layer_ids": forward_stage_layer_ids,
         "submesh_shapes": submesh_shapes,
         "logical_mesh_shapes": logical_mesh_shapes,
+        "autosharding_option_dicts": autosharding_option_dicts,
     }
 
     return parameter_count, max_mem_allocated, latencies, tflops, metadata

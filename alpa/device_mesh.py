@@ -1055,12 +1055,12 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         Get values of remote buffers.
 
         Args:
-            host_local_ids: For each RemoteArrayRef, we can fetch a list of buffers
-              from multiple devices on multiple hosts. This variable defines a list
-              of (host_id, local_id) pair for each RemoteArrayRef.
-              If it is None, fetch all remote buffers.
-            batching: Whether batch remote calls by host ids. This can reduce ray
-              overhead.
+            host_local_ids: For each RemoteArrayRef, we can fetch a list of
+              buffers from multiple devices on multiple hosts. This variable
+              defines a list of (host_id, local_id) pair for each
+              RemoteArrayRef. If it is None, fetch all remote buffers.
+            batching: Whether batch remote calls by host ids. This can reduce
+              ray overhead.
         """
         return_list = True
         if not isinstance(ary_refs, Iterable):

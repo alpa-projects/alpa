@@ -7,7 +7,8 @@ from jax.interpreters import pxla
 import numpy as np
 import ray
 
-from alpa.device_mesh import (DistributedArray, get_global_physical_mesh,
+from alpa.device_mesh import (DistributedArray, LocalPhysicalDeviceMesh,
+                              get_global_physical_mesh,
                               create_remote_array_refs)
 
 
@@ -96,7 +97,20 @@ def get_num_devices_for_whole_batch(sharding_spec, batch_dim=0):
 class MeshDriverDataLoader:
     """The driver part of a distributed data loader. The driver part creates
     distributed arrays and sends commands to let workers load the data in
-    parallel."""
+    parallel.
+
+    Args:
+        batch_size: The global batch size.
+        num_samples: The number of samples in the whole dataset.
+        input_iter_func: A function with the following signature.
+          func(start: int, end: int, batch_size: int) -> Iterator
+          It returns dataset[start:end] one batch by one batch.
+        placement_specs: The placement specs of batch arguments.
+        prefetch_size: The number of batches to prefetch.
+
+    Note:
+        Currently, this only works for ShardParallel without gradient accumulation.
+    """
 
     def __init__(self,
                  batch_size,
@@ -105,6 +119,10 @@ class MeshDriverDataLoader:
                  placement_specs,
                  prefetch_size=1):
         physical_mesh = get_global_physical_mesh()
+        assert not isinstance(physical_mesh, LocalPhysicalDeviceMesh), (
+            "Please use alpa.DataLoader instead of alpa.MeshWorkerDataLoader "
+            "for local physical device mesh.")
+
         avals = []
         sharding_specs = []
         indices = []
@@ -134,7 +152,6 @@ class MeshDriverDataLoader:
         self.num_batches = num_samples // batch_size
 
         for i in range(physical_mesh.num_hosts):
-            host_output_uuids = []
             host_indices = []
             for j in range(len(avals)):
                 batch_size = avals[j].shape[0]
@@ -158,22 +175,20 @@ class MeshDriverDataLoader:
                 end = (
                     (i // num_hosts_for_one_batch) + 1) * num_samples_per_host
 
-                host_output_uuids.append(self.output_uuids[j])
                 host_indices.append([])
                 for k in range(physical_mesh.num_devices_per_host):
                     device_id = i * physical_mesh.num_devices_per_host + k
                     tmp_indices = list(indices[j][device_id])
+                    offset = i // num_hosts_for_one_batch * batch_size_per_host 
                     if tmp_indices[0].start is not None:
                         tmp_indices[0] = slice(
-                            tmp_indices[0].start -
-                            i // num_hosts_for_one_batch * batch_size_per_host,
-                            tmp_indices[0].stop -
-                            i // num_hosts_for_one_batch * batch_size_per_host,
+                            tmp_indices[0].start - offset,
+                            tmp_indices[0].stop - offset,
                             tmp_indices[0].step)
                     host_indices[-1].append(tuple(tmp_indices))
 
             args = (input_iter_func, (start, end, batch_size_per_host),
-                    host_output_uuids, host_indices, prefetch_size)
+                    self.output_uuids, host_indices, prefetch_size)
             physical_mesh.workers[i].put_data_loader.remote(self.uuid, *args)
 
     def __iter__(self):

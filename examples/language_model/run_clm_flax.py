@@ -821,7 +821,7 @@ def main():
         eval_steps = len(eval_dataset) // eval_batch_size
         for _ in tqdm(range(eval_steps), desc="Evaluating...", position=2, leave=False):
             # Model forward
-            batch = shard(next(eval_loader))
+            batch = next(eval_loader)
             metrics = p_eval_step(state.params, batch)
             eval_metrics.append(metrics)
 

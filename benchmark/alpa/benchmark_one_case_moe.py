@@ -11,7 +11,7 @@ from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.util import print_used_time
 
 from benchmark_one_case_gpt_bert import (get_train_step)
-from benchmark.util import compute_moe_parameter_count, compute_moe_tflops
+from util import compute_moe_parameter_count, compute_moe_tflops
 from parallel_option import (get_pipeshard_parallel_method,
                              get_shard_parallel_method,
                              compile_and_benchmark_pipeshard_executable,

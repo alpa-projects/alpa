@@ -16,7 +16,7 @@ from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.timer import timers
 from alpa.util import print_used_time, to_str_round, GB
 
-from benchmark.util import compute_gpt_parameter_count, compute_inference_gpt_tflops
+from util import compute_gpt_parameter_count, compute_inference_gpt_tflops
 
 
 def create_infer_params_aval(rngkey, model, batch, no_embedding):

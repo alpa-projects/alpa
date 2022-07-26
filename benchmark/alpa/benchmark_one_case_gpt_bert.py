@@ -14,7 +14,7 @@ from alpa.model.gpt_model import FlaxGPTForLMModule
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.util import print_used_time
 
-from benchmark.util import compute_gpt_parameter_count, compute_gpt_tflops
+from util import compute_gpt_parameter_count, compute_gpt_tflops
 from parallel_option import (get_pipeshard_parallel_method,
                              get_shard_parallel_method,
                              compile_and_benchmark_pipeshard_executable,

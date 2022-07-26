@@ -30,6 +30,7 @@ from jax.tree_util import tree_map, tree_flatten, PyTreeDef
 import numpy as np
 import flax
 from flax.training import train_state
+from flax.training.common_utils import stack_forest
 import ray
 import tqdm
 
@@ -785,6 +786,7 @@ def get_metrics(device_metrics):
     This function is similar to flax/training/common_utils.py, but works for
     DistributedArray in alpa.
     """
+    # pylint: disable=import-outside-toplevel
     from alpa.device_mesh import fetch
 
     fetch(device_metrics)

@@ -240,9 +240,9 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
     Final TrainState.
   """
   # Use local devices
-  # alpa.init(cluster="local")
+  alpa.init(cluster="local")
   # Use all devices in a ray cluster
-  alpa.init(cluster="ray")
+  # alpa.init(cluster="ray")
 
   writer = metric_writers.create_default_writer(
       logdir=workdir, just_logging=jax.process_index() != 0)

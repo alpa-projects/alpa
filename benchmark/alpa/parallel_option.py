@@ -286,13 +286,6 @@ def compile_and_benchmark_shard_executable(physical_mesh, niter, train_step,
           f"#all-to-all: {n_all_to_all}")
     print(f"alloc_mem: {alloc_mem / GB:.2f} GB")
 
-    available_mem = physical_mesh.get_available_memory()
-    if alloc_mem > available_mem:
-        print(f"WARNING: alloc_mem ({alloc_mem / GB:.2f} GB) > "
-              f"available_memory ({available_mem / GB:.2f} GB), do not "
-              f"benchmark")
-        latencies = [-1]
-    else:
-        latencies = benchmark_executable(niter, train_step, executable, state,
-                                         other_train_step_inputs)
+    latencies = benchmark_executable(niter, train_step, executable, state,
+                                     other_train_step_inputs)
     return latencies, ilp_objective, alloc_mem, executable

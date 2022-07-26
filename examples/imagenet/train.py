@@ -334,7 +334,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
     if config.get('log_every_steps'):
       train_metrics.append(metrics)
       if (step + 1) % config.log_every_steps == 0:
-        train_metrics = alpa.get_metrics(train_metrics)
+        train_metrics = alpa.util.get_metrics(train_metrics)
         summary = {
             f'train_{k}': v
             for k, v in jax.tree_map(lambda x: x.mean(), train_metrics).items()
@@ -359,7 +359,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
         eval_batch = next(eval_iter)
         metrics = p_eval_step(state, eval_batch)
         eval_metrics.append(metrics)
-      eval_metrics = alpa.get_metrics(eval_metrics)
+      eval_metrics = alpa.util.get_metrics(eval_metrics)
       summary = jax.tree_map(lambda x: x.mean(), eval_metrics)
       logging.info('eval epoch: %d, loss: %.4f, accuracy: %.2f',
                    epoch, summary['loss'], summary['accuracy'] * 100)

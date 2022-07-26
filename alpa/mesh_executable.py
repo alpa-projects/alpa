@@ -412,6 +412,9 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         prefix = os.path.join(folder, name)
         with open(f"{prefix}.hlo", "w") as f:
             f.write(self.get_hlo_text())
+        with open(f"{prefix}.mem_usage.txt", "w") as f:
+            f.write(f"total_allocation_size: "
+                    f"{self.get_total_allocation_size()/(1024**3):.3f} GB")
 
 
 def delete_donated_buffers(buffer_dict, uuids, donated_invars):
@@ -814,6 +817,9 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             f.write(self.get_hlo_text())
         with open(f"{prefix}.grad_sync_channel_ids.txt", "w") as f:
             f.write(str(self.grad_sync_channel_ids) + "\n")
+        with open(f"{prefix}.mem_usage.txt", "w") as f:
+            f.write(f"total_allocation_size: "
+                    f"{self.get_total_allocation_size()/(1024**3):.3f} GB")
 
 
 class GradAccMeshWorkerExecutable(MeshWorkerExecutable):

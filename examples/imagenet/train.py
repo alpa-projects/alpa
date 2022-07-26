@@ -239,7 +239,10 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
   Returns:
     Final TrainState.
   """
+  # Use local devices
   alpa.init(cluster="local")
+  # Use all devices in a ray cluster
+  # alpa.init(cluster="ray")
 
   writer = metric_writers.create_default_writer(
       logdir=workdir, just_logging=jax.process_index() != 0)
@@ -306,6 +309,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
     "label": jax.core.ShapedArray((config.batch_size,), jnp.int32),
   }
   executable = p_train_step.get_executable(state, batch)
+  executable.dump_debug_info("alpa_debug_info")
   logging.info('Initial compilation completed.')
 
   batch_placement_specs = executable.get_input_placement_specs()[1]
@@ -330,7 +334,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
     if config.get('log_every_steps'):
       train_metrics.append(metrics)
       if (step + 1) % config.log_every_steps == 0:
-        train_metrics = common_utils.stack_forest(train_metrics)
+        train_metrics = alpa.util.get_metrics(train_metrics)
         summary = {
             f'train_{k}': v
             for k, v in jax.tree_map(lambda x: x.mean(), train_metrics).items()
@@ -355,7 +359,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
         eval_batch = next(eval_iter)
         metrics = p_eval_step(state, eval_batch)
         eval_metrics.append(metrics)
-      eval_metrics = common_utils.get_metrics(eval_metrics)
+      eval_metrics = alpa.util.get_metrics(eval_metrics)
       summary = jax.tree_map(lambda x: x.mean(), eval_metrics)
       logging.info('eval epoch: %d, loss: %.4f, accuracy: %.2f',
                    epoch, summary['loss'], summary['accuracy'] * 100)

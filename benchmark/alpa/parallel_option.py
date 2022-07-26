@@ -213,6 +213,10 @@ def benchmark_executable(niter,
     for i in range(niter):
         print(f"Iteration {i} ...")
         state = train_step(state, *other_train_step_inputs)
+        if isinstance(state, tuple):
+            # In case the train_step returns extra info (e.g. loss),
+            # Get the actual state out.
+            state = state[0]
         executable.sync()
 
     latencies = executable.get_execution_time_costs()[warmup:]

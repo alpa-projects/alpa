@@ -1,4 +1,4 @@
----
+--------------------------------------------------------------------------------
 
 Adopted from https://github.com/google/flax/tree/main/examples/imagenet.
 
@@ -9,7 +9,7 @@ Quick run:
 python3 main.py --workdir=./imagenet --config=configs/v100_x8.py --config.batch_size 1024
 ```
 
----
+--------------------------------------------------------------------------------
 
 ## ImageNet classification
 

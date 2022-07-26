@@ -352,4 +352,3 @@ def init_dummy(self, *args, **kwargs):
 
 
 setattr(flax.linen.module.Module, "init_dummy", init_dummy)
-setattr(flax.optim, "DynamicScale", dynamic_scale_lib.DynamicScale)

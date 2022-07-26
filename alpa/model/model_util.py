@@ -295,7 +295,7 @@ class TrainState(train_state.TrainState):
     the logic for mixed precision training.
     """
     master_copy: flax.core.FrozenDict[str, Any]
-    dynamic_scale: flax.optim.DynamicScale
+    dynamic_scale: flax.optim.dynamic_scale.DynamicScale
 
     def apply_gradients(self, *, grads, **kwargs):
         """Updates `step`, `params`, `opt_state` and `**kwargs` in return value.

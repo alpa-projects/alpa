@@ -1544,11 +1544,15 @@ class DistributedArray:
         self.delete()
 
 
-def fetch(dis_arrays: Sequence[DistributedArray]):
+def fetch(dis_arrays: Sequence[Union[ShardedDeviceArray, DistributedArray]]):
     """Fetch a pytree of DistributedArray in a batch."""
     group_by_mesh = defaultdict(list)
     for array in tree_leaves(dis_arrays):
-        group_by_mesh[array.device_mesh].append(array)
+        if isinstance(array, ShardedDeviceArray):
+            array.copy_to_host_async()
+        else:
+            assert isinstance(array, DistributedArray)
+            group_by_mesh[array.device_mesh].append(array)
 
     for device_mesh, arrays in group_by_mesh.items():
         buf_refs = []

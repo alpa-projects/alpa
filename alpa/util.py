@@ -776,6 +776,22 @@ def log_jaxpr(jaxpr: ClosedJaxpr, filename: str):
 
 
 ########################################
+##### Flax Utilities
+########################################
+
+
+def get_metrics(device_metrics):
+    """
+    This function is similar to flax/training/common_utils.py, but works for
+    DistributedArray in alpa.
+    """
+    from alpa.device_mesh import fetch
+
+    fetch(device_metrics)
+    return stack_forest(device_metrics)
+
+
+########################################
 ##### Profiling Utilities
 ########################################
 

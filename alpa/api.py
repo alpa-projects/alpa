@@ -26,6 +26,8 @@ def init(cluster: str = "ray"):
     Args:
       cluster: The distributed cluster.
         Possible choices: {"local", "ray"}.
+        "local" means using all local devices on a single node.
+        "ray" means using all devices in a ray cluster.
     """
     global is_initialized
 

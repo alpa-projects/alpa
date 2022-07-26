@@ -151,6 +151,10 @@ class MeshDriverDataLoader:
         self.worker_data_loaders = []
         self.num_batches = num_samples // batch_size
 
+        # Adjust sharding indices
+        # Basic idea:
+        # 1. For each host, assign a contiguous range of the whole dataset to it
+        # 2. Adjust the per-device view of sharding indices to per-host view.
         for i in range(physical_mesh.num_hosts):
             host_indices = []
             for j in range(len(avals)):

@@ -28,10 +28,11 @@ def benchmark_one_case_internal(model,
     if disable_tqdm:
         disable_tqdm_globally()
 
-    global_config.use_dummy_value_for_benchmarking = True
-    global_config.pipeline_sync_for_timer = True
+    # local mode does not support dummy value
+    global_config.use_dummy_value_for_benchmarking = not local
 
     if shard_only:
+        global_config.shard_parallel_sync_for_timer = True
         if local:
             assert num_hosts == 1
             physical_mesh = LocalPhysicalDeviceMesh(
@@ -57,6 +58,7 @@ def benchmark_one_case_internal(model,
             raise ValueError(f"Invalid model: {model}")
 
     else:
+        global_config.pipeline_sync_for_timer = True
         init(cluster="ray")
 
         # Run benchmark

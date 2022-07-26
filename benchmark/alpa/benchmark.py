@@ -63,6 +63,10 @@ if __name__ == "__main__":
     parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
 
+    if args.local:
+        assert args.shard_only, ("Only shard-only mode is supported for "
+                                 "execution on local GPUs.")
+
     # Get the benchmark suite
     num_hosts, num_devices_per_host = get_num_hosts_and_num_devices(args)
     num_gpus = num_hosts * num_devices_per_host

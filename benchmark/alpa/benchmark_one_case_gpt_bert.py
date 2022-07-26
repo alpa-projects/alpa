@@ -200,15 +200,13 @@ def compute_gpt_bert_statistics(benchmark_case, latencies, num_devices):
     batch_size = benchmark_case.batch_size
     (seq_len, hidden_size, num_layers, num_heads,
      vocab_size) = benchmark_case.model_config
+    use_remat = benchmark_case.parallel_args.use_remat
 
     tflops = compute_gpt_tflops(batch_size, seq_len, num_layers, hidden_size,
-                                vocab_size, num_devices, np.mean(latencies))
-    tflops_ckpt = compute_gpt_tflops(batch_size, seq_len, num_layers,
-                                     hidden_size, vocab_size, num_devices,
-                                     np.mean(latencies), True)
+                                vocab_size, num_devices, np.mean(latencies), use_remat)
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size,
                                                   vocab_size)
-    return tflops, tflops_ckpt, parameter_count
+    return tflops, parameter_count
 
 
 def benchmark_gpt_bert_3d_internal(model_type,
@@ -252,7 +250,7 @@ def benchmark_gpt_bert_3d_internal(model_type,
          benchmark_case.parallel_mode, niter, train_step, state,
          (batch, rngkey))
 
-    tflops, tflops_ckpt, parameter_count = compute_gpt_bert_statistics(
+    tflops, parameter_count = compute_gpt_bert_statistics(
         benchmark_case, latencies, virtual_mesh.num_devices)
 
     # report_pipeline_breakdown(executable,
@@ -260,20 +258,29 @@ def benchmark_gpt_bert_3d_internal(model_type,
     #                            "compute"],
     #                           niter)
 
-    return (parameter_count, max_mem_allocated, latencies, tflops, tflops_ckpt,
-            compilation_times) + get_last_dp_result()
+    (compute_cost_file_name, forward_stage_layer_ids,
+     submesh_shapes, logical_mesh_shapes) = get_last_dp_result()
+    metadata = {
+        "compilation_times": compilation_times,
+        "compute_cost_file_name": compute_cost_file_name,
+        "forward_stage_layer_ids": forward_stage_layer_ids,
+        "submesh_shapes": submesh_shapes,
+        "logical_mesh_shapes": logical_mesh_shapes,
+    }
+
+    return parameter_count, max_mem_allocated, latencies, tflops, metadata
 
 
 def benchmark_gpt_bert_2d_internal(physical_mesh, model_type, benchmark_case,
                                    niter):
     # Model configs
-    method, grad_func, use_remat = get_shard_parallel_method(
+    method, grad_func = get_shard_parallel_method(
         benchmark_case, physical_mesh)
 
     state, batch, rngkey = prepare_gpt_bert_input_and_model(
         model_type,
         benchmark_case,
-        add_manual_remat=use_remat,
+        add_manual_remat=benchmark_case.parallel_args.use_remat,
         aval_train_state=global_config.use_dummy_value_for_benchmarking)
 
     # Compile executable
@@ -284,9 +291,10 @@ def benchmark_gpt_bert_2d_internal(physical_mesh, model_type, benchmark_case,
          physical_mesh, niter, train_step, state, (batch, rngkey))
 
     # Compute statistics
-    tflops, tflops_ckpt, parameter_count = compute_gpt_bert_statistics(
+    tflops, parameter_count = compute_gpt_bert_statistics(
         benchmark_case, latencies, physical_mesh.num_devices)
-    if use_remat:
-        tflops = tflops_ckpt
     peak_mem = max(physical_mesh.get_max_memory_allocated(), alloc_mem)
-    return parameter_count, ilp_objective, peak_mem, latencies, tflops
+    metadata = {
+        "ilp_objective": ilp_objective,
+    }
+    return parameter_count, peak_mem, latencies, tflops, metadata

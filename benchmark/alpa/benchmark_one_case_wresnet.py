@@ -220,13 +220,22 @@ def benchmark_wresnet_3d_internal(benchmark_case, niter, num_hosts,
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
     parameter_count = compute_param_number(state.params)
 
-    return (parameter_count, max_mem_allocated, latencies, tflops, tflops,
-            compilation_times) + get_last_dp_result()
+    (compute_cost_file_name, forward_stage_layer_ids,
+     submesh_shapes, logical_mesh_shapes) = get_last_dp_result()
+    metadata = {
+        "compilation_times": compilation_times,
+        "compute_cost_file_name": compute_cost_file_name,
+        "forward_stage_layer_ids": forward_stage_layer_ids,
+        "submesh_shapes": submesh_shapes,
+        "logical_mesh_shapes": logical_mesh_shapes,
+    }
+
+    return parameter_count, max_mem_allocated, latencies, tflops, metadata
 
 
 def benchmark_wresnet_2d_internal(physical_mesh, benchmark_case, niter):
     # Model configs
-    method, grad_func, _ = get_shard_parallel_method(benchmark_case,
+    method, grad_func = get_shard_parallel_method(benchmark_case,
                                                      physical_mesh)
 
     use_grad_acc = benchmark_case.num_micro_batches > 1
@@ -248,4 +257,7 @@ def benchmark_wresnet_2d_internal(physical_mesh, benchmark_case, niter):
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
     parameter_count = compute_param_number(state.params)
     peak_mem = max(physical_mesh.get_max_memory_allocated(), alloc_mem)
-    return parameter_count, ilp_objective, peak_mem, latencies, tflops
+    metadata = {
+        "ilp_objective": ilp_objective,
+    }
+    return parameter_count, peak_mem, latencies, tflops, metadata

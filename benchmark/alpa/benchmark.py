@@ -9,7 +9,7 @@ import numpy as np
 from alpa.util import (write_tsv, get_num_hosts_and_num_devices, to_str_round,
                        GB)
 
-from benchmark_3d_one_case import benchmark_one_case
+from benchmark_one_case import benchmark_one_case
 import suite_auto_gpt
 import suite_auto_moe
 import suite_manual_gpt
@@ -95,23 +95,19 @@ if __name__ == "__main__":
             local=args.local,
             use_separate_process=args.use_separate_process,
             disable_tqdm=args.disable_tqdm)
-        (parameter_count, max_mem_allocated, latencies, tflops, tflops_ckpt,
-         compilation_times, compute_cost_file_name, forward_stage_layer_ids,
-         submesh_shapes, logical_mesh_shapes,
-         autosharding_option_dicts) = result
+        (parameter_count, peak_mem, latencies, tflops, metadata) = result
 
         heads = [
             "Type", "Model Config", "#Microbatch", "#GPU", "Parallel Config",
-            "Mean Time", "Std Time", "#Params", "TFLOPs", "TFLOPs (ckpt)",
-            "Peak Mem", "Compilation Time"
+            "Mean Time (s)", "Std Time (s)", "#Params (Billion)", "TFLOPs",
+            "Peak Mem (GB)", "Metadata"
         ]
         values = [
             model_type, model_config, num_micro_batches, num_gpus,
-            parallel_args, f"{np.mean(latencies):.3f}s",
+            parallel_args, f"{np.mean(latencies):.3f}",
             f"{np.std(latencies):.3f}", f"{parameter_count/1e9:.3f}B",
-            f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
-            f"{max_mem_allocated/GB:.3f}G",
-            to_str_round(compilation_times, 2)
+            f"{tflops:.2f}", f"{peak_mem/GB:.3f}",
+            to_str_round(metadata, 2)
         ]
         write_tsv(heads, values, output_name)
 

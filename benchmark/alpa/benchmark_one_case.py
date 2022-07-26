@@ -9,12 +9,12 @@ from alpa import (init, global_config, get_global_cluster,
                   LocalPhysicalDeviceMesh)
 from alpa.util import disable_tqdm_globally
 
-from benchmark_3d_one_case_gpt_bert import (benchmark_gpt_bert_3d_internal,
-                                            benchmark_gpt_bert_2d_internal)
-from benchmark_3d_one_case_moe import (benchmark_moe_3d_internal,
-                                       benchmark_moe_2d_internal)
-from benchmark_3d_one_case_wresnet import (benchmark_wresnet_3d_internal,
-                                           benchmark_wresnet_2d_internal)
+from benchmark_one_case_gpt_bert import (benchmark_gpt_bert_3d_internal,
+                                         benchmark_gpt_bert_2d_internal)
+from benchmark_one_case_moe import (benchmark_moe_3d_internal,
+                                    benchmark_moe_2d_internal)
+from benchmark_one_case_wresnet import (benchmark_wresnet_3d_internal,
+                                        benchmark_wresnet_2d_internal)
 
 
 def benchmark_one_case_internal(model,
@@ -123,9 +123,11 @@ if __name__ == "__main__":
     from suite_wresnet import WResNetModelConfig
     case = eval(args.case)
 
-    benchmark_one_case(args.model,
-                       case,
-                       args.niter,
-                       args.num_hosts,
-                       args.num_devices_per_host,
-                       disable_tqdm=args.disable_tqdm)
+    result = benchmark_one_case(args.model,
+                                case,
+                                args.niter,
+                                args.num_hosts,
+                                args.num_devices_per_host,
+                                disable_tqdm=args.disable_tqdm)
+
+    print(result)

@@ -195,7 +195,7 @@ def get_shard_parallel_method(benchmark_case: BenchmarkCase,
                            auto_sharding_option=as_option)
     print_used_time("Setup device mesh")
 
-    return method, grad_func, use_remat
+    return method, grad_func
 
 
 def benchmark_executable(niter,

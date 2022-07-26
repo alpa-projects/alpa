@@ -1,12 +1,15 @@
-Adopted from https://github.com/google/flax/tree/main/examples/mnist with the following modifications to better demonstrate the training speeedup on this small network.
-- Use a large batch size
-- Use numpy array for data loading instead of jax numpy array
-- Remove random permutation
+--------------------------------------------------------------------------------
+
+Adopted from https://github.com/google/flax/tree/main/examples/mnist.
+
+Use `alpa.parallelize` to parallelize the training loop.
 
 Quick run
 ```
-python3 main.py --workdir=/tmp/mnist --config=configs/default.py
+python3 main.py --workdir=/tmp/mnist --config=configs/default.py --config.batch_size 8192
 ```
+
+--------------------------------------------------------------------------------
 
 ## MNIST classification
 

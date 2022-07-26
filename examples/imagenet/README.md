@@ -1,5 +1,6 @@
 ---
 Adopted from https://github.com/google/flax/tree/main/examples/imagenet.
+Use `alpa.parallelize` to parallelize the training loop.
 
 Quick run:
 ```

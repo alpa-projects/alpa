@@ -167,11 +167,20 @@ def eval_step(state, batch):
 
 def create_input_iter(dataset_builder, batch_size, image_size, dtype,
                       placement_specs, train, cache):
-  ds = input_pipeline.create_split(
-      dataset_builder, batch_size, image_size=image_size, dtype=dtype,
-      train=train, cache=cache)
-  it = map(lambda xs: jax.tree_map(lambda x: x._numpy(), xs), ds)
-  it = alpa.DataLoader(it, placement_specs, prefetch_size=4)
+
+  def input_iter_func(start, end, batch_size):
+      ds = input_pipeline.create_split(
+	  dataset_builder, batch_size, train,
+	  start, end,
+	  image_size=image_size, dtype=dtype, cache=cache)
+      return map(lambda xs: (xs["image"]._numpy(), xs["label"]._numpy()), ds)
+
+  split_name = "train" if train else "validation"
+
+  it = alpa.MeshDriverDataLoader(
+      batch_size, dataset_builder.info.splits[split_name].num_examples,
+      input_iter_func, placement_specs, prefetch_size=4)
+  it = map(lambda x: {"image": x[0], "label": x[1]}, it)
   return it
 
 
@@ -240,10 +249,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
   Returns:
     Final TrainState.
   """
-  # Use local devices
-  alpa.init(cluster="local")
-  # Use all devices in a ray cluster
-  # alpa.init(cluster="ray")
+  alpa.init(cluster="ray")
 
   writer = metric_writers.create_default_writer(
       logdir=workdir, just_logging=jax.process_index() != 0)

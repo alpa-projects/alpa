@@ -38,6 +38,7 @@ from jax import lax
 import jax.numpy as jnp
 from jax import random
 import ml_collections
+import numpy as np
 import optax
 import ray
 import tensorflow as tf
@@ -195,11 +196,10 @@ def restore_checkpoint(state, workdir):
 
 
 def save_checkpoint(state, workdir):
-  if jax.process_index() == 0:
-    # get train state from the first replica
-    state = jax.device_get(jax.tree_map(lambda x: x[0], state))
-    step = int(state.step)
-    checkpoints.save_checkpoint(workdir, state, step, keep=3)
+  alpa.fetch(state)
+  state = alpa.util.map_to_nparray(state)
+  step = int(state.step)
+  checkpoints.save_checkpoint(workdir, state, step, keep=3)
 
 
 # pmean only works inside pmap because it needs an axis name.
@@ -315,7 +315,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
 
   p_train_step = alpa.parallelize(
       functools.partial(train_step, learning_rate_fn=learning_rate_fn))
-  p_eval_step = alpa.parallelize(eval_step)
+  p_eval_step = alpa.parallelize(eval_step, donate_argnums=())
 
   logging.info('Initial compilation, this might take some minutes...')
   batch = {
@@ -338,8 +338,8 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
 
   train_metrics = []
   hooks = []
-  #if jax.process_index() == 0:
-  #  hooks += [periodic_actions.Profile(num_profile_steps=5, logdir=workdir)]
+  if jax.process_index() == 0:
+    hooks += [periodic_actions.Profile(num_profile_steps=5, logdir=workdir)]
   train_metrics_last_t = time.time()
   for step, batch in zip(range(step_offset, num_steps), train_iter):
     state, metrics = p_train_step(state, batch)
@@ -360,16 +360,10 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
         train_metrics = []
         train_metrics_last_t = time.time()
 
-    # Currently, evaluation and model saving are not optimized in alpa
-    # TODO: support the logic below
-    continue
-
     if (step + 1) % steps_per_epoch == 0:
       epoch = step // steps_per_epoch
       eval_metrics = []
 
-      # sync batch statistics across replicas
-      state = sync_batch_stats(state)
       for _ in range(steps_per_eval):
         eval_batch = next(eval_iter)
         metrics = p_eval_step(state, eval_batch)
@@ -382,10 +376,9 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
           step + 1, {f'eval_{key}': val for key, val in summary.items()})
       writer.flush()
     if (step + 1) % steps_per_checkpoint == 0 or step + 1 == num_steps:
-      state = sync_batch_stats(state)
       save_checkpoint(state, workdir)
 
   # Wait until computations are done before exiting
-  jax.random.normal(jax.random.PRNGKey(0), ()).block_until_ready()
+  executable.sync()
 
   return state

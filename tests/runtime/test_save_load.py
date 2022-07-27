@@ -13,17 +13,6 @@ from alpa import init, parallelize, PipeshardParallel
 from alpa.testing import get_mlp_train_state_and_step, assert_allclose
 
 
-def tree_to_nparray(tree):
-    """Convert a pytree to a pytree of numpy array."""
-
-    def convert_to_nparray(x):
-        if hasattr(x, "__array__"):
-            return np.asanyarray(x)
-        return x
-
-    return jax.tree_map(convert_to_nparray, tree)
-
-
 class SaveLoadTest(unittest.TestCase):
 
     def setUp(self):
@@ -49,7 +38,7 @@ class SaveLoadTest(unittest.TestCase):
         # Save model to a temporary file
         outfile = TemporaryFile()
         parallel_state_dict = flax.serialization.to_state_dict(parallel_state)
-        pickle.dump(tree_to_nparray(parallel_state_dict), outfile)
+        pickle.dump(alpa.util.map_to_nparray(parallel_state_dict), outfile)
 
         # Load model from the temporary file
         outfile.seek(0)

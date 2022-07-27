@@ -1127,6 +1127,17 @@ def map_to_shape(array_pytree: PyTreeDef):
     return tree_map(lambda x: getattr(x, "shape", None), array_pytree)
 
 
+def map_to_nparray(tree: PyTreeDef):
+    """Map a PyTree to a PyTree of numpy array."""
+
+    def convert_to_nparray(x):
+        if hasattr(x, "__array__"):
+            return np.asarray(x)
+        return x
+
+    return jax.tree_map(convert_to_nparray, tree)
+
+
 def compute_bytes(pytree: PyTreeDef):
     """Compute the total bytes of arrays in a pytree."""
     flatten_args, _ = tree_flatten(pytree)

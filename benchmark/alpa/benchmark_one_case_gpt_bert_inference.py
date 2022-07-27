@@ -1,20 +1,13 @@
 """Benchmark one case of inter-op + intra-op parallelism."""
 import jax
 import jax.numpy as jnp
-from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
 import numpy as np
-import optax
-import time
 
-from alpa import (parallelize, global_config, get_global_cluster,
-                  set_global_virtual_physical_mesh, AutoShardingOption,
-                  PipeshardParallel, ManualStageOption)
+from alpa import (parallelize, get_global_cluster,
+                  set_global_virtual_physical_mesh)
 from alpa.model.bert_model import BertConfig, FlaxBertLayerCollection
-from alpa.model.model_util import TrainState
 from alpa.model.gpt_model import FlaxGPTForLMModule
-from alpa.pipeline_parallel.stage_construction import get_last_dp_result
-from alpa.timer import timers
-from alpa.util import print_used_time, to_str_round, GB
+from alpa.util import print_used_time
 
 from util import compute_gpt_parameter_count, compute_gpt_tflops
 from parallel_option import (

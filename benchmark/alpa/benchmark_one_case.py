@@ -145,9 +145,17 @@ if __name__ == "__main__":
     parser.add_argument("--case", type=str, required=True)
     parser.add_argument("--num-hosts", type=int)
     parser.add_argument("--num-devices-per-host", type=int)
-    parser.add_argument("--dump-result",
+    parser.add_argument("--shard-only",
                         action="store_true",
-                        help="Dump results into a temporary pickle file")
+                        help="Only profile the 2D case. No pipeline "
+                        "parallelism.")
+    parser.add_argument("--local",
+                        action="store_true",
+                        help="Run on local GPUs. Do not use ray actors.")
+    parser.add_argument("--profile-driver-time",
+                        action="store_true",
+                        help="Profile the execution time on the driver instead "
+                        "of the workers.")
     parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
 
@@ -165,6 +173,9 @@ if __name__ == "__main__":
                                 args.niter,
                                 args.num_hosts,
                                 args.num_devices_per_host,
+                                shard_only=args.shard_only,
+                                local=args.local,
+                                profile_driver_time=args.profile_driver_time,
                                 disable_tqdm=args.disable_tqdm)
 
     print(result)

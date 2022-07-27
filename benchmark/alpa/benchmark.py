@@ -37,6 +37,65 @@ benchmark_suites = {
     "wresnet.grid_search_auto": suite_wresnet.grid_search_auto_suite,
 }
 
+
+def benchmark_suite(suite, num_hosts, num_devices_per_host, exp_name, niter,
+                    shard_only=False, local=False, profile_driver_time=False,
+                    disable_tqdm=False, use_separate_process=True):
+    num_gpus = num_hosts * num_devices_per_host
+
+    if local:
+        assert shard_only, ("Only shard-only mode is supported for execution "
+                            "on local GPUs.")
+
+    assert num_gpus in benchmark_suites[suite], (
+        f"No available benchmark suite for {suite} on {num_gpus} GPUs")
+    suite = benchmark_suites[suite][num_gpus]
+
+    os.makedirs("tmp", exist_ok=True)
+
+    model_type = suite.split(".")[0]
+    date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    output_name = f"{model_type}_alpa_{exp_name}_{date_str}.tsv"
+
+    # Run all cases
+    for benchmark_case in suite:
+        model_config = benchmark_case.model_config
+        num_micro_batches = benchmark_case.num_micro_batches
+        parallel_args = benchmark_case.parallel_args
+
+        # Run one case
+        print("Working on case: {}".format(str(benchmark_case)))
+        result = benchmark_one_case(
+            model_type,
+            benchmark_case,
+            niter,
+            num_hosts,
+            num_devices_per_host,
+            shard_only=shard_only,
+            local=local,
+            profile_driver_time=profile_driver_time,
+            disable_tqdm=disable_tqdm,
+            use_separate_process=use_separate_process)
+
+        (parameter_count, peak_mem, latencies, tflops, metadata) = result
+
+        heads = [
+            "Type", "Model Config", "#Microbatch", "#GPU", "Parallel Config",
+            "Mean Time (s)", "Std Time (s)", "#Params (Billion)", "TFLOPs",
+            "Peak Mem (GB)", "Metadata"
+        ]
+        values = [
+            model_type, model_config, num_micro_batches, num_gpus,
+            parallel_args, f"{np.mean(latencies):.3f}",
+            f"{np.std(latencies):.3f}", f"{parameter_count/1e9:.3f}B",
+            f"{tflops:.2f}", f"{peak_mem/GB:.3f}",
+            to_str_round(metadata, 2)
+        ]
+        write_tsv(heads, values, output_name)
+
+        time.sleep(0.1)  # for ctrl+c to work
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--suite",
@@ -70,57 +129,9 @@ if __name__ == "__main__":
     parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
 
-    if args.local:
-        assert args.shard_only, ("Only shard-only mode is supported for "
-                                 "execution on local GPUs.")
-
-    # Get the benchmark suite
     num_hosts, num_devices_per_host = get_num_hosts_and_num_devices(args)
-    num_gpus = num_hosts * num_devices_per_host
 
-    assert num_gpus in benchmark_suites[args.suite], (
-        f"No available benchmark suite for {args.suite} on {num_gpus} GPUs")
-    suite = benchmark_suites[args.suite][num_gpus]
-
-    os.makedirs("tmp", exist_ok=True)
-
-    model_type = args.suite.split(".")[0]
-    date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    output_name = f"{model_type}_alpa_{args.exp_name}_{date_str}.tsv"
-
-    # Run all cases
-    for benchmark_case in suite:
-        model_config = benchmark_case.model_config
-        num_micro_batches = benchmark_case.num_micro_batches
-        parallel_args = benchmark_case.parallel_args
-
-        # Run one case
-        print("Working on case: {}".format(str(benchmark_case)))
-        result = benchmark_one_case(
-            model_type,
-            benchmark_case,
-            args.niter,
-            num_hosts,
-            num_devices_per_host,
-            shard_only=args.shard_only,
-            local=args.local,
-            use_separate_process=args.use_separate_process,
-            profile_driver_time=args.profile_driver_time,
-            disable_tqdm=args.disable_tqdm)
-        (parameter_count, peak_mem, latencies, tflops, metadata) = result
-
-        heads = [
-            "Type", "Model Config", "#Microbatch", "#GPU", "Parallel Config",
-            "Mean Time (s)", "Std Time (s)", "#Params (Billion)", "TFLOPs",
-            "Peak Mem (GB)", "Metadata"
-        ]
-        values = [
-            model_type, model_config, num_micro_batches, num_gpus,
-            parallel_args, f"{np.mean(latencies):.3f}",
-            f"{np.std(latencies):.3f}", f"{parameter_count/1e9:.3f}B",
-            f"{tflops:.2f}", f"{peak_mem/GB:.3f}",
-            to_str_round(metadata, 2)
-        ]
-        write_tsv(heads, values, output_name)
-
-        time.sleep(0.1)  # for ctrl+c to work
+    benchmark_suite(args.suite, num_hosts, num_devices_per_host, args.exp_name,
+                    args.niter, args.shard_only, args.local,
+                    args.profile_driver_time, args.disable_tqdm,
+                    args.use_separate_process)

@@ -172,7 +172,9 @@ def preprocess_for_eval(image_bytes, dtype=tf.float32, image_size=IMAGE_SIZE):
   return image
 
 
-def create_split(dataset_builder, batch_size, train, dtype=tf.float32,
+def create_split(dataset_builder, batch_size, train,
+                 split_start, split_end,
+                 dtype=tf.float32,
                  image_size=IMAGE_SIZE, cache=False):
   """Creates a split from the ImageNet dataset using TensorFlow Datasets.
 
@@ -186,16 +188,15 @@ def create_split(dataset_builder, batch_size, train, dtype=tf.float32,
   Returns:
     A `tf.data.Dataset`.
   """
+  # Hide any GPUs from TensorFlow. Otherwise TF might reserve memory and make
+  # it unavailable to JAX.
+  tf.config.experimental.set_visible_devices([], 'GPU')
   if train:
     train_examples = dataset_builder.info.splits['train'].num_examples
-    split_size = train_examples // jax.process_count()
-    start = jax.process_index() * split_size
-    split = 'train[{}:{}]'.format(start, start + split_size)
+    split = f'train[{split_start}:{split_end}]'
   else:
     validate_examples = dataset_builder.info.splits['validation'].num_examples
-    split_size = validate_examples // jax.process_count()
-    start = jax.process_index() * split_size
-    split = 'validation[{}:{}]'.format(start, start + split_size)
+    split = f'validation[{split_start}:{split_end}]'
 
   def decode_example(example):
     if train:

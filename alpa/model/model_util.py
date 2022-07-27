@@ -4,6 +4,7 @@ from dataclasses import fields
 from typing import Any, Callable, Optional, Tuple, Optional, Union
 
 import flax
+from flax.optim import dynamic_scale as dynamic_scale_lib
 from flax.training import train_state
 import numpy as np
 import jax
@@ -295,7 +296,7 @@ class TrainState(train_state.TrainState):
     the logic for mixed precision training.
     """
     master_copy: flax.core.FrozenDict[str, Any]
-    dynamic_scale: flax.optim.DynamicScale
+    dynamic_scale: dynamic_scale_lib.DynamicScale
 
     def apply_gradients(self, *, grads, **kwargs):
         """Updates `step`, `params`, `opt_state` and `**kwargs` in return value.

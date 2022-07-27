@@ -19,6 +19,7 @@ The data is loaded using tensorflow_datasets.
 """
 
 import functools
+import os
 import time
 from typing import Any
 
@@ -28,7 +29,7 @@ from clu import metric_writers
 from clu import periodic_actions
 import flax
 from flax import jax_utils
-from flax import optim
+from flax.optim import dynamic_scale as dynamic_scale_lib
 from flax.training import checkpoints
 from flax.training import common_utils
 from flax.training import train_state
@@ -115,9 +116,9 @@ def train_step(state, batch, learning_rate_fn):
     loss = cross_entropy_loss(logits, batch['label'])
     weight_penalty_params = jax.tree_leaves(params)
     weight_decay = 0.0001
-    weight_l2 = sum([jnp.sum(x ** 2)
+    weight_l2 = sum(jnp.sum(x ** 2)
                      for x in weight_penalty_params
-                     if x.ndim > 1])
+                     if x.ndim > 1)
     weight_penalty = weight_decay * 0.5 * weight_l2
     loss = loss + weight_penalty
     return loss, (new_model_state, logits)
@@ -144,14 +145,15 @@ def train_step(state, batch, learning_rate_fn):
     # if is_fin == False the gradients contain Inf/NaNs and optimizer state and
     # params should be restored (= skip this step).
     new_state = new_state.replace(
-        opt_state=jax.tree_multimap(
+        opt_state=jax.tree_map(
             functools.partial(jnp.where, is_fin),
             new_state.opt_state,
             state.opt_state),
-        params=jax.tree_multimap(
+        params=jax.tree_map(
             functools.partial(jnp.where, is_fin),
             new_state.params,
-            state.params))
+            state.params),
+        dynamic_scale=dynamic_scale)
     metrics['scale'] = dynamic_scale.scale
 
   return new_state, metrics
@@ -166,17 +168,26 @@ def eval_step(state, batch):
 
 def create_input_iter(dataset_builder, batch_size, image_size, dtype,
                       placement_specs, train, cache):
-  ds = input_pipeline.create_split(
-      dataset_builder, batch_size, image_size=image_size, dtype=dtype,
-      train=train, cache=cache)
-  it = map(lambda xs: jax.tree_map(lambda x: x._numpy(), xs), ds)
-  it = alpa.DataLoader(it, placement_specs, prefetch_size=4)
+
+  def input_iter_func(start, end, batch_size):
+      ds = input_pipeline.create_split(
+          dataset_builder, batch_size, train,
+          start, end,
+          image_size=image_size, dtype=dtype, cache=cache)
+      return map(lambda xs: (xs["image"]._numpy(), xs["label"]._numpy()), ds)
+
+  split_name = "train" if train else "validation"
+
+  it = alpa.MeshDriverDataLoader(
+      batch_size, dataset_builder.info.splits[split_name].num_examples,
+      input_iter_func, placement_specs, prefetch_size=4, repeat=True)
+  it = map(lambda x: {"image": x[0], "label": x[1]}, it)
   return it
 
 
 class TrainState(train_state.TrainState):
   batch_stats: Any
-  dynamic_scale: flax.optim.DynamicScale
+  dynamic_scale: dynamic_scale_lib.DynamicScale
 
 
 def restore_checkpoint(state, workdir):
@@ -209,7 +220,7 @@ def create_train_state(rng, config: ml_collections.ConfigDict,
   dynamic_scale = None
   platform = jax.local_devices()[0].platform
   if config.half_precision and platform == 'gpu':
-    dynamic_scale = optim.DynamicScale()
+    dynamic_scale = dynamic_scale_lib.DynamicScale()
   else:
     dynamic_scale = None
 
@@ -239,10 +250,14 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
   Returns:
     Final TrainState.
   """
-  # Use local devices
-  alpa.init(cluster="local")
-  # Use all devices in a ray cluster
-  # alpa.init(cluster="ray")
+  # Initialize ray.
+  # The `runtime_env` argument is used to upload local python scripts to
+  # remote workers while excluding checkpoints, profiling events, etc.
+  ray.init(address="auto",
+           runtime_env={"working_dir": ".",
+	                "excludes": [os.path.relpath(workdir)]})
+  # Initialize alpa.
+  alpa.init(cluster="ray")
 
   writer = metric_writers.create_default_writer(
       logdir=workdir, just_logging=jax.process_index() != 0)

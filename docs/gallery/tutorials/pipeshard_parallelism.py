@@ -29,6 +29,8 @@ from jax import random
 import optax
 import ray
 
+alpa.util.disable_tqdm_globally()
+
 ################################################################################
 # Connect to a Ray Cluster
 # -------------------------------------------

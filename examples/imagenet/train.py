@@ -258,7 +258,6 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
 	                "excludes": [os.path.relpath(workdir)]})
   # Initialize alpa.
   alpa.init(cluster="ray")
-  alpa.global_config.use_dummy_value_for_benchmarking = True
 
   writer = metric_writers.create_default_writer(
       logdir=workdir, just_logging=jax.process_index() != 0)

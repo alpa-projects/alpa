@@ -17,6 +17,7 @@ from typing import Callable, Optional, Sequence, Union, Any
 
 from jax import linear_util as lu
 from jax.core import AbstractValue
+from jax.interpreters import pxla
 from jax.tree_util import PyTreeDef
 import numpy as np
 
@@ -87,6 +88,8 @@ class ShardParallel(ParallelMethod):
         # Resolve the polymorphism in arguments
         if self.devices is None:
             mesh = get_global_physical_mesh(create_if_not_exist=True)
+            # Use 1d mesh by default
+            mesh = mesh.get_logical_mesh().flatten()
         elif isinstance(self.devices, (list, tuple)):
             mesh = LocalPhysicalDeviceMesh(self.devices)
         else:
@@ -166,16 +169,20 @@ class PipeshardParallel(ParallelMethod):
         stage_option: Options of grouping layers into pipeline stages.
           Possible choices are {"uniform", "auto", alpa.AutoStageOption,
                                  alpa.ManualStageOption}
+        stage_input_shardings: Options of input sharding specs for each stage.
+          Shape: [num_pipeline_stages, num_input_vars_in_hlo_module].
     """
 
     def __init__(
-            self,
-            devices: Optional[VirtualPhysicalMesh] = None,
-            num_micro_batches: int = 1,
-            default_auto_sharding_option: Optional[AutoShardingOption] = None,
-            pipeline_schedule: str = "1f1b",
-            layer_option: Optional[Union[LayerOption, str]] = None,
-            stage_option: Optional[Union[StageOption, str]] = None):
+        self,
+        devices: Optional[VirtualPhysicalMesh] = None,
+        num_micro_batches: int = 1,
+        default_auto_sharding_option: Optional[AutoShardingOption] = None,
+        pipeline_schedule: str = "1f1b",
+        layer_option: Optional[Union[LayerOption, str]] = None,
+        stage_option: Optional[Union[StageOption, str]] = None,
+        stage_input_shardings: Optional[Sequence[Sequence[
+            pxla.ShardingSpec]]] = None):
         self.devices = devices
         self.num_micro_batches = num_micro_batches
         self.as_option = (default_auto_sharding_option or
@@ -196,6 +203,7 @@ class PipeshardParallel(ParallelMethod):
         elif stage_option == "uniform":
             stage_option = UniformStageOption()
         self.stage_option = stage_option or UniformStageOption()
+        self.stage_input_shardings = stage_input_shardings
 
     def compile_executable(
         self,
@@ -220,7 +228,8 @@ class PipeshardParallel(ParallelMethod):
         return compile_pipeshard_executable(
             fun, in_tree, out_tree_thunk, static_argnums, donated_invars,
             batch_invars, mesh, self.num_micro_batches, self.pipeline_schedule,
-            self.as_option, self.layer_option, self.stage_option, *avals)
+            self.as_option, self.layer_option, self.stage_option,
+            self.stage_input_shardings, *avals)
 
 
 class LocalPipelineParallel(ParallelMethod):

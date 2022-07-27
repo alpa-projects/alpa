@@ -1051,8 +1051,17 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             host_local_ids: Sequence[Sequence[Tuple[int, int]]] = None,
             batching=False,
             asynchronize=False):
-        """Get values of remote buffers."""
+        """
+        Get values of remote buffers.
 
+        Args:
+            host_local_ids: For each RemoteArrayRef, we can fetch a list of
+              buffers from multiple devices on multiple hosts. This variable
+              defines a list of (host_id, local_id) pair for each
+              RemoteArrayRef. If it is None, fetch all remote buffers.
+            batching: Whether batch remote calls by host ids. This can reduce
+              ray overhead.
+        """
         return_list = True
         if not isinstance(ary_refs, Iterable):
             return_list = False
@@ -1535,25 +1544,29 @@ class DistributedArray:
         self.delete()
 
 
-def fetch(distributed_arrays: Sequence[DistributedArray]):
+def fetch(dis_arrays: Sequence[Union[ShardedDeviceArray, DistributedArray]]):
     """Fetch a pytree of DistributedArray in a batch."""
-    buf_refs = []
-    device_mesh = distributed_arrays[0].device_mesh
+    group_by_mesh = defaultdict(list)
+    for array in tree_leaves(dis_arrays):
+        if isinstance(array, ShardedDeviceArray):
+            array.copy_to_host_async()
+        else:
+            assert isinstance(array, DistributedArray)
+            group_by_mesh[array.device_mesh].append(array)
 
-    device_indices = []
-    for array in tree_leaves(distributed_arrays):
-        array: DistributedArray
-        assert array.device_mesh == device_mesh, (
-            "Only support fetching from the same mesh.")
-        buf_refs.append(array.remote_ref)
-        device_indices.append(array.one_replica_buffer_ids)
+    for device_mesh, arrays in group_by_mesh.items():
+        buf_refs = []
+        host_local_ids = []
+        for array in arrays:
+            buf_refs.append(array.remote_ref)
+            host_local_ids.append(array.one_replica_host_local_ids)
 
-    np_arrays = device_mesh.get_remote_buffers(buf_refs,
-                                               device_indices,
-                                               batching=True)
+        np_arrays = device_mesh.get_remote_buffers(buf_refs,
+                                                   host_local_ids,
+                                                   batching=True)
 
-    for array, np_value in zip(distributed_arrays, np_arrays):
-        array._fetched_np_buffers = np_value  # pylint: disable=protected-access
+        for array, np_value in zip(arrays, np_arrays):
+            array._fetched_np_buffers = np_value  # pylint: disable=protected-access
 
 
 core.pytype_aval_mappings[DistributedArray] = attrgetter("aval")

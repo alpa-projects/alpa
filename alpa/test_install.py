@@ -3,7 +3,7 @@ import os
 import unittest
 
 from alpa import (init, parallelize, ShardParallel, PipeshardParallel,
-                  AutoLayerOption)
+                  AutoLayerOption, fetch)
 from alpa.device_mesh import get_global_cluster
 from alpa.testing import assert_allclose, get_mlp_train_state_and_step
 
@@ -49,6 +49,7 @@ class InstallationTest(unittest.TestCase):
         actual_output = p_train_step(state, batch)
 
         # Check results
+        fetch(actual_output)
         assert_allclose(expected_output, actual_output)
 
 

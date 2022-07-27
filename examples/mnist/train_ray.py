@@ -80,17 +80,13 @@ def eval_step(state, images, labels):
   return loss, accuracy
 
 
-def train_epoch(state, train_ds, batch_size):
+def train_epoch(state, train_data_loader, steps_per_epoch):
   """Train for a single epoch."""
-  train_ds_size = len(train_ds['image'])
-  steps_per_epoch = train_ds_size // batch_size
-
   epoch_loss = []
   epoch_accuracy = []
 
   for i in range(steps_per_epoch):
-    batch_images = train_ds['image'][i*batch_size:(i+1)*batch_size]
-    batch_labels = train_ds['label'][i*batch_size:(i+1)*batch_size]
+    batch_images, batch_labels = next(train_data_loader)
     state, loss, accuracy = train_step(state, batch_images, batch_labels)
     epoch_loss.append(loss)
     epoch_accuracy.append(accuracy)
@@ -122,6 +118,31 @@ def create_train_state(rng, config):
       apply_fn=cnn.apply, params=params, tx=tx)
 
 
+def get_train_data_laoder(train_ds, state, batch_size):
+  images_np = train_ds['image']
+  labels_np = train_ds['label']
+  steps_per_epoch = len(images_np) // batch_size
+
+  def input_iter_func(start, end, batch_size):
+    while True:
+      for i in range(steps_per_epoch):
+        idx = start + i * batch_size
+        yield (images_np[idx:idx + batch_size],
+               labels_np[idx:idx + batch_size])
+
+  batch_images = jax.core.ShapedArray(
+      (batch_size, 28, 28, 1), jnp.float32)
+  batch_labels = jax.core.ShapedArray(
+      (batch_size,), jnp.int32)
+  executable = train_step.get_executable(state, batch_images, batch_labels)
+
+  data_loader = alpa.MeshDriverDataLoader(
+      batch_size, len(images_np),
+      input_iter_func, executable.get_input_placement_specs()[1:3],
+      prefetch_size=4, repeat=True)
+  return iter(data_loader), steps_per_epoch
+
+
 def train_and_evaluate(config: ml_collections.ConfigDict,
                        workdir: str) -> train_state.TrainState:
   """Execute model training and evaluation loop.
@@ -133,6 +154,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
   Returns:
     The train state (which includes the `.params`).
   """
+  alpa.init(cluster="ray")
   train_ds, test_ds = get_datasets()
 
   summary_writer = tensorboard.SummaryWriter(workdir)
@@ -141,10 +163,13 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
   rng = jax.random.PRNGKey(0)
   state = create_train_state(rng, config)
 
+  train_data_loader, steps_per_epoch = get_train_data_laoder(
+      train_ds, state, config.batch_size)
+
   for epoch in range(1, config.num_epochs + 1):
     tic = time.time()
-    state, train_loss, train_accuracy = train_epoch(state, train_ds,
-                                                    config.batch_size)
+    state, train_loss, train_accuracy = train_epoch(state, train_data_loader,
+                                                    steps_per_epoch)
     epoch_time = time.time() - tic
     test_loss, test_accuracy = eval_step(state, test_ds['image'], test_ds['label'])
     test_accuracy = np.array(test_accuracy)

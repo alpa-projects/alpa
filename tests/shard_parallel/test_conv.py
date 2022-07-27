@@ -3,7 +3,8 @@
 import unittest
 from typing import Any
 
-from flax import linen as nn, optim
+from flax import linen as nn
+from flax.optim import dynamic_scale as dynamic_scale_lib
 from flax.training import train_state
 import jax
 import jax.numpy as jnp
@@ -18,7 +19,7 @@ from tests.shard_parallel.test_mlp import assert_close, assert_all_replicated, i
 
 class TrainState(train_state.TrainState):
     batch_stats: Any
-    dynamic_scale: optim.DynamicScale
+    dynamic_scale: dynamic_scale_lib.DynamicScale
 
 
 def assert_data_parallel_cost(state,

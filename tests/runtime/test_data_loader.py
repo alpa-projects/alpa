@@ -7,12 +7,23 @@ from flax import optim
 import jax
 import jax.numpy as jnp
 from jax.interpreters import pxla
+import numpy as np
 
 from alpa import init, MeshDriverDataLoader
 from alpa.parallel_plan import PlacementSpec
 from alpa.device_mesh import get_global_physical_mesh
-from alpa.testing import (assert_allclose, data_loader_test_input_iter_func as
-                          input_iter_func)
+from alpa.testing import assert_allclose
+
+
+def input_iter_func(start, end, batch_size):
+    dataset_x = np.arange(1024 * 32).reshape(-1, 32).astype(np.float32)
+    dataset_y = np.arange(1024).astype(np.int32)
+
+    num_batches = (end - start) // batch_size
+
+    for i in range(num_batches):
+        idx = start + i * batch_size
+        yield dataset_x[idx:idx + batch_size], dataset_y[idx:idx + batch_size]
 
 
 class DataLoaderTest(unittest.TestCase):
@@ -24,8 +35,9 @@ class DataLoaderTest(unittest.TestCase):
     def run_test(self, sharding_specs):
         batch_size = 64
         num_samples = 256
+        feature_dim = 32
         avals = [
-            jax.core.ShapedArray((batch_size, 32), jnp.float32),
+            jax.core.ShapedArray((batch_size, feature_dim), jnp.float32),
             jax.core.ShapedArray((batch_size,), jnp.int32)
         ]
         placement_specs = [
@@ -39,9 +51,27 @@ class DataLoaderTest(unittest.TestCase):
                                            prefetch_size)
         expected_data_loader = input_iter_func(0, num_samples, batch_size)
 
+        actual_x = []
+        actual_y = []
+        expected_x = []
+        expected_y = []
         for actual_batch, expected_batch in zip(data_loader,
                                                 expected_data_loader):
-            assert_allclose(actual_batch, expected_batch)
+            actual_x.append(np.array(actual_batch[0]))
+            actual_y.append(np.array(actual_batch[1]))
+            expected_x.append(np.array(expected_batch[0]))
+            expected_y.append(np.array(expected_batch[1]))
+
+        actual_x = np.concatenate(actual_x)
+        actual_y = np.concatenate(actual_y)
+        expected_x = np.concatenate(expected_x)
+        expected_y = np.concatenate(expected_y)
+
+        # Check that actual_x is a permutation of expected_x.
+        for i in range(feature_dim):
+            assert np.sum(actual_x[:, i]) == np.sum(expected_x[:, i])
+        # Check that actual_y is a permutation of expected_y.
+        assert np.sum(actual_y) == np.sum(expected_y)
 
     def test_data_parallel(self):
         num_devices = self.physical_mesh.num_devices

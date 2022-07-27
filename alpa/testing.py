@@ -306,10 +306,3 @@ class PipelineBasicTest(unittest.TestCase):
 
         hlo_text = executable.get_hlo_text()
         return hlo_text
-
-
-def data_loader_test_input_iter_func(start, end, batch_size):
-    num_batches = (end - start) // batch_size
-    for i in range(num_batches):
-        yield (i * np.ones((batch_size, 32), dtype=np.float32), i * np.ones(
-            (batch_size,), dtype=np.int32))

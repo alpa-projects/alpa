@@ -35,7 +35,7 @@ is also attached at the end of the article.
 
 ################################################################################
 # Comparing ``alpa.parallelize``, ``pmap``, ``xmap``, and ``pjit``
-# -----------------------------------------------------------------
+# ----------------------------------------------------------------
 # Besides ``pmap``, jax also provides
 # `xmap <https://jax.readthedocs.io/en/latest/notebooks/xmap_tutorial.html>`_ and
 # `pjit <https://jax.readthedocs.io/en/latest/jax-101/08-pjit.html>`_

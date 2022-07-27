@@ -20,7 +20,8 @@ see also: https://arxiv.org/pdf/1605.07146.pdf
 from functools import partial
 from typing import Any, Callable, Sequence, Tuple
 
-from flax import linen as nn, optim
+from flax import linen as nn
+from flax.optim import dynamic_scale as dynamic_scale_lib
 from flax.training import train_state
 import jax.numpy as jnp
 
@@ -29,7 +30,7 @@ ModuleDef = Any
 
 class TrainState(train_state.TrainState):
     batch_stats: Any
-    dynamic_scale: optim.DynamicScale
+    dynamic_scale: dynamic_scale_lib.DynamicScale
 
 
 class ResNetBlock(nn.Module):

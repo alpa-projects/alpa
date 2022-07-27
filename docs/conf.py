@@ -66,8 +66,8 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 # script and leave no GPU memory for workers.
 within_subsection_order = {
     "tutorials": [
-        "pipeshard_parallelism.py",
         "quickstart.py",
+        "pipeshard_parallelism.py",
         "alpa_vs_pmap.py",
     ],
 }

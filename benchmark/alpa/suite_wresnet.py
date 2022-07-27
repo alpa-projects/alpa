@@ -1,7 +1,8 @@
 """Suites for wresnet benchmarking."""
 from collections import namedtuple
 from benchmark_parallel_utils import (BenchmarkCase, SearchParallelArgs,
-                                      LoadSolutionParallelArgs, ShardParallelArgs)
+                                      LoadSolutionParallelArgs,
+                                      ShardParallelArgs)
 
 # B = batch_size, I = image_size,
 # L = num_layers, C = num_base_channels, W = width_factor,

@@ -80,7 +80,7 @@ def eval_step(state, images, labels):
   return loss, accuracy
 
 
-def train_epoch(state, train_ds, batch_size, rng):
+def train_epoch(state, train_ds, batch_size):
   """Train for a single epoch."""
   train_ds_size = len(train_ds['image'])
   steps_per_epoch = train_ds_size // batch_size
@@ -134,24 +134,22 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
     The train state (which includes the `.params`).
   """
   train_ds, test_ds = get_datasets()
-  rng = jax.random.PRNGKey(0)
 
   summary_writer = tensorboard.SummaryWriter(workdir)
   summary_writer.hparams(dict(config))
 
-  rng, init_rng = jax.random.split(rng)
-  state = create_train_state(init_rng, config)
+  rng = jax.random.PRNGKey(0)
+  state = create_train_state(rng, config)
 
   for epoch in range(1, config.num_epochs + 1):
-    rng, input_rng = jax.random.split(rng)
     tic = time.time()
     state, train_loss, train_accuracy = train_epoch(state, train_ds,
-                                                    config.batch_size, input_rng)
+                                                    config.batch_size)
     epoch_time = time.time() - tic
     test_loss, test_accuracy = eval_step(state, test_ds['image'], test_ds['label'])
     test_accuracy = np.array(test_accuracy)
     logging.info(
-            'epoch:% 3d, train_loss: %.4f, train_accuracy: %.2f, test_loss: %.4f, test_accuracy: %.2f, epoch_time: %.3f'
+        'epoch:% 3d, train_loss: %.4f, train_accuracy: %.2f, test_loss: %.4f, test_accuracy: %.2f, epoch_time: %.3f'
         % (epoch, train_loss, train_accuracy * 100, test_loss,
            test_accuracy * 100, epoch_time))
 

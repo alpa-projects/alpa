@@ -19,6 +19,7 @@ The data is loaded using tensorflow_datasets.
 """
 
 import functools
+import os
 import time
 from typing import Any
 
@@ -170,9 +171,9 @@ def create_input_iter(dataset_builder, batch_size, image_size, dtype,
 
   def input_iter_func(start, end, batch_size):
       ds = input_pipeline.create_split(
-	  dataset_builder, batch_size, train,
-	  start, end,
-	  image_size=image_size, dtype=dtype, cache=cache)
+      dataset_builder, batch_size, train,
+      start, end,
+      image_size=image_size, dtype=dtype, cache=cache)
       return map(lambda xs: (xs["image"]._numpy(), xs["label"]._numpy()), ds)
 
   split_name = "train" if train else "validation"
@@ -249,6 +250,13 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
   Returns:
     Final TrainState.
   """
+  # Initialize ray.
+  # The `runtime_env` argument is used to upload local python scripts to
+  # remote workers while excluding checkpoints, profiling events, etc.
+  ray.init(address="auto",
+           runtime_env={"working_dir": ".",
+	                "excludes": [os.path.relpath(workdir)]})
+  # Initialize alpa.
   alpa.init(cluster="ray")
 
   writer = metric_writers.create_default_writer(

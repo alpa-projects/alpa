@@ -829,7 +829,8 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
             if global_config.use_dummy_value_for_benchmarking:
                 args[i] = np.full(avals[i].shape, 1e-8, avals[i].dtype)
             shards = [
-                args[i][shard_indices[i][k]] for k in range(len(self.devices))
+                args[i][shard_indices[i][k]]
+                for k in range(len(self.devices))
             ]
             buffers = [
                 jax.device_put(x, d) for x, d in zip(shards, self.devices)

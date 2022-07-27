@@ -141,14 +141,14 @@ assert_allclose(expected_state.params, actual_state.params, atol=5e-3)
 print("Input parameter type:", type(state.params["params"]["Dense_0"]["kernel"]))
 print("Output parameter type:", type(actual_state.params["params"]["Dense_0"]["kernel"]))
 
-# Get one copy
+# We can use `np.array` to convert a distributed array back to a numpy array.
 kernel_np = np.array(actual_state.params["params"]["Dense_0"]["kernel"])
 
 ################################################################################
 # Execution Speed Comparison
 # --------------------------
 # By parallelizing a jax function, we can accelerate the computation and reduce
-# the memory usage per GPU, so we can train large models faster.
+# the memory usage per GPU, so we can train larger models faster.
 # We benchmark the execution speed of ``jax.jit`` and ``alpa.parallelize``
 # on a 8-GPU machine.
 
@@ -166,11 +166,10 @@ def serial_execution():
     state = jit_train_step(state, batch)
 
 costs = benchmark_func(serial_execution, sync_func, warmup=5, number=10, repeat=5) * 1e3
-
 print(f"Serial execution time. Mean: {np.mean(costs):.2f} ms, Std: {np.std(costs):.2f} ms")
 
 # Benchmark parallel execution
-# We distribute arguments in advance for the benchmarking purpose
+# We distribute arguments in advance for the benchmarking purpose.
 state, batch = alpa_train_step.preshard_dynamic_args(state, batch)
 
 def parallel_execution():
@@ -178,7 +177,6 @@ def parallel_execution():
     state = alpa_train_step(state, batch)
 
 costs = benchmark_func(parallel_execution, sync_func, warmup=5, number=10, repeat=5) * 1e3
-
 print(f"Parallel execution time. Mean: {np.mean(costs):.2f} ms, Std: {np.std(costs):.2f} ms")
 
 ################################################################################
@@ -193,3 +191,52 @@ print(f"Serial execution per GPU memory usage: {executable.total_allocation_size
 
 executable = alpa_train_step.get_executable(state, batch)
 print(f"Parallel execution per GPU memory usage: {executable.get_total_allocation_size() / GB:.2f} GB")
+
+################################################################################
+# Comparison against data parallelism (or ``jax.pmap``)
+# -----------------------------------------------------
+# The most common parallelization technique in deep learning is data parallelism.
+# In jax, we can use ``jax.pmap`` to implement data parallelism.
+# However, data parallelism only is not enough for training large models, due to
+# both memory and communication cost. Here, we use the same model to benchmark the
+# execution speed and memory usage of `jax.pmap` on the same 8-GPU machine.
+
+@partial(jax.pmap, axis_name="batch")
+def pmap_train_step(state, batch):
+    def loss_func(params):
+        out = model.apply(params, batch["x"])
+        loss = jnp.mean((out - batch["y"])**2)
+        return loss
+
+    grads = jax.grad(loss_func)(state.params)
+    # all-reduce gradients
+    grads = jax.lax.pmean(grads, axis_name="batch")
+    new_state = state.apply_gradients(grads=grads)
+    return new_state
+
+# Replicate model and distribute batch
+devices = jax.local_devices()
+state = jax.device_put_replicated(state, devices)
+def shard_batch(x):
+    x = x.reshape((len(devices), -1) + x.shape[1:])
+    return jax.device_put_sharded(list(x), devices)
+batch = jax.tree_map(shard_batch, batch)
+
+# Benchmark data parallel execution
+def data_parallel_execution():
+    global state
+    state = pmap_train_step(state, batch)
+
+costs = benchmark_func(data_parallel_execution, sync_func, warmup=5, number=10, repeat=5) * 1e3
+print(f"Data parallel execution time. Mean: {np.mean(costs):.2f} ms, Std: {np.std(costs):.2f} ms")
+
+executable = pmap_train_step.lower(state, batch).compile().runtime_executable()
+print(f"Data-parallel execution per GPU memory usage: {executable.total_allocation_size() / GB:.2f} GB")
+
+################################################################################
+# As you can see, ``alpa.parallelize`` achieves better execution speed and
+# requires less memory compared with data parallelism.
+# This is because data parallelism only works well if the acitvation size is much
+# larger than the model size, which is not the case in this benchmark.
+# In the contrast, ``alpa.parallelize`` will analyze the computational graph and
+# finds the best parallelization strategy.

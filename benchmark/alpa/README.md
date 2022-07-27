@@ -35,24 +35,24 @@ All nodes should have alpa installed.
 ### GPT-3
 Run the benchmark with all GPUs in your cluster.
 ```
-python3 benchmark_3d.py --suite gpt.perf_test_auto
+python3 benchmark.py --suite gpt.perf_test_auto
 ```
 
 You can also specify the number of hosts and the number of devices per host.
 ```
-python3 benchmark_3d.py --suite gpt.perf_test_auto --num-hosts 2 --num-devices-per-host 8
+python3 benchmark.py --suite gpt.perf_test_auto --num-hosts 2 --num-devices-per-host 8
 ```
 
 ### Mixture-of-Expert Transformer
 Similar to the previous subsection.
 ```
-python3 benchmark_3d.py --suite moe.perf_test_auto
+python3 benchmark.py --suite moe.perf_test_auto
 ```
 
 ### Wide-ResNet
 Similar to the previous subsection.
 ```
-python3 benchmark_3d.py --suite wresnet.perf_test_auto
+python3 benchmark.py --suite wresnet.perf_test_auto
 ```
 
 ## Run Full Search
@@ -75,7 +75,7 @@ Note that this procedure is very slow and can take hours, but you only need to d
 
 ### Run Search
 ```
-python3 benchmark_3d.py --suite gpt.grid_search_auto
+python3 benchmark.py --suite gpt.grid_search_auto
 ```
 
 ## A Quick Performance Test
@@ -83,7 +83,7 @@ This is a quick test for checking performance regressions.
 Developers should at least run this test to make sure their modifications do not introduce performance regressions.
 
 ```
-python3 benchmark_3d.py --suite gpt.perf_test_manual
+python3 benchmark.py --suite gpt.perf_test_manual
 ```
 
 Expected output on AWS p3.16 (May 2, 2022)

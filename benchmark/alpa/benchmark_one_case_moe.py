@@ -12,10 +12,10 @@ from alpa.util import print_used_time
 
 from benchmark_one_case_gpt_bert import (get_train_step)
 from util import compute_moe_parameter_count, compute_moe_tflops
-from parallel_option import (get_pipeshard_parallel_method,
-                             get_shard_parallel_method,
-                             compile_and_benchmark_pipeshard_executable,
-                             compile_and_benchmark_shard_executable)
+from parallel_option import (
+    get_pipeshard_parallel_method, get_shard_parallel_method,
+    compile_and_benchmark_pipeshard_training_executable,
+    compile_and_benchmark_shard_training_executable)
 
 
 def create_train_state(rngkey, model, dtype, batch):
@@ -120,8 +120,11 @@ def compute_moe_statistics(benchmark_case, latencies, num_devices):
     return tflops, parameter_count
 
 
-def benchmark_moe_3d_internal(benchmark_case, niter, num_hosts,
-                              num_devices_per_host):
+def benchmark_moe_3d_internal(benchmark_case,
+                              niter,
+                              num_hosts,
+                              num_devices_per_host,
+                              profile_driver_time=False):
     # Connect to the cluster
     virtual_mesh = get_global_cluster().get_virtual_physical_mesh(
         host_ids=list(range(num_hosts)),
@@ -152,9 +155,12 @@ def benchmark_moe_3d_internal(benchmark_case, niter, num_hosts,
                                 fine_grained_remat_num_layers)
 
     (latencies, max_mem_allocated, compilation_times,
-     executable) = compile_and_benchmark_pipeshard_executable(
-         benchmark_case.parallel_mode, niter, train_step, state,
-         (batch, rngkey))
+     executable) = compile_and_benchmark_pipeshard_training_executable(
+         benchmark_case.parallel_mode,
+         niter,
+         train_step,
+         state, (batch, rngkey),
+         profile_driver_time=profile_driver_time)
 
     tflops, parameter_count = compute_moe_statistics(benchmark_case, latencies,
                                                      virtual_mesh.num_devices)
@@ -173,7 +179,10 @@ def benchmark_moe_3d_internal(benchmark_case, niter, num_hosts,
     return parameter_count, max_mem_allocated, latencies, tflops, metadata
 
 
-def benchmark_moe_2d_internal(physical_mesh, benchmark_case, niter):
+def benchmark_moe_2d_internal(physical_mesh,
+                              benchmark_case,
+                              niter,
+                              profile_driver_time=False):
     # Model configs
     method, grad_func = get_shard_parallel_method(benchmark_case, physical_mesh)
 
@@ -185,14 +194,17 @@ def benchmark_moe_2d_internal(physical_mesh, benchmark_case, niter):
     # Compile executable
     train_step = get_train_step(method, grad_func=grad_func)
 
-    (latencies, ilp_objective, alloc_mem,
-     executable) = compile_and_benchmark_shard_executable(
-         physical_mesh, niter, train_step, state, (batch, rngkey))
+    (latencies, ilp_objective, peak_mem,
+     executable) = compile_and_benchmark_shard_training_executable(
+         physical_mesh,
+         niter,
+         train_step,
+         state, (batch, rngkey),
+         profile_driver_time=profile_driver_time)
 
     # Compute statistics
     tflops, parameter_count = compute_moe_statistics(benchmark_case, latencies,
                                                      physical_mesh.num_devices)
-    peak_mem = max(physical_mesh.get_max_memory_allocated(), alloc_mem)
     metadata = {
         "ilp_objective": ilp_objective,
     }

@@ -15,10 +15,10 @@ from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.util import print_used_time
 
 from util import compute_gpt_parameter_count, compute_gpt_tflops
-from parallel_option import (get_pipeshard_parallel_method,
-                             get_shard_parallel_method,
-                             compile_and_benchmark_pipeshard_executable,
-                             compile_and_benchmark_shard_executable)
+from parallel_option import (
+    get_pipeshard_parallel_method, get_shard_parallel_method,
+    compile_and_benchmark_pipeshard_training_executable,
+    compile_and_benchmark_shard_training_executable)
 
 
 def report_pipeline_breakdown(executable, timer_names, niter):
@@ -155,35 +155,24 @@ def prepare_gpt_bert_input_and_model(model_type,
     }
     print_used_time("Prepare input")
 
+    bert_config = BertConfig(
+        vocab_size=vocab_size,
+        hidden_size=hidden_size,
+        num_attention_heads=num_heads,
+        intermediate_size=hidden_size * 4,
+        num_hidden_layers=num_layers,
+        type_vocab_size=0,
+        tie_word_embeddings=tie_word_embeddings,
+        gradient_checkpointing=add_manual_remat,
+        add_manual_pipeline_markers=add_manual_layer_marker,
+        pipeline_mp_size=num_manual_pipeline_stages,
+    )
+
     # Init train state
     if model_type == "bert":
-        model = FlaxBertForMaskedLMModule(BertConfig(
-            vocab_size=vocab_size,
-            hidden_size=hidden_size,
-            num_attention_heads=num_heads,
-            intermediate_size=hidden_size * 4,
-            num_hidden_layers=num_layers,
-            type_vocab_size=0,
-            tie_word_embeddings=tie_word_embeddings,
-            gradient_checkpointing=add_manual_remat,
-            add_manual_pipeline_markers=add_manual_layer_marker,
-            pipeline_mp_size=num_manual_pipeline_stages,
-        ),
-                                          dtype=dtype)
+        model = FlaxBertForMaskedLMModule(bert_config, dtype=dtype)
     elif model_type == "gpt":
-        model = FlaxGPTForLMModule(BertConfig(
-            vocab_size=vocab_size,
-            hidden_size=hidden_size,
-            num_attention_heads=num_heads,
-            intermediate_size=hidden_size * 4,
-            num_hidden_layers=num_layers,
-            type_vocab_size=0,
-            tie_word_embeddings=tie_word_embeddings,
-            gradient_checkpointing=add_manual_remat,
-            add_manual_pipeline_markers=add_manual_layer_marker,
-            pipeline_mp_size=num_manual_pipeline_stages,
-        ),
-                                   dtype=dtype)
+        model = FlaxGPTForLMModule(bert_config, dtype=dtype)
     else:
         raise ValueError(f"Invalid model {model_type}")
 
@@ -202,8 +191,14 @@ def compute_gpt_bert_statistics(benchmark_case, latencies, num_devices):
      vocab_size) = benchmark_case.model_config
     use_remat = benchmark_case.parallel_args.use_remat
 
-    tflops = compute_gpt_tflops(batch_size, seq_len, num_layers, hidden_size,
-                                vocab_size, num_devices, np.mean(latencies), use_remat)
+    tflops = compute_gpt_tflops(batch_size,
+                                seq_len,
+                                num_layers,
+                                hidden_size,
+                                vocab_size,
+                                num_devices,
+                                np.mean(latencies),
+                                checkpoint_activations=use_remat)
     parameter_count = compute_gpt_parameter_count(num_layers, hidden_size,
                                                   vocab_size)
     return tflops, parameter_count
@@ -214,7 +209,8 @@ def benchmark_gpt_bert_3d_internal(model_type,
                                    niter,
                                    num_hosts,
                                    num_devices_per_host,
-                                   aval_train_state=True):
+                                   aval_train_state=True,
+                                   profile_driver_time=False):
     # Connect to the cluster
     virtual_mesh = get_global_cluster().get_virtual_physical_mesh(
         host_ids=list(range(num_hosts)),
@@ -246,9 +242,12 @@ def benchmark_gpt_bert_3d_internal(model_type,
                                 fine_grained_remat_num_layers)
 
     (latencies, max_mem_allocated, compilation_times,
-     executable) = compile_and_benchmark_pipeshard_executable(
-         benchmark_case.parallel_mode, niter, train_step, state,
-         (batch, rngkey))
+     executable) = compile_and_benchmark_pipeshard_training_executable(
+         benchmark_case.parallel_mode,
+         niter,
+         train_step,
+         state, (batch, rngkey),
+         profile_driver_time=profile_driver_time)
 
     tflops, parameter_count = compute_gpt_bert_statistics(
         benchmark_case, latencies, virtual_mesh.num_devices)
@@ -272,11 +271,12 @@ def benchmark_gpt_bert_3d_internal(model_type,
     return parameter_count, max_mem_allocated, latencies, tflops, metadata
 
 
-def benchmark_gpt_bert_2d_internal(physical_mesh, model_type, benchmark_case,
-                                   niter):
-    # Model configs
-    method, grad_func = get_shard_parallel_method(
-        benchmark_case, physical_mesh)
+def benchmark_gpt_bert_2d_internal(physical_mesh,
+                                   model_type,
+                                   benchmark_case,
+                                   niter,
+                                   profile_driver_time=False):
+    method, grad_func = get_shard_parallel_method(benchmark_case, physical_mesh)
 
     state, batch, rngkey = prepare_gpt_bert_input_and_model(
         model_type,
@@ -284,17 +284,18 @@ def benchmark_gpt_bert_2d_internal(physical_mesh, model_type, benchmark_case,
         add_manual_remat=benchmark_case.parallel_args.use_remat,
         aval_train_state=global_config.use_dummy_value_for_benchmarking)
 
-    # Compile executable
     train_step = get_train_step(method, grad_func=grad_func)
 
-    (latencies, ilp_objective, alloc_mem,
-     executable) = compile_and_benchmark_shard_executable(
-         physical_mesh, niter, train_step, state, (batch, rngkey))
+    (latencies, ilp_objective, peak_mem,
+     executable) = compile_and_benchmark_shard_training_executable(
+         physical_mesh,
+         niter,
+         train_step,
+         state, (batch, rngkey),
+         profile_driver_time=profile_driver_time)
 
-    # Compute statistics
     tflops, parameter_count = compute_gpt_bert_statistics(
         benchmark_case, latencies, physical_mesh.num_devices)
-    peak_mem = max(physical_mesh.get_max_memory_allocated(), alloc_mem)
     metadata = {
         "ilp_objective": ilp_objective,
     }

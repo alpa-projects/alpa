@@ -69,23 +69,14 @@ def compute_gpt_tflops(batch_size,
                        vocab_size,
                        num_gpus,
                        latency,
+                       backward=True,
                        checkpoint_activations=False):
-    factor = 96 if checkpoint_activations else 72
-    total_flop = factor * batch_size * seq_len * (hidden_size ** 2) * num_layers * \
-          (1 + seq_len / (6 * hidden_size)) \
-          + 6 * batch_size * seq_len * hidden_size * vocab_size
-    # Note: The above formula does not count the first embedding table lookup
-    # because it is a sparse operation.
-    # If we use dense dot to compute the first embedding table lookup,
-    # then the last term in total_flops should be
-    # "+ 10 * batch_size * seq_len * hidden_size * vocab_size".
-    tflops = total_flop / latency / num_gpus / 1e12
-    return tflops
+    factor = 24
+    if backward:
+        factor += 48
+    if checkpoint_activations:
+        factor += 24
 
-
-def compute_inference_gpt_tflops(batch_size, seq_len, num_layers, hidden_size,
-                                 vocab_size, num_gpus, latency):
-    factor = 24  # forward pass only, no backward propagation
     total_flop = factor * batch_size * seq_len * (hidden_size ** 2) * num_layers * \
           (1 + seq_len / (6 * hidden_size)) \
           + 6 * batch_size * seq_len * hidden_size * vocab_size

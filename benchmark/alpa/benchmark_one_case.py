@@ -15,6 +15,8 @@ from benchmark_one_case_moe import (benchmark_moe_3d_internal,
                                     benchmark_moe_2d_internal)
 from benchmark_one_case_wresnet import (benchmark_wresnet_3d_internal,
                                         benchmark_wresnet_2d_internal)
+from benchmark_one_case_gpt_bert_inference import (
+    benchmark_gpt_inference_internal)
 
 
 def benchmark_one_case_internal(model,
@@ -22,6 +24,7 @@ def benchmark_one_case_internal(model,
                                 niter,
                                 num_hosts,
                                 num_devices_per_host,
+                                profile_driver_time=False,
                                 shard_only=False,
                                 local=False,
                                 disable_tqdm=False):
@@ -44,16 +47,28 @@ def benchmark_one_case_internal(model,
 
         # Run benchmark
         if model in ["gpt", "bert"]:
-            result = benchmark_gpt_bert_2d_internal(physical_mesh, model, case,
-                                                    niter)
+            result = benchmark_gpt_bert_2d_internal(
+                physical_mesh,
+                model,
+                case,
+                niter,
+                profile_driver_time=profile_driver_time)
         elif model == "moe":
-            result = benchmark_moe_2d_internal(physical_mesh, case, niter)
+            result = benchmark_moe_2d_internal(
+                physical_mesh,
+                case,
+                niter,
+                profile_driver_time=profile_driver_time)
         elif model == "wresnet":
             global_config.xla_client_mem_fraction = 0.88
             # Due to legacy issues, we turn off auto-tuning. Although the
             # performance will be much better if we turn it on
             global_config.xla_gpu_autotune_level = 0
-            result = benchmark_wresnet_2d_internal(physical_mesh, case, niter)
+            result = benchmark_wresnet_2d_internal(
+                physical_mesh,
+                case,
+                niter,
+                profile_driver_time=profile_driver_time)
         else:
             raise ValueError(f"Invalid model: {model}")
 
@@ -63,19 +78,39 @@ def benchmark_one_case_internal(model,
 
         # Run benchmark
         if model in ["gpt", "bert"]:
-            result = benchmark_gpt_bert_3d_internal(model, case, niter,
-                                                    num_hosts,
-                                                    num_devices_per_host)
+            result = benchmark_gpt_bert_3d_internal(
+                model,
+                case,
+                niter,
+                num_hosts,
+                num_devices_per_host,
+                profile_driver_time=profile_driver_time)
         elif model == "moe":
-            result = benchmark_moe_3d_internal(case, niter, num_hosts,
-                                               num_devices_per_host)
+            result = benchmark_moe_3d_internal(
+                case,
+                niter,
+                num_hosts,
+                num_devices_per_host,
+                profile_driver_time=profile_driver_time)
         elif model == "wresnet":
             global_config.xla_client_mem_fraction = 0.88
             # Due to legacy issues, we turn off auto-tuning. Although the
             # performance will be much better if we turn it on
             global_config.xla_gpu_autotune_level = 0
-            result = benchmark_wresnet_3d_internal(case, niter, num_hosts,
-                                                   num_devices_per_host)
+            result = benchmark_wresnet_3d_internal(
+                case,
+                niter,
+                num_hosts,
+                num_devices_per_host,
+                profile_driver_time=profile_driver_time)
+        elif model in ["gpt_inference", "gpt_no_embedding_inference"]:
+            result = benchmark_gpt_inference_internal(
+                model,
+                case,
+                niter,
+                num_hosts,
+                num_devices_per_host,
+                profile_driver_time=profile_driver_time)
         else:
             raise ValueError(f"Invalid model: {model}")
 

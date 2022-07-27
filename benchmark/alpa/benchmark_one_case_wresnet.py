@@ -14,10 +14,10 @@ from alpa import (parallelize, get_global_cluster,
 from alpa.model.wide_resnet import get_wide_resnet, TrainState
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.util import print_used_time, compute_param_number
-from parallel_option import (get_pipeshard_parallel_method,
-                             get_shard_parallel_method,
-                             compile_and_benchmark_pipeshard_executable,
-                             compile_and_benchmark_shard_executable)
+from parallel_option import (
+    get_pipeshard_parallel_method, get_shard_parallel_method,
+    compile_and_benchmark_pipeshard_training_executable,
+    compile_and_benchmark_shard_training_executable)
 
 
 def compute_metrics(logits, labels):
@@ -177,8 +177,11 @@ def prepare_wresnet_input_and_model(benchmark_case):
     return state, batch, learning_rate_fn
 
 
-def benchmark_wresnet_3d_internal(benchmark_case, niter, num_hosts,
-                                  num_devices_per_host):
+def benchmark_wresnet_3d_internal(benchmark_case,
+                                  niter,
+                                  num_hosts,
+                                  num_devices_per_host,
+                                  profile_driver_time=False):
     # Connect to the cluster
     virtual_mesh = get_global_cluster().get_virtual_physical_mesh(
         host_ids=list(range(num_hosts)),
@@ -203,8 +206,12 @@ def benchmark_wresnet_3d_internal(benchmark_case, niter, num_hosts,
                                 grad_func=grad_func)
 
     (latencies, max_mem_allocated, compilation_times,
-     executable) = compile_and_benchmark_pipeshard_executable(
-         benchmark_case.parallel_mode, niter, train_step, state, (batch,))
+     executable) = compile_and_benchmark_pipeshard_training_executable(
+         benchmark_case.parallel_mode,
+         niter,
+         train_step,
+         state, (batch,),
+         profile_driver_time=profile_driver_time)
 
     # Profile submesh executables
     # del state
@@ -234,10 +241,12 @@ def benchmark_wresnet_3d_internal(benchmark_case, niter, num_hosts,
     return parameter_count, max_mem_allocated, latencies, tflops, metadata
 
 
-def benchmark_wresnet_2d_internal(physical_mesh, benchmark_case, niter):
+def benchmark_wresnet_2d_internal(physical_mesh,
+                                  benchmark_case,
+                                  niter,
+                                  profile_driver_time=False):
     # Model configs
-    method, grad_func = get_shard_parallel_method(benchmark_case,
-                                                     physical_mesh)
+    method, grad_func = get_shard_parallel_method(benchmark_case, physical_mesh)
 
     use_grad_acc = benchmark_case.num_micro_batches > 1
     grad_func = alpa.grad if use_grad_acc else jax.grad
@@ -249,15 +258,18 @@ def benchmark_wresnet_2d_internal(physical_mesh, benchmark_case, niter):
                                 method,
                                 grad_func=grad_func)
 
-    (latencies, ilp_objective, alloc_mem,
-     executable) = compile_and_benchmark_shard_executable(
-         physical_mesh, niter, train_step, state, (batch,))
+    (latencies, ilp_objective, peak_mem,
+     executable) = compile_and_benchmark_shard_training_executable(
+         physical_mesh,
+         niter,
+         train_step,
+         state, (batch,),
+         profile_driver_time=profile_driver_time)
 
     # Compute statistics
     num_gpus = physical_mesh.num_devices
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
     parameter_count = compute_param_number(state.params)
-    peak_mem = max(physical_mesh.get_max_memory_allocated(), alloc_mem)
     metadata = {
         "ilp_objective": ilp_objective,
     }

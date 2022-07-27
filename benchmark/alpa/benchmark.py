@@ -15,6 +15,7 @@ import suite_auto_moe
 import suite_manual_gpt
 import suite_manual_moe
 import suite_wresnet
+import suite_inference_gpt
 
 benchmark_suites = {
     "gpt.tmp": suite_manual_gpt.tmp_suite,
@@ -24,6 +25,8 @@ benchmark_suites = {
     "gpt.perf_test_auto": suite_auto_gpt.perf_test_suite,
     "gpt.grid_search_auto": suite_auto_gpt.grid_search_suite,
     "gpt.correctness_test_auto": suite_auto_gpt.correctness_test_suite,
+    "gpt_inference.profile": suite_inference_gpt.profile_suite,
+    "gpt_no_embedding_inference.profile": suite_inference_gpt.profile_suite,
     "moe.tmp": suite_manual_moe.tmp_suite,
     "moe.tmp_auto": suite_auto_moe.tmp_suite,
     "moe.perf_test_fast_2d": suite_manual_moe.perf_test_fast_2d_suite,
@@ -53,6 +56,10 @@ if __name__ == "__main__":
     parser.add_argument("--local",
                         action="store_true",
                         help="Run on local GPUs. Do not use ray actors.")
+    parser.add_argument("--profile-driver-time",
+                        action="store_true",
+                        help="Profile the execution time on the driver instead "
+                        "of the workers.")
     parser.add_argument("--no-separate-process",
                         action="store_false",
                         help="Do not launch separate processes for benchmark. "
@@ -98,6 +105,7 @@ if __name__ == "__main__":
             shard_only=args.shard_only,
             local=args.local,
             use_separate_process=args.use_separate_process,
+            profile_driver_time=args.profile_driver_time,
             disable_tqdm=args.disable_tqdm)
         (parameter_count, peak_mem, latencies, tflops, metadata) = result
 

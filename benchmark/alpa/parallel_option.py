@@ -5,13 +5,15 @@ from collections import namedtuple
 
 import numpy as np
 import jax
+from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten
 
 import alpa
 from alpa import (AutoShardingOption, ShardParallel, PipeshardParallel,
                   ManualStageOption, AutoStageOption, AutoLayerOption,
                   global_config, PhysicalDeviceMesh)
 from alpa.timer import timers
-from alpa.util import print_used_time, to_str_round, count_communication_primitives, GB
+from alpa.util import (print_used_time, to_str_round,
+                       count_communication_primitives, GB)
 
 BenchmarkCase = namedtuple("BenchmarkCase", [
     "batch_size", "model_config", "num_micro_batches", "parallel_mode",
@@ -42,7 +44,8 @@ LoadSolutionParallelArgs = namedtuple("LoadSolutionParallelArgs", [
 def get_pipeshard_parallel_method(benchmark_case: BenchmarkCase,
                                   num_devices_per_host: Optional[int] = None,
                                   allow_mixed_mesh_shape: bool = False,
-                                  use_fine_grained_remat: bool = False):
+                                  use_fine_grained_remat: bool = False,
+                                  pipeline_schedule: str = "1f1b"):
     """Create the parallel method of a benchmark case.
 
     Args:
@@ -74,6 +77,7 @@ def get_pipeshard_parallel_method(benchmark_case: BenchmarkCase,
                 prefer_reduce_scatter=prefer_reduce_scatter,
                 allow_mixed_mesh_shape=allow_mixed_mesh_shape,
             ),
+            pipeline_schedule=pipeline_schedule,
             layer_option=AutoLayerOption(layer_num=num_auto_layers,
                                          remat_layer=use_remat),
             stage_option=AutoStageOption(**auto_stage_option))
@@ -94,6 +98,7 @@ def get_pipeshard_parallel_method(benchmark_case: BenchmarkCase,
                 prefer_reduce_scatter=prefer_reduce_scatter,
                 allow_mixed_mesh_shape=allow_mixed_mesh_shape,
             ),
+            pipeline_schedule=pipeline_schedule,
             layer_option=AutoLayerOption(layer_num=num_auto_layers,
                                          remat_layer=use_remat),
             stage_option=ManualStageOption(forward_stage_layer_ids,
@@ -127,6 +132,7 @@ def get_pipeshard_parallel_method(benchmark_case: BenchmarkCase,
         method = PipeshardParallel(
             num_micro_batches=num_micro_batches,
             default_auto_sharding_option=as_option,
+            pipeline_schedule=pipeline_schedule,
             layer_option="manual",
             stage_option=ManualStageOption(
                 forward_stage_layer_ids=[[i] for i in range(pp)],
@@ -198,48 +204,99 @@ def get_shard_parallel_method(benchmark_case: BenchmarkCase,
     return method, grad_func
 
 
-def benchmark_executable(niter,
-                         train_step,
-                         executable,
-                         state,
-                         other_train_step_inputs,
-                         profile_driver_overhead=False):
+def benchmark_training_executable(niter,
+                                  train_step,
+                                  executable,
+                                  state,
+                                  other_train_step_inputs,
+                                  profile_driver_time=False):
     print_used_time(None)
 
     # Benchmark step time
     warmup = 2 if niter >= 5 else 1
 
-    # Benchmark latency without driver overhead
-    for i in range(niter):
-        print(f"Iteration {i} ...")
-        state = train_step(state, *other_train_step_inputs)
-        if isinstance(state, tuple):
-            # In case the train_step returns extra info (e.g. loss),
-            # Get the actual state out.
-            state = state[0]
-        executable.sync()
-
-    latencies = executable.get_execution_time_costs()[warmup:]
-
-    # Benchmark latency with driver overhead
-    if profile_driver_overhead:
+    if profile_driver_time:
+        # Benchmark latency with driver overhead
         global_config.use_dummy_value_for_benchmarking = False
         global_config.shard_parallel_sync_for_timer = False
-        number = niter
-        executable.sync()
-        tic = time.time()
-        for i in range(number):
+        print("Warmup")
+        for i in range(warmup):
             state = train_step(state, *other_train_step_inputs)
         executable.sync()
-        e2e_latency = (time.time() - tic) / number
+        niter -= warmup
+        print("Benchmark")
+        tic = time.time()
+        for i in range(niter):
+            state = train_step(state, *other_train_step_inputs)
+        executable.sync()
+        e2e_latency = (time.time() - tic) / niter
+        latencies = [e2e_latency]
         print(f"latency with dirver overhead: {e2e_latency:.3f}")
+    else:
+        # Benchmark latency without driver overhead
+        for i in range(niter):
+            print(f"Iteration {i} ...")
+            state = train_step(state, *other_train_step_inputs)
+            if isinstance(state, tuple):
+                # In case the train_step returns extra info (e.g. loss),
+                # Get the actual state out.
+                state = state[0]
+            executable.sync()
+
+        latencies = executable.get_execution_time_costs()[warmup:]
+
     print_used_time("Benchmark")
 
     return latencies
 
 
-def compile_and_benchmark_pipeshard_executable(parallel_mode, niter, train_step,
-                                               state, other_train_step_inputs):
+def benchmark_inference_executable(niter,
+                                   infer_step,
+                                   executable,
+                                   params,
+                                   other_infer_step_inputs,
+                                   profile_driver_time=False):
+    print_used_time(None)
+
+    # Benchmark step time
+    warmup = 2 if niter >= 5 else 1
+
+    if profile_driver_time:
+        # Benchmark latency with streaming
+        for i in range(warmup):
+            _ = infer_step(params, *other_infer_step_inputs)
+        executable.sync()
+        niter -= warmup
+
+        # Benchmark latency
+        losses = []
+        start_time = time.time()
+        latencies = []
+        for i in range(niter):
+            print(f"Iteration {i} ...")
+            loss = infer_step(params, *other_infer_step_inputs)
+            loss.get_remote_buffers_async()
+            losses.append(loss)
+        for i, loss in enumerate(losses):
+            _ = loss._value
+            end_time = time.time()
+            latencies.append(end_time - start_time)
+            start_time = end_time
+    else:
+        for i in range(niter):
+            print(f"Iteration {i} ...")
+            _ = infer_step(params, *other_infer_step_inputs)
+            executable.sync()
+
+        latencies = executable.get_execution_time_costs()[warmup:]
+
+    print_used_time("Benchmark")
+
+    return latencies
+
+
+def compile_pipeshard_executable(parallel_mode, train_step, state,
+                                 other_train_step_inputs):
     print_used_time(None)
 
     executable = train_step.get_executable(state, *other_train_step_inputs)
@@ -260,16 +317,11 @@ def compile_and_benchmark_pipeshard_executable(parallel_mode, niter, train_step,
     executable.dump_debug_info("tmp")
     executable.sync()
     print_used_time("Compile (worker)")
-
-    latencies = benchmark_executable(niter, train_step, executable, state,
-                                     other_train_step_inputs)
-    max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
-
-    return latencies, max_mem_allocated, compilation_times, executable
+    return executable, compilation_times
 
 
-def compile_and_benchmark_shard_executable(physical_mesh, niter, train_step,
-                                           state, other_train_step_inputs):
+def compile_shard_executable(physical_mesh, train_step, state,
+                             other_train_step_inputs):
     print_used_time(None)
     executable = train_step.get_executable(state, *other_train_step_inputs)
     print_used_time("Compile (driver)")
@@ -289,7 +341,75 @@ def compile_and_benchmark_shard_executable(physical_mesh, niter, train_step,
           f"#all-gather: {n_all_gather}, #reduce-scatter: {n_reduce_scatter}, "
           f"#all-to-all: {n_all_to_all}")
     print(f"alloc_mem: {alloc_mem / GB:.2f} GB")
+    return executable, ilp_objective, alloc_mem
 
-    latencies = benchmark_executable(niter, train_step, executable, state,
-                                     other_train_step_inputs)
-    return latencies, ilp_objective, alloc_mem, executable
+
+def compile_and_benchmark_pipeshard_training_executable(
+        parallel_mode,
+        niter,
+        train_step,
+        state,
+        other_train_step_inputs,
+        profile_driver_time=False):
+    executable, compilation_times = compile_pipeshard_executable(
+        parallel_mode, train_step, state, other_train_step_inputs)
+    latencies = benchmark_training_executable(
+        niter,
+        train_step,
+        executable,
+        state,
+        other_train_step_inputs,
+        profile_driver_time=profile_driver_time)
+    max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
+
+    return latencies, max_mem_allocated, compilation_times, executable
+
+
+def compile_and_benchmark_shard_training_executable(physical_mesh,
+                                                    niter,
+                                                    train_step,
+                                                    state,
+                                                    other_train_step_inputs,
+                                                    profile_driver_time=False):
+    executable, ilp_objective, alloc_mem = compile_shard_executable(
+        physical_mesh, train_step, state, other_train_step_inputs)
+    latencies = benchmark_training_executable(
+        niter,
+        train_step,
+        executable,
+        state,
+        other_train_step_inputs,
+        profile_driver_time=profile_driver_time)
+    peak_mem = max(physical_mesh.get_max_memory_allocated(), alloc_mem)
+    return latencies, ilp_objective, peak_mem, executable
+
+
+def compile_and_benchmark_pipeshard_inference_executable(
+        parallel_mode,
+        niter,
+        infer_step,
+        params,
+        other_inference_step_inputs,
+        profile_driver_time=False):
+    executable, compilation_times = compile_pipeshard_executable(
+        parallel_mode, infer_step, params, other_inference_step_inputs)
+
+    # Preshard params
+    params_ps = executable.get_input_placement_specs()[0]
+    flat_params, in_tree = tree_flatten(params)
+    flat_ps = tree_leaves(params_ps)
+    params = tree_unflatten(
+        in_tree,
+        executable.mesh_group.shard_args_to_arrays(flat_ps, flat_params))
+    print_used_time("Preshard (driver)")
+
+    latencies = benchmark_inference_executable(
+        niter,
+        infer_step,
+        executable,
+        params,
+        other_inference_step_inputs,
+        profile_driver_time=profile_driver_time)
+    max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
+
+    return latencies, max_mem_allocated, compilation_times, executable

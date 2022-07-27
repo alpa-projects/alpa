@@ -38,7 +38,7 @@ benchmark_suites = {
 }
 
 
-def benchmark_suite(suite, num_hosts, num_devices_per_host, exp_name, niter,
+def benchmark_suite(suite_name, num_hosts, num_devices_per_host, exp_name, niter,
                     shard_only=False, local=False, profile_driver_time=False,
                     disable_tqdm=False, use_separate_process=True):
     num_gpus = num_hosts * num_devices_per_host
@@ -47,13 +47,13 @@ def benchmark_suite(suite, num_hosts, num_devices_per_host, exp_name, niter,
         assert shard_only, ("Only shard-only mode is supported for execution "
                             "on local GPUs.")
 
-    assert num_gpus in benchmark_suites[suite], (
-        f"No available benchmark suite for {suite} on {num_gpus} GPUs")
-    suite = benchmark_suites[suite][num_gpus]
+    assert num_gpus in benchmark_suites[suite_name], (
+        f"No available benchmark suite for {suite_name} on {num_gpus} GPUs")
+    suite = benchmark_suites[suite_name][num_gpus]
 
     os.makedirs("tmp", exist_ok=True)
 
-    model_type = suite.split(".")[0]
+    model_type = suite_name.split(".")[0]
     date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     output_name = f"{model_type}_alpa_{exp_name}_{date_str}.tsv"
 

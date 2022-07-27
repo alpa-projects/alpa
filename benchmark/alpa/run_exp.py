@@ -13,21 +13,21 @@ def run_exp(cluster_settings, suite_name, benchmark_settings=None):
     os.environ["PYTHONUNBUFFERED"] = "1"
     now = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 
-    with subprocess.Popen(["tee", f"{suite_name}-{now}.log"],
-                          stdin=subprocess.PIPE) as tee:
-        os.dup2(tee.stdin.fileno(), sys.stdout.fileno())
-        os.dup2(tee.stdin.fileno(), sys.stderr.fileno())
+    tee = subprocess.Popen(["tee", f"{suite_name}-{now}.log"],
+                           stdin=subprocess.PIPE)
+    os.dup2(tee.stdin.fileno(), sys.stdout.fileno())
+    os.dup2(tee.stdin.fileno(), sys.stderr.fileno())
 
-        if benchmark_settings is None:
-            benchmark_settings = {}
-        for num_hosts, num_devices_per_host in cluster_settings:
-            num_gpus = num_hosts * num_devices_per_host
-            benchmark_suite(suite_name,
-                            num_hosts,
-                            num_devices_per_host,
-                            exp_name=f"{suite_name}_{num_gpus}_gpus",
-                            disable_tqdm=True,
-                            **benchmark_settings)
+    if benchmark_settings is None:
+        benchmark_settings = {}
+    for num_hosts, num_devices_per_host in cluster_settings:
+        num_gpus = num_hosts * num_devices_per_host
+        benchmark_suite(suite_name,
+                        num_hosts,
+                        num_devices_per_host,
+                        exp_name=f"{suite_name}_{num_gpus}_gpus",
+                        disable_tqdm=True,
+                        **benchmark_settings)
 
 
 model_search_suites = {

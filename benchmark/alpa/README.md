@@ -102,3 +102,29 @@ Iteration 2 ...
  - Benchmark: 18.06 s
 Type: gpt  Model Config: GPTModelConfig(seq_len=1024, hidden_size=2560, num_layers=32, num_heads=32, vocab_size=51200)  #Microbatch: 4  #GPU: 8  Parallel Config: UniformParallelArgs(prefer_reduce_scatter=True, use_remat=True, dp=2, op=2, pp=2, force_batch_dim_mapping=True)  Mean Time (s): 2.454  Std Time (s): 0.000  #Params (Billion): 2.649B  TFLOPs: 37.16  Peak Mem (GB): 8.745  Metadata: {'compilation_times': 'None', 'compute_cost_file_name': 'None', 'forward_stage_layer_ids': 'None', 'submesh_shapes': 'None', 'logical_mesh_shapes': 'None', 'autosharding_option_dicts': 'None'}
 ```
+
+## Advanced Usage
+Benchmark pipeshard parallel case:
+```
+python benchmark.py --suite gpt.perf_test_auto
+```
+
+Benchmark shard parallel case (i.e. only intra-opeartor parallelism, no pipeline parallelism). Add `--local` in the end to run the benchmark with the local cluster without ray.
+```
+python benchmark.py --suite gpt.perf_test_fast_2d --shard-only [--local]
+```
+
+Some benchmarks are inference benchmarks:
+```
+python benchmark.py --suite gpt_inference.profile
+```
+
+Add `--profile-driver-time` to derive the latency from the driver. This flag will also turn off the synchronization barrier after each benchmarking step. Specially, for inference case, this turns streaming inference on and the model will pipeline different input batches (in addition to pipelining different micro-batches).
+```
+python benchmark.py --suite gpt_inference.profile --profile-driver-time
+```
+
+We also include a convenient script `run_exp.py` to run multiple benchmarks with different cluster configurations. For example, to run all gpt search cases:
+```
+python run_exp.py gpt
+```

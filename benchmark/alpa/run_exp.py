@@ -1,6 +1,7 @@
 """Convenient script to run search experiments with mutliple cluster
 settings."""
 import os
+import subprocess
 import sys
 import argparse
 from datetime import datetime
@@ -9,15 +10,12 @@ from benchmark import benchmark_suite
 
 
 def run_exp(cluster_settings, suite_name, benchmark_settings=None):
+    os.environ["PYTHONUNBUFFERED"] = "1"
     now = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 
-    with open(f"{now}-{suite_name}.log", "w") as log_file:
-        # re-open stdout without buffering
-        sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)
-
-        # redirect stdout and stderr to the log file opened above
-        os.dup2(log_file.fileno(), sys.stdout.fileno())
-        os.dup2(log_file.fileno(), sys.stderr.fileno())
+    with subprocess.Popen(["tee", f"{suite_name}-{now}.log"], stdin=subprocess.PIPE) as tee:
+        os.dup2(tee.stdin.fileno(), sys.stdout.fileno())
+        os.dup2(tee.stdin.fileno(), sys.stderr.fileno())
 
         if benchmark_settings is None:
             benchmark_settings = {}

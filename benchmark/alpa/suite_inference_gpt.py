@@ -1,6 +1,6 @@
 """Benchmark suites for gpt with auto parallelization."""
 from suite_manual_gpt import gpt_specs
-from parallel_option import (BenchmarkCase, UniformParallelArgs)
+from benchmark_parallel_utils import (BenchmarkCase, UniformParallelArgs)
 
 prefer_reduce_scatter = True
 force_batch_dim_mapping = True

@@ -10,7 +10,7 @@ from alpa.model.gpt_model import FlaxGPTForLMModule
 from alpa.util import print_used_time
 
 from util import compute_gpt_parameter_count, compute_gpt_tflops
-from parallel_option import (
+from benchmark_parallel_utils import (
     get_pipeshard_parallel_method,
     compile_and_benchmark_pipeshard_inference_executable)
 

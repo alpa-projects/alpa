@@ -162,7 +162,7 @@ if __name__ == "__main__":
     os.makedirs("tmp", exist_ok=True)
 
     # Make eval work smoothly
-    from parallel_option import *
+    from benchmark_parallel_utils import *
     from suite_manual_gpt import GPTModelConfig
     from suite_manual_moe import MoEModelConfig
     from suite_wresnet import WResNetModelConfig

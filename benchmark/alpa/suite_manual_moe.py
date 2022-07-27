@@ -1,6 +1,6 @@
 """Benchmark suites for moe with manual specifications."""
 from collections import namedtuple
-from parallel_option import BenchmarkCase, UniformParallelArgs
+from benchmark_parallel_utils import BenchmarkCase, UniformParallelArgs
 
 # B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
 # head = num_heads, S_ = expert_group_size, E = expert_number,

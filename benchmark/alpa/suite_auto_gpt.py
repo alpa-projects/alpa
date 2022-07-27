@@ -1,7 +1,7 @@
 """Benchmark suites for gpt with auto parallelization."""
 from suite_manual_gpt import gpt_specs
-from parallel_option import (BenchmarkCase, SearchParallelArgs,
-                             LoadSolutionParallelArgs)
+from benchmark_parallel_utils import (BenchmarkCase, SearchParallelArgs,
+                                      LoadSolutionParallelArgs)
 
 max_global_batch_size = 1024
 

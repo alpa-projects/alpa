@@ -12,7 +12,7 @@ from alpa.util import print_used_time
 
 from benchmark_one_case_gpt_bert import (get_train_step)
 from util import compute_moe_parameter_count, compute_moe_tflops
-from parallel_option import (
+from benchmark_parallel_utils import (
     get_pipeshard_parallel_method, get_shard_parallel_method,
     compile_and_benchmark_pipeshard_training_executable,
     compile_and_benchmark_shard_training_executable)

@@ -53,9 +53,16 @@ def benchmark_all(args):
 
     for case in benchmark_suites[args.suite][num_gpus]:
         print(">>>>>> Alpa benchmark: Working on case {}...".format(str(case)), flush=True)
-        batch_size, seq_len, hidden_size, num_layers, num_heads, vocab_size, num_expert, _, \
-        dp_size, tensor_mp_size, p_dim0, p_dim1, pipeline_mp_size, \
-        num_micro_batches, force_dp, checkpoint_activations, _, _, ep_size = case
+
+        (batch_size, model_config, num_micro_batches, parallel_mode,
+         parallel_args) = case
+        (seq_len, hidden_size, num_layers, num_heads, vocab_size, num_expert,
+         expert_group_size) = model_config
+
+        (prefer_reduce_scatter, checkpoint_activations, dp_size, tensor_mp_size, pipeline_mp_size,
+         _) = parallel_args
+
+        # TODO (hao, zhuohan): Figure out how to set ep_size
 
         use_deepspeed = True
 

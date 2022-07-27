@@ -14,7 +14,7 @@ from alpa import (parallelize, get_global_cluster,
 from alpa.model.wide_resnet import get_wide_resnet, TrainState
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.util import print_used_time, compute_param_number
-from parallel_option import (
+from benchmark_parallel_utils import (
     get_pipeshard_parallel_method, get_shard_parallel_method,
     compile_and_benchmark_pipeshard_training_executable,
     compile_and_benchmark_shard_training_executable)

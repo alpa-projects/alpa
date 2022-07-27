@@ -1,6 +1,6 @@
 """
-Differences between ``alpa.parallelize``, ``jax.pmap`` and ``jax.pjit``
-=======================================================================
+Differences between alpa.parallelize, jax.pmap and jax.pjit
+===========================================================
 
 The most common tool for parallelization or distributed computing in jax is
 `pmap <https://jax.readthedocs.io/en/latest/jax.html#parallelization-pmap>`_.

@@ -109,7 +109,8 @@ class MeshDriverDataLoader:
         prefetch_size: The number of batches to prefetch.
 
     Note:
-        Currently, this only works for ShardParallel without gradient accumulation.
+        Currently, this only works for ShardParallel without
+        gradient accumulation.
     """
 
     def __init__(self,
@@ -183,12 +184,11 @@ class MeshDriverDataLoader:
                 for k in range(physical_mesh.num_devices_per_host):
                     device_id = i * physical_mesh.num_devices_per_host + k
                     tmp_indices = list(indices[j][device_id])
-                    offset = i // num_hosts_for_one_batch * batch_size_per_host 
+                    offset = i // num_hosts_for_one_batch * batch_size_per_host
                     if tmp_indices[0].start is not None:
-                        tmp_indices[0] = slice(
-                            tmp_indices[0].start - offset,
-                            tmp_indices[0].stop - offset,
-                            tmp_indices[0].step)
+                        tmp_indices[0] = slice(tmp_indices[0].start - offset,
+                                               tmp_indices[0].stop - offset,
+                                               tmp_indices[0].step)
                     host_indices[-1].append(tuple(tmp_indices))
 
             args = (input_iter_func, (start, end, batch_size_per_host),

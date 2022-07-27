@@ -36,6 +36,7 @@ examples/opt_serving/weblogs
 examples/opt_serving/benchmark/tmp/
 examples/opt_serving/tmp/
 examples/language_model/norwegian-gpt2/
+alpa_debug_info
 
 # Analysis temp files
 *.nvprof

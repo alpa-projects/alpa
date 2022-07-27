@@ -18,7 +18,6 @@ from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
                                   xla_destructure, pyval_to_ir_constant)
 import flax
 from flax.linen.module import compact, wrap_method_once
-from flax.optim import dynamic_scale as dynamic_scale_lib
 
 from alpa.global_env import global_config, is_worker
 from alpa.pipeline_parallel.primitive_def import xla_identity

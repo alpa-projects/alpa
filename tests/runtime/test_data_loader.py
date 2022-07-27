@@ -69,7 +69,7 @@ class DataLoaderTest(unittest.TestCase):
 
         # Check that actual_x is a permutation of expected_x.
         for i in range(feature_dim):
-            assert np.sum(actual_x[:,i]) == np.sum(expected_x[:,i])
+            assert np.sum(actual_x[:, i]) == np.sum(expected_x[:, i])
         # Check that actual_y is a permutation of expected_y.
         assert np.sum(actual_y) == np.sum(expected_y)
 

@@ -107,6 +107,8 @@ class MeshDriverDataLoader:
           It returns dataset[start:end] one batch by one batch.
         placement_specs: The placement specs of batch arguments.
         prefetch_size: The number of batches to prefetch.
+        repeat: If true, repeat the dataset indefinitely. The
+          returned iterator will never stop.
 
     Note:
         Currently, this only works for ShardParallel without
@@ -118,7 +120,10 @@ class MeshDriverDataLoader:
                  num_samples,
                  input_iter_func,
                  placement_specs,
-                 prefetch_size=1):
+                 prefetch_size=1,
+                 repeat=False):
+        self.repeat = repeat
+
         physical_mesh = get_global_physical_mesh()
         assert not isinstance(physical_mesh, LocalPhysicalDeviceMesh), (
             "Please use alpa.DataLoader instead of alpa.MeshWorkerDataLoader "
@@ -200,13 +205,17 @@ class MeshDriverDataLoader:
         for w in self.physical_mesh.workers:
             w.data_loader_iter.remote(self.uuid)
 
-        # Yield next batch
-        for _ in range(self.num_batches):
-            for w in self.physical_mesh.workers:
-                w.data_loader_next.remote(self.uuid)
-            for a in self.output_arrays:
-                a.flush()
-            yield self.output_arrays
+        # Yield the next batch
+        while True:
+            for _ in range(self.num_batches):
+                for w in self.physical_mesh.workers:
+                    w.data_loader_next.remote(self.uuid)
+                for a in self.output_arrays:
+                    a.flush()
+                yield self.output_arrays
+
+            if not self.repeat:
+                break
 
     def __del__(self):
         physical_mesh = self.physical_mesh

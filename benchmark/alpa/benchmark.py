@@ -38,9 +38,16 @@ benchmark_suites = {
 }
 
 
-def benchmark_suite(suite_name, num_hosts, num_devices_per_host, exp_name, niter,
-                    shard_only=False, local=False, profile_driver_time=False,
-                    disable_tqdm=False, use_separate_process=True):
+def benchmark_suite(suite_name,
+                    num_hosts,
+                    num_devices_per_host,
+                    exp_name,
+                    niter,
+                    shard_only=False,
+                    local=False,
+                    profile_driver_time=False,
+                    disable_tqdm=False,
+                    use_separate_process=True):
     num_gpus = num_hosts * num_devices_per_host
 
     if local:
@@ -65,17 +72,16 @@ def benchmark_suite(suite_name, num_hosts, num_devices_per_host, exp_name, niter
 
         # Run one case
         print("Working on case: {}".format(str(benchmark_case)))
-        result = benchmark_one_case(
-            model_type,
-            benchmark_case,
-            niter,
-            num_hosts,
-            num_devices_per_host,
-            shard_only=shard_only,
-            local=local,
-            profile_driver_time=profile_driver_time,
-            disable_tqdm=disable_tqdm,
-            use_separate_process=use_separate_process)
+        result = benchmark_one_case(model_type,
+                                    benchmark_case,
+                                    niter,
+                                    num_hosts,
+                                    num_devices_per_host,
+                                    shard_only=shard_only,
+                                    local=local,
+                                    profile_driver_time=profile_driver_time,
+                                    disable_tqdm=disable_tqdm,
+                                    use_separate_process=use_separate_process)
 
         (parameter_count, peak_mem, latencies, tflops, metadata) = result
 

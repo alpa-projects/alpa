@@ -42,6 +42,7 @@ YAPF_FLAGS=(
 
 YAPF_EXCLUDES=(
     '--exclude' 'benchmark/cupy'
+    '--exclude' 'benchmark/alpa/old_backup'
     '--exclude' 'benchmark/deepspeed'
     '--exclude' 'benchmark/megatron'
     '--exclude' 'docs'
@@ -75,7 +76,7 @@ format_changed() {
 
 # Format all files
 format_all() {
-    yapf --in-place "${YAPF_FLAGS[@]}" "${YAPF_EXCLUDES[@]}" alpa tests
+    yapf --in-place "${YAPF_FLAGS[@]}" "${YAPF_EXCLUDES[@]}" alpa tests benchmark
 }
 
 ## This flag formats individual files. --files *must* be the first command line

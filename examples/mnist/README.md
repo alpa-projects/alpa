@@ -4,10 +4,18 @@ Adopted from https://github.com/google/flax/tree/main/examples/mnist.
 
 Use `alpa.parallelize` to parallelize the training loop.
 
-Quick run
+1. Run training with all local GPUs in a single machine.
 ```
 python3 main.py --workdir=/tmp/mnist --config=configs/default.py --config.batch_size 8192
 ```
+See `train.py` for a minimal example of using alpa on a single machine.
+
+2. Run training with all GPUs in a ray cluster
+```
+ray start --head
+python3 main.py --workdir=/tmp/mnist --config=configs/default.py --config.batch_size 8192 --use_ray
+```
+See `train_ray.py` for a minimal example of using alpa on a ray cluster.
 
 --------------------------------------------------------------------------------
 

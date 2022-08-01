@@ -339,7 +339,7 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
             "Too few non-trivial ops (dot, conv), which may influence"
             " auto-sharding performance")
 
-    @maybe_numba_jit
+    @maybe_numba_jit()
     def init():
         blocked = np.full((length + 1, length + 1), np.inf, dtype=np.float32)
         for left in range(1, length + 1):
@@ -360,7 +360,7 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
                 blocked[left, r] = 0
         return blocked
 
-    @maybe_numba_jit
+    @maybe_numba_jit()
     def dp(input_sizes, blocked):
         max_cost = np.full((length + 1, layer_num + 1),
                            np.inf,

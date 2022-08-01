@@ -1488,18 +1488,62 @@ def compute_gpt_tflops(batch_size,
 _DISABLE_NUMBA = False
 
 
-def maybe_numba_jit(func):
-    """Decorator to mark a function as numba jitted if numba is available."""
-    try:
-        from numba import jit  # pylint: disable=import-outside-toplevel
-        jitted_func = jit(nopython=True)(func)
+try:
+    from numba import njit
+    from numba.typed import List as MaybeNumbaList
+    from numba import prange as maybe_prange
 
-        def wrapper(*args, **kwargs):
+    def maybe_numba_jit(*args, **kwargs):
+        """Decorator to mark a function as numba jitted if numba is available and not disabled."""
+        def wrapper(func):
             if _DISABLE_NUMBA:
-                return func(*args, **kwargs)
-            return jitted_func(*args, **kwargs)
+                return func
+            return njit(*args, **kwargs)(func)
+        return wrapper
+
+except ImportError:
+    logger.warning("Install numba to jit and accelerate the function.")
+
+    def maybe_numba_jit(*args, **kwargs):
+        def wrapper(func):
+            return func
 
         return wrapper
-    except ImportError:
-        logger.warning("Install numba to jit and accelerate the function.")
-        return func
+
+    MaybeNumbaList = list
+    maybe_prange = range
+
+
+def is_ray_node_resource(resource_key):
+    """Check if the current resource is the host ip."""
+    ishost_regex = re.compile(r"^node:\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
+    return ishost_regex.match(resource_key)
+
+
+def try_import_ray_worker(error: bool = False):
+    """Tries importing `ray.worker` and returns the module (or None).
+
+    Args:
+        error: Whether to raise an error if ray.worker cannot be imported.
+
+    Returns:
+        The `ray.worker` modules.
+
+    Raises:
+        ImportError: If error=True and ray's version >= 2.0.
+    """
+    # In the ray-nightly version,
+    # worker = _DeprecationWrapper("worker", ray._private.worker)
+    # `_DeprecationWrapper` has attributes of `_real_worker`
+    try:
+        if hasattr(ray.worker, "_real_worker"):
+            if error:
+                raise ImportError("Could not import `ray.worker`!"
+                                  "You might use the ray-nightly "
+                                  "and `ray.worker` is deprecated there"
+                                  "`pip install ray==1.13.0`.")
+            return ray.worker._real_worker  # pylint: disable=protected-access
+        else:
+            return ray.worker
+    except ModuleNotFoundError:
+        return ray._private.worker  # pylint: disable=protected-access

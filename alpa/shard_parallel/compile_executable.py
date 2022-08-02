@@ -219,6 +219,11 @@ def filter_used_vars(all_vars, eqns):
     return [var for var in all_vars if var in used_vars]
 
 
+def filter_pass_through_vars(in_vars, out_vars):
+    in_vars_set = set(x for x in in_vars if not isinstance(x, Literal))
+    return [x for x in out_vars if x in in_vars_set]
+
+
 def clone_vars(var_list, gensym_func: Callable):
     """Clone variables."""
     return [gensym_func(x.aval) for x in var_list]
@@ -308,8 +313,11 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
 
     # Wrap all invars of apply_grad
     in_grad_vars = marker_eqn.outvars
-    old_invars = filter_used_vars(raw_jaxpr.jaxpr.invars,
-                                  apply_grad_eqns) + in_grad_vars
+    old_invars = (
+        filter_used_vars(raw_jaxpr.jaxpr.invars, apply_grad_eqns) +
+        filter_pass_through_vars(raw_jaxpr.jaxpr.invars,
+                                 raw_jaxpr.jaxpr.outvars) +
+        in_grad_vars)
     new_invars = []
     for var in old_invars:
         if var in global_invars:

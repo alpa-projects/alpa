@@ -687,11 +687,10 @@ def main():
             loss = loss_fn(logits, labels)
             return loss
 
-        grad_fn = jax.value_and_grad(compute_loss)
+        grad_fn = alpa.value_and_grad(compute_loss)
         loss, grad = grad_fn(state.params)
 
-        new_state = state.apply_gradients(grads=grad, dropout_rng=new_dropout_rng)
-
+        new_state = state.apply_gradients(grads=grad)
         metrics = {"loss": loss, "learning_rate": linear_decay_lr_schedule_fn(state.step)}
 
         return new_state, metrics
@@ -707,7 +706,10 @@ def main():
         return metrics
 
     # Create parallel version of the train and eval step
-    p_train_step = alpa.parallelize(train_step, donate_argnums=(0,))
+    method = alpa.Zero2Parallel(num_micro_batches=4)
+    p_train_step = alpa.parallelize(train_step,
+                                    method=method,
+                                    donate_argnums=(0,))
     p_eval_step = alpa.parallelize(eval_step)
 
     dump_debug_info_train_step = dump_debug_info_eval_step = True
@@ -722,12 +724,13 @@ def main():
     train_time = 0
     train_metrics = []
     epochs = tqdm(range(num_epochs), desc="Epoch ... ", position=0)
+
+    step_ct = 0
+    last_time = time.time()
+
     for epoch in epochs:
         # ======================== Training ================================
         train_start = time.time()
-
-        last_step = -1
-        last_time = time.time()
 
         # Create sampling rng
         rng, input_rng = jax.random.split(rng)
@@ -748,10 +751,19 @@ def main():
                 executable = p_train_step.get_last_executable()
                 executable.dump_debug_info("alpa_debug_info")
 
+            step_ct += 1
             if cur_step % training_args.logging_steps == 0 and cur_step > 0:
-                throughput = np.prod(batch["input_ids"].shape) * (cur_step - last_step) /\
-                      (time.time() - last_time)
-                last_step = step
+                latency = (time.time() - last_time) / step_ct
+                throughput_tokens = np.prod(batch["input_ids"].shape) / latency
+                throughput_tflops = alpa.util.compute_gpt_tflops(
+                    batch_size=batch["input_ids"].shape[0],
+                    seq_len=batch["input_ids"].shape[1],
+                    num_layers=config.num_hidden_layers,
+                    hidden_size=config.hidden_size,
+                    vocab_size=config.vocab_size,
+                    num_gpus=alpa.get_global_num_devices(),
+                    latency=latency)
+                step_ct = 0
                 last_time = time.time()
 
                 # Save metrics
@@ -760,10 +772,11 @@ def main():
                     write_train_metric(summary_writer, train_metrics, train_time, cur_step)
 
                 epochs.write(
-                    f"Step... {cur_step} | "\
-                    f"Loss: {train_metric['loss'].mean():.4f}, "\
-                    f"Learning Rate: {train_metric['learning_rate'].mean():.4f}, "\
-                    f"Throughput: {throughput:.2f} token/s"
+                    f"Step... {cur_step} | "
+                    f"Loss: {train_metric['loss'].mean():.4f}, "
+                    f"Learning Rate: {train_metric['learning_rate'].mean():.4f}, "
+                    f"Throughput: {throughput_tokens:.2f} token/s "
+                    f"Throughput: {throughput_tflops:.2f} TFLOP/s"
                 )
 
                 train_metrics = []

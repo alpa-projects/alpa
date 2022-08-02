@@ -2160,6 +2160,15 @@ def set_seed(seed: int):
             set_runtime_random_seed(seed)
 
 
+def get_global_num_devices():
+    if global_virtual_physical_mesh:
+        return global_virtual_physical_mesh.num_devices
+    if global_physical_mesh:
+        return global_physical_mesh.num_devices
+
+    raise RuntimeError("Please call alpa.init first")
+
+
 ########################################
 # Register ShardArg Handler
 ########################################

@@ -70,7 +70,7 @@ def batch_iterator(batch_size=1000):
         yield dataset[i: i + batch_size]["text"]
 
 # Customized training
-tokenizer.train_from_iterator(batch_iterator(), vocab_size=50257, min_frequency=2, special_tokens=[
+tokenizer.train_from_iterator(batch_iterator(), vocab_size=50256, min_frequency=2, special_tokens=[
     "<s>",
     "<pad>",
     "</s>",
@@ -91,7 +91,7 @@ in the local model folder:
 ```python
 from transformers import GPT2Config
 
-config = GPT2Config.from_pretrained("gpt2", resid_pdrop=0.0, embd_pdrop=0.0, attn_pdrop=0.0, vocab_size=50257)
+config = GPT2Config.from_pretrained("gpt2", resid_pdrop=0.0, embd_pdrop=0.0, attn_pdrop=0.0, vocab_size=50256)
 config.save_pretrained("./norwegian-gpt2")
 ```
 

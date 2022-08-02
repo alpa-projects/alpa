@@ -229,7 +229,7 @@ for dict_val in _backend_specific_translations.values():
 register_translation(pe.remat_call_p, _remat_translation_rule)
 
 
-# Support pickle ShardingSpec
+# Support using pickle on ShardingSpec
 def sharding_spec_getstate(self):
     sharding = []
     for x in self.sharding:
@@ -295,49 +295,17 @@ jax.tree_multimap = jax._src.tree_util.tree_map
 
 
 # Monkey patch the nn.Embed in flax to use onehot + matmul instead of
-# gather/scatter.
-# Because we currently do not support 2d partition of gather/scatter.
+# gather/scatter,
+# because we currently do not support 2d partition of gather/scatter.
 def embed_call_one_hot(self, inputs):
-    expanded = jax.nn.one_hot(inputs, self.num_embeddings, dtype=self.dtype)
-    ret = expanded @ jnp.asarray(self.embedding, self.dtype)
+    # NOTE(lmzheng): A hack here to always use fp16
+    dtype = jnp.float16
+    expanded = jax.nn.one_hot(inputs, self.num_embeddings, dtype=dtype)
+    ret = expanded @ jnp.asarray(self.embedding, dtype)
     return ret
 
 
-# Monkey patch the nn.Embed in flax to use always use fp32 as parameter type
-def embed_setup(self):
-    self.embedding = self.param("embedding", self.embedding_init,
-                                (self.num_embeddings, self.features))
-    if self.dtype == jnp.float16:
-        self.embedding_fp16 = self.embedding.astype(jnp.float16)
-
-
-setattr(flax.linen.Embed, "setup", embed_setup)
 setattr(flax.linen.Embed, "__call__", embed_call_one_hot)
-
-
-# Monkey patch nn.LayerNorm in flax to make sure all gradients are in fp16
-# when using mixed-precision.
-@compact
-def layer_norm_call(self, x):
-    x = jnp.asarray(x, jnp.float32)
-    features = x.shape[-1]
-    mean = jnp.mean(x, axis=-1, keepdims=True)
-    mean2 = jnp.mean(lax.square(x), axis=-1, keepdims=True)
-    var = mean2 - lax.square(mean)
-    mul = lax.rsqrt(var + self.epsilon)
-    mul = jnp.asarray(mul, self.dtype)
-    if self.use_scale:
-        mul = mul * jnp.asarray(
-            self.param("scale", self.scale_init, (features,)), self.dtype)
-    y = (x - mean) * mul
-    y = jnp.asarray(y, self.dtype)
-    if self.use_bias:
-        y = y + jnp.asarray(self.param("bias", self.bias_init,
-                                       (features,)), self.dtype)
-    return jnp.asarray(y, self.dtype)
-
-
-setattr(flax.linen.LayerNorm, "__call__", wrap_method_once(layer_norm_call))
 
 
 # Monkey patch a new method "init_dummy" to flax's Module.

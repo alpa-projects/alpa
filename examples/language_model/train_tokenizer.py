@@ -12,7 +12,7 @@ def batch_iterator(batch_size=1000):
         yield dataset[i: i + batch_size]["text"]
 
 # Customized training
-tokenizer.train_from_iterator(batch_iterator(), vocab_size=50257, min_frequency=2, special_tokens=[
+tokenizer.train_from_iterator(batch_iterator(), vocab_size=50256, min_frequency=2, special_tokens=[
     "<s>",
     "<pad>",
     "</s>",

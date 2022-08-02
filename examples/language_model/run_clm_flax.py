@@ -29,6 +29,7 @@ import sys
 import time
 from dataclasses import asdict, dataclass, field
 from enum import Enum
+import functools
 from itertools import chain
 from pathlib import Path
 from typing import Callable, Optional
@@ -39,6 +40,7 @@ from datasets import Dataset, load_dataset
 from tqdm import tqdm
 
 import alpa
+from alpa.model.model_util import DynamicScale
 import jax
 import jax.numpy as jnp
 import optax
@@ -258,7 +260,8 @@ class DataTrainingArguments:
 
 
 class TrainState(train_state.TrainState):
-    dropout_rng: jnp.ndarray
+    dynamic_scale: Optional[DynamicScale]
+    dropout_rng: Optional[jnp.ndarray]
 
 
 def data_loader(rng: jax.random.PRNGKey, dataset: Dataset, batch_size: int, shuffle: bool = False):
@@ -666,7 +669,8 @@ def main():
         )
 
     # Setup train state
-    state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer, dropout_rng=dropout_rng)
+    dynamic_scale = DynamicScale()
+    state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer, dynamic_scale=dynamic_scale, dropout_rng=None)
 
     def loss_fn(logits, labels):
         shift_logits = logits[..., :-1, :]
@@ -687,10 +691,28 @@ def main():
             loss = loss_fn(logits, labels)
             return loss
 
-        grad_fn = alpa.value_and_grad(compute_loss)
-        loss, grad = grad_fn(state.params)
+        dynamic_scale = state.dynamic_scale
+        if dynamic_scale:
+            grad_fn = dynamic_scale.value_and_grad(compute_loss)
+            dynamic_scale, is_fin, loss, grads = grad_fn(state.params)
+        else:
+            grad_fn = alpa.value_and_grad(compute_loss)
+            loss, grads = grad_fn(state.params)
 
-        new_state = state.apply_gradients(grads=grad)
+        new_state = state.apply_gradients(grads=grads)
+
+        if dynamic_scale:
+            new_state = new_state.replace(
+                opt_state=jax.tree_map(
+                    functools.partial(jnp.where, is_fin),
+                    new_state.opt_state,
+                    state.opt_state),
+                params=jax.tree_map(
+                    functools.partial(jnp.where, is_fin),
+                    new_state.params,
+                    state.params),
+                dynamic_scale=dynamic_scale)
+
         metrics = {"loss": loss, "learning_rate": linear_decay_lr_schedule_fn(state.step)}
 
         return new_state, metrics

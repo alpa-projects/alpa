@@ -40,7 +40,7 @@ from datasets import Dataset, load_dataset
 from tqdm import tqdm
 
 import alpa
-from alpa.model.model_util import DynamicScale
+from alpa.model.model_util import DynamicScale, TrainState
 import jax
 import jax.numpy as jnp
 import optax
@@ -257,11 +257,6 @@ class DataTrainingArguments:
             if self.validation_file is not None:
                 extension = self.validation_file.split(".")[-1]
                 assert extension in ["csv", "json", "txt"], "`validation_file` should be a csv, a json or a txt file."
-
-
-class TrainState(train_state.TrainState):
-    dynamic_scale: Optional[DynamicScale]
-    dropout_rng: Optional[jnp.ndarray]
 
 
 def data_loader(rng: jax.random.PRNGKey, dataset: Dataset, batch_size: int, shuffle: bool = False):
@@ -669,8 +664,13 @@ def main():
         )
 
     # Setup train state
-    dynamic_scale = DynamicScale()
-    state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer, dynamic_scale=dynamic_scale, dropout_rng=None)
+    if model_args.dtype == "float16":
+        use_master_copy = False
+        dynamic_scale = DynamicScale()
+    else:
+        use_master_copy = dynamic_scale = False
+    state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer,
+                              dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
 
     def loss_fn(logits, labels):
         shift_logits = logits[..., :-1, :]
@@ -680,14 +680,10 @@ def main():
 
     # Define gradient update step fn
     def train_step(state, batch):
-        # Alpa uses stateful rng generators so there is no need
-        # to explicitly manage rng seeds. Here we just copy them
-        # to make the code below runnable
-        new_dropout_rng = dropout_rng = state.dropout_rng
 
         def compute_loss(params):
             labels = batch.pop("labels")
-            logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
+            logits = state.apply_fn(**batch, params=params, train=True)[0]
             loss = loss_fn(logits, labels)
             return loss
 

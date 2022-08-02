@@ -305,12 +305,14 @@ class TrainState(train_state.TrainState):
         )
 
     @classmethod
-    def create(cls, *, apply_fn, params, tx, mixed_precision=False, **kwargs):
+    def create(cls, *, apply_fn, params, tx,
+               use_master_copy=False, **kwargs):
         """Creates a new instance with `step=0` and initialized `opt_state`."""
         opt_state = tx.init(params)
 
-        if mixed_precision:
-            master_copy = params
+        if use_master_copy:
+            master_copy = jax.tree_util.tree_map(
+                lambda x: jnp.asarray(x, dtype=jnp.float32), params)
             params = jax.tree_util.tree_map(
                 lambda x: jnp.asarray(x, dtype=jnp.float16), params)
         else:

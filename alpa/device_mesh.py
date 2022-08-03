@@ -43,6 +43,7 @@ from jax.lib import xla_client
 import jax.numpy as jnp
 import numpy as np
 import ray
+from ray.util.placement_group import placement_group
 
 from alpa import mesh_profiling
 import alpa.collective as col
@@ -955,6 +956,17 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
         # Launch workers
         self.workers = []
+
+        # build the placement group bundles
+        bundle_specs = [{
+            "GPU": self.num_devices_per_host,
+            "CPU": 1
+        } for _ in range(self.num_hosts)]
+
+        # https://docs.ray.io/en/latest/ray-core/placement-group.html#strategy-types
+        # STRICT_SPREAD: Each bundle must be scheduled in a separate node.
+        pg = placement_group(bundle_specs, strategy="STRICT_SPREAD")
+
         for i in range(self.num_hosts):
             # Set XLA environment variables
             env_vars = {
@@ -996,17 +1008,19 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 })
 
             # Launch the DaemonMoveWorker
-            node_resource = "node:" + self.host_info[i]["NodeManagerAddress"]
-            cls = ray.remote(resources={node_resource: 1e-3})(DaemonMoveWorker)
-            move_worker = cls.remote()
+            cls = ray.remote(DaemonMoveWorker)
+            move_worker = cls.options(placement_group=pg,
+                                      placement_group_bundle_index=i).remote()
 
             # Launch the MeshHostWorker
-            cls = ray.remote(num_gpus=self.num_devices_per_host,
-                             resources={node_resource: 1e-3})(MeshHostWorker)
-            worker = cls.options(runtime_env={
-                "env_vars": env_vars
-            }).remote(self.server_address, self.num_hosts, i, self.mesh_id,
-                      move_worker, global_config.runtime_random_seed)
+            cls = ray.remote(num_gpus=self.num_devices_per_host)(MeshHostWorker)
+            worker = cls.options(placement_group=pg,
+                                 placement_group_bundle_index=i,
+                                 runtime_env={
+                                     "env_vars": env_vars
+                                 }).remote(self.server_address, self.num_hosts,
+                                           i, self.mesh_id, move_worker,
+                                           global_config.runtime_random_seed)
             self.workers.append(worker)
         self.launched = True
 

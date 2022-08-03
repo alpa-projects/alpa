@@ -665,7 +665,7 @@ def main():
 
     # Setup train state
     if model_args.dtype == "float16":
-        use_master_copy = False
+        use_master_copy = True
         dynamic_scale = DynamicScale()
     else:
         use_master_copy = dynamic_scale = False

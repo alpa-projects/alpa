@@ -104,7 +104,6 @@ class ParallelizedFunc:
         """Launch the computation on the driver."""
         executable, _, out_tree, args_flat = (
             self._decode_args_and_get_executable(*args))
-        executable.dump_debug_info("alpa_debug_info")
         out = executable.launch_on_driver(*args_flat)
         return tree_unflatten(out_tree(), out)
 

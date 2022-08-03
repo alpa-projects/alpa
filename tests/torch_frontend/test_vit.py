@@ -285,11 +285,12 @@ train_config = {
     "dtype": torch.half,
 }
 # gBS = 512, fp16
-# #mb = 512, latency: TODO
-# #mb = 256, latency: TODO
-# #mb = 128, latency: TODO
-# #mb = 64, latency: TODO
-# #mb = 32, latency: TODO
+# #mb = 512, latency: 9.814587279369956
+# #mb = 256, latency: 8.63443210250453
+# #mb = 128, latency: 7.770233191941914
+# #mb = 64, latency: 7.834461299996627
+# #mb = 32, latency: 9.487284760726126
+# #mb = 16, latency: 12.428439065029746
 
 # ViT-60B model
 # arch_params = {

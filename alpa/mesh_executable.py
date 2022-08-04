@@ -953,8 +953,7 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
                 w.put_executable.remote(self.exec_uuid,
                                         PartialGradAccMeshWorkerExecutable,
                                         hlo_proto, stage_plan,
-                                        self.donated_invars,
-                                        self.out_acc_grad_indices)
+                                        self.donated_invars)
             self.hlo_text = None  # will be fetched from the workers later
             self.grad_sync_channel_ids = None
             self.skip_allreduce_env_name = None
@@ -991,8 +990,7 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
     """
 
     def __init__(self, worker: "MeshHostWorker", uuid: int, hlo_proto: bytes,
-                 stage_plan: StagePlan, donated_invars: Sequence[bool],
-                 output_acc_grad_indices: str):
+                 stage_plan: StagePlan, donated_invars: Sequence[bool]):
         super().__init__(worker, uuid, hlo_proto, stage_plan, donated_invars)
         self.grad_sync_channel_ids = get_grad_sync_channel_ids(
             self.compiled.hlo_modules()[0])

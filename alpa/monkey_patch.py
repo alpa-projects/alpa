@@ -298,13 +298,26 @@ jax.tree_multimap = jax._src.tree_util.tree_map
 # gather/scatter,
 # because we currently do not support 2d partition of gather/scatter.
 def embed_call_one_hot(self, inputs):
-    # NOTE(lmzheng): A hack here to always use fp16
-    dtype = jnp.float16
+    dtype = self.dtype
+    if global_config.flax_always_use_fp16_embedding:
+        dtype = jnp.float16
     expanded = jax.nn.one_hot(inputs, self.num_embeddings, dtype=dtype)
     ret = expanded @ jnp.asarray(self.embedding, dtype)
     return ret
 
 
+# Monkey patch the nn.Embed in flax to add a fp16 conversion.
+# This is used for manual pipeline marker.
+def embed_setup(self):
+    self.embedding = self.param('embedding',
+                                self.embedding_init,
+                                (self.num_embeddings, self.features),
+                                self.param_dtype)
+    if self.dtype == jnp.float16:
+        self.embedding_fp16 = self.embedding.astype(jnp.float16)
+
+
+setattr(flax.linen.Embed, "setup", embed_setup)
 setattr(flax.linen.Embed, "__call__", embed_call_one_hot)
 
 

@@ -43,7 +43,6 @@ from jax.lib import xla_client
 import jax.numpy as jnp
 import numpy as np
 import ray
-from ray.util.placement_group import placement_group
 
 from alpa import mesh_profiling
 import alpa.collective as col
@@ -54,7 +53,8 @@ from alpa.parallel_plan import PlacementSpec
 from alpa.timer import timers
 from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
                        update_jax_platform, is_ray_node_resource,
-                       try_import_ray_worker)
+                       try_import_ray_worker, create_placement_group,
+                       get_bundle_idx)
 
 ray_worker = try_import_ray_worker()
 
@@ -931,10 +931,12 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
         self.devices = devices
         self.device_strs = []
+        self.device_ips = []
         for i in range(self.num_hosts):
             ip = self.host_info[i]["NodeManagerAddress"]
             self.device_strs.extend(
                 [device_id_to_str(ip, j) for j in devices[i]])
+            self.device_ips.append(ip)
         self._launch_xla_servers()
 
         self.to_delete_remote_refs = []
@@ -956,18 +958,16 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
         # Launch workers
         self.workers = []
-
-        # build the placement group bundles
-        bundle_specs = [{
-            "GPU": self.num_devices_per_host,
-            "CPU": 1
-        } for _ in range(self.num_hosts)]
-
-        # https://docs.ray.io/en/latest/ray-core/placement-group.html#strategy-types
-        # STRICT_SPREAD: Each bundle must be scheduled in a separate node.
-        pg = placement_group(bundle_specs, strategy="STRICT_SPREAD")
-
+        
+        # create placement group
+        _placement_group = create_placement_group(self.num_hosts, self.num_devices_per_host)
+        
+        # get the sorted bundle index list 
+        device_bundle_idx_list = get_bundle_idx(_placement_group, self.device_ips)
+        
         for i in range(self.num_hosts):
+            bundle_index = device_bundle_idx_list[i]
+            
             # Set XLA environment variables
             env_vars = {
                 "ALPA_IS_WORKER":
@@ -1009,13 +1009,13 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
             # Launch the DaemonMoveWorker
             cls = ray.remote(DaemonMoveWorker)
-            move_worker = cls.options(placement_group=pg,
-                                      placement_group_bundle_index=i).remote()
+            move_worker = cls.options(placement_group=_placement_group,
+                                      placement_group_bundle_index=bundle_index).remote()
 
             # Launch the MeshHostWorker
             cls = ray.remote(num_gpus=self.num_devices_per_host)(MeshHostWorker)
-            worker = cls.options(placement_group=pg,
-                                 placement_group_bundle_index=i,
+            worker = cls.options(placement_group=_placement_group,
+                                 placement_group_bundle_index=bundle_index,
                                  runtime_env={
                                      "env_vars": env_vars
                                  }).remote(self.server_address, self.num_hosts,

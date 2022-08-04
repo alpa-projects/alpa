@@ -1364,7 +1364,7 @@ def create_placement_group(num_hosts,
 
         placement_group = ray.util.placement_group(bundles, strategy=strategy)
         logger.debug("Waiting for placement group to start.")
-        timeout = env_integer(PLACEMENT_GROUP_TIMEOUT_S_ENV, 1000)
+        timeout = env_integer(PLACEMENT_GROUP_TIMEOUT_S_ENV, 100)
         ready, _ = ray.wait([placement_group.ready()], timeout=timeout)
         if ready:
             logger.debug("Placement group has started.")

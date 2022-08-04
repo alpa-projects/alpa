@@ -162,7 +162,7 @@ class PipelineSchedule(metaclass=ABCMeta):
         Args:
             task (Tuple[int]): (batch index, stage index).
         """
-        batch_idx, stage_idx = task
+        batch_idx, _ = task
         return batch_idx != self.last_backward_batch_index
 
     @abstractmethod

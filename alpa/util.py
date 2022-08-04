@@ -1305,7 +1305,8 @@ def create_placement_group(num_hosts,
         The placement group
     """
     current_placement_group = get_current_placement_group()
-    worker = ray._private.worker.global_worker  # pylint: disable=protected-access
+    ray_worker = try_import_ray_worker()
+    worker = ray_worker.global_worker  # pylint: disable=protected-access
     should_capture_child_tasks_in_placement_group = (
         worker.should_capture_child_tasks_in_placement_group)
     should_create_placement_group = (

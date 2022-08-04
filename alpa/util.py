@@ -32,12 +32,12 @@ import flax
 from flax.training import train_state
 from flax.training.common_utils import stack_forest
 import ray
+from ray.util.placement_group import get_current_placement_group
 import tqdm
 
 from alpa.global_env import global_config, is_worker
 
-PLACEMENT_GROUP_TIMEOUT_S_ENV = 'ALPA_PLACEMENT_GROUP_TIMEOUT_S_ENV'
-from ray.util.placement_group import get_current_placement_group
+PLACEMENT_GROUP_TIMEOUT_S_ENV = "ALPA_PLACEMENT_GROUP_TIMEOUT_S_ENV"
 
 ########################################
 ##### Alpa API Utilities
@@ -1215,9 +1215,11 @@ def try_import_ray_worker(error: bool = False):
     except ModuleNotFoundError:
         return ray._private.worker  # pylint: disable=protected-access
 
+
 ########################################
 ##### Ray Palcement Group API Utilities
 ########################################
+
 
 def get_bundle2ip(pg=None):
     """get the ip address list from placement group
@@ -1225,12 +1227,13 @@ def get_bundle2ip(pg=None):
     The ordering of the ip address are aligned with each bundle index.
     """
 
-    if pg: 
+    if pg:
         pg_id = pg.id.hex()
     # dictionary: bundle_group to node_ip
-    dict_bg2ip = dict()
+    dict_bg2ip = {}
 
-    resources_list = ray._private.state.state._available_resources_per_node().values()
+    resources_list = ray._private.state.state._available_resources_per_node(  # pylint: disable=protected-access
+    ).values()
 
     for resource in resources_list:
         resource_name_list = resource.keys()
@@ -1239,15 +1242,17 @@ def get_bundle2ip(pg=None):
         node_ip = None
         bundle_index_list = []
         for resource_name in resource_name_list:
-            # when bundles are created, pg resources are specified as [resource]_[bundle_index]_[pg_id]
-            if pg: 
-                try_bundle_index = re.findall(rf"bundle_group_(\d+)_{pg_id}", resource_name)
-            else: 
-                try_bundle_index = re.findall(r"bundle_group_(\d+)_.*", resource_name)
+            # when bundles are created, pg resources are
+            # specified as [resource]_[bundle_index]_[pg_id]
+            if pg:
+                try_bundle_index = re.findall(rf"bundle_group_(\d+)_{pg_id}",
+                                              resource_name)
+            else:
+                try_bundle_index = re.findall(r"bundle_group_(\d+)_.*",
+                                              resource_name)
 
             try_node_ip = re.findall(
-                r"^node:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$)", resource_name
-            )
+                r"^node:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$)", resource_name)
 
             if try_node_ip:
                 node_ip = try_node_ip[0]
@@ -1256,8 +1261,7 @@ def get_bundle2ip(pg=None):
                 bundle_index_list.append(try_bundle_index[0])
 
         dict_bg2ip.update(
-            **dict(zip(bundle_index_list, [node_ip] * len(bundle_index_list)))
-        )
+            **dict(zip(bundle_index_list, [node_ip] * len(bundle_index_list))))
 
     ip_list = []
     for i in range(len(dict_bg2ip)):
@@ -1265,21 +1269,23 @@ def get_bundle2ip(pg=None):
 
     return ip_list
 
+
 def env_integer(key, default):
     if key in os.environ:
         value = os.environ[key]
         if value.isdigit():
             return int(os.environ[key])
 
-        logger.debug(
-            f"Found {key} in environment, but value must "
-            f"be an integer. Got: {value}. Returning "
-            f"provided default {default}."
-        )
+        logger.debug(f"Found {key} in environment, but value must "
+                     f"be an integer. Got: {value}. Returning "
+                     f"provided default {default}.")
         return default
     return default
 
-def create_placement_group(num_hosts, num_devices_per_host, additional_resources_per_host=None):
+
+def create_placement_group(num_hosts,
+                           num_devices_per_host,
+                           additional_resources_per_host=None):
     """Creates a placement group if it does not exist.
 
     If a placement group is already detected (Tune) this will be a no-op.
@@ -1290,7 +1296,7 @@ def create_placement_group(num_hosts, num_devices_per_host, additional_resources
     If a placement group is created it will be return the current
     placement group
 
-    Args: 
+    Args:
         num_hosts: the number of hosts to create the placement group for
         num_devices_per_host: the number of devices per host
         additional_resources_per_host: additional resources per host
@@ -1299,28 +1305,24 @@ def create_placement_group(num_hosts, num_devices_per_host, additional_resources
         The placement group
     """
     current_placement_group = get_current_placement_group()
-    worker = ray._private.worker.global_worker
+    worker = ray._private.worker.global_worker  # pylint: disable=protected-access
     should_capture_child_tasks_in_placement_group = (
-        worker.should_capture_child_tasks_in_placement_group
-    )
+        worker.should_capture_child_tasks_in_placement_group)
     should_create_placement_group = (
-        current_placement_group is None
-        or not should_capture_child_tasks_in_placement_group
-    )
+        current_placement_group is None or
+        not should_capture_child_tasks_in_placement_group)
 
     if should_create_placement_group:
-        additional_resources_per_worker = (
-            additional_resources_per_worker or {}
-        )
+        additional_resources_per_host = (additional_resources_per_host or {})
         bundle = {
             "CPU": 1,
             "GPU": num_devices_per_host,
-            **additional_resources_per_worker,
+            **additional_resources_per_host,
         }
         bundles = [bundle.copy() for _ in range(num_hosts)]
 
-        # Alpa Placement Group: `SPREAD` strategy is required 
-        # https://docs.ray.io/en/latest/ray-core/placement-group.html#strategy-types 
+        # Alpa Placement Group: `SPREAD` strategy is required
+        # https://docs.ray.io/en/latest/ray-core/placement-group.html#strategy-types
         # Each bundle must be scheduled in a separate node.
         strategy = "SPREAD"
 
@@ -1335,34 +1337,31 @@ def create_placement_group(num_hosts, num_devices_per_host, additional_resources
                 "Placement group creation timed out. Make sure your "
                 "cluster either has enough resources or use an "
                 "autoscaling cluster. If you are running on a cluster, "
-                "make sure you specify an address in `ray.init()`, for example, "
-                '`ray.init("auto")`. You can also increase the timeout by setting '
-                "the TRAIN_PLACEMENT_GROUP_TIMEOUT_S environment variable. "
-                "Current resources available: {}, resources requested by the "
-                "placement group: {}".format(
-                    ray.available_resources(), placement_group.bundle_specs
-                )
-            )
+                "make sure you specify an address in `ray.init()`, for example,"
+                ' `ray.init("auto")`. You can also increase the timeout by '
+                "setting the TRAIN_PLACEMENT_GROUP_TIMEOUT_S environment "
+                "variable. Current resources available: "
+                f"{ray.available_resources()}, resources requested by "
+                f"the placement group: {placement_group.bundle_specs}")
         return placement_group
-    else: 
+    else:
         return current_placement_group
-
 
 
 def get_bundle_idx(placement_group, device_ips):
     """Get the bundle index for the placement group.
 
-    The placement group is a list of resource bundles. 
-    Each bundle will be assigned to a device. 
-    
-    First, we need to find the bundle index with GPU resources. 
+    The placement group is a list of resource bundles.
+    Each bundle will be assigned to a device.
+
+    First, we need to find the bundle index with GPU resources.
     Then, we can find the device IP for the bundle index.
     Lastly, we sort bundle index according to the device IP list given.
 
     Args:
         placement_group (placement group): The placement group.
         device_ips (list): The list of device IP addresses.
-    
+
     Returns:
         list: The sorted bundle index list.
     """
@@ -1371,15 +1370,19 @@ def get_bundle_idx(placement_group, device_ips):
     bundle_specs = placement_group.bundle_specs
 
     # filter out the bundle index with device (GPUs)
-    device_bundle_idx_list = [i for i, bundle_spec in enumerate(bundle_specs) if bundle_spec.get('GPU', 0) > 0]
+    device_bundle_idx_list = [
+        i for i, bundle_spec in enumerate(bundle_specs)
+        if bundle_spec.get("GPU", 0) > 0
+    ]
 
     if len(device_bundle_idx_list) != len(device_ips):
-        raise ValueError('The number of bundles with GPU resources is not equal to the number of device IPs.')
+        raise ValueError("The number of bundles with GPU resources "
+                         "is not equal to the number of device IPs.")
 
-    # device IP -> bundle index 
+    # device IP -> bundle index
     bundle_ip2idx = {bundle_ips[i]: i for i in device_bundle_idx_list}
-    
+
     # sorted bundle index according to the device IP list given
     sorted_bundle_idx = [bundle_ip2idx[ip] for ip in device_ips]
-    
+
     return sorted_bundle_idx

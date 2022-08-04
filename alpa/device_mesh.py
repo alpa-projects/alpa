@@ -958,16 +958,18 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
         # Launch workers
         self.workers = []
-        
+
         # create placement group
-        _placement_group = create_placement_group(self.num_hosts, self.num_devices_per_host)
-        
-        # get the sorted bundle index list 
-        device_bundle_idx_list = get_bundle_idx(_placement_group, self.device_ips)
-        
+        placement_group = create_placement_group(self.num_hosts,
+                                                 self.num_devices_per_host)
+
+        # get the sorted bundle index list
+        device_bundle_idx_list = get_bundle_idx(placement_group,
+                                                self.device_ips)
+
         for i in range(self.num_hosts):
             bundle_index = device_bundle_idx_list[i]
-            
+
             # Set XLA environment variables
             env_vars = {
                 "ALPA_IS_WORKER":
@@ -1009,12 +1011,13 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
             # Launch the DaemonMoveWorker
             cls = ray.remote(DaemonMoveWorker)
-            move_worker = cls.options(placement_group=_placement_group,
-                                      placement_group_bundle_index=bundle_index).remote()
+            move_worker = cls.options(
+                placement_group=placement_group,
+                placement_group_bundle_index=bundle_index).remote()
 
             # Launch the MeshHostWorker
             cls = ray.remote(num_gpus=self.num_devices_per_host)(MeshHostWorker)
-            worker = cls.options(placement_group=_placement_group,
+            worker = cls.options(placement_group=placement_group,
                                  placement_group_bundle_index=bundle_index,
                                  runtime_env={
                                      "env_vars": env_vars

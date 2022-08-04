@@ -43,6 +43,7 @@ from jax.lib import xla_client
 import jax.numpy as jnp
 import numpy as np
 import ray
+from ray.util.placement_group import remove_placement_group
 
 from alpa import mesh_profiling
 import alpa.collective as col
@@ -914,6 +915,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.parent = parent
         self.mesh_id = mesh_id
         self.workers = None
+        self._placement_group = None
         self.launched = False
         self.service_server = None
         self.operation_executables = {}
@@ -960,11 +962,11 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.workers = []
 
         # create placement group
-        placement_group = create_placement_group(self.num_hosts,
-                                                 self.num_devices_per_host)
+        self._placement_group = create_placement_group(
+            self.num_hosts, self.num_devices_per_host)
 
         # get the sorted bundle index list
-        device_bundle_idx_list = get_bundle_idx(placement_group,
+        device_bundle_idx_list = get_bundle_idx(self._placement_group,
                                                 self.device_ips)
 
         for i in range(self.num_hosts):
@@ -1012,12 +1014,12 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             # Launch the DaemonMoveWorker
             cls = ray.remote(DaemonMoveWorker)
             move_worker = cls.options(
-                placement_group=placement_group,
+                placement_group=self._placement_group,
                 placement_group_bundle_index=bundle_index).remote()
 
             # Launch the MeshHostWorker
             cls = ray.remote(num_gpus=self.num_devices_per_host)(MeshHostWorker)
-            worker = cls.options(placement_group=placement_group,
+            worker = cls.options(placement_group=self._placement_group,
                                  placement_group_bundle_index=bundle_index,
                                  runtime_env={
                                      "env_vars": env_vars
@@ -1317,6 +1319,9 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             ray.get([w.shutdown.remote() for w in self.workers])
         for worker in self.workers:
             ray.kill(worker)
+        if self._placement_group:
+            remove_placement_group(self._placement_group)
+            self._placement_group = None
         self.workers = None
         # shutdown grpc server
         self.service_server.shutdown()

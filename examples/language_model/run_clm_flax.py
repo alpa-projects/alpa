@@ -667,6 +667,8 @@ def main():
     if model_args.dtype == "float16":
         use_master_copy = True
         dynamic_scale = DynamicScale()
+        # Fix a bug in huggingface's implementation (https://github.com/huggingface/transformers/pull/18462)
+        alpa.global_config.flax_always_use_fp16_embedding = True
     else:
         use_master_copy = dynamic_scale = False
     state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer,

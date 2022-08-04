@@ -1235,15 +1235,15 @@ def try_import_ray_state(error: bool = False):
     """
     # In the ray-nightly version,
     # state = _DeprecationWrapper("state", ray._private.state)
-    # `_DeprecationWrapper` has attributes of `_real_state`
+    # `_DeprecationWrapper` has attributes of `_real_worker`
     try:
-        if hasattr(ray.state, "_real_state"):
+        if hasattr(ray.state, "_real_worker"):
             if error:
                 raise ImportError("Could not import `ray.state`!"
                                   "You might use the ray-nightly "
                                   "and `ray.state` is deprecated there"
                                   "`pip install ray==1.13.0`.")
-            return ray.state._real_state  # pylint: disable=protected-access
+            return ray.state._real_worker  # pylint: disable=protected-access
         else:
             return ray.state
     except ModuleNotFoundError:

@@ -1364,7 +1364,7 @@ def create_placement_group(num_hosts,
 
         placement_group = ray.util.placement_group(bundles, strategy=strategy)
         logger.debug("Waiting for placement group to start.")
-        timeout = env_integer(PLACEMENT_GROUP_TIMEOUT_S_ENV, 100)
+        timeout = env_integer(PLACEMENT_GROUP_TIMEOUT_S_ENV, 1000)
         ready, _ = ray.wait([placement_group.ready()], timeout=timeout)
         if ready:
             logger.debug("Placement group has started.")
@@ -1375,7 +1375,7 @@ def create_placement_group(num_hosts,
                 "autoscaling cluster. If you are running on a cluster, "
                 "make sure you specify an address in `ray.init()`, for example,"
                 ' `ray.init("auto")`. You can also increase the timeout by '
-                "setting the TRAIN_PLACEMENT_GROUP_TIMEOUT_S environment "
+                "setting the ALPA_PLACEMENT_GROUP_TIMEOUT_S environment "
                 "variable. Current resources available: "
                 f"{ray.available_resources()}, resources requested by "
                 f"the placement group: {placement_group.bundle_specs}")

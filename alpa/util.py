@@ -1187,6 +1187,11 @@ def is_ray_node_resource(resource_key):
     return ishost_regex.match(resource_key)
 
 
+########################################
+##### Ray Compatibilityu API Utilities
+########################################
+
+
 def try_import_ray_worker(error: bool = False):
     """Tries importing `ray.worker` and returns the module (or None).
 
@@ -1216,6 +1221,35 @@ def try_import_ray_worker(error: bool = False):
         return ray._private.worker  # pylint: disable=protected-access
 
 
+def try_import_ray_state(error: bool = False):
+    """Tries importing `ray.state` and returns the module (or None).
+
+    Args:
+        error: Whether to raise an error if ray.state cannot be imported.
+
+    Returns:
+        The `ray.state` modules.
+
+    Raises:
+        ImportError: If error=True and ray's version >= 2.0.
+    """
+    # In the ray-nightly version,
+    # state = _DeprecationWrapper("state", ray._private.state)
+    # `_DeprecationWrapper` has attributes of `_real_state`
+    try:
+        if hasattr(ray.state, "_real_state"):
+            if error:
+                raise ImportError("Could not import `ray.state`!"
+                                  "You might use the ray-nightly "
+                                  "and `ray.state` is deprecated there"
+                                  "`pip install ray==1.13.0`.")
+            return ray.state._real_state  # pylint: disable=protected-access
+        else:
+            return ray.state
+    except ModuleNotFoundError:
+        return ray._private.state  # pylint: disable=protected-access
+
+
 ########################################
 ##### Ray Palcement Group API Utilities
 ########################################
@@ -1232,7 +1266,8 @@ def get_bundle2ip(pg=None):
     # dictionary: bundle_group to node_ip
     dict_bg2ip = {}
 
-    resources_list = ray._private.state.state._available_resources_per_node(  # pylint: disable=protected-access
+    ray_state = try_import_ray_state()
+    resources_list = ray_state.state._available_resources_per_node(  # pylint: disable=protected-access
     ).values()
 
     for resource in resources_list:

@@ -8,6 +8,7 @@ from alpa import (get_global_cluster, set_global_virtual_physical_mesh,
 from alpa.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.util import print_used_time
+import optax
 
 from benchmark_one_case_gpt_bert import (get_train_step)
 from util import compute_moe_parameter_count, compute_moe_tflops

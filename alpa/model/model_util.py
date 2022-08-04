@@ -332,12 +332,12 @@ class TrainState(train_state.TrainState):
                     apply_fn,
                     params,
                     tx,
-                    mixed_precision=False,
+                    use_master_copy=False,
                     **kwargs):
         """Creates a new instance with `step=0` and initialized `opt_state`."""
         opt_state = jax.eval_shape(tx.init, params)
 
-        if mixed_precision:
+        if use_master_copy:
             master_copy = params
             params = jax.eval_shape(
                 lambda p: jax.tree_util.tree_map(

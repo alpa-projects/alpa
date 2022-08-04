@@ -314,11 +314,10 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
 
     # Wrap all invars of apply_grad
     in_grad_vars = marker_eqn.outvars
-    old_invars = (
-        filter_used_vars(raw_jaxpr.jaxpr.invars, apply_grad_eqns) +
-        filter_pass_through_vars(raw_jaxpr.jaxpr.invars,
-                                 raw_jaxpr.jaxpr.outvars) +
-        in_grad_vars)
+    old_invars = (filter_used_vars(raw_jaxpr.jaxpr.invars, apply_grad_eqns) +
+                  filter_pass_through_vars(raw_jaxpr.jaxpr.invars,
+                                           raw_jaxpr.jaxpr.outvars) +
+                  in_grad_vars)
     new_invars = []
     for var in old_invars:
         if var in global_invars:

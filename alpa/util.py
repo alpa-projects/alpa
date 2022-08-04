@@ -1177,9 +1177,10 @@ def compute_gpt_tflops(batch_size,
     if checkpoint_activations:
         factor += 24
 
-    total_flop = factor * batch_size * seq_len * (hidden_size ** 2) * num_layers * \
-          (1 + seq_len / (6 * hidden_size)) \
-          + 6 * batch_size * seq_len * hidden_size * vocab_size
+    total_flop = (factor * batch_size * seq_len *
+                  (hidden_size**2) * num_layers * (1 + seq_len /
+                                                   (6 * hidden_size)) +
+                  6 * batch_size * seq_len * hidden_size * vocab_size)
     # Note: The above formula does not count the first embedding table lookup
     # because it is a sparse operation.
     # If we use dense dot to compute the first embedding table lookup,

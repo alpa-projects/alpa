@@ -17,7 +17,6 @@ from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
                                   _backend_specific_translations, parameter,
                                   xla_destructure, pyval_to_ir_constant)
 import flax
-from flax.linen.module import compact, wrap_method_once
 
 from alpa.global_env import global_config, is_worker
 from alpa.pipeline_parallel.primitive_def import xla_identity
@@ -309,8 +308,7 @@ def embed_call_one_hot(self, inputs):
 # Monkey patch the nn.Embed in flax to add a fp16 conversion.
 # This is used for manual pipeline marker.
 def embed_setup(self):
-    self.embedding = self.param('embedding',
-                                self.embedding_init,
+    self.embedding = self.param("embedding", self.embedding_init,
                                 (self.num_embeddings, self.features),
                                 self.param_dtype)
     if self.dtype == jnp.float16:

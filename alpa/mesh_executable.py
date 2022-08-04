@@ -491,14 +491,6 @@ def get_grad_sync_channel_ids(hlo_module: xe.HloModule) -> str:
     return xe.get_grad_sync_channel_ids(hlo_module)
 
 
-def get_grad_sync_channel_ids_with_hint(hlo_module: xe.HloModule,
-                                        hint: Sequence[int]) -> str:
-    """Return the channel ids of all-reduces that are used for gradient
-    synchronization. see also get_grad_sync_channel_ids.
-    """
-    return xe.get_grad_sync_channel_ids(hlo_module, hint)
-
-
 class GradAccMeshDriverExecutable(MeshDriverExecutable):
     """The driver part of a gradient accumulation mesh executable."""
 
@@ -973,8 +965,8 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
                                                     stage_plan,
                                                     physical_mesh.num_devices)
             self.hlo_text = self.compiled.hlo_modules()[0].to_string()
-            self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
-                self.compiled.hlo_modules()[0], self.out_acc_grad_indices)
+            self.grad_sync_channel_ids = get_grad_sync_channel_ids(
+                self.compiled.hlo_modules()[0])
             self.skip_allreduce_env_name = (
                 self.compiled.hlo_modules()[0].name() +
                 "XLA_SKIP_NCCL_COLLECTIVE_IDS")
@@ -1002,8 +994,8 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
                  stage_plan: StagePlan, donated_invars: Sequence[bool],
                  output_acc_grad_indices: str):
         super().__init__(worker, uuid, hlo_proto, stage_plan, donated_invars)
-        self.grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
-            self.compiled.hlo_modules()[0], output_acc_grad_indices)
+        self.grad_sync_channel_ids = get_grad_sync_channel_ids(
+            self.compiled.hlo_modules()[0])
         self.skip_allreduce_env_name = (self.compiled.hlo_modules()[0].name() +
                                         "XLA_SKIP_NCCL_COLLECTIVE_IDS")
 

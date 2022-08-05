@@ -654,13 +654,15 @@ def main():
             learning_rate=linear_decay_lr_schedule_fn,
         )
     else:
-        optimizer = optax.adamw(
-            learning_rate=linear_decay_lr_schedule_fn,
-            b1=training_args.adam_beta1,
-            b2=training_args.adam_beta2,
-            eps=training_args.adam_epsilon,
-            weight_decay=training_args.weight_decay,
-            mask=decay_mask_fn,
+        optimizer = optax.chain(
+            optax.clip_by_global_norm(1.0),
+            optax.adamw(
+                learning_rate=linear_decay_lr_schedule_fn,
+                b1=training_args.adam_beta1,
+                b2=training_args.adam_beta2,
+                eps=training_args.adam_epsilon,
+                weight_decay=training_args.weight_decay,
+                mask=decay_mask_fn)
         )
 
     # Setup train state

@@ -12,9 +12,8 @@ from opt_serving.service.utils import build_logger
 from opt_serving.dataset import data_utils
 from opt_serving.dataset.prepend_token_dataset import PrependTokenDataset
 from opt_serving.dataset.strip_token_dataset import StripTokenDataset
-from opt_serving.service.constants import MAX_SEQ_LEN
+from opt_serving.service.constants import MAX_SEQ_LEN, MAX_BS
 from opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
-from opt_serving.service.constants import MAX_BS
 
 logger = build_logger()
 

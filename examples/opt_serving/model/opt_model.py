@@ -176,8 +176,6 @@ class OPTSelfAttention(nn.Module):
             mask = jnp.arange(max_length) - (cache_index_ + 1)
             attention_bias = jnp.expand_dims(
                 (row_idxs[:, None] <= mask).astype(self.dtype) * -1e10, (0, 1))
-            # if attention_mask is not None:
-            #     attention_bias += attention_mask
 
             attention_cache = key_states, value_states, cache_index + num_updated_cache_vectors
         attn_weights = nn.attention.dot_product_attention_weights(

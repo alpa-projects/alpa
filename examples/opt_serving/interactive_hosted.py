@@ -63,8 +63,10 @@ def batching_loop(timeout=TIMEOUT_MS, max_tokens=MAX_BATCH_TOKENS, max_bs=MAX_BS
             item = target_queue.get(timeout=timeout / 1000)
             logger.debug(f"Get item: {item} into batch")
             # accumulate the batch until it gets too big
+            # Below we use number of tokens as a measure to accumulate batch
             # longest = max([item] + batch).cost
             # batch_cost = longest * (len(batch) + 1)
+            # Below we use number of sequences as a measure to accumulate batch
             bs = len(batch) + 1
             if batch and bs > max_bs:
                 # we're over budget, put it back in the queue

@@ -783,20 +783,19 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
     def load_array(key):
         return np.load(os.path.join(path, key))
 
-    def load_param(param_key, loaded_array):
+    def load_param(param_key, loaded_array, is_position_embedding=False):
         i = prefix_to_idx[param_key]
 
         for j in range(len(mesh_ids[i])):
             if self.mesh_id != mesh_ids[i][j]:
                 continue
 
-            # print(shapes[i][j])
-            # print(loaded_array.shape)
-            if shapes[i][j] != loaded_array.shape:
-                assert shapes[i][j][1] == loaded_array.shape[1]
-                loaded_array = loaded_array[:shapes[i][j][0], :]
-                # print(loaded_array.shape)
-            # assert shapes[i][j] == loaded_array.shape
+            if not is_position_embedding:
+                assert shapes[i][j] == loaded_array.shape
+            else:
+                if shapes[i][j] != loaded_array.shape:
+                    assert shapes[i][j][1] == loaded_array.shape[1]
+                    loaded_array = loaded_array[:shapes[i][j][0], :]
             uuid = uuids[i][j]
             datas = []
             for k in range(len(self.local_devices)):
@@ -807,7 +806,8 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
     load_param("params.transformers.embeddings.word_embeddings.embedding",
                load_array("decoder.embed_tokens.weight"))
     load_param("params.transformers.embeddings.position_embeddings.embedding",
-               load_array("decoder.embed_positions.weight"))
+               load_array("decoder.embed_positions.weight"),
+               is_position_embedding=True)
 
     if config.version > 2:
         load_param("params.transformers.layer_norm.scale",

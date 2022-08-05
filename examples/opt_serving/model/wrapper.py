@@ -200,17 +200,10 @@ class AlpaInferenceFunc(WrappedInferenceFunc):
     def _process_attention_mask(self, attention_mask):
         if isinstance(attention_mask, torch.Tensor):
             attention_mask = attention_mask.cpu().numpy()
-
-        # attention_mask =  attention_mask == 1
         batch_size = attention_mask.shape[0]
-        # # flip
-        # big_neg = jnp.finfo(dtype).min
-        # flipped = (attention_mask == 0) * big_neg
-        # # extend
-        ret_mask = np.ones((batch_size, self._max_target_positions),
+        ret_mask = np.zeros((batch_size, self._max_target_positions),
                                   dtype=np.bool)
         ret_mask[:, :attention_mask.shape[-1]] = attention_mask
-        # # reshape
         ret_mask = ret_mask[:, np.newaxis, np.newaxis, :]
         return ret_mask
 

@@ -113,6 +113,8 @@ class GeneratorInterface:
         self.num_gpus = 1
         self.dataset_to_epoch_iter = dict()
 
+        self.pad = 1
+
         self.load_model()
 
     def load_model(self):
@@ -127,6 +129,9 @@ class GeneratorInterface:
         self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
         # Disable default add_bos_token behavior and decide if to add it later.
         self.tokenizer.add_bos_token = False
+        # overwrite pad value
+        self.pad = self.tokenizer.pad_token_id
+
         if "alpa" in self.model_name:
             import alpa
             self.num_gpus = alpa.get_global_cluster().num_devices
@@ -170,7 +175,7 @@ class GeneratorInterface:
         ori_bs = len(inputs)
 
         # FIXME(Hao): the current batch uses the topp, reponse_length of the first sentence.
-        def pad_batch(inputs, pad_value=1):
+        def pad_batch(inputs, pad_value=self.pad):
             new_inputs = inputs
             src_lens = [len(input) for input in inputs]
             max_len = max(src_lens)

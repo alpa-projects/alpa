@@ -41,14 +41,14 @@ YAPF_FLAGS=(
 )
 
 YAPF_EXCLUDES=(
-    '--exclude' 'benchmark/cupy'
-    '--exclude' 'benchmark/alpa/old_backup'
-    '--exclude' 'benchmark/deepspeed'
-    '--exclude' 'benchmark/megatron'
-    '--exclude' 'docs'
-    '--exclude' 'examples'
-    '--exclude' 'playground'
-    '--exclude' 'third_party'
+    '--exclude' 'benchmark/cupy/*'
+    '--exclude' 'benchmark/alpa/old_backup/*'
+    '--exclude' 'benchmark/deepspeed/*'
+    '--exclude' 'benchmark/megatron/*'
+    '--exclude' 'docs/*'
+    '--exclude' 'examples/*'
+    '--exclude' 'playground/*'
+    '--exclude' 'third_party/*'
 )
 
 # Format specified files

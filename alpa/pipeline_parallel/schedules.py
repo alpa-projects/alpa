@@ -155,7 +155,6 @@ class PipelineSchedule(metaclass=ABCMeta):
         """Query the responsible stages of a worker given a worker index."""
         return self.mesh_stage_mapping[mesh_idx]
 
-    @abstractmethod
     def should_skip_grad_sync(self, task):
         """
         Query if grad sync (w/ other date replicas) should be skipped on a task.
@@ -163,7 +162,8 @@ class PipelineSchedule(metaclass=ABCMeta):
         Args:
             task (Tuple[int]): (batch index, stage index).
         """
-        raise NotImplementedError()
+        batch_idx, _ = task
+        return batch_idx != self.last_backward_batch_index
 
     @abstractmethod
     def previous_backward_batch_index(self, batch_idx):
@@ -242,15 +242,6 @@ class GpipeSchedule(PipelineSchedule):
             scheds[worker] = (self.last_backward_batch_index, stage_idx)
         schedules.append(scheds)
         return schedules
-
-    def should_skip_grad_sync(self, task):
-        """If we should skip the grad synchronization for this task."""
-        batch_idx, stage_idx = task
-        do_grad_sync = False
-        if (self.num_mesh <= stage_idx < self.num_mesh * 2 and
-                batch_idx == self.last_backward_batch_index):
-            do_grad_sync = True
-        return not do_grad_sync
 
     @property
     def first_backward_batch_index(self):
@@ -363,15 +354,6 @@ class PipeDreamFlush(PipelineSchedule):
         schedules.append(scheds)
         return schedules
 
-    def should_skip_grad_sync(self, task):
-        """If we should skip the grad synchronization for this task."""
-        batch_idx, stage_idx = task
-        do_grad_sync = False
-        if (self.num_mesh <= stage_idx < self.num_mesh * 2 and
-                batch_idx == self.last_backward_batch_index):
-            do_grad_sync = True
-        return not do_grad_sync
-
     @property
     def first_backward_batch_index(self):
         """Return the index of the first microbatch at backward pass."""
@@ -440,15 +422,6 @@ class InferenceSchedule(PipelineSchedule):
     def last_backward_batch_index(self):
         """Return the index of the last microbatch at backward pass."""
         return self.num_batch - 1
-
-    def should_skip_grad_sync(self, task):
-        """If we should skip the grad synchronization for this task."""
-        batch_idx, stage_idx = task
-        do_grad_sync = False
-        if (stage_idx < self.num_mesh and
-                batch_idx == self.last_backward_batch_index):
-            do_grad_sync = True
-        return not do_grad_sync
 
     def previous_backward_batch_index(self, batch_idx):
         """Return the index of the previous microbatch at backward pass."""

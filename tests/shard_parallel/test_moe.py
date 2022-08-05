@@ -13,7 +13,6 @@ import optax
 from alpa import parallelize, ShardParallel, LocalPhysicalDeviceMesh, AutoShardingOption
 from alpa.util import map_to_shape, count_communication_primitives
 from alpa.model.moe import FlaxMoELayer, FlaxMoEForLMModule, MoEConfig, TrainState
-from alpa.model.model_util import optax_adafactor
 
 from tests.shard_parallel.test_mlp import (assert_all_replicated, assert_close,
                                            assert_expert_partitioned,
@@ -137,7 +136,7 @@ class AutoShardingMoETest(unittest.TestCase):
             # do not use weight decay on layer norm and bias.
             return jax.tree_map(lambda x: x.ndim > 1, pytree)
 
-        tx = optax_adafactor(
+        tx = optax.adafactor(
             learning_rate=1e-2,
             weight_decay_mask=weight_decay_mask,
             min_dim_size_to_factor=4,
@@ -147,7 +146,7 @@ class AutoShardingMoETest(unittest.TestCase):
                                   params=params,
                                   tx=tx,
                                   dynamic_scale=None,
-                                  mixed_precision=(dtype == jnp.float16))
+                                  use_master_copy=(dtype == jnp.float16))
 
         # JIT compile
         state = train_step(

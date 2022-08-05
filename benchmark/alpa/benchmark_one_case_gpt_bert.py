@@ -64,11 +64,11 @@ def create_train_state(rngkey, model, batch, dtype):
     tx = optax.chain(
         #optax.clip_by_global_norm(1.0),  # TODO(lmzheng): fix reduce-scatter for this
         optax.adamw(learning_rate=1e-2, mask=weight_decay_mask))
-    mixed_precision = (dtype == jnp.float16)
+    use_master_copy = (dtype == jnp.float16)
     state = TrainState.create(apply_fn=model.apply,
                               params=params,
                               tx=tx,
-                              mixed_precision=mixed_precision,
+                              use_master_copy=use_master_copy,
                               dynamic_scale=None)
     return state
 
@@ -85,11 +85,11 @@ def create_train_state_aval(rngkey, model, batch, dtype):
     tx = optax.chain(
         #optax.clip_by_global_norm(1.0),  # TODO(lmzheng): fix reduce-scatter for this
         optax.adamw(learning_rate=1e-2, mask=weight_decay_mask))
-    mixed_precision = (dtype == jnp.float16)
+    use_master_copy = (dtype == jnp.float16)
     state = TrainState.create_aval(apply_fn=model.apply,
                                    params=params,
                                    tx=tx,
-                                   mixed_precision=mixed_precision,
+                                   use_master_copy=use_master_copy,
                                    dynamic_scale=None)
     return state
 

@@ -137,8 +137,10 @@ ConcatWorkerExecutableConfig = namedtuple("ConcatWorkerExecutableConfig",
                                           ["exec_uuid", "hlo_proto"])
 PartialGradWorkerExecutableConfig = namedtuple(
     "PartialGradWorkerExecutableConfig", [
-        "exec_uuid", "hlo_proto", "stage_plan", "donated_invars",
-        "grad_sync_channel_ids"
+        "exec_uuid",
+        "hlo_proto",
+        "stage_plan",
+        "donated_invars",
     ])
 
 ExecutableConfig = Union[AllocateZeroWorkerExecutableConfig,
@@ -600,8 +602,7 @@ class PipelineInstEmitter:
             hlo_module = stage.get_spmd_partitioned()
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             exec_config = PartialGradWorkerExecutableConfig(
-                exec_uuid, hlo_proto, stage.stage_plan, stage.donated_invars,
-                stage.output_acc_grad_indices)
+                exec_uuid, hlo_proto, stage.stage_plan, stage.donated_invars)
             for worker in self.mesh_group[mesh_idx].workers:
                 executable_config_lists[worker].append(exec_config)
 

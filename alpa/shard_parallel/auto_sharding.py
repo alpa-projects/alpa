@@ -339,8 +339,6 @@ def run_auto_sharding_pass(
                 all_gather_threshold,
             "combiner::all_reduce_threshold":
                 as_option.all_reduce_threshold,
-            "combiner::use_continuous_buffer":
-                True,
 
             # Debug options
             "auto_sharding::simplify_graph":
@@ -455,8 +453,6 @@ def run_backend_compilation(backend: xe.Client,
                 stage_plan.all_gather_threshold,
             "combiner::all_reduce_threshold":
                 stage_plan.all_reduce_threshold,
-            "combiner::use_continuous_buffer":
-                True,
     }):
         compiled = backend.compile(xla_computation, compile_options)
 

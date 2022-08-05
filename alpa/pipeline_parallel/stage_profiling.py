@@ -20,7 +20,7 @@ from alpa.device_mesh import (DistributedArray, PhysicalDeviceMesh,
                               VirtualPhysicalMesh, _shard_device_array)
 from alpa.global_env import global_config
 from alpa.mesh_executable import (PartialGradAccMeshDriverExecutable,
-                                  get_grad_sync_channel_ids_with_hint)
+                                  get_grad_sync_channel_ids)
 from alpa.mesh_profiling import (ProfilingResultDatabase,
                                  estimate_hlo_module_cost)
 from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
@@ -378,8 +378,7 @@ class HloCostModelProfileWorker:
         hlo_module = compiled.hlo_modules()[0]
         grad_sync_channel_ids = ""
         if acc_grad_indices:
-            grad_sync_channel_ids = get_grad_sync_channel_ids_with_hint(
-                hlo_module, acc_grad_indices)
+            grad_sync_channel_ids = get_grad_sync_channel_ids(hlo_module)
         peak_memory = compiled.total_allocation_size()
         available_memory = self.prof_result.available_memory_per_device
         cost = estimate_hlo_module_cost(hlo_module, self.prof_result,

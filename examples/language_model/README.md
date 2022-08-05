@@ -70,7 +70,7 @@ def batch_iterator(batch_size=1000):
         yield dataset[i: i + batch_size]["text"]
 
 # Customized training
-tokenizer.train_from_iterator(batch_iterator(), vocab_size=50257, min_frequency=2, special_tokens=[
+tokenizer.train_from_iterator(batch_iterator(), vocab_size=50256, min_frequency=2, special_tokens=[
     "<s>",
     "<pad>",
     "</s>",
@@ -91,7 +91,7 @@ in the local model folder:
 ```python
 from transformers import GPT2Config
 
-config = GPT2Config.from_pretrained("gpt2", resid_pdrop=0.0, embd_pdrop=0.0, attn_pdrop=0.0, vocab_size=50257)
+config = GPT2Config.from_pretrained("gpt2", resid_pdrop=0.0, embd_pdrop=0.0, attn_pdrop=0.0, vocab_size=50256)
 config.save_pretrained("./norwegian-gpt2")
 ```
 
@@ -103,7 +103,7 @@ push the training logs and model weights to the repo.
 Finally, we can run the example script to pretrain the model:
 
 ```bash
-python run_clm_flax.py \
+python3 run_clm_flax.py \
     --output_dir="./norwegian-gpt2" \
     --model_type="gpt2" \
     --config_name="./norwegian-gpt2" \
@@ -112,15 +112,16 @@ python run_clm_flax.py \
     --dataset_config_name="unshuffled_deduplicated_no" \
     --do_train --do_eval \
     --block_size="512" \
-    --per_device_train_batch_size="8" \
-    --per_device_eval_batch_size="32" \
-    --learning_rate="5e-3" --warmup_steps="1000" \
+    --per_device_train_batch_size="96" \
+    --per_device_eval_batch_size="96" \
+    --dtype="float16" \
+    --learning_rate="5e-4" --warmup_steps="2000" \
     --adam_beta1="0.9" --adam_beta2="0.98" --weight_decay="0.01" \
     --overwrite_output_dir \
     --num_train_epochs="20" \
-    --logging_steps="500" \
+    --logging_steps="16" \
     --save_steps="2500" \
-    --eval_steps="2500" \
+    --eval_steps="2500"
 ```
 
 Training should converge at a loss and perplexity 

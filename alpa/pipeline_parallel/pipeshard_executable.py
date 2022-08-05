@@ -408,8 +408,7 @@ class PipeshardMeshWorkerExecuable:
                                            PartialGradAccMeshWorkerExecutable,
                                            task_config.hlo_proto,
                                            task_config.stage_plan,
-                                           task_config.donated_invars,
-                                           task_config.grad_sync_channel_ids)
+                                           task_config.donated_invars)
                 self.partial_grad_exec_uuids.add(task_config.exec_uuid)
             elif isinstance(task_config, MemZeroWorkerExecutableConfig):
                 assert len(self.acc_grad_buffers) == 0

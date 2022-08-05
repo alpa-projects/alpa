@@ -29,6 +29,7 @@ import sys
 import time
 from dataclasses import asdict, dataclass, field
 from enum import Enum
+import functools
 from itertools import chain
 from pathlib import Path
 from typing import Callable, Optional
@@ -39,6 +40,7 @@ from datasets import Dataset, load_dataset
 from tqdm import tqdm
 
 import alpa
+from alpa.model.model_util import DynamicScale, TrainState
 import jax
 import jax.numpy as jnp
 import optax
@@ -255,10 +257,6 @@ class DataTrainingArguments:
             if self.validation_file is not None:
                 extension = self.validation_file.split(".")[-1]
                 assert extension in ["csv", "json", "txt"], "`validation_file` should be a csv, a json or a txt file."
-
-
-class TrainState(train_state.TrainState):
-    dropout_rng: jnp.ndarray
 
 
 def data_loader(rng: jax.random.PRNGKey, dataset: Dataset, batch_size: int, shuffle: bool = False):
@@ -656,17 +654,27 @@ def main():
             learning_rate=linear_decay_lr_schedule_fn,
         )
     else:
-        optimizer = optax.adamw(
-            learning_rate=linear_decay_lr_schedule_fn,
-            b1=training_args.adam_beta1,
-            b2=training_args.adam_beta2,
-            eps=training_args.adam_epsilon,
-            weight_decay=training_args.weight_decay,
-            mask=decay_mask_fn,
+        optimizer = optax.chain(
+            optax.clip_by_global_norm(1.0),
+            optax.adamw(
+                learning_rate=linear_decay_lr_schedule_fn,
+                b1=training_args.adam_beta1,
+                b2=training_args.adam_beta2,
+                eps=training_args.adam_epsilon,
+                weight_decay=training_args.weight_decay,
+                mask=decay_mask_fn)
         )
 
     # Setup train state
-    state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer, dropout_rng=dropout_rng)
+    if model_args.dtype == "float16":
+        use_master_copy = True
+        dynamic_scale = DynamicScale()
+        # Fix a bug in huggingface's implementation (https://github.com/huggingface/transformers/pull/18462)
+        alpa.global_config.flax_always_use_fp16_embedding = True
+    else:
+        use_master_copy = dynamic_scale = False
+    state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer,
+                              dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
 
     def loss_fn(logits, labels):
         shift_logits = logits[..., :-1, :]
@@ -676,21 +684,34 @@ def main():
 
     # Define gradient update step fn
     def train_step(state, batch):
-        # Alpa uses stateful rng generators so there is no need
-        # to explicitly manage rng seeds. Here we just copy them
-        # to make the code below runnable
-        new_dropout_rng = dropout_rng = state.dropout_rng
 
         def compute_loss(params):
             labels = batch.pop("labels")
-            logits = state.apply_fn(**batch, params=params, dropout_rng=dropout_rng, train=True)[0]
+            logits = state.apply_fn(**batch, params=params, train=True)[0]
             loss = loss_fn(logits, labels)
             return loss
 
-        grad_fn = jax.value_and_grad(compute_loss)
-        loss, grad = grad_fn(state.params)
+        dynamic_scale = state.dynamic_scale
+        if dynamic_scale:
+            grad_fn = dynamic_scale.value_and_grad(compute_loss)
+            dynamic_scale, is_fin, loss, grads = grad_fn(state.params)
+        else:
+            grad_fn = alpa.value_and_grad(compute_loss)
+            loss, grads = grad_fn(state.params)
 
-        new_state = state.apply_gradients(grads=grad, dropout_rng=new_dropout_rng)
+        new_state = state.apply_gradients(grads=grads)
+
+        if dynamic_scale:
+            new_state = new_state.replace(
+                opt_state=jax.tree_map(
+                    functools.partial(jnp.where, is_fin),
+                    new_state.opt_state,
+                    state.opt_state),
+                params=jax.tree_map(
+                    functools.partial(jnp.where, is_fin),
+                    new_state.params,
+                    state.params),
+                dynamic_scale=dynamic_scale)
 
         metrics = {"loss": loss, "learning_rate": linear_decay_lr_schedule_fn(state.step)}
 
@@ -707,7 +728,10 @@ def main():
         return metrics
 
     # Create parallel version of the train and eval step
-    p_train_step = alpa.parallelize(train_step, donate_argnums=(0,))
+    method = alpa.Zero2Parallel(num_micro_batches=4)
+    p_train_step = alpa.parallelize(train_step,
+                                    method=method,
+                                    donate_argnums=(0,))
     p_eval_step = alpa.parallelize(eval_step)
 
     dump_debug_info_train_step = dump_debug_info_eval_step = True
@@ -722,12 +746,13 @@ def main():
     train_time = 0
     train_metrics = []
     epochs = tqdm(range(num_epochs), desc="Epoch ... ", position=0)
+
+    step_ct = 0
+    last_time = time.time()
+
     for epoch in epochs:
         # ======================== Training ================================
         train_start = time.time()
-
-        last_step = -1
-        last_time = time.time()
 
         # Create sampling rng
         rng, input_rng = jax.random.split(rng)
@@ -748,10 +773,19 @@ def main():
                 executable = p_train_step.get_last_executable()
                 executable.dump_debug_info("alpa_debug_info")
 
+            step_ct += 1
             if cur_step % training_args.logging_steps == 0 and cur_step > 0:
-                throughput = np.prod(batch["input_ids"].shape) * (cur_step - last_step) /\
-                      (time.time() - last_time)
-                last_step = step
+                latency = (time.time() - last_time) / step_ct
+                throughput_tokens = np.prod(batch["input_ids"].shape) / latency
+                throughput_tflops = alpa.util.compute_gpt_tflops(
+                    batch_size=batch["input_ids"].shape[0],
+                    seq_len=batch["input_ids"].shape[1],
+                    num_layers=config.num_hidden_layers,
+                    hidden_size=config.hidden_size,
+                    vocab_size=config.vocab_size,
+                    num_gpus=alpa.get_global_num_devices(),
+                    latency=latency)
+                step_ct = 0
                 last_time = time.time()
 
                 # Save metrics
@@ -760,10 +794,11 @@ def main():
                     write_train_metric(summary_writer, train_metrics, train_time, cur_step)
 
                 epochs.write(
-                    f"Step... {cur_step} | "\
-                    f"Loss: {train_metric['loss'].mean():.4f}, "\
-                    f"Learning Rate: {train_metric['learning_rate'].mean():.4f}, "\
-                    f"Throughput: {throughput:.2f} token/s"
+                    f"Step... {cur_step} | "
+                    f"Loss: {train_metric['loss'].mean():.4f}, "
+                    f"Learning Rate: {train_metric['learning_rate'].mean():.4f}, "
+                    f"Throughput: {throughput_tokens:.2f} token/s "
+                    f"Throughput: {throughput_tflops:.2f} TFLOP/s"
                 )
 
                 train_metrics = []

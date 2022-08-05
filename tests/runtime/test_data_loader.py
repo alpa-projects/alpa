@@ -13,17 +13,7 @@ from alpa import init, MeshDriverDataLoader
 from alpa.parallel_plan import PlacementSpec
 from alpa.device_mesh import get_global_physical_mesh
 from alpa.testing import assert_allclose
-
-
-def input_iter_func(start, end, batch_size):
-    dataset_x = np.arange(1024 * 32).reshape(-1, 32).astype(np.float32)
-    dataset_y = np.arange(1024).astype(np.int32)
-
-    num_batches = (end - start) // batch_size
-
-    for i in range(num_batches):
-        idx = start + i * batch_size
-        yield dataset_x[idx:idx + batch_size], dataset_y[idx:idx + batch_size]
+from alpa.testing import data_loader_input_iter_func as input_iter_func
 
 
 class DataLoaderTest(unittest.TestCase):

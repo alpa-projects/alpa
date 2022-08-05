@@ -1,16 +1,23 @@
 # flake8: noqa
 from collections import OrderedDict
 from dataclasses import fields
-from typing import Any, Callable, Optional, Tuple, Optional, Union
+import functools
+from typing import Any, Callable, Optional, Tuple, Optional, Union, Sequence
 
+from alpa.api import value_and_grad
 import flax
 from flax.optim import dynamic_scale as dynamic_scale_lib
+from flax.optim.dynamic_scale import DynamicScaleResult
 from flax.training import train_state
+from flax import struct
 import numpy as np
 import jax
+from jax import lax
 import jax.numpy as jnp
 import jaxlib.xla_extension as jax_xla
 import optax
+
+Array = Any
 
 
 def is_tensor(x):
@@ -241,62 +248,14 @@ def softmax_cross_entropy(logits, labels):
     return -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
 
 
-def optax_adafactor(
-    learning_rate: Optional[Any] = None,
-    min_dim_size_to_factor: int = 128,
-    decay_rate: float = 0.8,
-    decay_offset: int = 0,
-    multiply_by_parameter_scale: float = True,
-    clipping_threshold: Optional[float] = 1.0,
-    momentum: Optional[float] = None,
-    dtype_momentum: Any = jnp.float32,
-    weight_decay_rate: Optional[float] = None,
-    eps: float = 1e-30,
-    factored: bool = True,
-    weight_decay_mask: Optional[Union[Any, Callable[[Any], Any]]] = None,
-):
-    """
-    The same as optax.adafactor but adds the mask for weight decay.
-    """
-    from optax._src.alias import (combine, clipping, factorized, transform,
-                                  _scale_by_learning_rate)
-
-    # The core of the algorithm is a procedure for rescaling gradients
-    # by a factored estimate of the root mean squared gradients.
-    # This reduces memory compared to algorithms such as Adam or RmsProp,
-    # by not having to hold a separate estimate for each weight.
-    tx = [
-        factorized.scale_by_factored_rms(factored, decay_rate, decay_offset,
-                                         min_dim_size_to_factor, eps)
-    ]
-    # This basic rescaling is typically combined with one or more of the following
-    # transformation (all can be disabled via adafactor's constructor args).
-    if clipping_threshold is not None:
-        tx.append(clipping.clip_by_block_rms(clipping_threshold))
-    if learning_rate is not None:
-        tx.append(_scale_by_learning_rate(learning_rate, flip_sign=False))
-    if multiply_by_parameter_scale:
-        tx.append(transform.scale_by_param_block_rms())
-    if momentum is not None:
-        tx.append(
-            transform.ema(momentum,
-                          debias=False,
-                          accumulator_dtype=dtype_momentum))
-    if weight_decay_rate is not None:
-        tx.append(
-            transform.add_decayed_weights(weight_decay_rate,
-                                          mask=weight_decay_mask))
-    # In gradient "descent" we follow the negative gradient.
-    tx.append(transform.scale(-1))
-    return combine.chain(*tx)
-
-
 class TrainState(train_state.TrainState):
-    """This is an improved version of the original flax train state that wraps
-    the logic for mixed precision training.
+    """This is an improved version of the original flax TrainState.
+
+    This class wraps the logic for creating the master weight copy in
+    mixed precision training.
     """
     master_copy: flax.core.FrozenDict[str, Any]
-    dynamic_scale: dynamic_scale_lib.DynamicScale
+    dynamic_scale: Optional[dynamic_scale_lib.DynamicScale]
 
     def apply_gradients(self, *, grads, **kwargs):
         """Updates `step`, `params`, `opt_state` and `**kwargs` in return value.
@@ -345,12 +304,13 @@ class TrainState(train_state.TrainState):
         )
 
     @classmethod
-    def create(cls, *, apply_fn, params, tx, mixed_precision=False, **kwargs):
+    def create(cls, *, apply_fn, params, tx, use_master_copy=False, **kwargs):
         """Creates a new instance with `step=0` and initialized `opt_state`."""
         opt_state = tx.init(params)
 
-        if mixed_precision:
-            master_copy = params
+        if use_master_copy:
+            master_copy = jax.tree_util.tree_map(
+                lambda x: jnp.asarray(x, dtype=jnp.float32), params)
             params = jax.tree_util.tree_map(
                 lambda x: jnp.asarray(x, dtype=jnp.float16), params)
         else:
@@ -372,12 +332,12 @@ class TrainState(train_state.TrainState):
                     apply_fn,
                     params,
                     tx,
-                    mixed_precision=False,
+                    use_master_copy=False,
                     **kwargs):
         """Creates a new instance with `step=0` and initialized `opt_state`."""
         opt_state = jax.eval_shape(tx.init, params)
 
-        if mixed_precision:
+        if use_master_copy:
             master_copy = params
             params = jax.eval_shape(
                 lambda p: jax.tree_util.tree_map(
@@ -394,3 +354,116 @@ class TrainState(train_state.TrainState):
             opt_state=opt_state,
             **kwargs,
         )
+
+
+class DynamicScale(struct.PyTreeNode):
+    """Dynamic loss scaling for mixed precision gradients.
+
+  NOTE(lmzheng): This is the same as flax.optim.DynamicScale, but with
+  jax.value_and_grad replaced by alpa.value_and_grad.
+
+  For many models gradient computations in float16 will result in numerical
+  issues because small/large gradients being flushed to zero/infinity.
+  Dynamic loss scaling is an algorithm that aims to find the largest scalar
+  multiple for which the gradient does not overflow. This way the risk of
+  underflow is minimized.
+
+  the `value_and_grad` method mimicks `jax.value_and_grad`. Beside the loss
+  and gradients it also ouputs and updated `DynamicScale` instance with the
+  current loss scale factor. This method also returns a boolean value indicating
+  whether the gradients are finite.
+
+  Example::
+
+    def loss_fn(p):
+      return jnp.asarray(p, jnp.float16) ** 2
+    p = jnp.array(1., jnp.float32)
+
+    dyn_scale = optim.DynamicScale(growth_interval=10)
+    compute_grad = jax.jit(lambda ds, p: ds.value_and_grad(loss_fn)(p))
+    for _ in range(100):
+      dyn_scale, is_fin, loss, grad = compute_grad(dyn_scale, p)
+      p += jnp.where(is_fin, 0.01 * grad, 0.)
+      print(loss)
+
+  Jax currently cannot execute conditionals efficiently on GPUs therefore we
+  selectifly ignore the gradient update using `jax.numpy.where` in case of
+  non-finite gradients.
+
+  Attributes:
+    growth_factor: how much to grow the scalar after a period of finite
+      gradients (default: 2.).
+    backoff_factor: how much to shrink the scalar after a non-finite gradient
+      (default: 0.5).
+    growth_interval: after how many steps of finite gradients the scale should
+      be increased (default: 2000).
+    fin_steps: indicates how many gradient steps in a row have been finite.
+    scale: the current scale by which the loss is multiplied.
+  """
+    growth_factor: float = struct.field(pytree_node=False, default=2.0)
+    backoff_factor: float = struct.field(pytree_node=False, default=0.5)
+    growth_interval: int = struct.field(pytree_node=False, default=2000)
+    fin_steps: Array = 0
+    scale: Array = 65536.0
+
+    def value_and_grad(
+        self,
+        fun: Callable[..., Any],
+        argnums: Union[int, Sequence[int]] = 0,
+        has_aux: bool = False,
+        axis_name: Optional[str] = None,
+    ) -> Callable[..., DynamicScaleResult]:
+        """Wrapper around `jax.value_and_grad`.
+
+    Args:
+      fun: Function to be differentiated. Its arguments at positions specified
+        by ``argnums`` should be arrays, scalars, or standard Python containers.
+        It should return a scalar (which includes arrays with shape ``()``
+        but not arrays with shape ``(1,)`` etc.)
+      argnums: Optional, integer or sequence of integers. Specifies which
+        positional argument(s) to differentiate with respect to (default 0).
+      has_aux: Optional, bool. Indicates whether ``fun`` returns a pair where
+        the first element is considered the output of the mathematical function
+        to be differentiated and the second element is auxiliary data.
+        Default False.
+      axis_name: If an axis is given the gradients will be averaged across
+        replicas (default: None).
+    Returns:
+      A function that takes the same arguments as `fun` and
+      returns a DynamicScaleResult
+    """
+
+        @functools.wraps(fun)
+        def loss_wrapper(*args):
+            aux = fun(*args)
+            if has_aux:
+                return (self.scale * aux[0], aux[1])
+            else:
+                return self.scale * aux
+
+        grad_fn = value_and_grad(loss_wrapper, argnums, has_aux)
+
+        def grad_fn_wrapper(*args):
+            aux, grad = grad_fn(*args)
+            aux = (aux[0] / self.scale, aux[1]) if has_aux else aux / self.scale
+
+            grad = jax.tree_util.tree_map(
+                lambda g: jnp.asarray(g, jnp.float32) / self.scale, grad)
+            if axis_name is not None:
+                grad = lax.pmean(grad, axis_name)
+
+            finite = jnp.array(True)
+            for g in jax.tree_util.tree_leaves(grad):
+                finite &= jnp.all(lax.is_finite(g))
+
+            grow = self.fin_steps == self.growth_interval
+            fin_scale = jnp.where(grow & finite,
+                                  self.scale * self.growth_factor, self.scale)
+            inf_scale = self.scale * self.backoff_factor
+            new_scale = jnp.where(finite, fin_scale, inf_scale)
+            new_fin_steps = jnp.where(grow | (~finite), 0, self.fin_steps + 1)
+
+            new_self = self.replace(fin_steps=new_fin_steps, scale=new_scale)
+            return DynamicScaleResult(new_self, finite, aux, grad)
+
+        return grad_fn_wrapper

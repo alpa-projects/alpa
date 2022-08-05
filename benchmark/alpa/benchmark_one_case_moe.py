@@ -5,10 +5,10 @@ import numpy as np
 
 from alpa import (get_global_cluster, set_global_virtual_physical_mesh,
                   global_config)
-from alpa.model.model_util import optax_adafactor
 from alpa.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.util import print_used_time
+import optax
 
 from benchmark_one_case_gpt_bert import (get_train_step)
 from util import compute_moe_parameter_count, compute_moe_tflops
@@ -27,13 +27,13 @@ def create_train_state(rngkey, model, dtype, batch):
         # do not use weight decay on layer norm and bias.
         return jax.tree_map(lambda x: x.ndim > 1, pytree)
 
-    tx = optax_adafactor(learning_rate=1e-2,
+    tx = optax.adafactor(learning_rate=1e-2,
                          weight_decay_mask=weight_decay_mask)
 
     state = TrainState.create(apply_fn=model.apply,
                               params=params,
                               tx=tx,
-                              mixed_precision=(dtype == jnp.float16),
+                              use_master_copy=(dtype == jnp.float16),
                               dynamic_scale=None)
     return state
 

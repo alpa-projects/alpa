@@ -219,6 +219,11 @@ def filter_used_vars(all_vars, eqns):
     return [var for var in all_vars if var in used_vars]
 
 
+def filter_pass_through_vars(in_vars, out_vars):
+    in_vars_set = set(x for x in in_vars if not isinstance(x, Literal))
+    return [x for x in out_vars if x in in_vars_set]
+
+
 def clone_vars(var_list, gensym_func: Callable):
     """Clone variables."""
     return [gensym_func(x.aval) for x in var_list]
@@ -228,14 +233,14 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     """Add gradient accumulation logics into the raw jaxpr.
 
     Signatures of functions:
-        raw_jaxpr(opt_state, param, batch) -> [new_opt_state, new_param]
+        raw_jaxpr(param, opt_state, batch) -> [new_param, new_opt_state]
 
         The original_jaxpr can be split into:
         "compute_grad(param, batch) -> out_grad"
-        "apply_grad(opt_state, param, in_grad) -> [new_opt_state, new_param]"
+        "apply_grad(param, opt_state, in_grad) -> [new_param, new_opt_state]"
 
         We then derive accumulate_grad from compute_grad:
-        "accumulate_grad(old_grad, param, batch) -> new_grad"
+        "accumulate_grad(param, batch, old_grad) -> new_grad"
 
         The returned jaxpr is composed by [
             pipeline_marker_start
@@ -245,7 +250,8 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
             pipeline_marker_start
             apply_grad
             pipeline_marker_end
-        ].
+        ], with the signature
+        "new_jaxpr(param, opt_state, batch, grad) -> [new_param, new_opt_state]"
     """
     # pylint: disable=import-outside-toplevel
     from alpa.pipeline_parallel.primitive_def import pipeline_p
@@ -308,8 +314,10 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
 
     # Wrap all invars of apply_grad
     in_grad_vars = marker_eqn.outvars
-    old_invars = filter_used_vars(raw_jaxpr.jaxpr.invars,
-                                  apply_grad_eqns) + in_grad_vars
+    old_invars = (filter_used_vars(raw_jaxpr.jaxpr.invars, apply_grad_eqns) +
+                  filter_pass_through_vars(raw_jaxpr.jaxpr.invars,
+                                           raw_jaxpr.jaxpr.outvars) +
+                  in_grad_vars)
     new_invars = []
     for var in old_invars:
         if var in global_invars:

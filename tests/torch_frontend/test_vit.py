@@ -292,19 +292,19 @@ train_config = {
 # #mb = 32, latency: 9.487284760726126
 # #mb = 16, latency: 12.428439065029746
 
-# ViT-60B model
-# arch_params = {
-#     "n_layers": 48,
-#     "n_heads": 32,
-#     "hidden_d": 10240,
-#     "mlp_d": 40960,
-# }
-# train_config = {
-#     "global_batch_size": 512,
-#     "num_micro_batches": int(sys.argv[1]),
-#     "num_auto_layers": 32,
-#     "dtype": torch.half,
-# }
+ViT-60B model
+arch_params = {
+    "n_layers": 48,
+    "n_heads": 32,
+    "hidden_d": 10240,
+    "mlp_d": 40960,
+}
+train_config = {
+    "global_batch_size": 512,
+    "num_micro_batches": int(sys.argv[1]),
+    "num_auto_layers": 32,
+    "dtype": torch.half,
+}
 # gBS = 512, fp16
 # #mb = 512, latency: 20.67109835775275
 # #mb = 256, latency: 16.762500963712995
@@ -312,19 +312,19 @@ train_config = {
 # #mb = 64, latency: 15.69248688848395
 # #mb = 32, latency: 18.569331746352347
 
-# # ViT-120B model
-# arch_params = {
-#     "n_layers": 96,
-#     "n_heads": 80,
-#     "hidden_d": 10240,
-#     "mlp_d": 40960,
-# }
-# train_config = {
-#     "global_batch_size": 512,
-#     "num_micro_batches": int(sys.argv[1]),
-#     "num_auto_layers": 64,
-#     "dtype": torch.half,
-# }
+# ViT-120B model
+arch_params = {
+    "n_layers": 96,
+    "n_heads": 80,
+    "hidden_d": 10240,
+    "mlp_d": 40960,
+}
+train_config = {
+    "global_batch_size": 512,
+    "num_micro_batches": int(sys.argv[1]),
+    "num_auto_layers": 64,
+    "dtype": torch.half,
+}
 # gBS = 512, fp16
 # #mb = 512, latency: 20.77894720278288
 # #mb = 256, latency: 17.389554663708335

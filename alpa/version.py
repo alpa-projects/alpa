@@ -16,8 +16,7 @@ except AttributeError:
 if alpa_jaxlib_version < minimal_alpa_jaxlib_version:
     minimal_alpa_jaxlib_version_str = ".".join(
         str(x) for x in minimal_alpa_jaxlib_version)
-    alpa_jaxlib_version_str = ".".join(
-        str(x) for x in alpa_jaxlib_version)
+    alpa_jaxlib_version_str = ".".join(str(x) for x in alpa_jaxlib_version)
     raise RuntimeError(
         f"The alpa-jaxlib's internal version is v{alpa_jaxlib_version_str}, "
         f"but the minimal requirement is v{minimal_alpa_jaxlib_version_str}. "

@@ -41,11 +41,14 @@ YAPF_FLAGS=(
 )
 
 YAPF_EXCLUDES=(
-    '--exclude' 'benchmark'
-    '--exclude' 'docs'
-    '--exclude' 'examples'
-    '--exclude' 'playground'
-    '--exclude' 'third_party'
+    '--exclude' 'benchmark/cupy/*'
+    '--exclude' 'benchmark/alpa/old_backup/*'
+    '--exclude' 'benchmark/deepspeed/*'
+    '--exclude' 'benchmark/megatron/*'
+    '--exclude' 'docs/*'
+    '--exclude' 'examples/*'
+    '--exclude' 'playground/*'
+    '--exclude' 'third_party/*'
 )
 
 # Format specified files
@@ -73,7 +76,7 @@ format_changed() {
 
 # Format all files
 format_all() {
-    yapf --in-place "${YAPF_FLAGS[@]}" "${YAPF_EXCLUDES[@]}" alpa tests
+    yapf --in-place "${YAPF_FLAGS[@]}" "${YAPF_EXCLUDES[@]}" alpa tests benchmark
 }
 
 ## This flag formats individual files. --files *must* be the first command line

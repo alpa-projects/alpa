@@ -10,12 +10,14 @@ import optax
 import alpa
 from alpa import (parallelize, get_global_cluster,
                   set_global_virtual_physical_mesh, ShardParallel,
-                  PipeshardParallel, AutoShardingOption, ManualStageOption,
-                  AutoStageOption, AutoLayerOption, automatic_remat)
+                  automatic_remat)
 from alpa.model.wide_resnet import get_wide_resnet, TrainState
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
-from alpa.timer import timers
-from alpa.util import print_used_time, compute_param_number, to_str_round
+from alpa.util import print_used_time, compute_param_number
+from benchmark_parallel_utils import (
+    get_pipeshard_parallel_method, get_shard_parallel_method,
+    compile_and_benchmark_pipeshard_training_executable,
+    compile_and_benchmark_shard_training_executable)
 
 
 def compute_metrics(logits, labels):
@@ -74,8 +76,14 @@ def create_train_state(rngkey, model, input_images, learning_rate_fn):
     return state
 
 
-def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_remat_layers,
-                   method):
+def get_train_step(learning_rate_fn,
+                   use_remat,
+                   num_remat_layers,
+                   method,
+                   grad_func=None):
+
+    if grad_func is None:
+        grad_func = alpa.grad
 
     @parallelize(method=method)
     def train_step(state, batch):
@@ -108,17 +116,12 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_remat_layers,
         dynamic_scale = state.dynamic_scale
 
         if dynamic_scale:
-            # TOOD(lmzheng): handle gradient accumulation for this
+            # TODO(lmzheng): handle gradient accumulation for this
             grad_fn = dynamic_scale.value_and_grad(loss_fn, has_aux=True)
             dynamic_scale, is_fin, aux, grads = grad_fn(state.params)
             # dynamic loss takes care of averaging gradients across replicas
         else:
-            if use_grad_acc:
-                get_grad_fn = alpa.grad
-            else:
-                get_grad_fn = jax.grad
-
-            grad_fn = get_grad_fn(loss_fn, has_aux=True)
+            grad_fn = grad_func(loss_fn, has_aux=True)
             grads, aux = grad_fn(state.params)
         new_model_state, metrics = aux
 
@@ -140,65 +143,18 @@ def get_train_step(learning_rate_fn, use_grad_acc, use_remat, num_remat_layers,
     return train_step
 
 
-def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
-                               num_devices_per_host):
+def prepare_wresnet_input_and_model(benchmark_case):
     print_used_time(None)
-
     # Model configs
-    model_type = "wide_resnet"
-    (batch_size, image_size, num_layers, num_channels, width_factor, dtype,
-     num_micro_batches, parallel_mode, parallel_args) = benchmark_case
+    (batch_size, model_config, num_micro_batches, parallel_mode,
+     parallel_args) = benchmark_case
+    (image_size, num_layers, num_channels, width_factor, dtype) = model_config
     if dtype == "fp32":
         dtype = jnp.float32
     elif dtype == "fp16":
         dtype = jnp.float16
     else:
         raise ValueError(f"Invalid dtype: {dtype}")
-
-    if num_layers == 50:
-        num_auto_layers = 16  # number of residual blocks
-    elif num_layers == 101:
-        num_auto_layers = 33
-
-    # Connect to the cluster
-    virtual_mesh = get_global_cluster().get_virtual_physical_mesh(
-        host_ids=list(range(num_hosts)),
-        num_devices_per_host=num_devices_per_host)
-    set_global_virtual_physical_mesh(virtual_mesh)
-
-    # Parallel configs
-    allow_mixed_mesh_shape = True
-    if parallel_mode == "search":
-        prefer_reduce_scatter, use_remat, auto_stage_option = parallel_args
-        auto_stage_option["cached_compute_cost"] = None
-        method = PipeshardParallel(
-            num_micro_batches=num_micro_batches,
-            default_auto_sharding_option=AutoShardingOption(
-                prefer_reduce_scatter=prefer_reduce_scatter,
-                allow_mixed_mesh_shape=allow_mixed_mesh_shape,
-            ),
-            layer_option=AutoLayerOption(layer_num=num_auto_layers,
-                                         remat_layer=use_remat),
-            stage_option=AutoStageOption(**auto_stage_option))
-    elif parallel_mode == "load_solution":
-        prefer_reduce_scatter, use_remat, manual_stage_option = parallel_args
-        method = PipeshardParallel(
-            num_micro_batches=num_micro_batches,
-            default_auto_sharding_option=AutoShardingOption(
-                prefer_reduce_scatter=prefer_reduce_scatter,
-                allow_mixed_mesh_shape=allow_mixed_mesh_shape,
-            ),
-            layer_option=AutoLayerOption(layer_num=num_auto_layers,
-                                         remat_layer=use_remat),
-            stage_option=ManualStageOption(*manual_stage_option))
-    else:
-        raise ValueError(f"Invalid model: {parallel_mode}")
-
-    if num_micro_batches > 1:
-        use_grad_acc = True
-    else:
-        use_grad_acc = False
-        num_micro_batches = None
 
     # Prepare input batch
     num_classes = 1024
@@ -214,47 +170,48 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
     model = get_wide_resnet(num_layers, width_factor, num_channels, num_classes,
                             dtype)
 
-    learning_rate_fn = create_learning_rate_fn()
     rngkey = jax.random.PRNGKey(0)
+    learning_rate_fn = create_learning_rate_fn()
     state = create_train_state(rngkey, model, batch["images"], learning_rate_fn)
-    train_step = get_train_step(learning_rate_fn, use_grad_acc, False, None,
-                                method)
     print_used_time("Create train state")
-    parameter_count = compute_param_number(state.params)
+    return state, batch, learning_rate_fn
 
-    # Compile executable
-    executable = train_step.get_executable(state, batch)
-    print_used_time("Compile (driver)")
 
-    if parallel_mode == "search":
-        compilation_times = {
-            k: timers(k).elapsed() for k in [
-                "stage-construction", "stage-construction-dp",
-                "stage-construction-compilation", "stage-construction-profiling"
-            ]
-        }
-        print(
-            f"compilation time breakdown: {to_str_round(compilation_times, 2)}")
-    else:
-        compilation_times = None
+def benchmark_wresnet_3d_internal(benchmark_case,
+                                  niter,
+                                  num_hosts,
+                                  num_devices_per_host,
+                                  profile_driver_time=False):
+    # Connect to the cluster
+    virtual_mesh = get_global_cluster().get_virtual_physical_mesh(
+        host_ids=list(range(num_hosts)),
+        num_devices_per_host=num_devices_per_host)
+    set_global_virtual_physical_mesh(virtual_mesh)
 
-    # Dump hlo ir for debugging
-    executable.dump_debug_info("tmp")
-    executable.sync()
-    print_used_time("Compile (workers)")
+    # Parallel configs
+    allow_mixed_mesh_shape = True
+    (method, _, _, _) = get_pipeshard_parallel_method(
+        benchmark_case,
+        virtual_mesh.num_devices_per_host,
+        allow_mixed_mesh_shape=allow_mixed_mesh_shape)
 
-    # Benchmark step time
-    for i in range(niter):
-        print(f"Iteration: {i} ...")
-        state, metrics = train_step(state, batch)
-        executable.sync()
+    use_grad_acc = benchmark_case.num_micro_batches > 1
+    grad_func = alpa.grad if use_grad_acc else jax.grad
+    state, batch, learning_rate_fn = prepare_wresnet_input_and_model(
+        benchmark_case)
+    train_step = get_train_step(learning_rate_fn,
+                                False,
+                                None,
+                                method,
+                                grad_func=grad_func)
 
-    latencies = executable.get_execution_time_costs()[2:]
-    if isinstance(method, PipeshardParallel):
-        max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
-    else:
-        max_mem_allocated = executable.physical_mesh.get_max_memory_allocated()
-    print_used_time("Benchmark")
+    (latencies, max_mem_allocated, compilation_times,
+     executable) = compile_and_benchmark_pipeshard_training_executable(
+         benchmark_case.parallel_mode,
+         niter,
+         train_step,
+         state, (batch,),
+         profile_driver_time=profile_driver_time)
 
     # Profile submesh executables
     # del state
@@ -268,6 +225,52 @@ def benchmark_wresnet_internal(benchmark_case, niter, num_hosts,
     # Compute statistics
     num_gpus = virtual_mesh.num_devices
     tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
+    parameter_count = compute_param_number(state.params)
 
-    return (parameter_count, max_mem_allocated, latencies, tflops, tflops,
-            compilation_times) + get_last_dp_result()
+    (compute_cost_file_name, forward_stage_layer_ids, submesh_shapes,
+     logical_mesh_shapes, autosharding_option_dicts) = get_last_dp_result()
+    metadata = {
+        "compilation_times": compilation_times,
+        "compute_cost_file_name": compute_cost_file_name,
+        "forward_stage_layer_ids": forward_stage_layer_ids,
+        "submesh_shapes": submesh_shapes,
+        "logical_mesh_shapes": logical_mesh_shapes,
+        "autosharding_option_dicts": autosharding_option_dicts,
+    }
+
+    return parameter_count, max_mem_allocated, latencies, tflops, metadata
+
+
+def benchmark_wresnet_2d_internal(physical_mesh,
+                                  benchmark_case,
+                                  niter,
+                                  profile_driver_time=False):
+    # Model configs
+    method, grad_func = get_shard_parallel_method(benchmark_case, physical_mesh)
+
+    use_grad_acc = benchmark_case.num_micro_batches > 1
+    grad_func = alpa.grad if use_grad_acc else jax.grad
+    state, batch, learning_rate_fn = prepare_wresnet_input_and_model(
+        benchmark_case)
+    train_step = get_train_step(learning_rate_fn,
+                                False,
+                                None,
+                                method,
+                                grad_func=grad_func)
+
+    (latencies, ilp_objective, peak_mem,
+     executable) = compile_and_benchmark_shard_training_executable(
+         physical_mesh,
+         niter,
+         train_step,
+         state, (batch,),
+         profile_driver_time=profile_driver_time)
+
+    # Compute statistics
+    num_gpus = physical_mesh.num_devices
+    tflops = executable.flop_count / num_gpus / np.mean(latencies) / 1e12
+    parameter_count = compute_param_number(state.params)
+    metadata = {
+        "ilp_objective": ilp_objective,
+    }
+    return parameter_count, peak_mem, latencies, tflops, metadata

@@ -19,6 +19,7 @@ The data is loaded using tensorflow_datasets.
 """
 
 import functools
+import os
 import time
 from typing import Any
 
@@ -28,7 +29,7 @@ from clu import metric_writers
 from clu import periodic_actions
 import flax
 from flax import jax_utils
-from flax import optim
+from flax.optim import dynamic_scale as dynamic_scale_lib
 from flax.training import checkpoints
 from flax.training import common_utils
 from flax.training import train_state
@@ -37,6 +38,7 @@ from jax import lax
 import jax.numpy as jnp
 from jax import random
 import ml_collections
+import numpy as np
 import optax
 import ray
 import tensorflow as tf
@@ -115,9 +117,9 @@ def train_step(state, batch, learning_rate_fn):
     loss = cross_entropy_loss(logits, batch['label'])
     weight_penalty_params = jax.tree_leaves(params)
     weight_decay = 0.0001
-    weight_l2 = sum([jnp.sum(x ** 2)
+    weight_l2 = sum(jnp.sum(x ** 2)
                      for x in weight_penalty_params
-                     if x.ndim > 1])
+                     if x.ndim > 1)
     weight_penalty = weight_decay * 0.5 * weight_l2
     loss = loss + weight_penalty
     return loss, (new_model_state, logits)
@@ -144,14 +146,15 @@ def train_step(state, batch, learning_rate_fn):
     # if is_fin == False the gradients contain Inf/NaNs and optimizer state and
     # params should be restored (= skip this step).
     new_state = new_state.replace(
-        opt_state=jax.tree_multimap(
+        opt_state=jax.tree_map(
             functools.partial(jnp.where, is_fin),
             new_state.opt_state,
             state.opt_state),
-        params=jax.tree_multimap(
+        params=jax.tree_map(
             functools.partial(jnp.where, is_fin),
             new_state.params,
-            state.params))
+            state.params),
+        dynamic_scale=dynamic_scale)
     metrics['scale'] = dynamic_scale.scale
 
   return new_state, metrics
@@ -166,17 +169,26 @@ def eval_step(state, batch):
 
 def create_input_iter(dataset_builder, batch_size, image_size, dtype,
                       placement_specs, train, cache):
-  ds = input_pipeline.create_split(
-      dataset_builder, batch_size, image_size=image_size, dtype=dtype,
-      train=train, cache=cache)
-  it = map(lambda xs: jax.tree_map(lambda x: x._numpy(), xs), ds)
-  it = alpa.DataLoader(it, placement_specs, prefetch_size=4)
+
+  def input_iter_func(start, end, batch_size):
+      ds = input_pipeline.create_split(
+          dataset_builder, batch_size, train,
+          start, end,
+          image_size=image_size, dtype=dtype, cache=cache)
+      return map(lambda xs: (xs["image"]._numpy(), xs["label"]._numpy()), ds)
+
+  split_name = "train" if train else "validation"
+
+  it = alpa.MeshDriverDataLoader(
+      batch_size, dataset_builder.info.splits[split_name].num_examples,
+      input_iter_func, placement_specs, prefetch_size=4, repeat=True)
+  it = map(lambda x: {"image": x[0], "label": x[1]}, it)
   return it
 
 
 class TrainState(train_state.TrainState):
   batch_stats: Any
-  dynamic_scale: flax.optim.DynamicScale
+  dynamic_scale: dynamic_scale_lib.DynamicScale
 
 
 def restore_checkpoint(state, workdir):
@@ -184,11 +196,10 @@ def restore_checkpoint(state, workdir):
 
 
 def save_checkpoint(state, workdir):
-  if jax.process_index() == 0:
-    # get train state from the first replica
-    state = jax.device_get(jax.tree_map(lambda x: x[0], state))
-    step = int(state.step)
-    checkpoints.save_checkpoint(workdir, state, step, keep=3)
+  alpa.fetch(state)
+  state = alpa.util.map_to_nparray(state)
+  step = int(state.step)
+  checkpoints.save_checkpoint(workdir, state, step, keep=3)
 
 
 # pmean only works inside pmap because it needs an axis name.
@@ -209,7 +220,7 @@ def create_train_state(rng, config: ml_collections.ConfigDict,
   dynamic_scale = None
   platform = jax.local_devices()[0].platform
   if config.half_precision and platform == 'gpu':
-    dynamic_scale = optim.DynamicScale()
+    dynamic_scale = dynamic_scale_lib.DynamicScale()
   else:
     dynamic_scale = None
 
@@ -239,7 +250,14 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
   Returns:
     Final TrainState.
   """
-  alpa.init(cluster="local")
+  # Initialize ray.
+  # The `runtime_env` argument is used to upload local python scripts to
+  # remote workers while excluding checkpoints, profiling events, etc.
+  ray.init(address="auto",
+           runtime_env={"working_dir": ".",
+	                "excludes": [os.path.relpath(workdir)]})
+  # Initialize alpa.
+  alpa.init(cluster="ray")
 
   writer = metric_writers.create_default_writer(
       logdir=workdir, just_logging=jax.process_index() != 0)
@@ -297,7 +315,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
 
   p_train_step = alpa.parallelize(
       functools.partial(train_step, learning_rate_fn=learning_rate_fn))
-  p_eval_step = alpa.parallelize(eval_step)
+  p_eval_step = alpa.parallelize(eval_step, donate_argnums=())
 
   logging.info('Initial compilation, this might take some minutes...')
   batch = {
@@ -306,6 +324,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
     "label": jax.core.ShapedArray((config.batch_size,), jnp.int32),
   }
   executable = p_train_step.get_executable(state, batch)
+  executable.dump_debug_info("alpa_debug_info")
   logging.info('Initial compilation completed.')
 
   batch_placement_specs = executable.get_input_placement_specs()[1]
@@ -319,8 +338,8 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
 
   train_metrics = []
   hooks = []
-  #if jax.process_index() == 0:
-  #  hooks += [periodic_actions.Profile(num_profile_steps=5, logdir=workdir)]
+  if jax.process_index() == 0:
+    hooks += [periodic_actions.Profile(num_profile_steps=5, logdir=workdir)]
   train_metrics_last_t = time.time()
   for step, batch in zip(range(step_offset, num_steps), train_iter):
     state, metrics = p_train_step(state, batch)
@@ -330,7 +349,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
     if config.get('log_every_steps'):
       train_metrics.append(metrics)
       if (step + 1) % config.log_every_steps == 0:
-        train_metrics = common_utils.stack_forest(train_metrics)
+        train_metrics = alpa.util.get_metrics(train_metrics)
         summary = {
             f'train_{k}': v
             for k, v in jax.tree_map(lambda x: x.mean(), train_metrics).items()
@@ -341,21 +360,15 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
         train_metrics = []
         train_metrics_last_t = time.time()
 
-    # Currently, evaluation and model saving are not optimized in alpa
-    # TODO: support the logic below
-    continue
-
     if (step + 1) % steps_per_epoch == 0:
       epoch = step // steps_per_epoch
       eval_metrics = []
 
-      # sync batch statistics across replicas
-      state = sync_batch_stats(state)
       for _ in range(steps_per_eval):
         eval_batch = next(eval_iter)
         metrics = p_eval_step(state, eval_batch)
         eval_metrics.append(metrics)
-      eval_metrics = common_utils.get_metrics(eval_metrics)
+      eval_metrics = alpa.util.get_metrics(eval_metrics)
       summary = jax.tree_map(lambda x: x.mean(), eval_metrics)
       logging.info('eval epoch: %d, loss: %.4f, accuracy: %.2f',
                    epoch, summary['loss'], summary['accuracy'] * 100)
@@ -363,10 +376,9 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
           step + 1, {f'eval_{key}': val for key, val in summary.items()})
       writer.flush()
     if (step + 1) % steps_per_checkpoint == 0 or step + 1 == num_steps:
-      state = sync_batch_stats(state)
       save_checkpoint(state, workdir)
 
   # Wait until computations are done before exiting
-  jax.random.normal(jax.random.PRNGKey(0), ()).block_until_ready()
+  executable.sync()
 
   return state

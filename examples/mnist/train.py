@@ -25,6 +25,7 @@ import time
 
 
 from absl import logging
+import alpa
 from flax import linen as nn
 from flax.metrics import tensorboard
 from flax.training import train_state
@@ -54,32 +55,11 @@ class CNN(nn.Module):
     return x
 
 
-@jax.jit
-def apply_model(state, images, labels):
-  """Computes gradients, loss and accuracy for a single batch."""
-  def loss_fn(params):
-    logits = CNN().apply({'params': params}, images)
-    one_hot = jax.nn.one_hot(labels, 10)
-    loss = jnp.mean(optax.softmax_cross_entropy(logits=logits, labels=one_hot))
-    return loss, logits
-
-  grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-  (loss, logits), grads = grad_fn(state.params)
-  accuracy = jnp.mean(jnp.argmax(logits, -1) == labels)
-  return grads, loss, accuracy
-
-
-@jax.jit
-def update_model(state, grads):
-  return state.apply_gradients(grads=grads)
-
-import alpa
-
 @alpa.parallelize
 def train_step(state, images, labels):
   """Computes gradients, loss and accuracy for a single batch."""
   def loss_fn(params):
-    logits = CNN().apply({'params': params}, images)
+    logits = state.apply_fn({'params': params}, images)
     one_hot = jax.nn.one_hot(labels, 10)
     loss = jnp.mean(optax.softmax_cross_entropy(logits=logits, labels=one_hot))
     return loss, logits
@@ -91,7 +71,16 @@ def train_step(state, images, labels):
   return state, loss, accuracy
 
 
-def train_epoch(state, train_ds, batch_size, rng):
+@alpa.parallelize(donate_argnums=())
+def eval_step(state, images, labels):
+  logits = state.apply_fn({'params': state.params}, images)
+  one_hot = jax.nn.one_hot(labels, 10)
+  loss = jnp.mean(optax.softmax_cross_entropy(logits=logits, labels=one_hot))
+  accuracy = jnp.mean(jnp.argmax(logits, -1) == labels)
+  return loss, accuracy
+
+
+def train_epoch(state, train_ds, batch_size):
   """Train for a single epoch."""
   train_ds_size = len(train_ds['image'])
   steps_per_epoch = train_ds_size // batch_size
@@ -105,6 +94,7 @@ def train_epoch(state, train_ds, batch_size, rng):
     state, loss, accuracy = train_step(state, batch_images, batch_labels)
     epoch_loss.append(loss)
     epoch_accuracy.append(accuracy)
+  alpa.fetch((epoch_loss, epoch_accuracy))
   train_loss = np.mean(epoch_loss)
   train_accuracy = np.mean(epoch_accuracy)
   return state, train_loss, train_accuracy
@@ -144,31 +134,24 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
     The train state (which includes the `.params`).
   """
   train_ds, test_ds = get_datasets()
-  rng = jax.random.PRNGKey(0)
 
   summary_writer = tensorboard.SummaryWriter(workdir)
   summary_writer.hparams(dict(config))
 
-  rng, init_rng = jax.random.split(rng)
-  state = create_train_state(init_rng, config)
+  rng = jax.random.PRNGKey(0)
+  state = create_train_state(rng, config)
 
   for epoch in range(1, config.num_epochs + 1):
-    rng, input_rng = jax.random.split(rng)
     tic = time.time()
     state, train_loss, train_accuracy = train_epoch(state, train_ds,
-                                                    config.batch_size, input_rng)
+                                                    config.batch_size)
     epoch_time = time.time() - tic
-    test_loss = test_accuracy = 0.0
+    test_loss, test_accuracy = eval_step(state, test_ds['image'], test_ds['label'])
+    test_accuracy = np.array(test_accuracy)
     logging.info(
-        'epoch:% 3d, train_loss: %.4f, train_accuracy: %.2f, epoch_time: %.3f'
-        % (epoch, train_loss, train_accuracy * 100, epoch_time))
-
-    #_, test_loss, test_accuracy = apply_model(state, test_ds['image'],
-    #                                          test_ds['label'])
-    #logging.info(
-    #    'epoch:% 3d, train_loss: %.4f, train_accuracy: %.2f, test_loss: %.4f, test_accuracy: %.2f'
-    #    % (epoch, train_loss, train_accuracy * 100, test_loss,
-    #       test_accuracy * 100))
+        'epoch:% 3d, train_loss: %.4f, train_accuracy: %.2f, test_loss: %.4f, test_accuracy: %.2f, epoch_time: %.3f'
+        % (epoch, train_loss, train_accuracy * 100, test_loss,
+           test_accuracy * 100, epoch_time))
 
     summary_writer.scalar('train_loss', train_loss, epoch)
     summary_writer.scalar('train_accuracy', train_accuracy, epoch)

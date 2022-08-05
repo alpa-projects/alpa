@@ -76,6 +76,9 @@ class GlobalConfig:
         # data-independent benchmarks.
         self.use_dummy_value_for_benchmarking = False
 
+        ########## Options of monkey patch ##########
+        self.flax_always_use_fp16_embedding = False
+
         ########## Options of logging ##########
         self.print_compilation_time = False
         self.print_auto_layer_stats = False

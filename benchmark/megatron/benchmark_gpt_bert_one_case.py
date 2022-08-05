@@ -17,7 +17,7 @@ import torch
 from util import write_tsv, benchmark_func,\
     compute_gpt_tflops, compute_gpt_parameter_count
 
-GB = 1024 ** 3
+GB = 1024**3
 
 
 def get_gpt_functions():
@@ -26,12 +26,10 @@ def get_gpt_functions():
     seq_len = args.encoder_seq_length
 
     def model_provider(pre_process=True, post_process=True):
-        model = GPTModel(
-            num_tokentypes=0,
-            parallel_output=True,
-            pre_process=pre_process,
-            post_process=post_process
-        )
+        model = GPTModel(num_tokentypes=0,
+                         parallel_output=True,
+                         pre_process=pre_process,
+                         post_process=post_process)
         return model
 
     def loss_func(loss_mask, output_tensor):
@@ -52,7 +50,9 @@ def get_gpt_functions():
     position_ids = torch.ones((micro_batch_size, seq_len)).cuda().long()
 
     def forward_step(data_iterator, model):
-        output_tensor = model(tokens, position_ids, attention_mask,
+        output_tensor = model(tokens,
+                              position_ids,
+                              attention_mask,
                               labels=labels)
         return output_tensor, partial(loss_func, loss_mask)
 
@@ -66,12 +66,11 @@ def get_bert_functions():
 
     def model_provider(pre_process=True, post_process=True):
         num_tokentypes = 2 if args.bert_binary_head else 0
-        model = BertModel(
-            num_tokentypes=num_tokentypes,
-            add_binary_head=args.bert_binary_head,
-            parallel_output=True,
-            pre_process=pre_process,
-            post_process=post_process)
+        model = BertModel(num_tokentypes=num_tokentypes,
+                          add_binary_head=args.bert_binary_head,
+                          parallel_output=True,
+                          pre_process=pre_process,
+                          post_process=post_process)
 
         return model
 
@@ -92,8 +91,10 @@ def get_bert_functions():
             #averaged_losses = average_losses_across_data_parallel_group(
             #    [lm_loss, sop_loss])
             averaged_losses = [0, 0]
-            return loss, {'lm loss': averaged_losses[0],
-                          'sop loss': averaged_losses[1]}
+            return loss, {
+                'lm loss': averaged_losses[0],
+                'sop loss': averaged_losses[1]
+            }
         else:
             loss = lm_loss
             #averaged_losses = average_losses_across_data_parallel_group(
@@ -113,7 +114,9 @@ def get_bert_functions():
         if not args.bert_binary_head:
             types = None
 
-        output_tensor = model(tokens, padding_mask, tokentype_ids=types,
+        output_tensor = model(tokens,
+                              padding_mask,
+                              tokentype_ids=types,
                               lm_labels=lm_labels)
         return output_tensor, partial(loss_func, loss_mask, sentence_order)
 
@@ -122,10 +125,14 @@ def get_bert_functions():
 
 def benchmark_gpt_bert_one_case(benchmark_case, output_file_name):
     # Model configs
-    (model_type, global_batch_size, seq_len, hidden_size, num_layers, num_heads,
-     vocab_size, num_micro_batches, parallel_mode, parallel_args) = benchmark_case
-    assert parallel_mode == "manual"
-    (prefer_reduce_scatter, use_remat, (dp, op, pp), force_batch_dim_mapping) = parallel_args
+    model_type = "gpt"
+    (global_batch_size, model_config, num_micro_batches, parallel_mode,
+     parallel_args) = benchmark_case
+    (seq_len, hidden_size, num_layers, num_heads,
+     vocab_size) = model_config
+    assert parallel_mode == "uniform"
+    (prefer_reduce_scatter, use_remat, dp, op, pp,
+     force_batch_dim_mapping) = parallel_args
 
     dp_size, tensor_mp_size, pipeline_mp_size = dp, op, pp
     checkpoint_activations = use_remat
@@ -176,11 +183,11 @@ def benchmark_gpt_bert_one_case(benchmark_case, output_file_name):
     elif model_type == "bert":
         model_provider, loss_func, forward_step = get_bert_functions()
 
-    model, optimizer, lr_scheduler = setup_model_and_optimizer(model_provider,
-                                                               model_type=ModelType.encoder_or_decoder)
+    model, optimizer, lr_scheduler = setup_model_and_optimizer(
+        model_provider, model_type=ModelType.encoder_or_decoder)
 
-    parameter_count = compute_gpt_parameter_count(
-        num_layers, hidden_size, vocab_size)
+    parameter_count = compute_gpt_parameter_count(num_layers, hidden_size,
+                                                  vocab_size)
 
     def run_func():
         train_step(forward_step, None, model, optimizer, lr_scheduler)
@@ -195,8 +202,11 @@ def benchmark_gpt_bert_one_case(benchmark_case, output_file_name):
     # Benchmark step time
     repeat = 2
     number = 1
-    costs = benchmark_func(run_func, sync_func=None,
-                           warmup=0, repeat=repeat, number=number)
+    costs = benchmark_func(run_func,
+                           sync_func=None,
+                           warmup=0,
+                           repeat=repeat,
+                           number=number)
     timers.log(names, normalizer=repeat * number)
 
     # Print results
@@ -210,16 +220,22 @@ def benchmark_gpt_bert_one_case(benchmark_case, output_file_name):
                                          hidden_size, vocab_size,
                                          torch.distributed.get_world_size(),
                                          np.mean(costs), True)
-        heads = ["Type", "Model Config", "Parallel Config", "P-mesh shape", "#Microbatch",
-                 "Force DP", "Remat", "Mean Time", "Std Time", "#Params", "TFLOPs", "TFLOPs (ckpt)",
-                  "Peak Mem"]
-        values = [model_type, str(benchmark_case[1:6]),
-                  str((dp_size, tensor_mp_size, pipeline_mp_size)),
-                  "N/A", str(num_micro_batches), "N/A",
-                  str(checkpoint_activations), f"{np.mean(costs):.3f}", f"{np.std(costs):.3f}",
-                  f"{parameter_count/1e9:.3f}", f"{tflops:.2f}", f"{tflops_ckpt:.2f}",
-                  f"{peak_mem/GB:5.3f}"]
-        write_tsv(heads, values, f"{model_type}_megatron_{output_file_name}_rank{rank}.tsv")
+        heads = [
+            "Type", "Model Config", "Parallel Config", "P-mesh shape",
+            "#Microbatch", "Force DP", "Remat", "Mean Time", "Std Time",
+            "#Params", "TFLOPs", "TFLOPs (ckpt)", "Peak Mem"
+        ]
+        values = [
+            model_type,
+            str(benchmark_case[1:6]),
+            str((dp_size, tensor_mp_size, pipeline_mp_size)), "N/A",
+            str(num_micro_batches), "N/A",
+            str(checkpoint_activations), f"{np.mean(costs):.3f}",
+            f"{np.std(costs):.3f}", f"{parameter_count/1e9:.3f}",
+            f"{tflops:.2f}", f"{tflops_ckpt:.2f}", f"{peak_mem/GB:5.3f}"
+        ]
+        write_tsv(heads, values,
+                  f"{model_type}_megatron_{output_file_name}_rank{rank}.tsv")
         print("Sleeping for 30 seconds before starting the next case. ")
         time.sleep(30)
 

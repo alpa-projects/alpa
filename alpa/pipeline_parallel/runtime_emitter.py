@@ -137,8 +137,10 @@ ConcatWorkerExecutableConfig = namedtuple("ConcatWorkerExecutableConfig",
                                           ["exec_uuid", "hlo_proto"])
 PartialGradWorkerExecutableConfig = namedtuple(
     "PartialGradWorkerExecutableConfig", [
-        "exec_uuid", "hlo_proto", "stage_plan", "donated_invars",
-        "grad_sync_channel_ids"
+        "exec_uuid",
+        "hlo_proto",
+        "stage_plan",
+        "donated_invars",
     ])
 
 ExecutableConfig = Union[AllocateZeroWorkerExecutableConfig,
@@ -252,6 +254,7 @@ class PipeshardConfig:
     output_local_uuid_list: Sequence[Sequence[int]]
     outs_handler: Callable
     # Others (debug info)
+    stage_input_shard_specs: Sequence[Sequence[pxla.ShardingSpec]]
     input_placement_specs: Sequence[PlacementSpec]
     output_placement_specs: Sequence[PlacementSpec]
     default_auto_sharding_option: AutoShardingOption
@@ -448,6 +451,13 @@ class PipelineInstEmitter:
         # Compile load info
         input_placement_specs = self._compile_input_placement_spec(
             input_config.mesh_arg_indices, input_shard_specs)
+
+        # Keep the input sharding specs based on pipeline stages
+        input_shard_specs = [
+            self.stages[idx].input_sharding_specs
+            for idx in self.schedule.mesh_stage_mapping
+        ]
+
         return PipeshardConfig(
             # Executable configs
             instruction_lists,
@@ -466,6 +476,7 @@ class PipelineInstEmitter:
             output_local_uuid_list,
             outs_handler,
             # Others
+            input_shard_specs,
             input_placement_specs,
             output_placement_specs,
             self.default_auto_sharding_option,
@@ -591,8 +602,7 @@ class PipelineInstEmitter:
             hlo_module = stage.get_spmd_partitioned()
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             exec_config = PartialGradWorkerExecutableConfig(
-                exec_uuid, hlo_proto, stage.stage_plan, stage.donated_invars,
-                stage.output_acc_grad_indices)
+                exec_uuid, hlo_proto, stage.stage_plan, stage.donated_invars)
             for worker in self.mesh_group[mesh_idx].workers:
                 executable_config_lists[worker].append(exec_config)
 

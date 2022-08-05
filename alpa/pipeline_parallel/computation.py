@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import logging
-from typing import Sequence, Any, Dict
+from typing import Sequence, Any, Dict, Optional
 
 import jax
 from jax import jit
@@ -827,7 +827,8 @@ def generate_computations_from_modules(jax_computations, computation_names,
 def generate_sharded_xla_computations_arguments(
         name: str, jax_computations: Sequence[JaxPipelineComputation],
         computation_donate_invars: Sequence[bool],
-        output_sharding_dict: Dict[Var, pxla.ShardingSpec]):
+        output_sharding_dict: Dict[Var, pxla.ShardingSpec],
+        stage_input_sharding: Optional[Sequence[pxla.ShardingSpec]]):
     """
     Generates the arguments for distributed compilation.
 
@@ -873,6 +874,13 @@ def generate_sharded_xla_computations_arguments(
         ]
         xe.set_hlo_module_output_shardings(hlo_module, sharding_protos)
 
+    if stage_input_sharding:
+        sharding_protos = [
+            sharding_spec.sharding_proto()
+            for sharding_spec in stage_input_sharding
+        ]
+        xe.set_hlo_module_input_shardings(hlo_module, sharding_protos)
+
     flops = xe.hlo_module_count_flop_dot_conv_only(hlo_module)
     return hlo_module, flops
 
@@ -881,7 +889,7 @@ def generate_sharded_xla_computations(
         name: str, jax_computations: Sequence[JaxPipelineComputation],
         computation_donate_invars, donatable_lists, acc_grad_outvars,
         num_micro_batches, logical_mesh, autosharding_option,
-        output_sharding_dict):
+        output_sharding_dict, stage_input_sharding):
     """
     Generate sharded XLA computations.
 
@@ -890,7 +898,8 @@ def generate_sharded_xla_computations(
     them together to get a sharding strategy config.
     """
     hlo_module, flops = generate_sharded_xla_computations_arguments(
-        name, jax_computations, computation_donate_invars, output_sharding_dict)
+        name, jax_computations, computation_donate_invars, output_sharding_dict,
+        stage_input_sharding)
 
     #  pylint: disable=unbalanced-tuple-unpacking
     (computation_names, computation_modules,

@@ -308,8 +308,13 @@ class PipelineBasicTest(unittest.TestCase):
         return hlo_text
 
 
-def data_loader_test_input_iter_func(start, end, batch_size):
+def data_loader_input_iter_func(start, end, batch_size):
+    """A data loader function for testing."""
+    dataset_x = np.arange(1024 * 32).reshape(-1, 32).astype(np.float32)
+    dataset_y = np.arange(1024).astype(np.int32)
+
     num_batches = (end - start) // batch_size
+
     for i in range(num_batches):
-        yield (i * np.ones((batch_size, 32), dtype=np.float32), i * np.ones(
-            (batch_size,), dtype=np.int32))
+        idx = start + i * batch_size
+        yield dataset_x[idx:idx + batch_size], dataset_y[idx:idx + batch_size]

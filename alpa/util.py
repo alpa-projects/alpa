@@ -30,6 +30,7 @@ from jax.tree_util import tree_map, tree_flatten, PyTreeDef
 import numpy as np
 import flax
 from flax.training import train_state
+from flax.training.common_utils import stack_forest
 import ray
 import tqdm
 
@@ -776,6 +777,23 @@ def log_jaxpr(jaxpr: ClosedJaxpr, filename: str):
 
 
 ########################################
+##### Flax Utilities
+########################################
+
+
+def get_metrics(device_metrics):
+    """
+    This function is similar to flax/training/common_utils.py, but works for
+    DistributedArray in alpa.
+    """
+    # pylint: disable=import-outside-toplevel
+    from alpa.device_mesh import fetch
+
+    fetch(device_metrics)
+    return stack_forest(device_metrics)
+
+
+########################################
 ##### Profiling Utilities
 ########################################
 
@@ -898,7 +916,7 @@ def run_with_timeout(func, args=(), kwargs=None, timeout=None):
 
 
 ########################################
-##### Array conversion
+##### Array Conversion
 ########################################
 
 
@@ -1109,6 +1127,17 @@ def map_to_shape(array_pytree: PyTreeDef):
     return tree_map(lambda x: getattr(x, "shape", None), array_pytree)
 
 
+def map_to_nparray(tree: PyTreeDef):
+    """Map a PyTree to a PyTree of numpy array."""
+
+    def convert_to_nparray(x):
+        if hasattr(x, "__array__"):
+            return np.asarray(x)
+        return x
+
+    return jax.tree_map(convert_to_nparray, tree)
+
+
 def compute_bytes(pytree: PyTreeDef):
     """Compute the total bytes of arrays in a pytree."""
     flatten_args, _ = tree_flatten(pytree)
@@ -1127,6 +1156,38 @@ def compute_param_number(pytree: PyTreeDef):
         if hasattr(x, "shape"):
             ret += np.prod(x.shape)
     return ret
+
+
+def compute_gpt_tflops(batch_size,
+                       seq_len,
+                       num_layers,
+                       hidden_size,
+                       vocab_size,
+                       num_gpus,
+                       latency,
+                       backward=True,
+                       checkpoint_activations=False):
+    """
+    Compute the Tera Flop Operations (TFLOP) per second per GPU
+    for GPT-like models.
+    """
+    factor = 24
+    if backward:
+        factor += 48
+    if checkpoint_activations:
+        factor += 24
+
+    total_flop = (factor * batch_size * seq_len *
+                  (hidden_size**2) * num_layers * (1 + seq_len /
+                                                   (6 * hidden_size)) +
+                  6 * batch_size * seq_len * hidden_size * vocab_size)
+    # Note: The above formula does not count the first embedding table lookup
+    # because it is a sparse operation.
+    # If we use dense dot to compute the first embedding table lookup,
+    # then the last term in total_flops should be
+    # "+ 10 * batch_size * seq_len * hidden_size * vocab_size".
+    tflops = total_flop / latency / num_gpus / 1e12
+    return tflops
 
 
 _DISABLE_NUMBA = False

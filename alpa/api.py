@@ -26,6 +26,8 @@ def init(cluster: str = "ray"):
     Args:
       cluster: The distributed cluster.
         Possible choices: {"local", "ray"}.
+        "local" means using all local devices on a single node.
+        "ray" means using all devices in a ray cluster.
     """
     global is_initialized
 
@@ -209,8 +211,8 @@ def clear_executable_cache():
 
 
 def grad(*args, **kwargs):
-    """The same as jax.grad, but inserts a gradient marker after the gradient
-    computation.
+    """The functionality is the same as jax.grad,
+    but alpa inserts a gradient marker after the gradient computation.
 
     This function annotates all gradient tensors. This information is used to
     perform gradient accumulation transformation.
@@ -233,8 +235,8 @@ def grad(*args, **kwargs):
 
 
 def value_and_grad(*args, **kwargs):
-    """The same as jax.value_and_grad, but inserts a gradient marker after the
-    gradient computation.
+    """The functionality is the same as jax.grad,
+    but alpa inserts a gradient marker after the gradient computation.
 
     This function annotates all gradient tensors. This information is used to
     perform gradient accumulation transformation.

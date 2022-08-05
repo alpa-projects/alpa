@@ -4,7 +4,6 @@ import argparse
 from alpa import DeviceCluster, ProfilingResultDatabase
 from alpa.util import run_cmd
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--filename", type=str, default="prof_database.pkl")

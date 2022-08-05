@@ -19,19 +19,27 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--cluster-key", type=str, default="default")
     parser.add_argument("--efa", action="store_true")
-    parser.add_argument("--filename", type=str, default="prof_database.pkl",
-        help="The filename of the output database")
-    parser.add_argument("--max-comm-size-intra-node", type=int, required=True,
-        help="Run profiling for communication up to 2^x bytes within a node, where x "
-             "is this argument")
-    parser.add_argument("--max-comm-size-inter-node", type=int, required=True,
-        help="Run profiling for communication up to 2^x bytes cross nodes, where x "
-             "is this argument")
-    parser.add_argument("--cache-filename", type=str,
+    parser.add_argument("--filename",
+                        type=str,
+                        default="prof_database.pkl",
+                        help="The filename of the output database")
+    parser.add_argument("--max-comm-size-intra-node",
+                        type=int,
+                        required=True,
+                        help="Run profiling for communication up to 2^x bytes "
+                        "within a node, where x is this argument")
+    parser.add_argument("--max-comm-size-inter-node",
+                        type=int,
+                        required=True,
+                        help="Run profiling for communication up to 2^x bytes "
+                        "cross nodes, where x is this argument")
+    parser.add_argument(
+        "--cache-filename",
+        type=str,
         default="/home/ubuntu/efs/alpa/benchmark/alpa/tmp/hlo_op_cost_dict.pkl",
         help="The filename of the temporary cache. This should be an "
-             "absolute path on a network file system that can be accessed by "
-             "ray workers on all nodes.")
+        "absolute path on a network file system that can be accessed by "
+        "ray workers on all nodes.")
     parser.add_argument("--max-fail-retry", type=int, default=5)
     args = parser.parse_args()
 
@@ -51,12 +59,11 @@ if __name__ == "__main__":
     ray.init(address="auto")
     cluster = DeviceCluster()
 
-    prof_database = cluster.profile_all(
-        args.cluster_key,
-        args.max_comm_size_intra_node,
-        args.max_comm_size_inter_node,
-        max_fail_retry=args.max_fail_retry,
-        cache_filename=args.cache_filename,
-        dot_range=range(0, 8192, 128))
+    prof_database = cluster.profile_all(args.cluster_key,
+                                        args.max_comm_size_intra_node,
+                                        args.max_comm_size_inter_node,
+                                        max_fail_retry=args.max_fail_retry,
+                                        cache_filename=args.cache_filename,
+                                        dot_range=range(0, 8192, 128))
     prof_database.save(args.filename)
     print(f"Save profiling database to {args.filename}")

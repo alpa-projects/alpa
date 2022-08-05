@@ -26,12 +26,10 @@ import jax
 from ml_collections import config_flags
 import tensorflow as tf
 
-import train
-
-
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string('workdir', None, 'Directory to store model data.')
+flags.DEFINE_boolean('use_ray', False, 'Whether to use Ray cluster.')
 config_flags.DEFINE_config_file(
     'config',
     None,
@@ -47,15 +45,10 @@ def main(argv):
   # it unavailable to JAX.
   tf.config.experimental.set_visible_devices([], 'GPU')
 
-  logging.info('JAX process: %d / %d', jax.process_index(), jax.process_count())
-  logging.info('JAX local devices: %r', jax.local_devices())
-
-  # Add a note so that we can tell which task is which JAX host.
-  # (Depending on the platform task 0 is not guaranteed to be host 0)
-  platform.work_unit().set_task_status(f'process_index: {jax.process_index()}, '
-                                       f'process_count: {jax.process_count()}')
-  platform.work_unit().create_artifact(platform.ArtifactType.DIRECTORY,
-                                       FLAGS.workdir, 'workdir')
+  if FLAGS.use_ray:
+    import train_ray as train
+  else:
+    import train
 
   train.train_and_evaluate(FLAGS.config, FLAGS.workdir)
 

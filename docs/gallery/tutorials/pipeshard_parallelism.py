@@ -29,9 +29,11 @@ from jax import random
 import optax
 import ray
 
+alpa.util.disable_tqdm_globally()
+
 ################################################################################
 # Connect to a Ray Cluster
-# -------------------------------------------
+# ------------------------
 # Alpa uses a distributed framework `ray <https://docs.ray.io/>`_ to manage
 # the cluster and disributed workers. We initialize ray and alpa.
 

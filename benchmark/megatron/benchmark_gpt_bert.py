@@ -22,6 +22,7 @@ def benchmark_all(args):
     model = args.suite.split(".")[0]
 
     for case in benchmark_suites[args.suite][num_gpus]:
+        case = tuple(tuple(x) if isinstance(x, tuple) else x for x in case)
         case_str = str((model,) + case)
 
         if args.nnodes == 1:

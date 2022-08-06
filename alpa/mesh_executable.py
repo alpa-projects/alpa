@@ -21,7 +21,6 @@ from jax.interpreters import pxla
 from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves, PyTreeDef
 import numpy as np
 import ray
-import util
 from alpa.util import XlaPassContext
 
 from alpa.device_mesh import (LocalPhysicalDeviceMesh,
@@ -39,7 +38,8 @@ from alpa.timer import timers
 from alpa.util import (compile_allocate_zero_buffers,
                        compile_memset_zero_buffers, get_compile_options,
                        get_index_select_computation, get_shard_shape,
-                       get_microbatch_sharding_spec, profile_xla_executable)
+                       get_microbatch_sharding_spec, profile_xla_executable,
+                       synchronize_inputs_done_events)
 from alpa.wrapped_hlo import HloStatus, WrappedHlo
 
 
@@ -459,10 +459,15 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
         input_bufs = [buffer_dict[x] for x in input_uuids]
 
         if global_config.enable_overlapping:
+            print(input_uuids)
+            print(self.worker.buffers_done_events.items())
             input_done_events = (
                 [self.worker.buffers_done_events[x] for x in input_uuids])
-            util.synchronize_inputs_done_events(
+            streams = xe.fetch_working_streams(self.compiled)
+            print(streams)
+            synchronize_inputs_done_events(
                 input_done_events, xe.fetch_working_streams(self.compiled))
+            print(f"synchronize {input_uuids}")
         # Execute the executable
         timers(self.timer_name).start(self.sync_func if sync_before else None)
         try:
@@ -486,6 +491,7 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
                     else:
                         done_events.append(None)
                 self.worker.buffers_done_events[output_uuids[i]] = done_events
+                print(f"add event {output_uuids[i]} {done_events}")
                 
         # Delete donated input buffers
         delete_donated_buffers(buffer_dict, input_uuids, self.donated_invars)
@@ -1124,6 +1130,7 @@ class AllocZeroBufferWorkerExecutable(MeshWorkerExecutable):
             done_events_avail_devices = xe.done_events_avail_devices(
                 i, self.worker.backend.local_device_count()
             )
+            print(f"alloc {output_uuids} into {done_events_avail_devices}")
             if global_config.enable_overlapping:
                 done_events = []
                 for device_id in range(self.worker.backend.local_device_count()):
@@ -1132,7 +1139,8 @@ class AllocZeroBufferWorkerExecutable(MeshWorkerExecutable):
                     else:
                         done_events.append(None)
                 self.worker.buffers_done_events[output_uuids[i]] = done_events
-
+                print(f"add event {output_uuids[i]} {done_events}")
+                
     def __del__(self):
         self.allocate_zero_buffers.delete()
 
@@ -1213,7 +1221,8 @@ class UtilMeshWorkerExecutable(MeshWorkerExecutable):
 
         if global_config.enable_overlapping:
             inputs_done_events = [self.worker.buffers_done_events[x] for x in input_uuids]
-            util.synchronize_inputs_done_events(inputs_done_events, xe.fetch_working_streams(self.exec))
+            synchronize_inputs_done_events(inputs_done_events, xe.fetch_working_streams(self.exec))
+            print(f"synchronize {input_uuids}")
 
         # Execute
         timers(self.timer_name).start(self.sync_func if sync_before else None)
@@ -1233,6 +1242,7 @@ class UtilMeshWorkerExecutable(MeshWorkerExecutable):
                     else:
                         done_events.append(None)
                 self.worker.buffers_done_events[output_uuids[i]] = done_events
+                print(f"add event {output_uuids[i]} {done_events}")
 
     def __del__(self):
         self.exec.delete()

@@ -447,6 +447,7 @@ class PipeshardMeshWorkerExecuable:
         # Buffer management
         self.worker = worker
         self.global_buffers = worker.buffers
+        self.global_buffers_done_events = worker.buffers_done_events
         self.acc_grad_buffers = {}
         self.acc_in_uuids = acc_local_uuids
         self.acc_out_uuids = acc_out_uuids
@@ -504,15 +505,17 @@ class PipeshardMeshWorkerExecuable:
         # create a local buffer environment
         assert len(self.input_local_uuids) == len(input_global_uuids)
         buffers = {}
+        buffers_done_events = {}
         for local_id, global_id in zip(self.input_local_uuids,
                                        input_global_uuids):
             buffers[local_id] = self.global_buffers[global_id]
+            buffers_done_events[local_id] = self.global_buffers_done_events[global_id]
         # add preallocated buffers for gradient accumulation
-        # print("input_global_uuids", input_global_uuids)
-        # print("input_local_uuids", self.input_local_uuids)
-        # print("buffers.keys", self.worker.buffers.keys())
-        # print("buffers.keys", self.worker.buffers_done_events.keys())
-        # print("output_global_uuids", output_global_uuids)
+        print("input_global_uuids", input_global_uuids)
+        print("input_local_uuids", self.input_local_uuids)
+        print("buffers.keys", self.worker.buffers.keys())
+        print("buffers.keys", self.worker.buffers_done_events.keys())
+        print("output_global_uuids", output_global_uuids)
         buffers.update(self.acc_grad_buffers)
         # donate invars
         for global_id, donate in zip(input_global_uuids, self.donate_invars):
@@ -522,6 +525,7 @@ class PipeshardMeshWorkerExecuable:
                 
         # load the local env
         self.worker.buffers = buffers
+        self.worker.buffers_done_events = buffers_done_events
         sync_func = self.worker.sync if sync_for_timer else None
 
         # Setup tracer
@@ -591,8 +595,9 @@ class PipeshardMeshWorkerExecuable:
                 self.acc_grad_buffers[in_uuid] = buffers[out_uuid]
         # restore global environment
         self.worker.buffers = self.global_buffers
+        self.worker.buffers_done_events = self.global_buffers_done_events
         buffers.clear()
-        self.worker.buffers_done_events.clear() # TODO(hexu): should I clear it here? 
+        buffers_done_events.clear() # TODO(hexu): should I clear it here? 
 
     def profile_with_dummy_inputs(self):
         """Profile the executable with dummy inputs."""

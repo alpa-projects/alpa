@@ -18,7 +18,7 @@ The key features of Alpa include:
 ✨ **Tight Integration with Machine Learning Ecosystem**. Alpa is backed by open-source, high-performance, and production-ready libraries such as [Jax](https://github.com/google/jax), [XLA](https://www.tensorflow.org/xla), and [Ray](https://github.com/ray-project/ray)
 
 ## Quick Start
-Use Alpa's decorator ``@parallelize`` to scale your single-device training code to distributed clusters. 
+Use Alpa's decorator ``@parallelize`` to scale your single-device training code to distributed clusters.
 
 ```python
 import alpa

@@ -12,7 +12,7 @@ from opt_serving.service.utils import build_logger
 from opt_serving.dataset import data_utils
 from opt_serving.dataset.prepend_token_dataset import PrependTokenDataset
 from opt_serving.dataset.strip_token_dataset import StripTokenDataset
-from opt_serving.service.constants import MAX_SEQ_LEN
+from opt_serving.service.constants import MAX_SEQ_LEN, MAX_BS
 from opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
 
 logger = build_logger()
@@ -113,198 +113,29 @@ class GeneratorInterface:
         self.num_gpus = 1
         self.dataset_to_epoch_iter = dict()
 
+        self.pad = 1
+
         self.load_model()
 
     def load_model(self):
         """Load model and return the model wrapper."""
         tic = time.time()
-        self.model_wrapper = get_model(self.model_name, "cuda", self.path, True)
+        self.model_wrapper = get_model(self.model_name, "cuda", self.path, True,
+                                       batch_size=MAX_BS,
+                                       max_target_positions=MAX_SEQ_LEN)
         load_time = time.time() - tic
 
         # Init tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
         # Disable default add_bos_token behavior and decide if to add it later.
         self.tokenizer.add_bos_token = False
+        # overwrite pad value
+        self.pad = self.tokenizer.pad_token_id
+
         if "alpa" in self.model_name:
             import alpa
             self.num_gpus = alpa.get_global_cluster().num_devices
         logger.info(f"Loading model time: {load_time:.2f}")
-
-    def legacy_generate(
-        self,
-        inputs: List[List[int]],
-        min_tokens: List[int] = None,
-        max_tokens: List[int] = None,
-        temperature: float = 1.0,
-        top_p: float = -1.0,
-        logprobs: int = 0,
-        n: int = 1,
-        best_of: Optional[int] = None,
-        echo: bool = False,
-        stop: Optional[List[int]] = None,
-        seed: Optional[int] = None,
-        use_cuda: bool = True,
-    ):
-        """
-        Generate from sequences.
-        Parameters match those of the OpenAI API.
-        https://beta.openai.com/docs/api-reference/completions/create
-        inputs: a list of pre-tokenized prompts
-        min_tokens: blocks EOS until at least this many tokens is provided
-        max_tokens: forces EOS after this many tokens
-        temperature: softmax temperature
-        top_p: nucleus probability
-        log_probs: return this cutoff of the probability distribution
-        n: beam size
-        best_of: number of beams to return. must be <= n
-        echo: if true, returned text/tokens/scores includes the prompt.
-            This is useful for getting PPL evaluations.
-        stop: a list of terminating tokens
-        seed: an integer if desired
-        use_cuda: should we use GPUs.
-        """
-        # if seed:
-        #     utils.set_torch_seed(seed)
-        if self.tokenizer is None or self.model_wrapper is None:
-            raise RuntimeError("Do you call load_model()?")
-
-        start_time = time.time()
-        total_generation_time = 0
-
-        # Generator args
-        if not best_of:
-            best_of = n
-        assert best_of >= n
-        beam = best_of
-        sampling_topp = top_p if top_p > 0 else -1
-        sampling = top_p > 0.0
-        temperature = temperature if temperature > 0 else 1.0
-
-        # Resolve max sequence length from multiple sources.
-        max_seq_len = self.max_sequence_len()
-
-        # TODO(roller): simplify
-        retval = []
-        tokens = [torch.LongTensor(t) for t in inputs]
-        lengths = [len(t) for t in inputs]
-        batches = self.task.get_batch_iterator(
-            dataset=self.task.build_dataset_for_inference(tokens, lengths),
-            max_tokens=None,
-            max_sentences=1,
-            max_positions=None,
-            ignore_invalid_inputs=False,
-        ).next_epoch_itr(shuffle=False)
-        for batch in batches:
-            src_tokens = batch["net_input"]["src_tokens"]
-            src_lengths = batch["net_input"]["src_lengths"]
-            batchsize = src_tokens.size(0)
-
-            # set generation args
-            # prevent us from ever generating past our max sequence length
-            if max_tokens is None:
-                max_tokens = [max_seq_len] * batchsize
-            if min_tokens is None:
-                min_tokens = [0] * batchsize
-            total_max_tokens = min(max_seq_len,
-                                   max(max_tokens) + src_lengths.max().item())
-            total_min_tokens = max(min_tokens) + src_lengths.max().item()
-            min_len = total_min_tokens
-            max_len = total_max_tokens
-
-            # generator = self.task.build_generator(
-            #     self.models, self.cfg.generation, extra_gen_cls_kwargs={"stop": stop}
-            # )
-            generator_args = {
-                "beam_size": beam,
-                "max_len": max_len,
-                "min_len": min_len,
-                "temperature": temperature,
-                "sampling": sampling,
-                "top_p": sampling_topp,
-            }
-            logger.info(f"Preparing generator with settings {generator_args}")
-            generator = Generator(self.model_wrapper, **generator_args)
-
-            # okay actually generate
-            logger.info(
-                f"Executing generation on input tensor size {src_tokens.shape}")
-            if use_cuda:
-                batch = move_to_cuda(batch)
-
-            translate_start_time = time.time()
-            translations = generator.generate(batch["net_input"]["src_tokens"])
-            translate_time = time.time() - translate_start_time
-            total_generation_time += translate_time
-
-            # possibly cut off any bsz padding we did
-            translations = translations[:len(inputs)]
-            # actually turn everything into strings
-            for i in range(len(translations)):
-                decoding = translations[i]
-                beams = []
-                for beam in decoding:
-                    # first beam is always the highest scoring
-                    tokens = beam["tokens"].tolist()  # implicit move to cpu
-                    scores = beam["positional_scores"].tolist()
-                    if logprobs > 0:
-                        distributions = beam["distributions"].cpu()
-                    else:
-                        distributions = None
-
-                    tokens, scores, distributions = GeneratorInterface._filter_special(
-                        tokens, scores, distributions)
-                    prompt_len = src_lengths[i]
-                    if echo:
-                        # don't cut off prompt
-                        tokens = tokens[:prompt_len + max_tokens[i] - 1]
-                        scores = scores[:prompt_len + max_tokens[i] - 1]
-                        if logprobs > 0:
-                            distributions = distributions[:prompt_len +
-                                                          max_tokens[i] - 1]
-                    else:
-                        # cut off prompt
-                        tokens = tokens[prompt_len - 1:][:max_tokens[i]]
-                        scores = scores[prompt_len - 1:][:max_tokens[i]]
-                        if logprobs > 0:
-                            distributions = distributions[prompt_len -
-                                                          1:][:max_tokens[i]]
-                    # turn it into a string
-                    text = self.tokenizer.decode(tokens,
-                                                 skip_special_tokens=True)
-                    result = {
-                        "text": text,
-                        "tokens": [self.tokenizer.decode([t]) for t in tokens],
-                        # text offset is useful for cutting off prompts or prefixes
-                        # or evaluating PPL on just a subset of tokens
-                        "text_offset": None,
-                        "token_scores": scores,
-                    }
-                    if logprobs > 0:
-                        # final result is a List[Dict[str, float]]
-                        # where each item in the list corresponds to a token in the
-                        # sequence, and the dict provides the probabilities of the
-                        # top-k tokens at that timestep.
-                        out_logprobs = []
-                        all_top_toks, all_top_scores = distributions.topk(
-                            k=logprobs, dim=-1)
-                        for top_scores, top_toks in zip(all_top_toks,
-                                                        all_top_scores):
-                            lp = {
-                                self.bpe.bpe.decode([t.item()]): s.item()
-                                for t, s in zip(top_toks, top_scores)
-                            }
-                            out_logprobs.append(lp)
-                        result["top_logprobs"] = out_logprobs
-                    else:
-                        result["top_logprobs"] = None
-
-                    beams.append(result)
-                retval.append(beams)
-
-        logger.info(
-            "Total time: {:.3f} seconds; generation time: {:.3f}".format(
-                time.time() - start_time, total_generation_time))
-        return retval
 
     def generate(
         self,
@@ -341,6 +172,28 @@ class GeneratorInterface:
         """
         # if seed:
         #     utils.set_torch_seed(seed)
+        ori_bs = len(inputs)
+
+        # FIXME(Hao): the current batch uses the topp, reponse_length of the first sentence.
+        def pad_batch(inputs, pad_value=self.pad):
+            new_inputs = inputs
+            src_lens = [len(input) for input in inputs]
+            max_len = max(src_lens)
+            bs = len(inputs)
+
+            for new_input in new_inputs:
+                ori_len = len(new_input)
+                if len(new_input) < max_len:
+                    new_input.extend([pad_value for _ in range(max_len - ori_len)])
+            # pad to bs = MAX_BS
+            if bs < MAX_BS:
+                new_inputs.extend([[pad_value for _ in range(max_len)] for _ in range(MAX_BS - bs)])
+            return new_inputs
+
+
+        # pad the length
+        inputs = pad_batch(inputs)
+
         batch_request_uuid = next_serve_batch_uuid()
         if self.tokenizer is None or self.model_wrapper is None:
             raise RuntimeError("Model is not loaded.")
@@ -359,7 +212,7 @@ class GeneratorInterface:
         assert best_of >= n
         beam_size = best_of
 
-        # TODO (Hao & Yonghao): support beam search
+        # TODO (Hao & Yonghao): support beam search in web server
         if beam_size > 1:
             raise NotImplementedError("We only support beam = 1 now.")
 
@@ -376,10 +229,11 @@ class GeneratorInterface:
         batches = self.get_batch_iterator(
             dataset=self.build_dataset_for_inference(tokens, lengths),
             max_tokens=None,
-            max_sentences=1,
+            max_sentences=MAX_BS,
             max_positions=None,
             ignore_invalid_inputs=False,
         ).next_epoch_itr(shuffle=False)
+        assert len(batches) == 1, "we have enforce inner bs = 1."
         logger.info(f"Serve batch {batch_request_uuid} with {len(batches)} compute batches.")
         for batch_idx, batch in enumerate(batches):
             src_tokens = batch["src_tokens"]
@@ -406,9 +260,11 @@ class GeneratorInterface:
                 "sampling": sampling,
                 "top_p": sampling_topp,
             }
-            logger.debug(generator_args)
+            logger.info(
+                "+ Serve batch {} / compute batch {} | #batch_size: {}, original bs: {}, max_len: {}, shape: {}, args: {}."
+                .format(batch_request_uuid, batch_idx, batchsize, ori_bs,
+                        max(src_lengths), src_lengths, generator_args))
             generator = Generator(self.model_wrapper, **generator_args)
-
             # okay actually generate
             if use_cuda:
                 batch = move_to_cuda(batch)
@@ -419,15 +275,16 @@ class GeneratorInterface:
             flops, speed, token_32_latency = self.estimate_performance(
                 translations, inference_time)
             logger.info(
-                "- Serve batch {} / compute batch {} | #batch_size: {}, max_len: {} shape: {}, args: {}, "
-                "batch latency (s): {:.2f}, flops: {:.4f}, speed: {:.4f}, 32-token latency: {:.2f}"
-                .format(batch_request_uuid, batch_idx, batchsize,
+                "- Serve batch {} / compute batch {} | #batch_size: {}, original bs: {}, max_len: {}, shape: {}, args: {}, "
+                "batch latency (s): {:.2f}, flops: {:.4f}, speed: {:.4f}, 32-token latency: {:.2f}."
+                .format(batch_request_uuid, batch_idx, batchsize, ori_bs,
                         max(src_lengths), src_lengths, generator_args,
                         inference_time, flops, speed, token_32_latency))
             total_inference_time += inference_time
 
             # possibly cut off any bsz padding we did
-            translations = translations[:len(inputs)]
+            # translations = translations[:len(inputs)]
+            translations = translations[:ori_bs]
             # actually turn everything into strings
             for i in range(len(translations)):
                 decoding = translations[i]
@@ -709,7 +566,6 @@ class Generator:
             early_stopping=True,
             repetition_penalty=1.0,
             no_repeat_ngram_size=8,
-            # no_repeat_ngram_size=2
             # return_dict_in_generate=True
             # output_hidden_states=True
         )

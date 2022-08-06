@@ -24,16 +24,12 @@ RUN source python3.9-env/bin/activate && pip install --upgrade pip \
     pybind11 ray[default] matplotlib
 
 # Install PyTorch dependencies
-RUN git clone https://github.com/pytorch/functorch /functorch
-RUN source python3.7-env/bin/activate \
-  && pip install torch torchdistx --pre --extra-index-url https://download.pytorch.org/whl/nightly/cpu \
-  && pushd /functorch && python setup.py install && popd
-RUN source python3.8-env/bin/activate \
-  && pip install torch torchdistx --pre --extra-index-url https://download.pytorch.org/whl/nightly/cpu \
-  && pushd /functorch && python setup.py install && popd
-RUN source python3.9-env/bin/activate \
-  && pip install torch torchdistx --pre --extra-index-url https://download.pytorch.org/whl/nightly/cpu \
-  && pushd /functorch && python setup.py install && popd
+WORKDIR /
+COPY scripts/install_torch.sh /install_torch.sh
+RUN chmod +x /install_torch.sh
+RUN source python3.7-env/bin/activate && /install_torch.sh
+RUN source python3.8-env/bin/activate && /install_torch.sh
+RUN source python3.9-env/bin/activate && /install_torch.sh
 
 # We determine the CUDA version at `docker build ...` phase
 ARG JAX_CUDA_VERSION=11.1

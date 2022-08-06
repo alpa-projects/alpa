@@ -37,4 +37,4 @@ python -m cupyx.tools.install_library --library nccl --cuda 11.1
 pip install -e .[dev]
 ray start --head
 cd tests
-python run_all.py
+python run_all.py --skip-pattern torch

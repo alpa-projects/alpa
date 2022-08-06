@@ -511,11 +511,11 @@ class PipeshardMeshWorkerExecuable:
             buffers[local_id] = self.global_buffers[global_id]
             buffers_done_events[local_id] = self.global_buffers_done_events[global_id]
         # add preallocated buffers for gradient accumulation
-        print("input_global_uuids", input_global_uuids)
-        print("input_local_uuids", self.input_local_uuids)
-        print("buffers.keys", self.worker.buffers.keys())
-        print("buffers.keys", self.worker.buffers_done_events.keys())
-        print("output_global_uuids", output_global_uuids)
+        print("input_global_uuids", input_global_uuids, flush=True)
+        print("input_local_uuids", self.input_local_uuids, flush=True)
+        print("buffers.keys", self.worker.buffers.keys(), flush=True)
+        print("buffers.keys", self.worker.buffers_done_events.keys(), flush=True)
+        print("output_global_uuids", output_global_uuids, flush=True)
         buffers.update(self.acc_grad_buffers)
         # donate invars
         for global_id, donate in zip(input_global_uuids, self.donate_invars):

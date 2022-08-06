@@ -1,9 +1,12 @@
 """NCCL-based collective operations."""
 import logging
+import os
 
 import ray
 import cupy
 from jaxlib import xla_extension
+
+from jax._src.lib import xla_bridge as xb, xla_extension as xe
 
 from alpa.collective.const import ENV
 from alpa.collective.collective_group import nccl_util
@@ -14,6 +17,8 @@ from alpa.collective.types import (AllReduceOptions, BarrierOptions, Backend,
                                    AllGatherOptions, ReduceScatterOptions,
                                    SendOptions, RecvOptions)
 from alpa.collective.collective_group.cuda_stream import get_stream_pool
+from alpa.global_env import global_config
+from alpa.monkey_patch import override_get_backend
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +43,30 @@ class NCCLGroup(BaseGroup):
         # TODO(Fu): might need an event map
         self._dev_event_map = {}
 
+        self.input_xla_cuda_streams = {}
+        self.output_xla_cuda_streams = {}
+        self.input_cupy_cuda_streams = {}
+        self.output_cupy_cuda_streams = {}
+
+        backend = override_get_backend()
+        # print(backend)
+        self.initialize_streams(backend)
+
         if nccl_util.get_nccl_build_version() < 2000:
             raise RuntimeError("NCCL in Ray requires NCCL >= 2.0.")
         if nccl_util.get_nccl_runtime_version() < 2704:
             logger.warning("NCCL send/recv calls requires NCCL>=2.7.4")
+
+    def initialize_streams(self, backend):
+        for gpu_idx in range(backend.local_device_count()):
+            # print(gpu_idx)
+            
+            self.input_xla_cuda_streams[gpu_idx] = xe.create_xla_cuda_stream(backend, gpu_idx)
+            self.output_xla_cuda_streams[gpu_idx] = xe.create_xla_cuda_stream(backend, gpu_idx)
+            in_stream_ptr = xe.get_cuda_stream(self.input_xla_cuda_streams[gpu_idx])
+            out_stream_ptr = xe.get_cuda_stream(self.output_xla_cuda_streams[gpu_idx])
+            self.input_cupy_cuda_streams[gpu_idx] = cupy.cuda.ExternalStream(in_stream_ptr, gpu_idx)
+            self.output_cupy_cuda_streams[gpu_idx] = cupy.cuda.ExternalStream(out_stream_ptr, gpu_idx)
 
     def destroy_group(self):
         """Destroy the group and release NCCL communicators."""
@@ -242,7 +267,12 @@ class NCCLGroup(BaseGroup):
             with nccl_util.Device(device_id):
                 comms[i] = nccl_util.create_nccl_communicator(
                     world_size, nccl_uid, global_rank)
-                streams[i] = get_stream_pool(device_id).get_stream()
+                if global_config.enable_overlapping:
+                    streams[i] = (self.output_cupy_cuda_streams[device_id]
+                                  if global_rank == 0 else
+                                  self.input_cupy_cuda_streams[device_id])
+                else:
+                    streams[i] = get_stream_pool(device_id).get_stream()
                 events[i] = cupy.cuda.Event()
         nccl_util.groupEnd()
         self._dev_comm_map[comm_key] = comms
@@ -375,7 +405,7 @@ class NCCLGroup(BaseGroup):
                 nccl_util.get_nccl_tensor_dtype(tensor), peer, stream.ptr)
 
         self._point2point(tensors, p2p_fn, send_options.dst_rank,
-                          send_options.dst_gpu_index)
+                          send_options.dst_gpu_index, True)
 
     def recv(self, tensors, recv_options=RecvOptions()):
         """Receive a tensor from a source gpu in the group.
@@ -396,7 +426,7 @@ class NCCLGroup(BaseGroup):
                 nccl_util.get_nccl_tensor_dtype(tensor), peer, stream.ptr)
 
         self._point2point(tensors, p2p_fn, recv_options.src_rank,
-                          recv_options.src_gpu_index)
+                          recv_options.src_gpu_index, False)
 
     def _get_nccl_collective_communicator(self,
                                           comm_key,
@@ -492,7 +522,8 @@ class NCCLGroup(BaseGroup):
                                    my_gpu_idx,
                                    peer_rank,
                                    peer_gpu_idx,
-                                   nccl_uid=None):
+                                   nccl_uid=None,
+                                   is_sender=True):
         """Create or retrieve an NCCL communicator for p2p tasks.
 
         Note(Hao): this function is not thread-safe now.
@@ -556,7 +587,11 @@ class NCCLGroup(BaseGroup):
         # create the p2p communicators
         with nccl_util.Device(my_gpu_idx):
             comm = nccl_util.create_nccl_communicator(2, nccl_uid, my_p2p_rank)
-            stream = get_stream_pool(my_gpu_idx).get_stream()
+            if global_config.enable_overlapping:
+                stream = (self.output_cupy_cuda_streams[my_gpu_idx]
+                          if is_sender else self.input_cupy_cuda_streams[my_gpu_idx])
+            else:
+                stream = get_stream_pool(my_gpu_idx).get_stream()
             event = cupy.cuda.Event()
 
         self._dev_comm_map[comm_key] = [comm]
@@ -688,7 +723,7 @@ class NCCLGroup(BaseGroup):
         self._get_nccl_p2p_communicator(comm_key, my_gpu_idx, peer_rank,
                                         peer_gpu_idx, nccl_uid)
 
-    def _point2point(self, tensors, p2p_fn, peer_rank: int, peer_gpu_idx: int):
+    def _point2point(self, tensors, p2p_fn, peer_rank: int, peer_gpu_idx: int, is_sender: bool):
         """A method to encapsulate all peer-to-peer calls (i.e., send/recv).
 
         Args:
@@ -712,7 +747,7 @@ class NCCLGroup(BaseGroup):
         comm_key = _get_comm_key_send_recv(self.rank, my_gpu_idx, peer_rank,
                                            peer_gpu_idx)
         comms = self._get_nccl_p2p_communicator(comm_key, my_gpu_idx, peer_rank,
-                                                peer_gpu_idx)
+                                                peer_gpu_idx, is_sender)
         streams = self._dev_streams_map[comm_key]
         events = self._dev_event_map[comm_key]
 

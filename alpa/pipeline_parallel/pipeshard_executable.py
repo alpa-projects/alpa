@@ -508,11 +508,18 @@ class PipeshardMeshWorkerExecuable:
                                        input_global_uuids):
             buffers[local_id] = self.global_buffers[global_id]
         # add preallocated buffers for gradient accumulation
+        # print("input_global_uuids", input_global_uuids)
+        # print("input_local_uuids", self.input_local_uuids)
+        # print("buffers.keys", self.worker.buffers.keys())
+        # print("buffers.keys", self.worker.buffers_done_events.keys())
+        # print("output_global_uuids", output_global_uuids)
         buffers.update(self.acc_grad_buffers)
         # donate invars
         for global_id, donate in zip(input_global_uuids, self.donate_invars):
             if donate:
+                # print("delete global_id: ", global_id)
                 self.worker.delete_buffers(global_id)
+                
         # load the local env
         self.worker.buffers = buffers
         sync_func = self.worker.sync if sync_for_timer else None
@@ -585,6 +592,7 @@ class PipeshardMeshWorkerExecuable:
         # restore global environment
         self.worker.buffers = self.global_buffers
         buffers.clear()
+        self.worker.buffers_done_events.clear() # TODO(hexu): should I clear it here? 
 
     def profile_with_dummy_inputs(self):
         """Profile the executable with dummy inputs."""

@@ -36,9 +36,12 @@ import ray
 from ray.util.placement_group import get_current_placement_group,\
     PlacementGroup
 import tqdm
+import cupy
 
 from alpa import device_mesh
 from alpa.global_env import global_config, is_worker
+from alpa.collective.collective_group import nccl_util
+from alpa.monkey_patch import override_backend as backend
 from alpa.monkey_patch import (restore_random, monkey_patch_random,
                                rng_primitives)
 from alpa.wrapped_hlo import HloStatus, WrappedHlo
@@ -449,7 +452,11 @@ def compile_allocate_zero_buffers(backend, num_devices: int,
         device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
     )
-    compiled = backend.compile(c, compile_options)
+    with XlaPassContext({
+            "done-event::enable":
+                global_config.enable_overlapping,
+    }):
+        compiled = backend.compile(c, compile_options)
     return compiled
 
 
@@ -1715,3 +1722,59 @@ def maybe_numba_jit(func):
     except ImportError:
         logger.warning("Install numba to jit and accelerate the function.")
         return func
+
+
+########################################
+##### cuda stream synchronization
+########################################
+
+def synchronize_inputs_done_events(all_inputs_done_events, all_devices_working_streams):
+    for one_input_done_events in all_inputs_done_events:
+        for event, working_stream in zip(one_input_done_events, all_devices_working_streams):
+            # for stream in working_streams:
+            synchronize_one_event(event, working_stream)
+
+def synchronize_one_event(event, stream):
+    if event is None:
+        return 
+    xe.stream_wait_for_event(stream, event)
+    #TODO(hexu): event(se::Event, cupy.event, None), stream(se:stream, cupy.stream)
+
+    # Implementation
+    # Plan 1: take out pointer of CuEvent/CUstream in se::Event/se::Stream and convert cupy.cuda.event/...stream, synchronize in the context of cupy cuda.
+    # Plan 2: synchronize in the context of xla stream/event. 
+    # Plan 3: take out pointer for event and pointer for stream.
+
+    pass
+
+def mark_events(streams, devices):
+    events = []
+    for stream, device in zip(streams, devices):
+        events.append(mark_event(stream, device))
+    return events
+
+def mark_event(stream, device_id):
+    if isinstance(stream, cupy.cuda.Stream):# never use this. return cupy.cuda.event
+        with nccl_util.Device(device_id):
+            event = cupy.cuda.Event()
+        event.record(stream)
+        return event
+    elif isinstance(stream, xe.XLACudaStream):# return se::Event
+        event = xe.CreateXLACudaEvent(backend, device_id)
+        xe.stream_record_event(stream, event)
+        return event
+    else:
+        raise NotImplementedError()
+
+def host_wait_for_events(events):
+    for event in events:
+        if isinstance(event, cupy.cuda.Event): # return cupy.cuda.event
+            cupy.cuda.runtime.eventSynchronize(event)
+            # Synchronizes all device work to the event. 
+            # If the event is created as a blocking event, 
+            # it also blocks the CPU thread until the event is done.
+        elif isinstance(event, xe.CudaEvent):# return se::Event
+            pass # there is not any case that needs host to synchronize xe.CudaEvent
+            # return xe.xla_cuda_host_sync_event(event)# create an event on gpus[device_id], then record on stream.
+        else:
+            raise NotImplementedError()

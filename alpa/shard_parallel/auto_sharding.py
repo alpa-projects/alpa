@@ -438,6 +438,9 @@ def run_backend_compilation(backend: xe.Client,
                 stage_plan.all_gather_threshold,
             "combiner::all_reduce_threshold":
                 stage_plan.all_reduce_threshold,
+            "done-event::enable":
+                global_config.enable_overlapping,
+            # TODO(hexu): do I use it in a right way?
     }):
         compiled = backend.compile(hlo.get_computation(), compile_options)
 

@@ -126,9 +126,16 @@ class GroupManager:
         except ValueError:
             pass
 
+    def initialize_streams_for_groups(self, backend):
+        for name, group in self._name_group_map.items():
+            print(name)
+            group.initialize_streams(backend)
+
 
 _group_mgr = GroupManager()
 
+def initialize_streams_for_groups(backend):
+    _group_mgr.initialize_streams_for_groups(backend)
 
 def is_group_initialized(group_name):
     """Check if the group is initialized in this process by the group name."""
@@ -837,3 +844,23 @@ def _check_root_tensor_valid(length, root_tensor):
     if root_tensor >= length:
         raise ValueError(f"root_tensor '{root_tensor}' is greater "
                          f"than the number of GPUs: '{length}'")
+
+def get_participated_streams(participated_devices,
+                             input_or_output_streams,
+                             group_name):
+    """get working streams for participated devices.
+
+    Args:
+        participated_devices: participated devices ids.
+        input_or_output_streams(List[bool]): True means input
+            stream, otherwise output stream
+
+    Returns:
+        None
+    """
+    g = _check_and_get_group(group_name)
+    participated_streams = []
+    for device, is_input in zip(participated_devices, input_or_output_streams):
+        participated_streams.append(g.input_xla_cuda_streams[device]
+                                    if is_input else g.output_xla_cuda_streams[device])
+    return participated_streams

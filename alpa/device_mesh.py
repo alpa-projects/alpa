@@ -26,9 +26,11 @@ from operator import attrgetter
 import os
 import pickle
 import shutil
+from struct import pack
 import threading
 import time
 from typing import Any, List, Union, Sequence, Tuple, Optional
+from alpa.collective.collective import get_participated_streams
 
 from jax import core, xla, device_put
 from jax._src.api import ShapeDtypeStruct
@@ -55,7 +57,8 @@ from alpa.timer import timers, tracer
 from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
                        update_jax_platform, is_ray_node_resource,
                        try_import_ray_worker, create_placement_group,
-                       get_bundle_idx, retrieve_placement_group, get_bundle2ip)
+                       get_bundle_idx, retrieve_placement_group, get_bundle2ip,
+                       synchronize_inputs_done_events, mark_event)
 
 ray_worker = try_import_ray_worker()
 
@@ -134,11 +137,16 @@ class MeshHostWorker:
             raise NotImplementedError(
                 f"backend {global_config.backend} is not supported")
         # Monkey patch the backend
+        # print(self.backend)
         set_override_backend(self.backend)
+        # print(-1)
+        # self.initialize_streams_for_groups(self.backend)
         self.local_devices = self.backend.local_devices()
+        # print(self.local_devices)
         self.num_devices = len(self.local_devices)
 
         self.buffers = {}  # Dict[uuid -> Sequence[DeviceArray]]
+        self.buffers_done_events = {} # Dict[uuid -> List[event]]
         self.executables = {}  # Dict[uud -> MeshWorkerExecutable]
 
         self.send_tasks = {}  # Dict[uuid -> ReshardingSendTask]
@@ -159,12 +167,18 @@ class MeshHostWorker:
                 self.signal_buffers.append(
                     worker_nccl_util.to_signal_buffer(jax_tensor))
 
+        self.launched = True
+
+    def initialize_streams_for_groups(self, backend):
+        col.initialize_streams_for_groups(backend)
+
     ##### Buffer Related Functions #####
     def put_buffers(self,
                     uuids: Union[int, Sequence[int]],
                     datas: Sequence[np.ndarray],
                     num_batch=1,
                     batch_dim=0):
+        # print("put buffers: ", uuids)
         assert len(datas) == self.num_devices
         if not isinstance(uuids, Iterable):
             uuids = [uuids]
@@ -176,23 +190,28 @@ class MeshHostWorker:
                 split_datas.extend(split_buffers)
             datas = split_datas
         arys = [([None] * self.num_devices) for _ in range(num_batch)]
+        all_done_events = [[None for _ in range(self.num_devices)] for _ in range(num_batch)]
         for i, data in enumerate(datas):
             if data.dtype == np.int64:
                 data = data.astype(np.int32)
             device_id, batch_id = divmod(i, num_batch)
             arys[batch_id][device_id] = (self.backend.buffer_from_pyval(
                 data, self.local_devices[device_id]))
-        for uuid, ary in zip(uuids, arys):
+
+        for uuid, ary, done_events in zip(uuids, arys, all_done_events):
             self.buffers[uuid] = ary
+            self.buffers_done_events[uuid] = done_events
 
     def shard_and_put_non_zero_buffer(self, uuids: Union[Sequence[int], int],
                                       shape: Sequence[int], dtype: np.dtype,
                                       indices: Sequence, num_batch: int):
+        # print("put buffers: ", uuids)
         if isinstance(uuids, int):
             uuids = [uuids]
         assert len(uuids) == num_batch
         assert len(indices) == self.num_devices * num_batch
         arys = [([None] * self.num_devices) for _ in range(num_batch)]
+        all_done_events = [[None for _ in range(self.num_devices)] for _ in range(num_batch)]
         for device_id in range(self.num_devices):
             for b in range(num_batch):
                 shard_shape = []
@@ -204,11 +223,13 @@ class MeshHostWorker:
                 arys[b][device_id] = (self.backend.buffer_from_pyval(
                     np.full(shard_shape, 1e-8, dtype),
                     self.local_devices[device_id]))
-        for uuid, ary in zip(uuids, arys):
+        for uuid, ary, done_events in zip(uuids, arys, all_done_events):
             self.buffers[uuid] = ary
+            self.buffers_done_events[uuid] = done_events
 
     def _get_buffers_with_local_ids(self, uuid: int, device_ids: Sequence[int]):
         bufs = self.buffers[uuid]
+        # done_events = self.buffers_done_events[uuid]
         if device_ids is None:
             return map(np.asarray, bufs)
         elif not isinstance(device_ids, Iterable):
@@ -233,10 +254,15 @@ class MeshHostWorker:
         if isinstance(uuids, Iterable):
             for uuid in uuids:
                 del self.buffers[uuid]
+                if global_config.enable_overlapping:# and uuid in self.buffers_done_events:
+                    del self.buffers_done_events[uuid]
+                #TODO(hexu): based on my understanding, del only deletes variable but not value? Therefore, I could simply delete here and will not affect underlying data. ?
         else:
             del self.buffers[uuids]
+            if global_config.enable_overlapping:# and uuids in self.buffers_done_events:
+                del self.buffers_done_events[uuids]
 
-    def block_until_ready_buffers(self, uuids: Union[Sequence[int], int]):
+    def block_until_ready_buffers(self, uuids: Union[Sequence[int], int]): # TODO(hexu): do we need synchronize events here? 
         # We have to block all buffers to avoid the last operation is
         # cross-mesh resharding(not SPMD)
         if isinstance(uuids, Iterable):
@@ -347,6 +373,7 @@ class MeshHostWorker:
             array_buffers[device_id] = (self.backend.buffer_from_pyval(
                 data, self.local_devices[device_id]))
         self.buffers[uuid] = array_buffers
+        # TODO(hexu): whether I should add events here? when do we use this method?
 
     ##### Data loader Related Functions #####
     def put_data_loader(self, uuid: int, *args):
@@ -419,8 +446,30 @@ class MeshHostWorker:
         self.recv_tasks[uuid] = ReshardingRecvTask(recv_specs=tasks,
                                                    group_name=group_name)
 
+    def get_devices_and_events(self, tile_specs, ary_uuid):
+        
+        participated_devices = sorted(list(set([
+            tile_spec.device_id for tile_spec in tile_specs])))
+        if ary_uuid in self.buffers_done_events:
+            inputs_done_events = [self.buffers_done_events[ary_uuid][device_id]
+                                for device_id in participated_devices]
+        else:
+            inputs_done_events = [None for _ in participated_devices]
+        return participated_devices, inputs_done_events
+
     def run_resharding_send_task(self, uuid, ary_uuid):
         task: ReshardingSendTask = self.send_tasks[uuid]
+        if global_config.enable_overlapping:
+            participated_devices, inputs_done_events = (
+                self.get_devices_and_events(task.tile_specs, ary_uuid)
+            )
+            
+            input_or_output_streams = [False] * len(participated_devices)
+            participated_streams = col.get_participated_streams(
+                participated_devices, input_or_output_streams, task.group_name)
+            synchronize_inputs_done_events([inputs_done_events],
+                                            participated_streams)
+
         for send_tile_spec in task.tile_specs:
             send_tile_spec: ReshardingSendSpec
             self.send_tile(ary_uuid, send_tile_spec.device_id,
@@ -428,10 +477,29 @@ class MeshHostWorker:
                            send_tile_spec.tile_spec.rank,
                            send_tile_spec.tile_spec.gpu_idx, task.group_name)
 
+        if global_config.enable_overlapping:
+            for device_id, stream in zip(participated_devices, participated_streams):
+                self.buffers_done_events[ary_uuid][device_id] = mark_event(stream, device_id)
+                #TODO(hexu): will we continue to use it after sending it to other devices?
+
     def run_resharding_recv_task(self, uuid, ary_uuid, set_empty_buffer=True):
         task: ReshardingRecvTask = self.recv_tasks[uuid]
         if set_empty_buffer and ary_uuid not in self.buffers:
             self.buffers[ary_uuid] = [None] * self.num_devices
+            if global_config.enable_overlapping:
+                self.buffers_done_events[ary_uuid] = [None] * self.num_devices
+
+        if global_config.enable_overlapping:
+            participated_devices, inputs_done_events = (
+                self.get_devices_and_events(task.recv_specs, ary_uuid)
+            )
+
+            input_or_output_streams = [True] * len(participated_devices)
+            participated_streams = col.get_participated_streams(
+                participated_devices, input_or_output_streams, task.group_name)
+            synchronize_inputs_done_events([inputs_done_events],
+                                            participated_streams)
+
         buffers = self.buffers[ary_uuid]
         for recv_spec in task.recv_specs:
             recv_spec: ReshardingRecvSpec
@@ -440,11 +508,20 @@ class MeshHostWorker:
                 buffers[device_id] = self.backend.buffer_from_pyval(
                     np.full(recv_spec.shape, 1e-8, recv_spec.dtype),
                     self.local_devices[device_id])
+                self.buffers_done_events[ary_uuid][device_id] = None
+            # TODO(hexu): is this asynchroneous? I think it is, 
+            # we need an event for it. But it seems that we never
+            # set_empty_buffer to True.
+
             for recv_tile_spec in recv_spec.tile_specs:
                 recv_tile_spec: ReshardingTileSpec
                 self.recv_tile(ary_uuid, device_id, recv_tile_spec.offset,
                                recv_tile_spec.rank, recv_tile_spec.gpu_idx,
                                task.group_name)
+
+        if global_config.enable_overlapping:
+            for device_id, stream in zip(participated_devices, participated_streams):
+                self.buffers_done_events[ary_uuid][device_id] = mark_event(stream, device_id)
 
     def send_tile(self, uuid: int, device_id: int, offset: Sequence[slice],
                   dst_rank: int, dst_gpu_idx: int, group_name: str):
@@ -498,6 +575,28 @@ class MeshHostWorker:
                                                self.local_devices[device_id])
                 for device_id in range(self.num_devices)
             ]
+            self.buffers_done_events[ary_uuid] = None
+            #TODO(hexu): add events?
+
+        if global_config.enable_overlapping:
+            inputs_done_events = (
+                [self.buffers_done_events[ary_uuid][device_id]
+                for device_id in broadcast_spec.devices_ids]
+            )
+
+            input_or_output_streams = (
+                [not x==0 for x in broadcast_spec.devices_global_rank]
+            )
+
+            participated_streams = (
+                col.get_participated_streams(broadcast_spec.devices_ids,
+                                            input_or_output_streams,
+                                            task.group_name)
+                )
+
+            synchronize_inputs_done_events([inputs_done_events],
+                                        participated_streams)
+
         for group_idx in broadcast_specs:
             broadcast_spec: ReshardingBroadcastSpec = broadcast_specs[group_idx]
 
@@ -507,6 +606,11 @@ class MeshHostWorker:
                                        broadcast_spec.devices_global_rank,
                                        broadcast_spec.tensor_slices,
                                        task.group_name)
+        if global_config.enable_overlapping:
+            for device_id, stream in enumerate(broadcast_spec.devices_ids,
+                                               participated_streams):
+                self.buffers_done_events[ary_uuid][device_id] = mark_event(stream, device_id)
+        
 
     ##### Profiling and Debugging Related Functions #####
     def profile_hlo_ops(self, op_infos: Sequence[Any], cache_filename: str,

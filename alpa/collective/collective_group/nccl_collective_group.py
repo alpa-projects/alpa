@@ -68,6 +68,15 @@ class NCCLGroup(BaseGroup):
             self.input_cupy_cuda_streams[gpu_idx] = cupy.cuda.ExternalStream(in_stream_ptr, gpu_idx)
             self.output_cupy_cuda_streams[gpu_idx] = cupy.cuda.ExternalStream(out_stream_ptr, gpu_idx)
 
+        print("input_xla_cuda_streams: ", self.input_xla_cuda_streams)
+        for gpu_idx in range(backend.local_device_count()):
+            xe.check_liveness(self.input_xla_cuda_streams[gpu_idx])
+            print("cupy ptr: ", self.input_cupy_cuda_streams[gpu_idx].ptr)
+        print("output_xla_cuda_streams: ", self.output_xla_cuda_streams)
+        for gpu_idx in range(backend.local_device_count()):
+            xe.check_liveness(self.output_xla_cuda_streams[gpu_idx])
+            print("cupy ptr: ", self.output_cupy_cuda_streams[gpu_idx].ptr)
+
     def destroy_group(self):
         """Destroy the group and release NCCL communicators."""
         if len(self._dev_comm_map.keys()) > 0:

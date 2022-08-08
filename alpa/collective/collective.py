@@ -863,4 +863,5 @@ def get_participated_streams(participated_devices,
     for device, is_input in zip(participated_devices, input_or_output_streams):
         participated_streams.append(g.input_xla_cuda_streams[device]
                                     if is_input else g.output_xla_cuda_streams[device])
+    print(participated_streams)
     return participated_streams

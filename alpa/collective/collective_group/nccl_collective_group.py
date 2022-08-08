@@ -59,7 +59,7 @@ class NCCLGroup(BaseGroup):
 
     def initialize_streams(self, backend):
         for gpu_idx in range(backend.local_device_count()):
-            # print(gpu_idx)
+            print(gpu_idx)
             
             self.input_xla_cuda_streams[gpu_idx] = xe.create_xla_cuda_stream(backend, gpu_idx)
             self.output_xla_cuda_streams[gpu_idx] = xe.create_xla_cuda_stream(backend, gpu_idx)

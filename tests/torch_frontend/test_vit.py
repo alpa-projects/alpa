@@ -208,12 +208,12 @@ class ViT(nn.Module):
 
 
 def weight_init_func(pt_module, name_map, params, bufs):
-    # for k, m in pt_module.named_modules():
-    #     if isinstance(m, nn.Linear):
-    #         params[name_map[f"{k}.weight"]] = nn.init.xavier_uniform(
-    #             params[name_map[f"{k}.weight"]])
-    #         params[name_map[f"{k}.bias"]] = nn.init.normal(
-    #             params[name_map[f"{k}.bias"]], std=1e-6)
+    for k, m in pt_module.named_modules():
+        if isinstance(m, nn.Linear):
+            params[name_map[f"{k}.weight"]] = nn.init.xavier_uniform(
+                params[name_map[f"{k}.weight"]])
+            params[name_map[f"{k}.bias"]] = nn.init.normal(
+                params[name_map[f"{k}.bias"]], std=1e-6)
     return params, bufs
 
 
@@ -237,18 +237,18 @@ params = {
     "c_stem_dims": [],
 }
 
-# # ViT-L model
-# arch_params = {
-#     "n_layers": 24,
-#     "n_heads": 16,
-#     "hidden_d": 1024,
-#     "mlp_d": 4096,
-# }
-# train_config = {
-#     "global_batch_size": 128,  # 512
-#     "num_micro_batches": 128,  # 128,
-#     "num_auto_layers": 16,
-# }
+# ViT-L model
+arch_params = {
+    "n_layers": 24,
+    "n_heads": 16,
+    "hidden_d": 1024,
+    "mlp_d": 4096,
+}
+train_config = {
+    "global_batch_size": 128,
+    "num_micro_batches": 128,
+    "num_auto_layers": 16,
+}
 
 # # ViT-H model
 # arch_params = {
@@ -266,78 +266,52 @@ params = {
 #     "mlp_d": 20480,
 # }
 # train_config = {
-#     "global_batch_size": 512,  # 512
-#     "num_micro_batches": 256,  # 128,
+#     "global_batch_size": 512,
+#     "num_micro_batches": 256,
 #     "num_auto_layers": 16,
 # }
 
-# ViT-25B model
-arch_params = {
-    "n_layers": 36,
-    "n_heads": 32,
-    "hidden_d": 7680,
-    "mlp_d": 30720,
-}
-train_config = {
-    "global_batch_size": 512,
-    "num_micro_batches": int(sys.argv[1]),
-    "num_auto_layers": 32,
-    "dtype": torch.half,
-}
-# gBS = 512, fp16
-# #mb = 512, latency: 9.814587279369956
-# #mb = 256, latency: 8.63443210250453
-# #mb = 128, latency: 7.770233191941914
-# #mb = 64, latency: 7.834461299996627
-# #mb = 32, latency: 9.487284760726126
-# #mb = 16, latency: 12.428439065029746
+# # ViT-25B model
+# arch_params = {
+#     "n_layers": 36,
+#     "n_heads": 32,
+#     "hidden_d": 7680,
+#     "mlp_d": 30720,
+# }
+# train_config = {
+#     "global_batch_size": 512,
+#     "num_micro_batches": 128,
+#     "num_auto_layers": 32,
+#     "dtype": torch.half,
+# }
 
-ViT-60B model
-arch_params = {
-    "n_layers": 48,
-    "n_heads": 32,
-    "hidden_d": 10240,
-    "mlp_d": 40960,
-}
-train_config = {
-    "global_batch_size": 512,
-    "num_micro_batches": int(sys.argv[1]),
-    "num_auto_layers": 32,
-    "dtype": torch.half,
-}
-# gBS = 512, fp16
-# #mb = 512, latency: 20.67109835775275
-# #mb = 256, latency: 16.762500963712995
-# #mb = 128, latency: 15.853858282691554
-# #mb = 64, latency: 15.69248688848395
-# #mb = 32, latency: 18.569331746352347
+# # ViT-60B model
+# arch_params = {
+#     "n_layers": 48,
+#     "n_heads": 32,
+#     "hidden_d": 10240,
+#     "mlp_d": 40960,
+# }
+# train_config = {
+#     "global_batch_size": 512,
+#     "num_micro_batches": 128,
+#     "num_auto_layers": 32,
+#     "dtype": torch.half,
+# }
 
-# ViT-120B model
-arch_params = {
-    "n_layers": 96,
-    "n_heads": 80,
-    "hidden_d": 10240,
-    "mlp_d": 40960,
-}
-train_config = {
-    "global_batch_size": 512,
-    "num_micro_batches": int(sys.argv[1]),
-    "num_auto_layers": 64,
-    "dtype": torch.half,
-}
-# gBS = 512, fp16
-# #mb = 512, latency: 20.77894720278288
-# #mb = 256, latency: 17.389554663708335
-# #mb = 128, latency: 17.45910153890911
-# #mb = 64, latency: 19.361714049389487
-# #mb = 32, latency: 26.380857806456717
-
-"""
-32: get_solution_case("15B", num_micro_batches=128,
-              num_auto_layers=16, forward_stage_layer_ids=[[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15]],
-              submesh_physical_shapes=[(1, 8)] * 4, submesh_logical_shapes=[(2, 4)] * 4,
-              submesh_autosharding_option_dicts=[{'force_batch_dim_to_mesh_dim': 0}] * 4),
-"""
+# # ViT-120B model
+# arch_params = {
+#     "n_layers": 96,
+#     "n_heads": 80,
+#     "hidden_d": 10240,
+#     "mlp_d": 40960,
+# }
+# train_config = {
+#     "global_batch_size": 512,
+#     "num_micro_batches": 128,
+#     "num_auto_layers": 64,
+#     "dtype": torch.half,
+# }
 
 params.update(arch_params)
 dtype = train_config["dtype"]
@@ -346,7 +320,6 @@ global_batch_size = train_config["global_batch_size"]
 
 dataloader = [
     (torch.randn(global_batch_size, num_channels, image_size, image_size, dtype=dtype), torch.randn(global_batch_size, num_classes, dtype=dtype)),
-    # (torch.randn(global_batch_size, num_channels, image_size, image_size, dtype=dtype), torch.randn(global_batch_size, num_classes, dtype=dtype)),
 ]
 loss_func = lambda *args, **kwargs: nn.functional.mse_loss(
     *args, **kwargs)
@@ -362,24 +335,10 @@ class TorchViTTest(unittest.TestCase):
     def test_vit_pipeshard(self):
         num_micro_batches = train_config["num_micro_batches"]
         num_auto_layers = train_config["num_auto_layers"]
-        #parallel_method = alpa.PipeshardParallel(
-        #    stage_mode="auto",
-        #    num_micro_batches=num_micro_batches,
-        #    default_auto_sharding_option=alpa.AutoShardingOption(**train_config["auto_sharding_option"]),
-        #)
-
-        #parallel_method = alpa.ManualPipeshardParallel(
-        #    forward_stage_layer_ids=[[0,1,2,3], [4,5,6,7], [8,9,10,11], [12,13,14,15]],
-        #    submesh_physical_shapes=[(1, 4)] * 4,
-        #    submesh_logical_shapes=[(4, 1)] * 4,
-        #    submesh_autosharding_option_dicts=[{"force_batch_dim_to_mesh_dim": 0}] * 4,
-        #    num_micro_batches=num_micro_batches,
-        #)
 
         parallel_method = alpa.PipeshardParallel(
             stage_mode="uniform",
             num_micro_batches=num_micro_batches,
-            # default_auto_sharding_option=alpa.AutoShardingOption(force_data_parallel=True),
         )
         auto_layer_con_func = alpa.automatic_layer_construction(
             layer_num=num_auto_layers, remat_layer=True)

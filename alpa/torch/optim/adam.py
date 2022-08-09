@@ -4,7 +4,7 @@ import copy
 import torch
 
 
-def adam(lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0):
+def adam(lr=1e-4):
     """torchoptim.adam(**adam_config)(params)
         Factory that generates functional version of Adam optimizer.
         Implementation has no in-place op and no data-dependent control flow.
@@ -31,6 +31,7 @@ def adam(lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0):
             return params, optim_state
 
         optim_state = copy.deepcopy(params)
+
         def optim_state_init_func(optim_state):
             new_state = {}
             for k, v in optim_state.items():

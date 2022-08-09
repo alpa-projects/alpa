@@ -382,9 +382,6 @@ def get_model(model_name: str,
             seq_len=config.max_target_positions,
             vocab_size=config.vocab_size)
 
-        if autoregressive and batch_size > 1:
-            # assert batch_size == 1, "we only support batch_sie = 1 for autoregressive!"
-            print(f"autoregressive and batch size is {batch_size}")
         executable, params_aval = get_pipeshard_executable(
             config,
             batch_size=expand_size,

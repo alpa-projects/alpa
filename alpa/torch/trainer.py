@@ -108,12 +108,9 @@ def train_torch_module(pt_module_gen, weight_init_func, dataloader, loss_func,
         train_step_executable.dump_debug_info("train_state_debug_info")
 
         # Initialize weights and optimizer states
-        print("Create train state")
         state = create_train_state()
-        train_step_executable.sync()
 
         # Run training loops
-        print("Run training loops")
         for epoch_id in range(num_epochs):
             for i, pt_batch in enumerate(dataloader):
                 pt_batch = atorch.to_format(atorch.mode(), pt_batch)

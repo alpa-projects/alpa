@@ -22,7 +22,8 @@ from opt_serving.service.constants import MAX_SEQ_LEN, MAX_BATCH_TOKENS, DEFAULT
 app = Flask(__name__, template_folder='service')
 BATCH_QUEUE = PriorityQueueRingShard()
 sampling_css = ""
-beam_size = 1
+num_beams = 1
+num_return_sequences = 1
 
 logger = build_logger()
 
@@ -116,7 +117,7 @@ def batching_loop(timeout=TIMEOUT_MS, max_tokens=MAX_BATCH_TOKENS, max_bs=MAX_BS
                 continue
 
 
-def worker_main(model_name, path, port, best_of):
+def worker_main(model_name, path, port, num_beams, num_samples):
     # disable multithreading in tokenizers and torch, as different Flask threads
     # may then fight for resources.
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -127,14 +128,26 @@ def worker_main(model_name, path, port, best_of):
     torch.manual_seed(random.randint(1, 20000))
     torch.cuda.manual_seed(random.randint(1, 20000))
 
-    if best_of > 1:
+    global num_return_sequences
+    globals()['num_beams'] = num_beams
+    if num_beams > 1:
         # beam search is on, disable sampling
         global sampling_css
-        global beam_size
         sampling_css = 'display:none'
-        beam_size = best_of
+        num_return_sequences = num_beams
+        do_sample = False
+    elif num_samples > 1:
+        num_return_sequences = num_samples
+        do_sample = True
+    else:
+        num_return_sequences = 1
+        do_sample = True
 
-    generator = GeneratorInterface(model_name, path, best_of=best_of)
+    generator = GeneratorInterface(model_name,
+                                   path,
+                                   num_beams=num_beams,
+                                   num_return_sequences=num_return_sequences,
+                                   do_sample=do_sample)
 
     thread = threading.Thread(target=batching_loop, daemon=True)
     thread.start()
@@ -200,22 +213,29 @@ def completions(engine=None):
         else:
             stop = [encode_fn(generator, s)[0] for s in stop]
         generation_args["stop"] = stop
-    if "temperature" in generation_args:
-        generation_args["temperature"] = round(
-            float(generation_args["temperature"]), 1)
-    else:
-        generation_args["temperature"] = 1.0
-    if "top_p" in generation_args:
-        generation_args["top_p"] = round(float(generation_args["top_p"]), 1)
-    else:
-        generation_args["top_p"] = 1.0
+
     # beam search top n
-    global beam_size
-    generation_args["best_of"] = beam_size
+    global num_beams
+    global num_return_sequences
+    generation_args["best_of"] = num_beams
     if "n" in generation_args:
         generation_args["n"] = int(generation_args["n"])
     else:
-        generation_args["n"] = beam_size
+        generation_args["n"] = num_return_sequences
+    if num_beams > 1:
+        # if beam search is enabled, disable all sampling
+        generation_args["temperature"] = 0.0
+        generation_args["top_p"] = 0.0
+    else:
+        if "temperature" in generation_args:
+            generation_args["temperature"] = round(
+                float(generation_args["temperature"]), 1)
+        else:
+            generation_args["temperature"] = 1.0
+        if "top_p" in generation_args:
+            generation_args["top_p"] = round(float(generation_args["top_p"]), 1)
+        else:
+            generation_args["top_p"] = 1.0
 
     logger.info(f"Received new request: prompt length {len(prompts[0])}, "
                 f"max_len: {generation_args.get('max_tokens', 0)}, "
@@ -248,10 +268,10 @@ def completions(engine=None):
 @app.route("/")
 def index():
     global sampling_css
-    global beam_size
+    global num_return_sequences
     return render_template('index.html',
                            sampling_css=sampling_css,
-                           beam_size=beam_size)
+                           num_return_sequences=num_return_sequences)
 
 
 if __name__ == "__main__":
@@ -259,7 +279,14 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="alpa/opt-125m")
     parser.add_argument("--path", type=str, default="/home/ubuntu/opt_weights/")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--best_of", type=int, default=1)
+    parser.add_argument("--num_beams", type=int, default=1)
+    parser.add_argument("--num_samples", type=int, default=1)
     args = parser.parse_args()
 
-    worker_main(args.model, args.path, args.port, args.best_of)
+    assert (
+        (args.num_beams >= 1 and args.num_samples == 1) or
+        (args.num_beams == 1 and args.num_samples >= 1)
+    ), "either beam search or sampling can be enabled, not both (currently)"
+
+    worker_main(args.model, args.path, args.port, args.num_beams,
+                args.num_samples)

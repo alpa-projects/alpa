@@ -101,7 +101,9 @@ class GeneratorInterface:
                  path="/home/ubuntu/opt_weights/",
                  tokenizer_name=None,
                  add_bos_token=False,
-                 best_of=1):
+                 num_beams=1,
+                 num_return_sequences=1,
+                 do_sample=False):
 
         self.model_name = model_name
         self.path = path
@@ -115,7 +117,9 @@ class GeneratorInterface:
         self.dataset_to_epoch_iter = dict()
 
         self.pad = 1
-        self.num_beams = best_of
+        self.num_beams = num_beams
+        self.num_return_sequences = num_return_sequences
+        self.do_sample = do_sample
 
         self.load_model()
 
@@ -127,9 +131,9 @@ class GeneratorInterface:
         self.model_wrapper = get_model(self.model_name, "cuda", self.path, True,
                                        batch_size=MAX_BS,
                                        max_target_positions=MAX_SEQ_LEN,
-                                       do_sample=False,
-                                       num_beams=self.num_beams)
-
+                                       num_beams=self.num_beams,
+                                       num_return_sequences=self.num_return_sequences,
+                                       do_sample=self.do_sample)
         load_time = time.time() - tic
 
         # Init tokenizer
@@ -214,15 +218,13 @@ class GeneratorInterface:
         total_inference_time = 0
 
         # Generator args
+        sampling_topp = top_p if top_p > 0 else -1
+        sampling = top_p > 0.0
+        temperature = temperature if temperature > 0 else 1.0
+
         assert best_of == self.num_beams, "model must be instantiated and used with the same num_beams"
-        if best_of > 1:
-            sampling_topp = -1
-            sampling = False
-            temperature = 1.0
-        else:
-            sampling_topp = top_p if top_p > 0 else -1
-            sampling = top_p > 0.0
-            temperature = temperature if temperature > 0 else 1.0
+        assert n == self.num_return_sequences, "model must be instantiated and used with the same num_return_sequences"
+        assert sampling == self.do_sample, "model must be instantiated and used with the same do_sample"
 
         # Resolve max sequence length from multiple sources.
         max_seq_len = self.max_sequence_len()

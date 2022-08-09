@@ -300,7 +300,7 @@ def embed_call_one_hot(self, inputs):
     dtype = self.dtype
     if global_config.flax_always_use_fp16_embedding:
         dtype = jnp.float16
-    expanded = jax.nn.one_hot(inputs, self.num_embeddings, dtype=dtype)
+    expanded = jax.nn.one_hot(inputs, self.embedding.shape[0], dtype=dtype)
     ret = expanded @ jnp.asarray(self.embedding, dtype)
     return ret
 

@@ -35,9 +35,9 @@ way which enables simple and efficient model parallelism.
 
 In the following, we demonstrate how to train an auto-regressive causal transformer model 
 in JAX/Flax.
-More specifically, we pretrain a randomely initialized [**`gpt2`**](https://huggingface.co/gpt2) model in Norwegian on a single TPUv3-8.
+More specifically, we pretrain a randomely initialized [**`gpt2`**](https://huggingface.co/gpt2) model in Norwegian
 to pre-train 124M [**`gpt2`**](https://huggingface.co/gpt2)
-in Norwegian on a single TPUv3-8 pod.
+in Norwegian.
 
 The example script uses the 🤗 Datasets library. You can easily customize them to your needs if you need extra processing on your datasets.
 
@@ -102,6 +102,13 @@ push the training logs and model weights to the repo.
 
 Finally, we can run the example script to pretrain the model:
 
+#### Launch a Ray cluster
+1. Use the command below to launch ray on a head node  
+  ```ray start --head```
+2. (Optional) If you have more nodes, connect them to the head node. The command should look like this, but with the ip address and password printed by the previous command.   
+  ```ray start --address='172.31.34.216:6379' --redis-password='5241590000000000'```
+
+##### Run
 ```bash
 python3 run_clm_flax.py \
     --output_dir="./norwegian-gpt2" \
@@ -125,8 +132,8 @@ python3 run_clm_flax.py \
 ```
 
 Training should converge at a loss and perplexity 
-of 3.24 and 25.72 respectively after 20 epochs on a single TPUv3-8.
-This should take less than ~21 hours.
+of 3.24 and 25.72 respectively after 20 epochs
+This should take less than ~21 hours on a single TPUv3-8 or a machine with 8 V100 GPUs.
 Training statistics can be accessed on [tfhub.de](https://tensorboard.dev/experiment/2zEhLwJ0Qp2FAkI3WVH9qA).
 
 For a step-by-step walkthrough of how to do causal language modeling in Flax, please have a 

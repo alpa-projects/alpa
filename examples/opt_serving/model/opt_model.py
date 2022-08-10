@@ -211,9 +211,6 @@ class OPTSelfAttention(nn.Module):
                                  value_states)
         attn_output = attn_output.reshape(attn_output.shape[:2] + (-1,))
 
-        # FIXME: Output attn_output for debugging. Remove this line when done.
-        attention_cache = attn_output
-
         outputs = (attn_output, attention_cache,
                    attn_weights) if output_attentions else (attn_output,
                                                             attention_cache)

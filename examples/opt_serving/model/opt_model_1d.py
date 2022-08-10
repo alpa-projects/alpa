@@ -4,7 +4,7 @@ from functools import partial
 import itertools
 import math
 import os
-from typing import Callable, Optional, Tuple, Dict
+from typing import Callable, Optional, Tuple
 
 import alpa
 from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
@@ -16,14 +16,16 @@ import jax
 import flax
 from jax import lax
 import jax.numpy as jnp
-from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves
+from jax.tree_util import tree_flatten, tree_leaves
 from jax.interpreters import pxla
 import jaxlib.xla_extension as jax_xla
 import numpy as np
-import ray
 from tqdm import tqdm
 
-from ft_mha import fused_mmha
+try:
+    from ft_mha import fused_mmha
+except ImportError:
+    raise RuntimeError("Please install ft_mha to use 1D OPT model.")
 
 ACT2FN = {
     "gelu": partial(nn.gelu, approximate=False),
@@ -166,13 +168,9 @@ class OPTSelfAttention(nn.Module):
                                  cache_index)
         attn_output = attn_output.reshape(attn_output.shape[:1] + (-1,))
 
-        # TODO: Update cache
-        # Note that assuming the maxiumn length of current input prompts is Lmax,
-        # the values of updated cache_index are organized as follows:
-        # [<1 x L1>, <0 x (Lmax-L1)>, <1 x L2>, <0 x (Lmax-L2)>, ..., 0, ...]
-
-        # FIXME: Output attn_output for debugging. Remove this line when done.
-        attention_cache = attn_output
+        # FIXME: Update cache
+        # Update cache key and value. Note that the cache index should
+        # be updated outside the model.
 
         if output_attentions:
             print("Do not support output_attentions")
@@ -500,7 +498,7 @@ def init_cache_aval(config, batch_size):
     return tuple(all_cache)
 
 
-def init_cache_np(config, batch_size):
+def init_cache_np(config):
     """Init cache with numpy arrays."""
     np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
@@ -508,13 +506,13 @@ def init_cache_np(config, batch_size):
     all_cache = []
     for i in range(config.decoder_layers):
         layer_cache = (
-            np.zeros((batch_size * config.max_target_positions,
+            np.zeros((config.max_target_positions,
                       config.decoder_attention_heads, head_dim),
                      dtype=np_dtype),
-            np.zeros((batch_size * config.max_target_positions,
+            np.zeros((config.max_target_positions,
                       config.decoder_attention_heads, head_dim),
                      dtype=np_dtype),
-            np.zeros((batch_size * config.max_target_positions,), np.int32),
+            np.zeros((config.max_target_positions,), np.int32),
         )
         all_cache.append(layer_cache)
     return tuple(all_cache)

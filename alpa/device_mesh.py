@@ -2015,7 +2015,6 @@ class DeviceCluster:
                 from ae
         self.head_ip = self.head_info["node_ip_address"]
 
-        ic(ray.nodes())
         # Gather host ids
         self.host_info = []
         for node in ray.nodes():
@@ -2030,6 +2029,8 @@ class DeviceCluster:
             assert number.is_integer()
             self.host_num_devices.append(int(number))
 
+        ic(self.host_info, self.host_num_devices)
+        
     @property
     def num_cpus(self):
         return sum(

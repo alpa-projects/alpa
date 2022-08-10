@@ -1825,6 +1825,7 @@ class VirtualPhysicalMesh:
         assert self.launched_physical_mesh is None, \
             "Physical mesh can only be launched once."
 
+        ic(mesh_id, self.device_strs, self.host_ids, self.host_info)
         self.launched_physical_mesh = DistributedPhysicalDeviceMesh(
             host_ids=self.host_ids,
             host_info=self.host_info,

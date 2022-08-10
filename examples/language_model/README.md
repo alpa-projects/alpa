@@ -103,9 +103,9 @@ push the training logs and model weights to the repo.
 Finally, we can run the example script to pretrain the model:
 
 #### Launch a Ray cluster
-1. Use the command below to launch ray on a head node
+1. Use the command below to launch ray on a head node  
   ```ray start --head```
-2. (Optional) If you have more nodes, connect them to the head node. The command should look like this, but with the ip address and password printed by the previous command. 
+2. (Optional) If you have more nodes, connect them to the head node. The command should look like this, but with the ip address and password printed by the previous command.   
   ```ray start --address='172.31.34.216:6379' --redis-password='5241590000000000'```
 
 ##### Run

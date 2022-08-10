@@ -1691,6 +1691,7 @@ class VirtualPhysicalMesh:
         self.launched_physical_mesh = None
         self.launched_physical_mesh_group = None
 
+        ic(self.host_ids, self.host_info)
         if devices is not None:
             if len(devices) != len(host_ids):
                 raise RuntimeError(
@@ -2084,7 +2085,6 @@ class DeviceCluster:
         host_ids = host_ids or np.arange(len(self.host_info))
         host_info = [self.host_info[x] for x in host_ids]
 
-        ic(host_ids)
         num_devices_per_host = num_devices_per_host or self.host_num_devices[
             host_ids[0]]
         for host_id in host_ids:

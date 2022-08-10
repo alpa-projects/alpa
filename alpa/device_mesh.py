@@ -934,6 +934,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.devices = devices
         self.device_strs = []
         self.device_ips = []
+        ic(self.host_info)
         for i in range(self.num_hosts):
             ip = self.host_info[i]["NodeManagerAddress"]
             self.device_strs.extend(

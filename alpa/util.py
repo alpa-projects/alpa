@@ -1381,6 +1381,7 @@ def create_placement_group(num_hosts,
         current_placement_group is None or
         not should_capture_child_tasks_in_placement_group)
 
+    ic(current_placement_group, should_capture_child_tasks_in_placement_group, ray.available_resources())
     if should_create_placement_group:
         additional_resources_per_host = (additional_resources_per_host or {})
         bundle = {

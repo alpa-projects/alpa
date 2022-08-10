@@ -2029,8 +2029,6 @@ class DeviceCluster:
             assert number.is_integer()
             self.host_num_devices.append(int(number))
 
-        ic(self.host_info, self.host_num_devices)
-        
     @property
     def num_cpus(self):
         return sum(
@@ -2086,6 +2084,7 @@ class DeviceCluster:
         host_ids = host_ids or np.arange(len(self.host_info))
         host_info = [self.host_info[x] for x in host_ids]
 
+        ic(host_ids)
         num_devices_per_host = num_devices_per_host or self.host_num_devices[
             host_ids[0]]
         for host_id in host_ids:

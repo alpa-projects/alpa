@@ -935,6 +935,10 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.device_strs = []
         self.device_ips = []
         ic(self.host_info)
+        if len(self.host_info) == 1: 
+            import traceback
+            traceback.print_stack()
+
         for i in range(self.num_hosts):
             ip = self.host_info[i]["NodeManagerAddress"]
             self.device_strs.extend(
@@ -1755,7 +1759,6 @@ class VirtualPhysicalMesh:
                 for x in indices[i]:
                     assert x in self.devices[i]
 
-            ic('i am there', host_ids, host_info)
             
             return VirtualPhysicalMesh(host_ids=self.host_ids,
                                        host_info=self.host_info,

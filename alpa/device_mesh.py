@@ -2141,7 +2141,7 @@ def init_global_cluster(cluster: str):
 def shutdown_global_cluster():
     global global_cluster, global_physical_mesh, global_virtual_physical_mesh
 
-    global_cluster.clean_up_placement_group()
+    _placement_group = global_cluster._placement_group
     global_cluster = None
     update_jax_platform("gpu")
 
@@ -2153,7 +2153,8 @@ def shutdown_global_cluster():
         if global_virtual_physical_mesh.launched_physical_mesh_group:
             global_virtual_physical_mesh.launched_physical_mesh_group.shutdown()
         global_virtual_physical_mesh = None
-
+    
+    remove_placement_group(_placement_group)
 
 def set_global_cluster(cluster: DeviceCluster):
     global global_cluster

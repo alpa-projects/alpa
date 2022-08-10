@@ -1320,6 +1320,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             ray.get([w.shutdown.remote() for w in self.workers])
         for worker in self.workers:
             ray.kill(worker)
+        ic(self._placement_group)
         if self._placement_group:
             remove_placement_group(self._placement_group)
             self._placement_group = None

@@ -968,9 +968,11 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
         # ic(ray.available_resources())
         # create placement group
-        self._placement_group = create_placement_group(
-            self.num_hosts, self.num_devices_per_host)
+        # self._placement_group = create_placement_group(
+        #     self.num_hosts, self.num_devices_per_host)
 
+        self._placement_group = global_cluster._placement_group
+        
         # get the sorted bundle index list
         device_bundle_idx_list = get_bundle_idx(self._placement_group,
                                                 self.device_ips)
@@ -1326,9 +1328,9 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         for worker in self.workers:
             ray.kill(worker)
         # ic(self._placement_group)
-        if self._placement_group:
-            remove_placement_group(self._placement_group)
-            self._placement_group = None
+        # if self._placement_group:
+        #     remove_placement_group(self._placement_group)
+        #     self._placement_group = None
         self.workers = None
         # shutdown grpc server
         self.service_server.shutdown()
@@ -2037,10 +2039,13 @@ class DeviceCluster:
             assert number.is_integer()
             self.host_num_devices.append(int(number))
 
-        
         self._placement_group = create_placement_group(
             len(self.host_num_devices), self.host_num_devices[0])
-        
+    
+    def clean_up_placement_group(self):
+        if self._placement_group: 
+            remove_placement_group(self._placement_group)
+    
     @property
     def num_cpus(self):
         return sum(
@@ -2136,6 +2141,7 @@ def init_global_cluster(cluster: str):
 def shutdown_global_cluster():
     global global_cluster, global_physical_mesh, global_virtual_physical_mesh
 
+    global_cluster.clean_up_placement_group()
     global_cluster = None
     update_jax_platform("gpu")
 

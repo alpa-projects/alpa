@@ -103,6 +103,11 @@ push the training logs and model weights to the repo.
 Finally, we can run the example script to pretrain the model:
 
 ```bash
+# Launch a ray cluster. You can use the command below or other methods.
+ray start --head
+```
+
+```bash
 python3 run_clm_flax.py \
     --output_dir="./norwegian-gpt2" \
     --model_type="gpt2" \

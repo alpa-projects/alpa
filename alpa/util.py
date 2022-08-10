@@ -1446,9 +1446,9 @@ def get_bundle_idx(placement_group, device_ips):
         if bundle_spec.get("GPU", 0) > 0
     ]
 
-    if len(device_bundle_idx_list) != len(device_ips):
-        raise ValueError("The number of bundles with GPU resources "
-                         "is not equal to the number of device IPs.")
+    # if len(device_bundle_idx_list) != len(device_ips):
+    #     raise ValueError("The number of bundles with GPU resources "
+    #                      "is not equal to the number of device IPs.")
 
     # device IP -> bundle index
     bundle_ip2idx = {bundle_ips[i]: i for i in device_bundle_idx_list}

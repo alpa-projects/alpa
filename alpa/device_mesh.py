@@ -2015,6 +2015,7 @@ class DeviceCluster:
                 from ae
         self.head_ip = self.head_info["node_ip_address"]
 
+        ic(ray.nodes())
         # Gather host ids
         self.host_info = []
         for node in ray.nodes():

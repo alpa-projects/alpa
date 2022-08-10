@@ -146,7 +146,7 @@
         var submitData = getFormData($("form"));
         console.log(JSON.stringify(submitData));
         $.ajax({
-            url: "/completions",
+            url: "completions",
             type: "POST",
             processData: true,
             contentType: "application/json",

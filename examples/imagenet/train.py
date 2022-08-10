@@ -317,7 +317,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
       functools.partial(train_step, learning_rate_fn=learning_rate_fn))
   p_eval_step = alpa.parallelize(eval_step, donate_argnums=())
 
-  logging.info('Initial compilation, this might take some minutes...')
+  logging.info('Initial compilation. This might take some minutes...')
   batch = {
     "image": jax.core.ShapedArray(
         (config.batch_size, image_size, image_size, 3), jnp.float32),

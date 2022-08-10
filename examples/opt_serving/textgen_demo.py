@@ -8,7 +8,7 @@ import numpy as np
 tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", use_fast=False)
 tokenizer.add_bos_token = False
 
-generate_params = {"do_sample": False, "num_beams": 1, "num_return_sequences": 1}
+generate_params = {"do_sample": True, "num_beams": 1, "num_return_sequences": 1}
 
 # Load the model
 model = get_model(model_name="alpa/opt-125m",
@@ -29,7 +29,7 @@ input_ids = tokenizer(prompt, return_tensors="pt", padding="longest").input_ids.
 
 outputs = model.generate(input_ids=input_ids,
                          pad_token_id=tokenizer.pad_token_id,
-                         max_length=32,
+                         max_length=64,
                          **generate_params)
 
 # Print results

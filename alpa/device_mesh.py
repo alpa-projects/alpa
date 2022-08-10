@@ -1741,7 +1741,6 @@ class VirtualPhysicalMesh:
             host_ids = [self.host_ids[x] for x in indices]
             host_info = [self.host_info[x] for x in host_ids]
             
-            ic('i am here', host_ids, host_info)
             return VirtualPhysicalMesh(
                 host_ids=host_ids,
                 host_info=host_info,
@@ -1756,6 +1755,8 @@ class VirtualPhysicalMesh:
                 for x in indices[i]:
                     assert x in self.devices[i]
 
+            ic('i am there', host_ids, host_info)
+            
             return VirtualPhysicalMesh(host_ids=self.host_ids,
                                        host_info=self.host_info,
                                        head_ip=self.head_ip,

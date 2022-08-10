@@ -938,8 +938,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # if len(self.host_info) == 1: 
         #     import traceback
         #     traceback.print_stack()
-
-
         
         for i in range(self.num_hosts):
             ip = self.host_info[i]["NodeManagerAddress"]
@@ -968,7 +966,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # Launch workers
         self.workers = []
 
-        ic(ray.available_resources())
+        # ic(ray.available_resources())
         # create placement group
         self._placement_group = create_placement_group(
             self.num_hosts, self.num_devices_per_host)
@@ -1327,7 +1325,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             ray.get([w.shutdown.remote() for w in self.workers])
         for worker in self.workers:
             ray.kill(worker)
-        ic(self._placement_group)
+        # ic(self._placement_group)
         if self._placement_group:
             remove_placement_group(self._placement_group)
             self._placement_group = None
@@ -1827,7 +1825,7 @@ class VirtualPhysicalMesh:
         assert self.launched_physical_mesh is None, \
             "Physical mesh can only be launched once."
 
-        ic(mesh_id, self.device_strs, self.host_ids, self.host_info)
+        # ic(mesh_id, self.device_strs, self.host_ids, self.host_info)
         self.launched_physical_mesh = DistributedPhysicalDeviceMesh(
             host_ids=self.host_ids,
             host_info=self.host_info,
@@ -2039,6 +2037,10 @@ class DeviceCluster:
             assert number.is_integer()
             self.host_num_devices.append(int(number))
 
+        
+        self._placement_group = create_placement_group(
+            len(self.host_num_devices), self.host_num_devices[0])
+        
     @property
     def num_cpus(self):
         return sum(

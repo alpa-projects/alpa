@@ -36,6 +36,7 @@ from ray.util.placement_group import get_current_placement_group
 import tqdm
 
 from alpa.global_env import global_config, is_worker
+from icecream import ic
 
 PLACEMENT_GROUP_TIMEOUT_S_ENV = "ALPA_PLACEMENT_GROUP_TIMEOUT_S_ENV"
 
@@ -1437,6 +1438,7 @@ def get_bundle_idx(placement_group, device_ips):
     bundle_ips = get_bundle2ip(placement_group)
     bundle_specs = placement_group.bundle_specs
 
+    ic(bundle_ips, bundle_specs, device_ips)
     # filter out the bundle index with device (GPUs)
     device_bundle_idx_list = [
         i for i, bundle_spec in enumerate(bundle_specs)

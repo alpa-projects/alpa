@@ -85,7 +85,7 @@ ReshardingBroadcastSpec = namedtuple("ReshardingBroadcastSpec", [
 ReshardingBroadcastTask = namedtuple("ReshardingBroadcastTask",
                                      ["broadcast_specs", "group_name"])
 
-
+from icecream import ic
 ########################################
 # Ray Workers
 ########################################
@@ -961,6 +961,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # Launch workers
         self.workers = []
 
+        ic(ray.available_resources())
         # create placement group
         self._placement_group = create_placement_group(
             self.num_hosts, self.num_devices_per_host)

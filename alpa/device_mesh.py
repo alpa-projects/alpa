@@ -963,9 +963,15 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # Launch workers
         self.workers = []
 
-        print(ray.available_resources())
-        print(ray._private.state.state.placement_group_table())
-        placement_group = alpa.device_mesh.global_placement_group
+        # print(ray.available_resources())
+        # print(ray._private.state.state.placement_group_table())
+        if alpa.device_mesh.global_placement_group: 
+            placement_group = alpa.device_mesh.global_placement_group
+        else: 
+            for name, info in ray._private.state.state.placement_group_table(): 
+                if info['state'] == 'CREATED':
+                    placement_group = ray.util.placement_group.get_placement_group(name)
+            alpa.device_mesh.global_placement_group
         # get the sorted bundle index list
         device_bundle_idx_list = get_bundle_idx(placement_group,
                                                 self.device_ips)

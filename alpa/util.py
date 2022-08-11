@@ -1476,7 +1476,7 @@ def retrieve_placement_group():
     # case 1:
     # Get the current placement group which a task or actor is using
     current_placement_group = get_current_placement_group()
-    if current_placement_group is None:
+    if current_placement_group:
         return current_placement_group
 
     # case 2:

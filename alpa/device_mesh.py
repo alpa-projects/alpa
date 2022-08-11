@@ -58,7 +58,7 @@ from alpa.timer import timers
 from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
                        update_jax_platform, is_ray_node_resource,
                        try_import_ray_worker, create_placement_group,
-                       get_bundle_idx)
+                       get_bundle_idx, try_import_ray_state)
 
 ray_worker = try_import_ray_worker()
 
@@ -965,13 +965,11 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # Launch workers
         self.workers = []
 
-        print(ray.available_resources())
-        # print(ray._private.state.state.placement_group_table())
         if alpa.device_mesh.global_placement_group:
             placement_group = alpa.device_mesh.global_placement_group
         else:
-            for name, info in ray._private.state.state.placement_group_table(
-            ).items():
+            ray_state = try_import_ray_state()
+            for name, info in ray_state.state.placement_group_table().items():
                 if info["state"] == "CREATED":
                     placement_group = PlacementGroup(
                         PlacementGroupID(hex_to_binary(name)))

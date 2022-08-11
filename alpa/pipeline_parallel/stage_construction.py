@@ -14,7 +14,6 @@ import numpy as np
 from ray.exceptions import RayActorError
 import tqdm
 
-import alpa
 from alpa.device_mesh import DeviceCluster, VirtualPhysicalMesh
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.computation import (

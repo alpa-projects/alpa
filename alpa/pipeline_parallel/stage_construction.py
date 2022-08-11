@@ -461,7 +461,7 @@ def get_compute_cost(
         num_hosts, num_devices = submesh
         tic = time()
         if global_config.profile_with_whole_ray_cluster:
-            if alpa.api.initialized:
+            if alpa.api.is_initialized:
                 whole_cluster = alpa.device_mesh.global_cluster
             else: 
                 whole_cluster = DeviceCluster()

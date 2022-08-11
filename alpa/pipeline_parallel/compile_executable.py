@@ -63,30 +63,30 @@ def compile_pipeshard_executable(
     debug_compilation_time(None)
     name_base = f"{fun.__name__}_pipeshard_parallel"
 
-    # Trace the function wit a micro batch to get the jaxpr.
     # Apply layer construction to add pipeline markers.
     with GradFuncTransformContext(layer_option.transform):
         if pipeline_schedule == "inference":
             f_backup = fun.f
             fun.f = layer_option.transform(fun.f)
 
+        # Trace the function with a micro batch to get the jaxpr.
         closed_jaxpr, micro_batch_size = trace_jaxpr_with_micro_batch(
             fun, batch_invars, num_microbatch, avals)
 
+        # Trace again with a full batch.
+        # The full batch is used to derive the reduction operator across
+        # micro batches (e.g., addition, concatenation).
+        if num_microbatch > 1:
+            for store in fun.stores:
+                if store:
+                    store.reset()
+            full_batch_closed_jaxpr, _ = trace_jaxpr_with_micro_batch(
+                fun, batch_invars, 1, avals)
+        else:
+            full_batch_closed_jaxpr = None
+
         if pipeline_schedule == "inference":
             fun.f = f_backup
-
-    # Trace again with a full batch.
-    # The full batch is used to derive the reduction operator across
-    # micro batches (e.g., addition, concatenation).
-    if num_microbatch > 1:
-        for store in fun.stores:
-            if store:
-                store.reset()
-        full_batch_closed_jaxpr, _ = trace_jaxpr_with_micro_batch(
-            fun, batch_invars, 1, avals)
-    else:
-        full_batch_closed_jaxpr = None
     debug_compilation_time("trace")
 
     pipeshard_config = compile_pipeshard_executable_internal(

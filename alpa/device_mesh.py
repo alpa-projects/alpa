@@ -963,6 +963,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # Launch workers
         self.workers = []
 
+        print(ray.available_resources())
         placement_group = alpa.device_mesh.global_placement_group
         # get the sorted bundle index list
         device_bundle_idx_list = get_bundle_idx(placement_group,

@@ -1683,7 +1683,6 @@ class VirtualPhysicalMesh:
         self.launched_physical_mesh = None
         self.launched_physical_mesh_group = None
 
-        ic(self.host_ids, self.host_info)
         if devices is not None:
             if len(devices) != len(host_ids):
                 raise RuntimeError(
@@ -1813,7 +1812,6 @@ class VirtualPhysicalMesh:
         assert self.launched_physical_mesh is None, \
             "Physical mesh can only be launched once."
 
-        # ic(mesh_id, self.device_strs, self.host_ids, self.host_info)
         self.launched_physical_mesh = DistributedPhysicalDeviceMesh(
             host_ids=self.host_ids,
             host_info=self.host_info,

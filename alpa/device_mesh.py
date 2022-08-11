@@ -1016,7 +1016,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 placement_group_bundle_index=bundle_index).remote()
 
             # Launch the MeshHostWorker
-            cls = ray.remote(num_cpus=0, num_gpus=self.num_devices_per_host)(MeshHostWorker)
+            cls = ray.remote(num_cpus=0,
+                             num_gpus=self.num_devices_per_host)(MeshHostWorker)
             worker = cls.options(placement_group=placement_group,
                                  placement_group_bundle_index=bundle_index,
                                  runtime_env={

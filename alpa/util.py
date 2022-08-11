@@ -1382,7 +1382,7 @@ def create_placement_group(num_hosts,
     if should_create_placement_group:
         additional_resources_per_host = (additional_resources_per_host or {})
         bundle = {
-            "CPU": 2,
+            "CPU": 1,
             "GPU": num_devices_per_host,
             **additional_resources_per_host,
         }

@@ -1227,7 +1227,6 @@ def is_ray_node_resource(resource_key):
 ##### Ray Compatibilityu API Utilities
 ########################################
 
-
 def try_import_ray_worker(error: bool = False):
     """Tries importing `ray.worker` and returns the module (or None).
 

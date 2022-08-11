@@ -85,7 +85,7 @@ ReshardingBroadcastSpec = namedtuple("ReshardingBroadcastSpec", [
 ReshardingBroadcastTask = namedtuple("ReshardingBroadcastTask",
                                      ["broadcast_specs", "group_name"])
 
-from icecream import ic
+
 ########################################
 # Ray Workers
 ########################################
@@ -934,7 +934,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.devices = devices
         self.device_strs = []
         self.device_ips = []
-        
+
         for i in range(self.num_hosts):
             ip = self.host_info[i]["NodeManagerAddress"]
             self.device_strs.extend(
@@ -962,9 +962,9 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # Launch workers
         self.workers = []
 
-        _placement_group = global_cluster._placement_group
+        placement_group = global_cluster._placement_group
         # get the sorted bundle index list
-        device_bundle_idx_list = get_bundle_idx(_placement_group,
+        device_bundle_idx_list = get_bundle_idx(placement_group,
                                                 self.device_ips)
 
         for i in range(self.num_hosts):
@@ -1012,12 +1012,12 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             # Launch the DaemonMoveWorker
             cls = ray.remote(DaemonMoveWorker)
             move_worker = cls.options(
-                placement_group=_placement_group,
+                placement_group=placement_group,
                 placement_group_bundle_index=bundle_index).remote()
 
             # Launch the MeshHostWorker
             cls = ray.remote(num_gpus=self.num_devices_per_host)(MeshHostWorker)
-            worker = cls.options(placement_group=_placement_group,
+            worker = cls.options(placement_group=placement_group,
                                  placement_group_bundle_index=bundle_index,
                                  runtime_env={
                                      "env_vars": env_vars
@@ -1731,7 +1731,7 @@ class VirtualPhysicalMesh:
             # slicing along the host dimension
             host_ids = [self.host_ids[x] for x in indices]
             host_info = [self.host_info[x] for x in host_ids]
-            
+
             return VirtualPhysicalMesh(
                 host_ids=host_ids,
                 host_info=host_info,
@@ -1746,7 +1746,6 @@ class VirtualPhysicalMesh:
                 for x in indices[i]:
                     assert x in self.devices[i]
 
-            
             return VirtualPhysicalMesh(host_ids=self.host_ids,
                                        host_info=self.host_info,
                                        head_ip=self.head_ip,
@@ -2025,11 +2024,11 @@ class DeviceCluster:
 
         self._placement_group = create_placement_group(
             len(self.host_num_devices), self.host_num_devices[0])
-    
+
     def clean_up_placement_group(self):
-        if self._placement_group: 
+        if self._placement_group:
             remove_placement_group(self._placement_group)
-    
+
     @property
     def num_cpus(self):
         return sum(
@@ -2125,7 +2124,7 @@ def init_global_cluster(cluster: str):
 def shutdown_global_cluster():
     global global_cluster, global_physical_mesh, global_virtual_physical_mesh
 
-    _placement_group = global_cluster._placement_group
+    placement_group = global_cluster._placement_group
     global_cluster = None
     update_jax_platform("gpu")
 
@@ -2137,8 +2136,9 @@ def shutdown_global_cluster():
         if global_virtual_physical_mesh.launched_physical_mesh_group:
             global_virtual_physical_mesh.launched_physical_mesh_group.shutdown()
         global_virtual_physical_mesh = None
-    
-    remove_placement_group(_placement_group)
+
+    remove_placement_group(placement_group)
+
 
 def set_global_cluster(cluster: DeviceCluster):
     global global_cluster

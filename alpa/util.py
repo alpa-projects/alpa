@@ -36,7 +36,6 @@ from ray.util.placement_group import get_current_placement_group
 import tqdm
 
 from alpa.global_env import global_config, is_worker
-from icecream import ic
 
 PLACEMENT_GROUP_TIMEOUT_S_ENV = "ALPA_PLACEMENT_GROUP_TIMEOUT_S_ENV"
 

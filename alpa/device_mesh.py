@@ -934,10 +934,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.devices = devices
         self.device_strs = []
         self.device_ips = []
-        # ic(self.host_info)
-        # if len(self.host_info) == 1: 
-        #     import traceback
-        #     traceback.print_stack()
         
         for i in range(self.num_hosts):
             ip = self.host_info[i]["NodeManagerAddress"]
@@ -966,15 +962,10 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # Launch workers
         self.workers = []
 
-        # ic(ray.available_resources())
-        # create placement group
-        # self._placement_group = create_placement_group(
-        #     self.num_hosts, self.num_devices_per_host)
-
-        self._placement_group = global_cluster._placement_group
+        _placement_group = global_cluster._placement_group
         
         # get the sorted bundle index list
-        device_bundle_idx_list = get_bundle_idx(self._placement_group,
+        device_bundle_idx_list = get_bundle_idx(_placement_group,
                                                 self.device_ips)
 
         for i in range(self.num_hosts):
@@ -1022,12 +1013,12 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             # Launch the DaemonMoveWorker
             cls = ray.remote(DaemonMoveWorker)
             move_worker = cls.options(
-                placement_group=self._placement_group,
+                placement_group=_placement_group,
                 placement_group_bundle_index=bundle_index).remote()
 
             # Launch the MeshHostWorker
             cls = ray.remote(num_gpus=self.num_devices_per_host)(MeshHostWorker)
-            worker = cls.options(placement_group=self._placement_group,
+            worker = cls.options(placement_group=_placement_group,
                                  placement_group_bundle_index=bundle_index,
                                  runtime_env={
                                      "env_vars": env_vars
@@ -1327,10 +1318,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             ray.get([w.shutdown.remote() for w in self.workers])
         for worker in self.workers:
             ray.kill(worker)
-        # ic(self._placement_group)
-        # if self._placement_group:
-        #     remove_placement_group(self._placement_group)
-        #     self._placement_group = None
         self.workers = None
         # shutdown grpc server
         self.service_server.shutdown()

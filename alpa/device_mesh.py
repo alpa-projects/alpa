@@ -44,10 +44,7 @@ import jax.numpy as jnp
 import numpy as np
 import ray
 from ray.util.placement_group import remove_placement_group, PlacementGroup
-from ray._private.utils import hex_to_binary
-from ray._raylet import PlacementGroupID
 
-import alpa
 from alpa import mesh_profiling
 import alpa.collective as col
 from alpa.global_env import global_config
@@ -58,7 +55,7 @@ from alpa.timer import timers
 from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
                        update_jax_platform, is_ray_node_resource,
                        try_import_ray_worker, create_placement_group,
-                       get_bundle_idx, try_import_ray_state)
+                       get_bundle_idx, retrieve_placement_group)
 
 ray_worker = try_import_ray_worker()
 
@@ -918,7 +915,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.parent = parent
         self.mesh_id = mesh_id
         self.workers = None
-        self._placement_group = None
         self.launched = False
         self.service_server = None
         self.operation_executables = {}
@@ -965,14 +961,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # Launch workers
         self.workers = []
 
-        if alpa.device_mesh.global_placement_group:
-            placement_group = alpa.device_mesh.global_placement_group
-        else:
-            ray_state = try_import_ray_state()
-            for name, info in ray_state.state.placement_group_table().items():
-                if info["state"] == "CREATED":
-                    placement_group = PlacementGroup(
-                        PlacementGroupID(hex_to_binary(name)))
+        # retrieve the placement group
+        placement_group = retrieve_placement_group()
 
         # get the sorted bundle index list
         device_bundle_idx_list = get_bundle_idx(placement_group,
@@ -2034,10 +2024,6 @@ class DeviceCluster:
             assert number.is_integer()
             self.host_num_devices.append(int(number))
 
-    def clean_up_placement_group(self):
-        if self._placement_group:
-            remove_placement_group(self._placement_group)
-
     @property
     def num_cpus(self):
         return sum(
@@ -2114,7 +2100,7 @@ class DeviceCluster:
 global_cluster: DeviceCluster = None
 global_physical_mesh: PhysicalDeviceMesh = None
 global_virtual_physical_mesh: VirtualPhysicalMesh = None
-global_placement_group = None
+global_placement_group: PlacementGroup = None
 
 
 def init_global_cluster(cluster: str):

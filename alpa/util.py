@@ -32,9 +32,13 @@ import flax
 from flax.training import train_state
 from flax.training.common_utils import stack_forest
 import ray
-from ray.util.placement_group import get_current_placement_group
-import tqdm
+from ray.util.placement_group import get_current_placement_group,\
+    PlacementGroup
+from ray._private.utils import hex_to_binary
+from ray._raylet import PlacementGroupID
 
+import tqdm
+import alpa
 from alpa.global_env import global_config, is_worker
 
 PLACEMENT_GROUP_TIMEOUT_S_ENV = "ALPA_PLACEMENT_GROUP_TIMEOUT_S_ENV"
@@ -1453,3 +1457,44 @@ def get_bundle_idx(placement_group, device_ips):
     sorted_bundle_idx = [bundle_ip2idx[ip] for ip in device_ips]
 
     return sorted_bundle_idx
+
+
+def get_placement_group_from_id(placement_group_id: str):
+    """Get the placement group from the unique id"""
+    return PlacementGroup(PlacementGroupID(hex_to_binary(placement_group_id)))
+
+def retrieve_placement_group():
+    """retrieve the placement group to support node affinity scheduling
+
+    If already inside the placement group, retrieve the current placement
+    group (case I). Then, if the placement group is detected globally in
+    alpa, retrieve the global placement group (case II). Last, we can try
+    to retrieve the placement group from the ray cluster global state (III).
+
+    """
+    # case 1:
+    # Get the current placement group which a task or actor is using
+    current_placement_group = get_current_placement_group()
+    if current_placement_group is None:
+        return current_placement_group
+
+    # case 2:
+    # Get the placement group created when alpa.init('ray')
+    if alpa.device_mesh.global_placement_group:
+        alpa_placement_group = alpa.device_mesh.global_placement_group
+        return alpa_placement_group
+
+    # case 3:
+    # Get the placement group from ray global state
+    ray_state = try_import_ray_state()
+    for pg_id, info in ray_state.state.placement_group_table().items():
+        if info["state"] == "CREATED":
+            created_placement_group = get_placement_group_from_id(pg_id)
+            return created_placement_group
+
+    raise ValueError(
+        "The alpa training is not inside the ray tasks or actor or "
+        "the placement group is not created yet. One reason is that "
+        "Alpa is not connected to Ray cluster, and use `alpa.init('ray')`"
+        " at the beginning. Do you have override the placement group? "
+        "If not, please help file an issue on Github.")

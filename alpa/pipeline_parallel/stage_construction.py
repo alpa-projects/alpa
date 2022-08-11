@@ -14,6 +14,7 @@ import numpy as np
 from ray.exceptions import RayActorError
 import tqdm
 
+import alpa
 from alpa.device_mesh import DeviceCluster, VirtualPhysicalMesh
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.computation import (
@@ -460,8 +461,12 @@ def get_compute_cost(
         num_hosts, num_devices = submesh
         tic = time()
         if global_config.profile_with_whole_ray_cluster:
-            whole_cluster_virtual_mesh = DeviceCluster(
-            ).get_virtual_physical_mesh()
+            if alpa.api.initialized:
+                whole_cluster = alpa.device_mesh.global_cluster
+            else: 
+                whole_cluster = DeviceCluster()
+            whole_cluster_virtual_mesh = whole_cluster\
+                .get_virtual_physical_mesh()
             sliced_virtual_meshes = (
                 whole_cluster_virtual_mesh.slice_profiling_submeshes(
                     num_hosts, num_devices))

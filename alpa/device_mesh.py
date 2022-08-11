@@ -963,7 +963,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # Launch workers
         self.workers = []
 
-        # print(ray.available_resources())
+        print(ray.available_resources())
         # print(ray._private.state.state.placement_group_table())
         if alpa.device_mesh.global_placement_group: 
             placement_group = alpa.device_mesh.global_placement_group

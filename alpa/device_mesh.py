@@ -791,6 +791,8 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.device_strs = []
         self.operation_executables = {}
 
+        self.backend = xb.get_backend("gpu")
+
         self.set_runtime_random_seed(global_config.runtime_random_seed)
 
     ##### Executable Related Functions #####

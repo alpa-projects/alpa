@@ -334,12 +334,16 @@ def get_compile_options(num_replicas: int, num_partitions: int,
     return compile_options
 
 
-def jaxpr_to_hlo_module(name: str, closed_jaxpr: ClosedJaxpr,
-                        donated_invars: Sequence[bool], backend):
+def jaxpr_to_hlo_module(name: str,
+                        closed_jaxpr: ClosedJaxpr,
+                        donated_invars: Sequence[bool],
+                        backend=None):
     """Convert a jaxpr to an XLA HloModule.
 
     Reference code: jax/jax/_src/dispatch.py::lower_xla_callable
     """
+    if backend is None:
+        backend = xb.get_backend("gpu")
     backend_name = backend.platform
     in_avals = [var.aval for var in closed_jaxpr.jaxpr.invars]
     consts = closed_jaxpr.consts
@@ -666,6 +670,14 @@ class XlaPassContext:
     def __exit__(self, exc_type, exc_value, exc_traceback):
         XlaPassContext.current = None
         xe.clear_pass_context()
+
+
+def undefined_sharding_spec_proto():
+    """Return a proto of ShardingSpec which represents an undefined spec."""
+    # We reuse "Manual" to represent "Undefined"
+    proto = xc.OpSharding()
+    proto.type = xc.OpSharding.Type.MANUAL
+    return proto
 
 
 ########################################

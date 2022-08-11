@@ -1,7 +1,7 @@
 """Group small ops into layers and rematerialize at layer boundary."""
 from abc import ABC, abstractmethod
-import logging
 from functools import partial, wraps
+import logging
 from typing import Callable, Union, Sequence
 
 import numpy as np
@@ -14,6 +14,7 @@ from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun,
 from jax.interpreters.partial_eval import remat_call_p
 
 from alpa.global_env import global_config
+from alpa.parallel_plan import PlacementSpec
 from alpa.pipeline_parallel.layer_stats import (global_invar_size,
                                                 is_nontrivial, eqn_flops,
                                                 heavy_count,
@@ -42,14 +43,24 @@ class ManualLayerOption(LayerOption):
     """
     Manually specifying the boundaries of layers by using
     alpa.mark_pipeline_boundary()
+
+    Args:
+      remat_layer: Whether to use gradient rematerialization for each layer.
+      static_argnums: The indices of static arguments of the
+        forward function.
     """
 
-    def __init__(self, remat_layer=False):
+    def __init__(self,
+                 remat_layer: bool = False,
+                 static_argnums: Sequence[int] = ()):
         self.remat_layer = remat_layer
+        self.static_argnums = static_argnums
         super().__init__()
 
     def transform(self, func):
-        return manual_layer_construction(func, remat_layer=self.remat_layer)
+        return manual_layer_construction(func,
+                                         static_argnums=self.static_argnums,
+                                         remat_layer=self.remat_layer)
 
 
 class AutoLayerOption(LayerOption):
@@ -59,17 +70,51 @@ class AutoLayerOption(LayerOption):
     resulting layers. You can try a few values for this parameters.
     The best choice of this value depends on the number of nodes in your
     cluster and the number of repetitive blocks in your model.
+
+    Args:
+      layer_num: The number of layers to construct.
+      remat_layer: Whether to use gradient rematerialization for each layer.
+      static_argnums: The indices of static arguments of the
+        forward function.
     """
 
-    def __init__(self, layer_num: int, remat_layer=False):
+    def __init__(self,
+                 layer_num: int,
+                 remat_layer: bool = False,
+                 static_argnums: Sequence[int] = ()):
         super().__init__()
         self.layer_num = layer_num
         self.remat_layer = remat_layer
+        self.static_argnums = static_argnums
 
     def transform(self, func):
         return automatic_layer_construction(func,
+                                            static_argnums=self.static_argnums,
                                             layer_num=self.layer_num,
                                             remat_layer=self.remat_layer)
+
+
+class FollowLayerOption(LayerOption):
+    """Follow given input placement specs to construct the layer.
+
+    Args:
+      input_placement_specs: The flatten placement specs of inputs.
+      static_argnums: The indices of static arguments of the
+        forward function.
+    """
+
+    def __init__(self,
+                 input_placement_specs: Sequence[PlacementSpec],
+                 num_meshes: int,
+                 static_argnums: Sequence[int] = ()):
+        super().__init__()
+        self.placement_specs = input_placement_specs
+        self.num_meshes = num_meshes
+        self.static_argnums = static_argnums
+
+    def transform(self, func):
+        return follow_layer_construction(func, self.static_argnums,
+                                         self.placement_specs, self.num_meshes)
 
 
 LAYER_HEAVY_OP_LOWER_BOUND = 3
@@ -623,3 +668,83 @@ def automatic_layer_construction(fun: Callable = None,
     else:
         _check_callable(fun)
         return decorate_fun(fun)
+
+
+def follow_layer_construction(fun, static_argnums, input_placement_specs,
+                              num_meshes):
+    """Follow given input placement specs to construct layers."""
+    _check_callable(fun)
+
+    @wraps(fun)
+    def wrapped(*args):
+        jaxpr, out_shape_tree = make_jaxpr(fun,
+                                           static_argnums=static_argnums,
+                                           return_shape=True)(*args)
+
+        var2mesh = {}  # Dict[var -> mesh_idx]
+
+        for var, spec in zip(jaxpr.jaxpr.invars, input_placement_specs):
+            if spec is None:
+                # Assign input vars to mesh 0 by default
+                if isinstance(var, Var):
+                    var2mesh[var] = 0
+            else:
+                if isinstance(var, Var):
+                    var2mesh[var] = spec.mesh_ids[0]
+
+        sliced_eqns = slice_jaxpr_with_var_assignment(jaxpr, var2mesh,
+                                                      num_meshes)
+        jaxpr = add_pipeline_marks_for_sliced_eqns(jaxpr, sliced_eqns)
+
+        flatten_args, _ = tree_flatten(args)
+        ans = jaxpr_as_fun(jaxpr)(*flatten_args)  # pylint: disable=not-callable
+        _, out_tree = tree_flatten(out_shape_tree)
+        return tree_unflatten(out_tree, ans)
+
+    return wrapped
+
+
+def slice_jaxpr_with_var_assignment(jaxpr, var2mesh, num_meshes):
+    mesh_begin = [None] * num_meshes
+    mesh_end = [None] * num_meshes
+
+    # Run a linear scan to find the begin and end equations of each mesh.
+    cur_mesh = 0
+    for idx, eqn in enumerate(jaxpr.eqns):
+        if eqn.primitive is pipeline_p:
+            raise ValueError("FollowParallel is not compatible with manual "
+                             "pipeline marker. Please do not insert manual "
+                             "pipeline marker in the function.")
+        for var in eqn.invars:
+            if isinstance(var, Var) and var in var2mesh:
+                mesh_idx = var2mesh[var]
+
+                if mesh_idx > cur_mesh:
+                    cur_mesh = mesh_idx
+
+                if mesh_begin[cur_mesh] is None:
+                    mesh_begin[cur_mesh] = idx
+                mesh_end[cur_mesh] = idx
+
+    # Some boundary equations are not within the ranges detected above.
+    # Use DP algorithm to refine the boundary, so we can minimize the
+    # communication costs.
+    cost_criteria = "flops"
+    costs = get_layer_construction_costs(jaxpr, cost_criteria=cost_criteria)
+    _, _, compute_costs = costs
+
+    # To make the solution of DP algorithm respect our begin/end constraint.
+    # We assign begin, end equations a very large cost and run DP
+    # with a small eps.
+    max_cost = np.sum(compute_costs) * 10
+    for i in range(num_meshes):
+        assert mesh_begin[i] is not None and mesh_end[i] is not None
+        compute_costs[mesh_begin[i]] += max_cost
+        compute_costs[mesh_end[i]] += max_cost
+
+    sliced_eqns, _ = cluster_jaxpr_by_cost(jaxpr,
+                                           layer_num=num_meshes,
+                                           eps=0.1,
+                                           costs=costs,
+                                           cost_criteria=cost_criteria)
+    return sliced_eqns

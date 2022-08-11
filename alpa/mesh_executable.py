@@ -9,14 +9,13 @@ workers. The driver part sends control commands to launch the worker parts on
 workers.
 """
 from abc import ABC, abstractmethod
-import logging
 from typing import Sequence, Optional
 import os
 
 from jax import xla
 import jax.numpy as jnp
 from jax._src.api import ShapeDtypeStruct
-from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
+from jax._src.lib import xla_client as xc, xla_extension as xe
 from jax.core import ShapedArray
 from jax.interpreters import pxla
 from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves, PyTreeDef
@@ -40,12 +39,11 @@ from alpa.util import (compile_allocate_zero_buffers,
                        get_index_select_computation, get_shard_shape,
                        get_microbatch_sharding_spec, profile_xla_executable)
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
 # The global executable and buffer counter.
 mesh_executable_counter = 0
 remote_buffer_counter = 0
+
+GLOBAL_BACKEND_NAME = "gpu"
 
 
 class MeshDriverExecutable(ABC):
@@ -248,19 +246,18 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
 
-            backend = xb.get_backend("gpu")
-
             if physical_mesh.devices[0] is None:
                 # A fake physical mesh for generating HLO module only
                 self.compiled = run_backend_compilation(
-                    backend,
+                    physical_mesh.backend,
                     hlo_module,
                     stage_plan,
                     physical_mesh.num_devices,
                     bypass_device_assignment_check=True)
             else:
                 self.compiled = run_backend_compilation(
-                    backend, hlo_module, stage_plan, physical_mesh.num_devices)
+                    physical_mesh.backend, hlo_module, stage_plan,
+                    physical_mesh.num_devices)
             self.fully_optimized_hlo_text = self.compiled.hlo_modules(
             )[0].to_string()
 
@@ -375,7 +372,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
             costs = np.mean(costs, axis=0)
         else:
             assert isinstance(self.physical_mesh, LocalPhysicalDeviceMesh)
-            costs = profile_xla_executable(self.compiled, xb.get_backend("gpu"),
+            costs = profile_xla_executable(self.compiled,
+                                           self.physical_mesh.backend,
                                            self.physical_mesh.devices)
         return costs
 
@@ -622,7 +620,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             self.grad_sync_channel_ids = None
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
-            backend = xb.get_backend("gpu")
+            backend = physical_mesh.backend
 
             self.accumulate_grad = run_backend_compilation(
                 backend, accumulate_grad, stage_plan, physical_mesh.num_devices)
@@ -959,9 +957,8 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
             self.skip_allreduce_env_name = None
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
-            backend = xb.get_backend("gpu")
-            self.compiled = run_backend_compilation(backend, hlo_module,
-                                                    stage_plan,
+            self.compiled = run_backend_compilation(physical_mesh.backend,
+                                                    hlo_module, stage_plan,
                                                     physical_mesh.num_devices)
             self.hlo_text = self.compiled.hlo_modules()[0].to_string()
             self.grad_sync_channel_ids = get_grad_sync_channel_ids(
@@ -1040,7 +1037,7 @@ class AllocZeroBufferDriverExecutable(MeshDriverExecutable):
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
             self.allocate_zero_buffers = compile_allocate_zero_buffers(
-                xb.get_backend("gpu"), physical_mesh.devices, grad_shard_shapes,
+                physical_mesh.backend, physical_mesh.devices, grad_shard_shapes,
                 grad_shard_dtypes)
 
         self.exec_timer_name = get_execution_timer_name(self.exec_uuid)

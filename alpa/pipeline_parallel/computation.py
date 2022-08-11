@@ -29,7 +29,8 @@ from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
 from alpa.global_env import global_config
 from alpa.util import (OrderedSet, clone_jaxpr, get_compile_options,
                        jaxpr_to_hlo_module, setup_computation_alias,
-                       compile_dummy_zero_constant, get_var_mapping)
+                       compile_dummy_zero_constant, get_var_mapping,
+                       undefined_sharding_spec_proto)
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
@@ -143,9 +144,8 @@ class XlaPipelineComputation(PipelineComputation):
               JaxPipelineComputation.
         """
         closed_jaxpr = jax_pipeline_computation.closed_jaxpr()
-        backend = xb.get_backend("gpu")
         name = f"pipeline_computation_{jax_pipeline_computation.name}"
-        hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, None, backend)
+        hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, None)
 
         return cls(
             name=jax_pipeline_computation.name,
@@ -159,8 +159,7 @@ class XlaPipelineComputation(PipelineComputation):
         out_avals = [var.aval for var in self.outvars]
         tuple_args = len(
             self.invars) > 100  # pass long arg lists as tuple for TPU
-        backend = "gpu"
-        backend = xb.get_backend(backend)
+        backend = xb.get_backend("gpu")
         device = backend.get_default_device_assignment(1)[0]
         options = get_compile_options(
             num_replicas=1,
@@ -212,12 +211,10 @@ class XlaShardedPipelineComputation(PipelineComputation):
     @classmethod
     def dummy_computation(cls, name, logical_mesh_shape, gensym_func):
         """Create a dummy computation."""
-        backend_name = "gpu"
-        backend = xb.get_backend(backend_name)
         stage_plan = StagePlan(global_config.compile_random_seed,
                                logical_mesh_shape, 1, 1, AutoShardingOption(),
                                None, 0)
-        compiled = compile_dummy_zero_constant(backend,
+        compiled = compile_dummy_zero_constant(xb.get_backend("gpu"),
                                                np.prod(logical_mesh_shape))
         sharding_annotated_module = compiled.hlo_modules()[0]
         outvar = gensym_func(ShapedArray((), np.dtype(np.int32)))
@@ -827,6 +824,7 @@ def generate_computations_from_modules(jax_computations, computation_names,
 def generate_sharded_xla_computations_arguments(
         name: str, jax_computations: Sequence[JaxPipelineComputation],
         computation_donate_invars: Sequence[bool],
+        input_sharding_dict: Dict[Var, pxla.ShardingSpec],
         output_sharding_dict: Dict[Var, pxla.ShardingSpec],
         stage_input_sharding: Optional[Sequence[pxla.ShardingSpec]]):
     """
@@ -863,10 +861,19 @@ def generate_sharded_xla_computations_arguments(
     dummy_donated_invars = (True,) * donation_num + (False,) * (len(invars) -
                                                                 donation_num)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
-    backend_name = "gpu"
-    backend = xb.get_backend(backend_name)
-    hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, dummy_donated_invars,
-                                     backend)
+    hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, dummy_donated_invars)
+
+    if input_sharding_dict:
+        sharding_protos = []
+        sharding_specs = []
+        for x in invars:
+            spec = input_sharding_dict.get(x, None)
+            if spec is None:
+                sharding_protos.append(undefined_sharding_spec_proto())
+            else:
+                sharding_protos.append(spec.sharding_proto())
+            sharding_specs.append(spec)
+        xe.set_hlo_module_input_shardings(hlo_module, sharding_protos)
 
     if output_sharding_dict:
         sharding_protos = [
@@ -889,7 +896,7 @@ def generate_sharded_xla_computations(
         name: str, jax_computations: Sequence[JaxPipelineComputation],
         computation_donate_invars, donatable_lists, acc_grad_outvars,
         num_micro_batches, logical_mesh, autosharding_option,
-        output_sharding_dict, stage_input_sharding):
+        input_sharding_dict, output_sharding_dict, stage_input_sharding):
     """
     Generate sharded XLA computations.
 
@@ -898,8 +905,8 @@ def generate_sharded_xla_computations(
     them together to get a sharding strategy config.
     """
     hlo_module, flops = generate_sharded_xla_computations_arguments(
-        name, jax_computations, computation_donate_invars, output_sharding_dict,
-        stage_input_sharding)
+        name, jax_computations, computation_donate_invars, input_sharding_dict,
+        output_sharding_dict, stage_input_sharding)
 
     #  pylint: disable=unbalanced-tuple-unpacking
     (computation_names, computation_modules,

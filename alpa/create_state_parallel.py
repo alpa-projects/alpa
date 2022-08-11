@@ -2,7 +2,7 @@
 from collections import defaultdict, deque
 from typing import Sequence, Optional
 
-from jax._src.lib import xla_bridge as xb, xla_extension as xe
+from jax._src.lib import xla_extension as xe
 from jax.core import ClosedJaxpr, Var
 from jax.interpreters import partial_eval as pe, pxla
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
@@ -76,15 +76,13 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
     # Trace to get jaxpr and HloModule
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    out_tree = out_tree_thunk()
-    state_aval = tree_unflatten(out_tree, out_avals)
 
     name = f"{fun.__name__}_create_state_parallel"
-    backend = xb.get_backend("gpu")
-    hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, donated_invars,
-                                     backend)
+    hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, donated_invars)
 
     # Compile train_step to get the placement specs.
+    out_tree = out_tree_thunk()
+    state_aval = tree_unflatten(out_tree, out_avals)
     executable = train_step.get_executable(state_aval, other_args)
     placement_specs = executable.get_input_placement_specs()[0]
     placement_specs, _ = tree_flatten(placement_specs)
@@ -126,15 +124,17 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
         num_meshes = len(executable.mesh_group)
 
         propagate_mesh_assignment(jaxpr, var2mesh, eqn2mesh)
-        eqns = slice_jaxpr_with_mesh_assignment(jaxpr, eqn2mesh, num_meshes)
-        new_jaxpr = add_pipeline_marks_for_sliced_eqns(closed_jaxpr, eqns)
+        sliced_eqns = slice_jaxpr_with_mesh_assignment(jaxpr, eqn2mesh,
+                                                       num_meshes)
+        new_jaxpr = add_pipeline_marks_for_sliced_eqns(closed_jaxpr,
+                                                       sliced_eqns)
 
         # Compile a pipeshard executable with predefined output shardings
         pipeshard_config = compile_pipeshard_executable_internal(
             new_jaxpr, None, 1, [False] * len(avals), [False] * len(avals),
             executable.mesh_group.parent, 1, "inference",
             AutoShardingOption(enable_auto_sharding=False),
-            UniformStageOption(), name, output_shardings, None)
+            UniformStageOption(), name, None, output_shardings, None)
 
         return CreateStateExecutable(mesh_group=executable.mesh_group,
                                      pipeshard_config=pipeshard_config,
@@ -145,6 +145,16 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
 
 
 def propagate_mesh_assignment(jaxpr, var2mesh, eqn2mesh):
+    """Propagate mesh assignment for all variables and equations.
+
+    Note that this is different from the propagation in apply_grad.
+    create_state_parallel: always assign one equation to one mesh.
+      If one equation is used by multiple meshes, use send/recv to
+      pass the value.
+    apply_grad: can assign one equation to multiple meshes.
+      If one equation is used by multiple meshes, replicate the
+      computation on all meshes.
+    """
     def_eqn = {}  # Dict[var -> eqn_idx]
 
     for idx, eqn in enumerate(jaxpr.eqns):
@@ -162,6 +172,8 @@ def propagate_mesh_assignment(jaxpr, var2mesh, eqn2mesh):
         for var in mesh2vars[mesh_idx]:
             eqn_idx = def_eqn[var]
             if eqn_idx not in eqn2mesh:
+                # Propagate from the definition equation to
+                # all related equations
                 queue = deque((eqn_idx,))
 
                 while queue:
@@ -176,10 +188,10 @@ def propagate_mesh_assignment(jaxpr, var2mesh, eqn2mesh):
 
 
 def slice_jaxpr_with_mesh_assignment(jaxpr, eqn2mesh, num_meshes):
-    eqns = [[] for _ in range(num_meshes)]
+    sliced_eqns = [[] for _ in range(num_meshes)]
 
     for idx, eqn in enumerate(jaxpr.eqns):
         if idx in eqn2mesh:
-            eqns[eqn2mesh[idx]].append(eqn)
+            sliced_eqns[eqn2mesh[idx]].append(eqn)
 
-    return eqns
+    return sliced_eqns

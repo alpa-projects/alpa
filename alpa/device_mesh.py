@@ -963,7 +963,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.workers = []
 
         _placement_group = global_cluster._placement_group
-        
         # get the sorted bundle index list
         device_bundle_idx_list = get_bundle_idx(_placement_group,
                                                 self.device_ips)

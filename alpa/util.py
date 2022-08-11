@@ -1306,7 +1306,6 @@ def get_bundle2ip(pg=None):
     for resource in resources_list:
         resource_name_list = resource.keys()
 
-        # ic(resource_name_list, pg_id)
         node_ip = None
         bundle_index_list = []
         for resource_name in resource_name_list:
@@ -1381,7 +1380,6 @@ def create_placement_group(num_hosts,
         current_placement_group is None or
         not should_capture_child_tasks_in_placement_group)
 
-    ic(current_placement_group, should_capture_child_tasks_in_placement_group, ray.available_resources())
     if should_create_placement_group:
         additional_resources_per_host = (additional_resources_per_host or {})
         bundle = {
@@ -1439,16 +1437,15 @@ def get_bundle_idx(placement_group, device_ips):
     bundle_ips = get_bundle2ip(placement_group)
     bundle_specs = placement_group.bundle_specs
 
-    ic(bundle_ips, bundle_specs, device_ips)
     # filter out the bundle index with device (GPUs)
     device_bundle_idx_list = [
         i for i, bundle_spec in enumerate(bundle_specs)
         if bundle_spec.get("GPU", 0) > 0
     ]
 
-    # if len(device_bundle_idx_list) != len(device_ips):
-    #     raise ValueError("The number of bundles with GPU resources "
-    #                      "is not equal to the number of device IPs.")
+    if len(device_bundle_idx_list) < len(device_ips):
+        raise ValueError("The number of bundles with GPU resources "
+                         "is no less than the number of device IPs.")
 
     # device IP -> bundle index
     bundle_ip2idx = {bundle_ips[i]: i for i in device_bundle_idx_list}

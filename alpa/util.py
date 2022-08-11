@@ -1463,6 +1463,7 @@ def get_placement_group_from_id(placement_group_id: str):
     """Get the placement group from the unique id"""
     return PlacementGroup(PlacementGroupID(hex_to_binary(placement_group_id)))
 
+
 def retrieve_placement_group():
     """retrieve the placement group to support node affinity scheduling
 

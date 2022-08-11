@@ -1733,7 +1733,6 @@ class VirtualPhysicalMesh:
             # slicing along the host dimension
             host_ids = [self.host_ids[x] for x in indices]
             host_info = [self.host_info[x] for x in host_ids]
-
             return VirtualPhysicalMesh(
                 host_ids=host_ids,
                 host_info=host_info,

@@ -44,6 +44,8 @@ import jax.numpy as jnp
 import numpy as np
 import ray
 from ray.util.placement_group import remove_placement_group, PlacementGroup
+from ray._private.utils import hex_to_binary
+from ray._raylet import PlacementGroupID
 
 import alpa
 from alpa import mesh_profiling
@@ -965,20 +967,15 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
         print(ray.available_resources())
         # print(ray._private.state.state.placement_group_table())
-        if alpa.device_mesh.global_placement_group: 
+        if alpa.device_mesh.global_placement_group:
             placement_group = alpa.device_mesh.global_placement_group
-        else: 
-            for name, info in ray._private.state.state.placement_group_table().items(): 
-                if info['state'] == 'CREATED':
-                    from ray._private.utils import hex_to_binary
-                    from ray._raylet import PlacementGroupID
-
-                    # placement_group = get_placement_group(name)
-                    
+        else:
+            for name, info in ray._private.state.state.placement_group_table(
+            ).items():
+                if info["state"] == "CREATED":
                     placement_group = PlacementGroup(
-                        PlacementGroupID(hex_to_binary(name))
-                    )
-        print(placement_group)
+                        PlacementGroupID(hex_to_binary(name)))
+
         # get the sorted bundle index list
         device_bundle_idx_list = get_bundle_idx(placement_group,
                                                 self.device_ips)
@@ -2015,7 +2012,6 @@ class DeviceCluster:
     """
 
     def __init__(self):
-        global global_placement_group
         # pylint: disable=import-outside-toplevel
         ray_global_node = ray_worker._global_node
         try:
@@ -2039,13 +2035,6 @@ class DeviceCluster:
             number = host_info["Resources"]["GPU"]
             assert number.is_integer()
             self.host_num_devices.append(int(number))
-
-        print('hello, ', alpa.device_mesh.global_placement_group)
-        # import traceback
-        # traceback.print_stack()
-        # print(ray.available_resources())
-        # global_placement_group = create_placement_group(
-        #     len(self.host_num_devices), self.host_num_devices[0])
 
     def clean_up_placement_group(self):
         if self._placement_group:
@@ -2129,8 +2118,10 @@ global_physical_mesh: PhysicalDeviceMesh = None
 global_virtual_physical_mesh: VirtualPhysicalMesh = None
 global_placement_group = None
 
+
 def init_global_cluster(cluster: str):
-    global global_cluster, global_physical_mesh, global_virtual_physical_mesh, global_placement_group
+    global global_cluster, global_physical_mesh, global_virtual_physical_mesh,\
+        global_placement_group
 
     if cluster == "local":
         global_physical_mesh = LocalPhysicalDeviceMesh()
@@ -2140,16 +2131,15 @@ def init_global_cluster(cluster: str):
         update_jax_platform("cpu")
         global_cluster = DeviceCluster()
         global_placement_group = create_placement_group(
-            len(global_cluster.host_num_devices), global_cluster.host_num_devices[0])
+            len(global_cluster.host_num_devices),
+            global_cluster.host_num_devices[0])
         global_virtual_physical_mesh = (
             global_cluster.get_virtual_physical_mesh())
-    
-        print('hello, ', alpa.device_mesh.global_placement_group)
 
 
 def shutdown_global_cluster():
-    global global_cluster, global_physical_mesh, global_virtual_physical_mesh, global_placement_group
-
+    global global_cluster, global_physical_mesh, global_virtual_physical_mesh,\
+        global_placement_group
 
     global_cluster = None
     update_jax_platform("gpu")
@@ -2164,7 +2154,7 @@ def shutdown_global_cluster():
         global_virtual_physical_mesh = None
 
     remove_placement_group(global_placement_group)
-    global_placement_group = None 
+    global_placement_group = None
 
 
 def set_global_cluster(cluster: DeviceCluster):

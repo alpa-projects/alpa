@@ -905,8 +905,8 @@ def generate_sharded_xla_computations(
     them together to get a sharding strategy config.
     """
     hlo_module, flops = generate_sharded_xla_computations_arguments(
-        name, jax_computations, computation_donate_invars,
-        input_sharding_dict, output_sharding_dict, stage_input_sharding)
+        name, jax_computations, computation_donate_invars, input_sharding_dict,
+        output_sharding_dict, stage_input_sharding)
 
     #  pylint: disable=unbalanced-tuple-unpacking
     (computation_names, computation_modules,

@@ -18,7 +18,7 @@ from typing import Callable, Optional, Sequence, Union, Any
 from jax import linear_util as lu
 from jax.core import AbstractValue
 from jax.interpreters import pxla
-from jax.tree_util import PyTreeDef, tree_map
+from jax.tree_util import PyTreeDef
 import numpy as np
 
 from alpa.create_state_parallel import compile_create_state_executable
@@ -229,8 +229,8 @@ class PipeshardParallel(ParallelMethod):
         return compile_pipeshard_executable(
             fun, in_tree, out_tree_thunk, static_argnums, donated_invars,
             batch_invars, mesh, self.num_micro_batches, self.pipeline_schedule,
-            self.as_option, self.layer_option, self.stage_option,
-            None, self.stage_input_shardings, *avals)
+            self.as_option, self.layer_option, self.stage_option, None,
+            self.stage_input_shardings, *avals)
 
 
 class LocalPipelineParallel(ParallelMethod):
@@ -344,12 +344,8 @@ class FollowParallel(ParallelMethod):
         *avals: Sequence[AbstractValue],
     ):
         input_placement_specs = self.get_input_placement_specs()
-        return compile_follow_parallel_executable(fun, in_tree, out_tree_thunk,
-                                                  static_argnums,
-                                                  donated_invars, batch_invars,
-                                                  self.src_func,
-                                                  self.num_micro_batches,
-                                                  input_placement_specs,
-                                                  self.pipeline_schedule,
-                                                  self.layer_option,
-                                                  *avals)
+        return compile_follow_parallel_executable(
+            fun, in_tree, out_tree_thunk, static_argnums, donated_invars,
+            batch_invars, self.src_func, self.num_micro_batches,
+            input_placement_specs, self.pipeline_schedule, self.layer_option,
+            *avals)

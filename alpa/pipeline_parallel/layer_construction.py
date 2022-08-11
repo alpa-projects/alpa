@@ -1,6 +1,5 @@
 """Group small ops into layers and rematerialize at layer boundary."""
 from abc import ABC, abstractmethod
-from collections import defaultdict
 from functools import partial, wraps
 import logging
 from typing import Callable, Union, Sequence
@@ -51,7 +50,8 @@ class ManualLayerOption(LayerOption):
         forward function.
     """
 
-    def __init__(self, remat_layer: bool = False,
+    def __init__(self,
+                 remat_layer: bool = False,
                  static_argnums: Sequence[int] = ()):
         self.remat_layer = remat_layer
         self.static_argnums = static_argnums
@@ -78,7 +78,9 @@ class AutoLayerOption(LayerOption):
         forward function.
     """
 
-    def __init__(self, layer_num: int, remat_layer: bool = False,
+    def __init__(self,
+                 layer_num: int,
+                 remat_layer: bool = False,
                  static_argnums: Sequence[int] = ()):
         super().__init__()
         self.layer_num = layer_num
@@ -94,7 +96,7 @@ class AutoLayerOption(LayerOption):
 
 class FollowLayerOption(LayerOption):
     """Follow given input placement specs to construct the layer.
-    
+
     Args:
       input_placement_specs: The flatten placement specs of inputs.
       static_argnums: The indices of static arguments of the
@@ -105,15 +107,14 @@ class FollowLayerOption(LayerOption):
                  input_placement_specs: Sequence[PlacementSpec],
                  num_meshes: int,
                  static_argnums: Sequence[int] = ()):
+        super().__init__()
         self.placement_specs = input_placement_specs
         self.num_meshes = num_meshes
         self.static_argnums = static_argnums
 
     def transform(self, func):
-        return follow_layer_construction(func, 
-                                         self.static_argnums,
-                                         self.placement_specs,
-                                         self.num_meshes)
+        return follow_layer_construction(func, self.static_argnums,
+                                         self.placement_specs, self.num_meshes)
 
 
 LAYER_HEAVY_OP_LOWER_BOUND = 3
@@ -669,7 +670,8 @@ def automatic_layer_construction(fun: Callable = None,
         return decorate_fun(fun)
 
 
-def follow_layer_construction(fun, static_argnums, input_placement_specs, num_meshes):
+def follow_layer_construction(fun, static_argnums, input_placement_specs,
+                              num_meshes):
     """Follow given input placement specs to construct layers."""
     _check_callable(fun)
 
@@ -690,7 +692,8 @@ def follow_layer_construction(fun, static_argnums, input_placement_specs, num_me
                 if isinstance(var, Var):
                     var2mesh[var] = spec.mesh_ids[0]
 
-        sliced_eqns = slice_jaxpr_with_var_assignment(jaxpr, var2mesh, num_meshes)
+        sliced_eqns = slice_jaxpr_with_var_assignment(jaxpr, var2mesh,
+                                                      num_meshes)
         jaxpr = add_pipeline_marks_for_sliced_eqns(jaxpr, sliced_eqns)
 
         flatten_args, _ = tree_flatten(args)
@@ -724,11 +727,11 @@ def slice_jaxpr_with_var_assignment(jaxpr, var2mesh, num_meshes):
                 mesh_end[cur_mesh] = idx
 
     # Some boundary equations are not within the ranges detected above.
-    # Use DP algorithm to refine the boundary, so we can minimize the communication
-    # costs.
+    # Use DP algorithm to refine the boundary, so we can minimize the
+    # communication costs.
     cost_criteria = "flops"
     costs = get_layer_construction_costs(jaxpr, cost_criteria=cost_criteria)
-    non_trivial, input_sizes, compute_costs = costs
+    _, _, compute_costs = costs
 
     # To make the solution of DP algorithm respect our begin/end constraint.
     # We assign begin, end equations a very large cost and run DP

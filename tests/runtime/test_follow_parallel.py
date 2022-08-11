@@ -83,8 +83,7 @@ class FollowParallelTest(unittest.TestCase):
         out = eval_step(state.params, eval_batch)
 
         actual = jax.tree_flatten(
-            eval_step.get_last_executable().get_input_placement_specs()
-            [0])[0]
+            eval_step.get_last_executable().get_input_placement_specs()[0])[0]
         expected = jax.tree_flatten(
             train_step.get_last_executable().get_input_placement_specs()
             [0].params)[0]
@@ -99,8 +98,8 @@ class FollowParallelTest(unittest.TestCase):
         self.run_test(method)
 
     def test_pipeshard_parallel(self):
-        method = PipeshardParallel(num_micro_batches=2,
-                                   layer_option=alpa.AutoLayerOption(layer_num=2))
+        method = PipeshardParallel(
+            num_micro_batches=2, layer_option=alpa.AutoLayerOption(layer_num=2))
         self.run_test(method)
 
 

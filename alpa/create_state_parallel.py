@@ -124,10 +124,10 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
         num_meshes = len(executable.mesh_group)
 
         propagate_mesh_assignment(jaxpr, var2mesh, eqn2mesh)
-        sliced_eqns = slice_jaxpr_with_mesh_assignment(
-            jaxpr, eqn2mesh, num_meshes)
-        new_jaxpr = add_pipeline_marks_for_sliced_eqns(
-            closed_jaxpr, sliced_eqns)
+        sliced_eqns = slice_jaxpr_with_mesh_assignment(jaxpr, eqn2mesh,
+                                                       num_meshes)
+        new_jaxpr = add_pipeline_marks_for_sliced_eqns(closed_jaxpr,
+                                                       sliced_eqns)
 
         # Compile a pipeshard executable with predefined output shardings
         pipeshard_config = compile_pipeshard_executable_internal(

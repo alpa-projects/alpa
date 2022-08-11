@@ -228,7 +228,8 @@ def compile_pipeshard_executable_internal(
         input_sharding_dict = {}
     if global_output_shardings:
         assert len(global_output_shardings) == len(global_outvars)
-        output_sharding_dict = dict(zip(global_outvars, global_output_shardings))
+        output_sharding_dict = dict(zip(global_outvars,
+                                        global_output_shardings))
     else:
         output_sharding_dict = {}
 
@@ -273,8 +274,8 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                      acc_grad_outvars, donate_invars_dict, num_microbatch,
                      logical_mesh_shapes, autosharding_option_dicts,
                      default_as_option, input_sharding_dict,
-                     output_sharding_dict, stage_input_shardings,
-                     name_base, gensym_func):
+                     output_sharding_dict, stage_input_shardings, name_base,
+                     gensym_func):
     """Run intra-op parallelism compilation for a stage."""
     # Initialize donation mapping
     stage_dict = [[] for _ in range(num_meshes)]
@@ -330,8 +331,8 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         if distributed_compile:
             module, flops = (generate_sharded_xla_computations_arguments(
                 f"{name_base}_mesh_{mesh_idx}", stage_dict[mesh_idx],
-                stage_donate_invars, input_sharding_dict,
-                output_sharding_dict, stage_input_sharding))
+                stage_donate_invars, input_sharding_dict, output_sharding_dict,
+                stage_input_sharding))
             other_kwargs = {
                 "logical_mesh": logical_mesh,
                 "return_mode": "stages",
@@ -348,8 +349,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                 f"{name_base}_mesh_{mesh_idx}", stage_dict[mesh_idx],
                 stage_donate_invars, donatable_dict[mesh_idx], acc_grad_outvars,
                 num_microbatch, logical_mesh, autosharding_option,
-                input_sharding_dict, output_sharding_dict,
-                stage_input_sharding)
+                input_sharding_dict, output_sharding_dict, stage_input_sharding)
             total_flops += flops
             for i, xla_stage in zip(stage_id_dict[mesh_idx],
                                     sharded_xla_stages):

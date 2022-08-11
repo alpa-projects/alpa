@@ -968,7 +968,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         if alpa.device_mesh.global_placement_group: 
             placement_group = alpa.device_mesh.global_placement_group
         else: 
-            for name, info in ray._private.state.state.placement_group_table(): 
+            for name, info in ray._private.state.state.placement_group_table().items(): 
                 if info['state'] == 'CREATED':
                     placement_group = ray.util.placement_group.get_placement_group(name)
             alpa.device_mesh.global_placement_group

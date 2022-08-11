@@ -966,8 +966,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # get the sorted bundle index list
         device_bundle_idx_list = get_bundle_idx(placement_group,
                                                 self.device_ips)
-        
-        print(self.num_devices_per_host)
+
         for i in range(self.num_hosts):
             bundle_index = device_bundle_idx_list[i]
 

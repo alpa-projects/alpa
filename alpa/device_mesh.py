@@ -2026,6 +2026,7 @@ class DeviceCluster:
             assert number.is_integer()
             self.host_num_devices.append(int(number))
 
+        print('hello, ', alpa.device_mesh.global_placement_group)
         # import traceback
         # traceback.print_stack()
         # print(ray.available_resources())

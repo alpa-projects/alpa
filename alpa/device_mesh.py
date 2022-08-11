@@ -2129,6 +2129,8 @@ def init_global_cluster(cluster: str):
             len(global_cluster.host_num_devices), global_cluster.host_num_devices[0])
         global_virtual_physical_mesh = (
             global_cluster.get_virtual_physical_mesh())
+    
+        print('hello, ', alpa.device_mesh.global_placement_group)
 
 
 def shutdown_global_cluster():

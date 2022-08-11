@@ -43,7 +43,7 @@ from jax.lib import xla_client
 import jax.numpy as jnp
 import numpy as np
 import ray
-from ray.util.placement_group import remove_placement_group, get_placement_group
+from ray.util.placement_group import remove_placement_group, PlacementGroup
 
 import alpa
 from alpa import mesh_profiling
@@ -970,8 +970,14 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         else: 
             for name, info in ray._private.state.state.placement_group_table().items(): 
                 if info['state'] == 'CREATED':
-                    placement_group = get_placement_group(name)
+                    from ray._private.utils import hex_to_binary
+                    from ray._raylet import PlacementGroupID
+
+                    # placement_group = get_placement_group(name)
                     
+                    placement_group = PlacementGroup(
+                        PlacementGroupID(hex_to_binary(name))
+                    )
         print(placement_group)
         # get the sorted bundle index list
         device_bundle_idx_list = get_bundle_idx(placement_group,

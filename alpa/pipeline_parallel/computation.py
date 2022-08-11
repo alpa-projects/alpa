@@ -865,12 +865,14 @@ def generate_sharded_xla_computations_arguments(
 
     if input_sharding_dict:
         sharding_protos = []
+        sharding_specs = []
         for x in invars:
-            spec = input_sharding_dict[x]
+            spec = input_sharding_dict.get(x, None)
             if spec is None:
                 sharding_protos.append(undefined_sharding_spec_proto())
             else:
                 sharding_protos.append(spec.sharding_proto())
+            sharding_specs.append(spec)
         xe.set_hlo_module_input_shardings(hlo_module, sharding_protos)
 
     if output_sharding_dict:

@@ -315,7 +315,7 @@ class FollowParallel(ParallelMethod):
                  num_micro_batches: Optional[int] = None,
                  get_input_placement_specs: Callable = None,
                  pipeline_schedule: str = "inference",
-                 layer_option: str = "auto"):
+                 layer_option: str = "follow"):
         self.src_func = src_func
         self.num_micro_batches = num_micro_batches
 

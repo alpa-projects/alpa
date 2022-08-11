@@ -7,8 +7,13 @@ from jax.interpreters import partial_eval as pe
 from jax.tree_util import tree_leaves
 
 from alpa.mesh_executable import (NormalMeshDriverExecutable,
-                                  GradAccMeshDriverExecutable,
-                                  PlacementSpec)
+                                  GradAccMeshDriverExecutable)
+from alpa.parallel_plan import PlacementSpec
+from alpa.pipeline_parallel.compile_executable import (
+    compile_pipeshard_executable)
+from alpa.pipeline_parallel.layer_construction import (ManualLayerOption,
+                                                       FollowLayerOption)
+from alpa.pipeline_parallel.stage_construction import UniformStageOption
 from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                AutoShardingOption)
 from alpa.util import (jaxpr_to_hlo_module, trace_jaxpr_with_micro_batch,
@@ -25,7 +30,7 @@ def compile_follow_parallel_executable(fun, in_tree, out_tree_thunk,
                                        pipeline_schedule, layer_option, *avals):
     executable = src_func.get_last_executable()
     is_leave = lambda x: isinstance(x, PlacementSpec) or x is None
-    placement_specs = tree_leaves(input_placement_specs, is_leave)
+    input_placement_specs = tree_leaves(input_placement_specs, is_leave)
 
     if isinstance(executable,
                   (NormalMeshDriverExecutable, GradAccMeshDriverExecutable)):
@@ -42,7 +47,7 @@ def compile_follow_parallel_executable(fun, in_tree, out_tree_thunk,
 
         # Get input sharding specs
         sharding_protos = []
-        for spec in placement_specs:
+        for spec in input_placement_specs:
             if spec is None:
                 sharding_protos.append(undefined_sharding_spec_proto())
             else:
@@ -65,10 +70,15 @@ def compile_follow_parallel_executable(fun, in_tree, out_tree_thunk,
 
         if layer_option == "manual":
             layer_option = ManualLayerOption()
-        elif layer_option == "auto":
-            layer_option = FollowLayerOption(placement_specs)
+        elif layer_option == "follow":
+            layer_option = FollowLayerOption(input_placement_specs,
+                                             len(executable.mesh_group))
         else:
             raise ValueError(f"Invalid layer option: {layer_option}")
+
+        input_shardings = [x.sharding_specs[0] for x in input_placement_specs]
+        # TODO(lmzheng): handle ReplicatedDistributedArray, tied embedding
+        mesh = executable.mesh_group.parent
 
         return compile_pipeshard_executable(
             fun, in_tree, out_tree_thunk, static_argnums, donated_invars,
@@ -76,72 +86,3 @@ def compile_follow_parallel_executable(fun, in_tree, out_tree_thunk,
             AutoShardingOption(enable_auto_sharding=False),
             layer_option, UniformStageOption(),
             input_shardings, None, *avals)
-
-#def slice_jaxpr_with_var_assignment(jaxpr, var2mesh):
-#        # Trace to get jaxpr and HloModule
-#        closed_jaxpr, batch_size = trace_jaxpr_with_micro_batch(
-#            fun, batch_invars, num_micro_batches, avals)
-#
-#        if num_microbatch > 1:
-#            # Trace again with a full batch
-#            for store in fun.stores:
-#                if store:
-#                    store.reset()
-#            full_batch_closed_jaxpr, _ = trace_jaxpr_with_micro_batch(
-#                fun, batch_invars, 1, avals)
-#        else:
-#            full_batch_closed_jaxpr = None
-#
-#        # Construct a new pipelined jaxpr
-#        invars = closed_jaxpr.jaxpr.invars
-#
-#        var2mesh = {}  # Dict[var -> mesh_id]
-#
-#        input_shardings = []
-#        for var, spec in zip(invars, placement_specs):
-#            if spec is None:
-#                # Assign input vars to mesh 0 by default
-#                if isinstance(var, Var):
-#                    var2mesh[var] = 0
-#            else:
-#                if isinstance(var, Var):
-#                    var2mesh[var] = spec.mesh_ids[0]
-#                input_shardings.append(spec.sharding_specs[0])
-#
-#        num_meshes = len(executable.mesh_group)
-#        sliced_eqns = slice_jaxpr_with_var_assignment(
-#            closed_jaxpr.jaxpr, var2mesh)
-#        new_jaxpr = add_pipeline_marks_for_sliced_eqns(
-#            closed_jaxpr, sliced_eqns)
-#
-#
-#
-#    mesh_must_eqns = defaultdict(list)   # Dict[mesh_idx -> List[eqn_idx]]
-#
-#    # All direct users of an input var much be on the same mesh of the input var.
-#    for idx, eqn in enumerate(jaxpr.eqns):
-#        if eqn.primitive is pipeline_p:
-#            raise ValueError("FollowParallel is not compatible with manual "
-#                             "pipeline marker. Please do not insert manual "
-#                             "pipeline marker in the function.")
-#        for var in eqn.invars:
-#            if var in var2mesh:
-#                mesh_must_eqns[var2mesh[var]].append(idx)
-#
-#    cost_criteria = "flops"
-#    costs = get_layer_construction_costs(jaxpr, cost_criteria=cost_criteria)
-#    non_trivial, input_sizes, compute_costs = costs
-#
-#    max_cost = np.sum(compute_costs) * 10
-#    for mesh_idx, eqn_indices in mesh_must_eqns:
-#        tmp_cost = max_cost / len(eqn_indices)
-#        for eqn_idx in eqn_indices:
-#            compute_costs[eqn_idx] = tmp_cost
-#
-#    sliced_eqns, _ = cluster_jaxpr_by_cost(jaxpr,
-#					   layer_num=len(mesh_must_eqns),
-#					   eps=0.1,
-#					   costs,
-#					   cost_criteria=cost_criteria)
-#    return sliced_eqns
-#

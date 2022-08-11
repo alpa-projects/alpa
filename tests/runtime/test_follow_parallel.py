@@ -82,16 +82,13 @@ class FollowParallelTest(unittest.TestCase):
         state = train_step(state, train_batch)
         out = eval_step(state.params, eval_batch)
 
-        if isinstance(method, ShardParallel):
-            actual = jax.tree_flatten(
-                eval_step.get_last_executable().get_input_placement_specs()
-                [0])[0]
-            expected = jax.tree_flatten(
-                train_step.get_last_executable().get_input_placement_specs()
-                [0].params)[0]
-            assert actual == expected
-        elif isinstance(method, PipeshardParallel):
-            raise NotImplementedError
+        actual = jax.tree_flatten(
+            eval_step.get_last_executable().get_input_placement_specs()
+            [0])[0]
+        expected = jax.tree_flatten(
+            train_step.get_last_executable().get_input_placement_specs()
+            [0].params)[0]
+        assert actual == expected
 
     def test_shard_parallel(self):
         method = ShardParallel(num_micro_batches=None)
@@ -109,8 +106,8 @@ class FollowParallelTest(unittest.TestCase):
 
 def suite():
     suite = unittest.TestSuite()
-    #suite.addTest(FollowParallelTest("test_shard_parallel"))
-    #suite.addTest(FollowParallelTest("test_shard_parallel_grad_acc"))
+    suite.addTest(FollowParallelTest("test_shard_parallel"))
+    suite.addTest(FollowParallelTest("test_shard_parallel_grad_acc"))
     suite.addTest(FollowParallelTest("test_pipeshard_parallel"))
     return suite
 

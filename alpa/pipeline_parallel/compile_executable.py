@@ -63,14 +63,18 @@ def compile_pipeshard_executable(
     debug_compilation_time(None)
     name_base = f"{fun.__name__}_pipeshard_parallel"
 
-    if pipeline_schedule == "inference":
-        fun.f = layer_option.transform(fun.f)
-
     # Trace the function wit a micro batch to get the jaxpr.
     # Apply layer construction to add pipeline markers.
     with GradFuncTransformContext(layer_option.transform):
+        if pipeline_schedule == "inference":
+            f_backup = fun.f
+            fun.f = layer_option.transform(fun.f)
+
         closed_jaxpr, micro_batch_size = trace_jaxpr_with_micro_batch(
             fun, batch_invars, num_microbatch, avals)
+
+        if pipeline_schedule == "inference":
+            fun.f = f_backup
 
     # Trace again with a full batch.
     # The full batch is used to derive the reduction operator across
@@ -218,8 +222,8 @@ def compile_pipeshard_executable_internal(
 
     # Forcibly set the sharding specs of global invars and outvars.
     if global_input_shardings:
-        assert len(global_input_shardings) == len(global_outvars)
-        input_sharding_dict = dict(zip(global_outvars, global_input_shardings))
+        assert len(global_input_shardings) == len(global_invars)
+        input_sharding_dict = dict(zip(global_invars, global_input_shardings))
     else:
         input_sharding_dict = {}
     if global_output_shardings:

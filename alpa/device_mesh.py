@@ -2023,6 +2023,7 @@ class DeviceCluster:
             assert number.is_integer()
             self.host_num_devices.append(int(number))
 
+        print(ray.available_resources())
         self._placement_group = create_placement_group(
             len(self.host_num_devices), self.host_num_devices[0])
 

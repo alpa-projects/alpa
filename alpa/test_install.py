@@ -34,7 +34,7 @@ class InstallationTest(unittest.TestCase):
 
         state, batch, train_step = get_mlp_train_state_and_step(batch_size=128,
                                                                 hidden_size=128,
-                                                                num_layers=6)
+                                                                num_layers=8)
 
         # Serial execution
         expected_output = train_step(state, batch)
@@ -47,6 +47,10 @@ class InstallationTest(unittest.TestCase):
                 num_micro_batches=2,
                 layer_option=AutoLayerOption(layer_num=layer_num)))
         actual_output = p_train_step(state, batch)
+
+        # print(expected_output)
+        # with open("expected_output.txt", "w") as f:
+        #     f.write(str(expected_output))
 
         # Check results
         prefetch(actual_output)

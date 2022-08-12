@@ -137,12 +137,12 @@ class MeshHostWorker:
             raise NotImplementedError(
                 f"backend {global_config.backend} is not supported")
         # Monkey patch the backend
-        # print(self.backend)
+        print(self.backend)
         set_override_backend(self.backend)
         # print(-1)
         # self.initialize_streams_for_groups(self.backend)
         self.local_devices = self.backend.local_devices()
-        # print(self.local_devices)
+        print(self.local_devices)
         self.num_devices = len(self.local_devices)
 
         self.buffers = {}  # Dict[uuid -> Sequence[DeviceArray]]
@@ -178,7 +178,7 @@ class MeshHostWorker:
                     datas: Sequence[np.ndarray],
                     num_batch=1,
                     batch_dim=0):
-        # print("put buffers: ", uuids)
+        print("put buffers: ", uuids)
         assert len(datas) == self.num_devices
         if not isinstance(uuids, Iterable):
             uuids = [uuids]
@@ -205,7 +205,7 @@ class MeshHostWorker:
     def shard_and_put_non_zero_buffer(self, uuids: Union[Sequence[int], int],
                                       shape: Sequence[int], dtype: np.dtype,
                                       indices: Sequence, num_batch: int):
-        # print("put buffers: ", uuids)
+        print("put buffers: ", uuids)
         if isinstance(uuids, int):
             uuids = [uuids]
         assert len(uuids) == num_batch
@@ -455,7 +455,7 @@ class MeshHostWorker:
                                 for device_id in participated_devices]
         else:
             inputs_done_events = [None for _ in participated_devices]
-        print(f"synchronize comm {ary_uuid} devices {participated_devices}")
+        # print(f"synchronize comm {ary_uuid} devices {participated_devices}")
         return participated_devices, inputs_done_events
 
     def run_resharding_send_task(self, uuid, ary_uuid):
@@ -465,7 +465,7 @@ class MeshHostWorker:
                 self.get_devices_and_events(task.tile_specs, ary_uuid)
             )
 
-            input_or_output_streams = [False] * len(participated_devices)
+            input_or_output_streams = [False for _ in range(len(participated_devices))]
             participated_streams = col.get_participated_streams(
                 participated_devices, input_or_output_streams, task.group_name)
             synchronize_inputs_done_events([inputs_done_events],
@@ -496,7 +496,7 @@ class MeshHostWorker:
                 self.get_devices_and_events(task.recv_specs, ary_uuid)
             )
 
-            input_or_output_streams = [True] * len(participated_devices)
+            input_or_output_streams = [True for _ in range(len(participated_devices))]
             participated_streams = col.get_participated_streams(
                 participated_devices, input_or_output_streams, task.group_name)
             print(inputs_done_events, participated_streams)

@@ -41,9 +41,8 @@ import cupy
 from alpa import device_mesh
 from alpa.global_env import global_config, is_worker
 from alpa.collective.collective_group import nccl_util
-from alpa.monkey_patch import override_backend as backend
 from alpa.monkey_patch import (restore_random, monkey_patch_random,
-                               rng_primitives)
+                               rng_primitives, override_get_backend)
 from alpa.wrapped_hlo import HloStatus, WrappedHlo
 
 PLACEMENT_GROUP_TIMEOUT_S_ENV = "ALPA_PLACEMENT_GROUP_TIMEOUT_S_ENV"
@@ -1760,7 +1759,8 @@ def mark_event(stream, device_id):
         event.record(stream)
         return event
     elif isinstance(stream, xe.XLACudaStream):# return se::Event
-        event = xe.CreateXLACudaEvent(backend, device_id)
+        backend = override_get_backend()
+        event = xe.create_xla_cuda_event(backend, device_id)
         xe.stream_record_event(stream, event)
         return event
     else:

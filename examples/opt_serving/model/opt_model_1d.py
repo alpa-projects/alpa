@@ -156,6 +156,9 @@ class OPTSelfAttention(nn.Module):
             qkv_combined_states.shape[:1] +
             (self.config.decoder_attention_heads, head_dim, 3))
 
+        qvk_combined_bias_trans = self.qkv_combined_bias.transpose((1, 2, 0))
+        qkv_combined_states_w_bias = qkv_combined_states + qvk_combined_bias_trans
+
         # Shape: [1D seq, 3, heads, head_dim]
         qkv_combined_states = qkv_combined_states.transpose((0, 3, 1, 2))
 
@@ -168,9 +171,12 @@ class OPTSelfAttention(nn.Module):
                                  cache_index)
         attn_output = attn_output.reshape(attn_output.shape[:1] + (-1,))
 
-        # FIXME: Update cache
         # Update cache key and value. Note that the cache index should
         # be updated outside the model.
+        _, key_states, value_states = jnp.split(qkv_combined_states_w_bias,
+                                                3,
+                                                axis=3)
+        attention_cache = (key_states, value_states)
 
         if output_attentions:
             print("Do not support output_attentions")
@@ -499,7 +505,7 @@ def init_cache_aval(config, batch_size):
 
 
 def init_cache_np(config):
-    """Init cache with numpy arrays."""
+    """Init cache per sequence with numpy arrays."""
     np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
@@ -512,7 +518,7 @@ def init_cache_np(config):
             np.zeros((config.max_target_positions,
                       config.decoder_attention_heads, head_dim),
                      dtype=np_dtype),
-            np.zeros((config.max_target_positions,), np.int32),
+            np.zeros((1,), np.int32),
         )
         all_cache.append(layer_cache)
     return tuple(all_cache)

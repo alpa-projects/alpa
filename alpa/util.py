@@ -10,7 +10,7 @@ import time
 from collections import OrderedDict
 from functools import partial, partialmethod
 import threading
-from typing import Iterable, Sequence, Any, Union
+from typing import Iterable, Sequence, Any, Union, List
 from warnings import warn
 
 import jax
@@ -1278,7 +1278,7 @@ def try_import_ray_state(error: bool = False):
                 raise ImportError("Could not import `ray.state`!"
                                   "You might use the ray-nightly "
                                   "and `ray.state` is deprecated there"
-                                  "`pip install ray==1.13.0`.")
+                                  "`pip install ray>=1.13.0`.")
             return ray.state._real_worker  # pylint: disable=protected-access
         else:
             return ray.state
@@ -1291,7 +1291,7 @@ def try_import_ray_state(error: bool = False):
 ########################################
 
 
-def get_bundle2ip(pg=None):
+def get_bundle2ip(pg: PlacementGroup = None):
     """get the ip address list from placement group
 
     The ordering of the ip address are aligned with each bundle index.
@@ -1384,6 +1384,8 @@ def create_placement_group(num_hosts,
         not should_capture_child_tasks_in_placement_group)
 
     if should_create_placement_group:
+        # `should_create_placement_group` is always True when using alpa alone.
+        # `should_create_placement_group` can be false when integrated with Tune
         additional_resources_per_host = (additional_resources_per_host or {})
         bundle = {
             "CPU": 1,
@@ -1419,42 +1421,42 @@ def create_placement_group(num_hosts,
         return current_placement_group
 
 
-def get_bundle_idx(placement_group, device_ips):
+def get_bundle_idx(placement_group: PlacementGroup, node_ips: List[str]):
     """Get the bundle index for the placement group.
 
     The placement group is a list of resource bundles.
-    Each bundle will be assigned to a device.
+    Each bundle will be assigned to **one** node.
 
     First, we need to find the bundle index with GPU resources.
-    Then, we can find the device IP for the bundle index.
-    Lastly, we sort bundle index according to the device IP list given.
+    Then, we can find the node IP for the bundle index.
+    Lastly, we sort bundle index according to the node IP list given.
 
     Args:
-        placement_group (placement group): The placement group.
-        device_ips (list): The list of device IP addresses.
+        placement_group: The placement group.
+        node_ips: The list of node IP addresses.
 
     Returns:
         list: The sorted bundle index list.
     """
-    # get the device IP for the bundle index
+    # get the node IP for the bundle index
     bundle_ips = get_bundle2ip(placement_group)
     bundle_specs = placement_group.bundle_specs
 
-    # filter out the bundle index with device (GPUs)
-    device_bundle_idx_list = [
+    # filter out the bundle index with node (GPUs)
+    node_bundle_idx_list = [
         i for i, bundle_spec in enumerate(bundle_specs)
         if bundle_spec.get("GPU", 0) > 0
     ]
 
-    if len(device_bundle_idx_list) < len(device_ips):
+    if len(node_bundle_idx_list) < len(node_ips):
         raise ValueError("The number of bundles with GPU resources "
-                         "is no less than the number of device IPs.")
+                         "is less than the number of node IPs.")
 
-    # device IP -> bundle index
-    bundle_ip2idx = {bundle_ips[i]: i for i in device_bundle_idx_list}
+    # node IP -> bundle index
+    bundle_ip2idx = {bundle_ips[i]: i for i in node_bundle_idx_list}
 
-    # sorted bundle index according to the device IP list given
-    sorted_bundle_idx = [bundle_ip2idx[ip] for ip in device_ips]
+    # sorted bundle index according to the node IP list given
+    sorted_bundle_idx = [bundle_ip2idx[ip] for ip in node_ips]
 
     return sorted_bundle_idx
 

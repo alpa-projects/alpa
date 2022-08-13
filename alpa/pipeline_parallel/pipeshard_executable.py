@@ -4,6 +4,7 @@ import os
 import time
 from typing import Optional, Sequence
 
+from jax._src import traceback_util
 from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves, PyTreeDef
 import numpy as np
 import ray.exceptions
@@ -26,6 +27,8 @@ from alpa.pipeline_parallel.runtime_emitter import (
 from alpa.shard_parallel.auto_sharding import HloStatus
 from alpa.timer import timers
 from alpa.util import OrderedSet
+
+traceback_util.register_exclusion(__file__)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

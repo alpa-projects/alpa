@@ -2,9 +2,8 @@
 from typing import Callable, Optional, Sequence, Union
 
 from jax import linear_util as lu
-from jax._src import api
+from jax._src import api, traceback_util
 from jax._src.util import HashableFunction
-from jax._src.traceback_util import api_boundary
 from jax.api_util import (argnums_partial, donation_vector,
                           flatten_fun_nokwargs, rebase_donate_argnums)
 from jax.core import AbstractValue
@@ -16,6 +15,8 @@ from alpa.parallel_method import ParallelMethod, ShardParallel
 from alpa.pipeline_parallel.primitive_def import mark_gradient
 from alpa.util import (auto_donate_argnums, auto_static_argnums,
                        abstractify_with_aval, GradFuncTransformContext)
+
+traceback_util.register_exclusion(__file__)
 
 is_initialized = False
 
@@ -99,7 +100,7 @@ class ParallelizedFunc:
 
         self.last_executable = None
 
-    @api_boundary
+    @traceback_util.api_boundary
     def __call__(self, *args):
         """Launch the computation on the driver."""
         executable, _, out_tree, args_flat = (

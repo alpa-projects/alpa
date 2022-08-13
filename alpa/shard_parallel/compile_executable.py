@@ -5,6 +5,7 @@ from typing import Callable, Sequence, Optional, Union
 
 import numpy as np
 from jax import linear_util as lu
+from jax._src import traceback_util
 from jax._src.lib import xla_extension as xe
 from jax.core import (Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym,
                       get_aval, raise_to_shaped, AbstractValue)
@@ -21,6 +22,8 @@ from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                AutoShardingOption)
 from alpa.util import (jaxpr_to_hlo_module, trace_jaxpr_with_micro_batch,
                        setup_computation_alias, OrderedSet)
+
+traceback_util.register_exclusion(__file__)
 
 
 def get_compute_key(fun: lu.WrappedFun, in_tree: PyTreeDef,

@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import logging
-from typing import Sequence, Any, Dict, Optional
+from typing import Sequence, Any, Dict, Optional, Tuple
 
 import jax
 from jax import jit
@@ -366,6 +366,65 @@ class XlaShardedPipelineComputation(PipelineComputation):
         """Get the HLO text."""
         assert self.sharding_annotated_module is not None
         return self.sharding_annotated_module.to_string()
+
+
+@dataclass
+class ApplyGradXlaShardedPipelineComputation(PipelineComputation):
+    """
+    Multiple pipeline computation defined by XLA HLO Module for apply gradient.
+    Each XLA HLO is annotated by sharding spec.
+    """
+
+    sharding_annotated_modules: Sequence[xe.HloModule] = None
+    donated_invars: Sequence[bool] = None
+    stage_plans: Sequence[StagePlan] = None
+    input_sharding_specs: Sequence[pxla.ShardingSpec] = None
+    output_sharding_specs: Sequence[pxla.ShardingSpec] = None
+    output_acc_grad_indices: Sequence[int] = None
+    donatables: OrderedSet[Var] = None
+    spmd_partitioned_hlo_modules: Sequence[xe.HloModule] = None
+    allreduce_ops: Sequence[Sequence[Tuple[int, str]]] = None
+
+    def get_spmd_partitioned(self):
+        """Run spmd partitioner to get the input/output sharding specs after
+        partitioning."""
+        if self.spmd_partitioned_hlo_modules is not None:
+            return self.spmd_partitioned_hlo_modules
+
+        stage_plans = self.stage_plans
+        logical_mesh_shape = stage_plans[0].logical_mesh_shape
+        hlo_modules = self.sharding_annotated_modules
+        for module in hlo_modules:
+            setup_computation_alias(module, self.donated_invars)
+
+        num_devices = np.prod(logical_mesh_shape)
+        rewrite_for_grad_acc = len(self.output_acc_grad_indices) > 0
+        spmd_partitioned_hlo_modules = []
+        for module in hlo_modules:
+            spmd_partitioned_hlo_modules.append(
+                run_spmd_partitioner_pass(
+                    module,
+                    num_devices,
+                    rewrite_for_grad_acc=rewrite_for_grad_acc,
+                    rewrite_grad_acc_indices=self.output_acc_grad_indices))
+
+        avals = [var.aval for var in self.invars]
+        out_avals = [var.aval for var in self.outvars]
+        # FIXME(yonghao): the out aval for the first module and in aval for last
+        # module is incorrect
+        input_sharding_specs, _ = (get_input_output_sharding_specs(
+            spmd_partitioned_hlo_modules[0], avals, out_avals, num_devices,
+            logical_mesh_shape))
+        _, output_sharding_specs = (get_input_output_sharding_specs(
+            spmd_partitioned_hlo_modules[-1], avals, out_avals, num_devices,
+            logical_mesh_shape))
+        self.input_sharding_specs = input_sharding_specs
+        self.output_sharding_specs = output_sharding_specs
+        # The run_spmd_partitioner_pass modifies hlo module in-place,
+        # so the old hlo module cannot be accessed anymore
+        self.sharding_annotated_modules = None
+        self.spmd_partitioned_hlo_modules = spmd_partitioned_hlo_modules
+        return spmd_partitioned_hlo_modules
 
 
 def slice_closed_jaxpr_by_full_pipeline_marks(
@@ -814,6 +873,7 @@ def generate_computations_from_modules(jax_computations, computation_names,
                                        stage_plan):
     """Generate pipeline computation from HLO modules."""
     module_dict = dict(zip(computation_names, computation_modules))
+    # FIXME(yonghao): consider the apply grad that has multiple computations
     computations = [
         XlaShardedPipelineComputation.from_auto_sharded_computation(
             sharding_annotated_module=module_dict[computation.name],

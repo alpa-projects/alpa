@@ -386,8 +386,6 @@ def process_apply_gradient(apply_grad_jaxpr, microbatch_bound, pipeline_stages,
                            donated_invars, reduction_vector):
     """Slice apply_grad jaxpr into stages and assign them to the corresponding
     meshes."""
-    # TODO(yonghao): the condition of creating RDA variable should be extended.
-
     # Process apply gradient:
     # 1. change invars of apply grad to outvars of accumulate grad
     gradients = [
@@ -601,8 +599,6 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
         info: A tuple of:
             deps (List[Tuple[int, int]]): dependencies of apply gradient
               computations
-            mesh_assignment (Dict[int, int]): From apply grad index to the its
-              mesh's index
             infered_global_invars (Dict[Var, List[int]]): From invar index to
               meshes need this invar.
     """
@@ -615,6 +611,8 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     while changed:
         changed = _reverse_propagate_var_at_mesh(closed_jaxpr, donation_mapping,
                                                  eqn_mesh, var_mesh)
+    # TODO(yonghao): pattern matching and rewrite here. Some info should be output
+    # How do we rewrite it? just adding a new identity marker and then slice it somewhere?
 
     sliced_eqns = [[] for _ in range(num_mesh)]
     for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):

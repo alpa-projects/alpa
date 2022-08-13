@@ -15,7 +15,8 @@ from alpa.device_mesh import (DistributedArray, PhysicalDeviceMeshGroup,
                               ReplicatedDistributedArray)
 from alpa.mesh_executable import next_mesh_executable_uuid
 from alpa.parallel_plan import PlacementSpec
-from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
+from alpa.pipeline_parallel.computation import (
+    ApplyGradXlaShardedPipelineComputation, XlaShardedPipelineComputation)
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     CrossMeshCommunicator, SymbolicBroadcastReshardingTask,
     SymbolicReshardingTask, ReshardingTask)
@@ -142,11 +143,19 @@ PartialGradWorkerExecutableConfig = namedtuple(
         "stage_plan",
         "donated_invars",
     ])
+ApplyGradWorkerExecutableConfig = namedtuple(
+    "ApplyGradWorkerExecutableConfig", [
+        "exec_uuid", "hlo_protos", "stage_plans", "donated_invars",
+        "allreduce_ops"
+    ])
 
 ExecutableConfig = Union[AllocateZeroWorkerExecutableConfig,
                          MemZeroWorkerExecutableConfig,
                          PartialGradWorkerExecutableConfig,
-                         ConcatWorkerExecutableConfig]
+                         ConcatWorkerExecutableConfig,
+                         ApplyGradWorkerExecutableConfig]
+ComputationType = Union[XlaShardedPipelineComputation,
+                        ApplyGradXlaShardedPipelineComputation]
 
 
 def flatten_uuid_set(container):
@@ -238,7 +247,7 @@ class PipeshardConfig:
     """Configurations of a Pipeshard executable."""
     # Executable configs
     instruction_lists: Dict[Any, Sequence[PipelineInstruction]]
-    xla_stages: Sequence[XlaShardedPipelineComputation]
+    xla_stages: Sequence[ComputationType]
     # FIXME(yonghao): share this setting within a mesh
     executable_configs: Dict[Any, Sequence[ExecutableConfig]]
     executable_uuids: Sequence[int]
@@ -266,7 +275,7 @@ class PipeshardConfig:
 class PipelineInstEmitter:
     """Pipeline Instruction Emitter."""
 
-    def __init__(self, *, stages: Sequence[XlaShardedPipelineComputation],
+    def __init__(self, *, stages: Sequence[ComputationType],
                  global_invars: Sequence[Var], grad_dummy_invars: Dict[Var,
                                                                        Var],
                  global_outvars: Sequence[Var], concat_vars_mapping: Dict[Var,
@@ -599,10 +608,23 @@ class PipelineInstEmitter:
             mesh_idx = self.schedule.stage_placement(stage_idx)
             assert len(mesh_idx) == 1
             mesh_idx = list(mesh_idx)[0]
-            hlo_module = stage.get_spmd_partitioned()
-            hlo_proto = hlo_module.as_serialized_hlo_module_proto()
-            exec_config = PartialGradWorkerExecutableConfig(
-                exec_uuid, hlo_proto, stage.stage_plan, stage.donated_invars)
+            if isinstance(stage, ApplyGradXlaShardedPipelineComputation):
+                hlo_modules = stage.get_spmd_partitioned()
+                hlo_protos = [
+                    hlo_module.as_serialized_hlo_module_proto()
+                    for hlo_module in hlo_modules
+                ]
+                exec_config = ApplyGradWorkerExecutableConfig(
+                    exec_uuid, hlo_protos, stage.stage_plans,
+                    stage.donated_invars, stage.allreduce_ops)
+            else:
+                assert isinstance(stage, XlaShardedPipelineComputation)
+                hlo_module = stage.get_spmd_partitioned()
+                hlo_proto = hlo_module.as_serialized_hlo_module_proto()
+                exec_config = PartialGradWorkerExecutableConfig(
+                    exec_uuid, hlo_proto, stage.stage_plan,
+                    stage.donated_invars)
+
             for worker in self.mesh_group[mesh_idx].workers:
                 executable_config_lists[worker].append(exec_config)
 

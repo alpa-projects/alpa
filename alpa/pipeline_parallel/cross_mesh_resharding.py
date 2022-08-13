@@ -928,6 +928,7 @@ class CrossMeshCommunicator:
     def __init__(self, sharded_stages, schedule):
         if not isinstance(sharded_stages, list):
             raise RuntimeError("Require a list of stages.")
+        # FIXME(yonghao): consider the apply grad version
         for s in sharded_stages:
             if not isinstance(s, XlaShardedPipelineComputation):
                 raise RuntimeError("Require a list of sharded stages.")

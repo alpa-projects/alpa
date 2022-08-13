@@ -313,6 +313,27 @@ def create_learning_rate_fn(
     return schedule_fn
 
 
+def get_3d_parallel_method(num_micro_batches, data_parallel, operator_parallel,
+                           pipeline_parallel):
+    assert pipeline_parallel == 1, "TODO(lmzheng): Will be added later."
+    num_devices = alpa.get_global_num_devices()
+    if data_parallel == -1:
+        data_parallel = num_devices // operator_parallel // pipeline_parallel
+    assert num_devices % data_parallel == 0
+    assert num_devices % operator_parallel == 0
+    assert num_devices % pipeline_parallel == 0
+    assert num_devices == data_parallel * operator_parallel * pipeline_parallel
+
+    method = alpa.ShardParallel(
+        num_micro_batches=num_micro_batches,
+        auto_sharding_option=alpa.AutoShardingOption(
+            prefer_reduce_scatter=True,
+            force_batch_dim_to_mesh_dim=0),
+        devices=alpa.get_global_physical_mesh(create_if_not_exist=True)
+                    .get_logical_mesh([data_parallel, operator_parallel]))
+    return method
+
+
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
@@ -733,33 +754,15 @@ def main():
         return metrics
 
     # Create parallel version of the train and eval step
-    def get_3d_parallel_method(num_micro_batches, data_parallel, operator_parallel,
-                               pipeline_parallel):
-        assert (data_parallel * operator_parallel * pipeline_parallel == 
-                alpa.get_global_num_devices())
-        assert pipeline_parallel == 1, "TODO(lmzheng): Will be added later."
-
-        method = alpa.ShardParallel(
-            num_micro_batches=num_micro_batches,
-            auto_sharding_option=alpa.AutoShardingOption(
-                prefer_reduce_scatter=True,
-                force_batch_dim_to_mesh_dim=0),
-            devices=alpa.get_global_physical_mesh(create_if_not_exist=True)
-                        .get_logical_mesh([data_parallel, operator_parallel]))
-        return method
-
-    def get_eval_step_input_specs():
-        input_specs = p_train_step.get_executable().get_input_placement_specs()
-        return input_specs[0].params, input_specs[1]
-
     method = get_3d_parallel_method(num_micro_batches=4,
-                                    data_parallel=2,
+                                    data_parallel=-1,
                                     operator_parallel=4,
                                     pipeline_parallel=1)
     p_train_step = alpa.parallelize(train_step,
                                     method=method,
                                     donate_argnums=(0,))
-    p_eval_step = alpa.parallelize(eval_step, method=alpa.FollowParallel(get_eval_step_input_specs))
+    p_eval_step = alpa.parallelize(eval_step,
+                                   method=alpa.FollowParallel(p_train_step))
 
     dump_debug_info_train_step = dump_debug_info_eval_step = True
 

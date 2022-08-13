@@ -43,7 +43,7 @@ from jax.lib import xla_client
 import jax.numpy as jnp
 import numpy as np
 import ray
-from ray.util.placement_group import remove_placement_group, PlacementGroup
+from ray.util.placement_group import remove_placement_group
 
 from alpa import mesh_profiling
 import alpa.collective as col
@@ -1999,6 +1999,7 @@ class DeviceCluster:
 
     def __init__(self):
         # pylint: disable=import-outside-toplevel
+        self.placement_group = None
         ray_global_node = ray_worker._global_node
         try:
             self.head_info = ray_global_node.address_info
@@ -2021,6 +2022,18 @@ class DeviceCluster:
             number = host_info["Resources"]["GPU"]
             assert number.is_integer()
             self.host_num_devices.append(int(number))
+
+    def create_placment_group(self):
+        """
+        Create a placement group for the current device cluster.
+        """
+        self.placement_group = create_placement_group(self.num_hosts,
+                                                      self.host_num_devices[0])
+
+    def delete_placement_group(self):
+        """remove the placement group for the current device cluster."""
+        remove_placement_group(self.placement_group)
+        self.placement_group = None
 
     @property
     def num_cpus(self):
@@ -2098,12 +2111,10 @@ class DeviceCluster:
 global_cluster: DeviceCluster = None
 global_physical_mesh: PhysicalDeviceMesh = None
 global_virtual_physical_mesh: VirtualPhysicalMesh = None
-global_placement_group: PlacementGroup = None
 
 
 def init_global_cluster(cluster: str):
-    global global_cluster, global_physical_mesh, global_virtual_physical_mesh,\
-        global_placement_group
+    global global_cluster, global_physical_mesh, global_virtual_physical_mesh
 
     if cluster == "local":
         global_physical_mesh = LocalPhysicalDeviceMesh()
@@ -2112,19 +2123,13 @@ def init_global_cluster(cluster: str):
             ray.init(address="auto", ignore_reinit_error=True)
         update_jax_platform("cpu")
         global_cluster = DeviceCluster()
-        global_placement_group = create_placement_group(
-            len(global_cluster.host_num_devices),
-            global_cluster.host_num_devices[0])
+        global_cluster.create_placment_group()
         global_virtual_physical_mesh = (
             global_cluster.get_virtual_physical_mesh())
 
 
 def shutdown_global_cluster():
-    global global_cluster, global_physical_mesh, global_virtual_physical_mesh,\
-        global_placement_group
-
-    global_cluster = None
-    update_jax_platform("gpu")
+    global global_cluster, global_physical_mesh, global_virtual_physical_mesh
 
     if global_physical_mesh:
         global_physical_mesh.shutdown()
@@ -2135,8 +2140,9 @@ def shutdown_global_cluster():
             global_virtual_physical_mesh.launched_physical_mesh_group.shutdown()
         global_virtual_physical_mesh = None
 
-    remove_placement_group(global_placement_group)
-    global_placement_group = None
+    global_cluster.delete_placement_group()
+    global_cluster = None
+    update_jax_platform("gpu")
 
 
 def set_global_cluster(cluster: DeviceCluster):

@@ -1483,8 +1483,8 @@ def retrieve_placement_group():
 
     # case 2:
     # Get the placement group created when alpa.init('ray')
-    if alpa.device_mesh.global_placement_group:
-        alpa_placement_group = alpa.device_mesh.global_placement_group
+    if alpa.device_mesh.global_cluster.placement_group:
+        alpa_placement_group = alpa.device_mesh.global_cluster.placement_group
         return alpa_placement_group
 
     # case 3:

@@ -102,9 +102,8 @@ doc_require_list = [
 
 def get_alpa_version():
     with open(os.path.join(ROOT_DIR, "alpa", "version.py")) as fp:
-        version_match = re.search(
-            r"^__version__ = ['\"]([^'\"]*)['\"]", fp.read(), re.M
-        )
+        version_match = re.search(r"^__version__ = ['\"]([^'\"]*)['\"]",
+                                  fp.read(), re.M)
         if version_match:
             return version_match.group(1)
     raise RuntimeError("Unable to find version string.")

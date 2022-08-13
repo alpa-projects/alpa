@@ -739,8 +739,8 @@ def main():
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {num_epochs}")
-    logger.info(f"  Instantaneous batch size per device = {training_args.per_device_train_batch_size}")
-    logger.info(f"  Total train batch size (w. parallel & distributed) = {train_batch_size}")
+    logger.info(f"  Batch size per device (w. accumulation)= {training_args.per_device_train_batch_size}")
+    logger.info(f"  Global train batch size (w. parallel & distributed) = {train_batch_size}")
     logger.info(f"  Total optimization steps = {total_train_steps}")
 
     train_time = 0
@@ -749,6 +749,8 @@ def main():
 
     step_ct = 0
     last_time = time.time()
+
+    epochs.write("Initial compilation. This might take some minutes...")
 
     for epoch in epochs:
         # ======================== Training ================================
@@ -773,6 +775,8 @@ def main():
                 executable = p_train_step.get_last_executable()
                 executable.sync()
                 executable.dump_debug_info("alpa_debug_info")
+                epochs.write(f"Initial compilation completed. "
+                             f"Time elapsed: {time.time() - train_start:.2f} s")
 
             step_ct += 1
             if cur_step % training_args.logging_steps == 0 and cur_step > 0:
@@ -788,6 +792,9 @@ def main():
                     num_gpus=alpa.get_global_num_devices(),
                     latency=latency)
                 step_ct = 0
+
+                #print(f"driver latency: {latency:.2f}, "
+                #      f"worker latency: {executable.get_execution_time_costs()[-1]:.2f}")
 
                 # Save metrics
                 train_time += time.time() - train_start

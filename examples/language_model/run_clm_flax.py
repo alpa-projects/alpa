@@ -45,6 +45,7 @@ import jax
 import jax.numpy as jnp
 import optax
 import transformers
+import tensorflow as tf
 from flax import jax_utils, traverse_util
 from flax.training import train_state
 from flax.training.common_utils import onehot, shard, shard_prng_key
@@ -62,6 +63,8 @@ from transformers import (
 from transformers.testing_utils import CaptureLogger
 from transformers.utils import get_full_repo_name, send_example_telemetry
 
+alpa.init(cluster="ray")
+tf.config.experimental.set_visible_devices([], 'GPU')
 
 logger = logging.getLogger(__name__)
 
@@ -264,20 +267,16 @@ def data_loader(rng: jax.random.PRNGKey, dataset: Dataset, batch_size: int, shuf
     Returns batches of size `batch_size` from truncated `dataset`, sharded over all local devices.
     Shuffle batches if `shuffle` is `True`.
     """
-    steps_per_epoch = len(dataset) // batch_size
+    batch_size = min(batch_size, len(dataset))
+    data_collator = transformers.DefaultDataCollator("np")
+    tf_dataset = dataset.to_tf_dataset(batch_size=batch_size,
+                                       columns=dataset.column_names,
+                                       collate_fn=data_collator,
+                                       shuffle=shuffle,
+                                       drop_remainder=True)
 
-    if shuffle:
-        batch_idx = jax.random.permutation(rng, len(dataset))
-    else:
-        batch_idx = jnp.arange(len(dataset))
-
-    batch_idx = batch_idx[: steps_per_epoch * batch_size]  # Skip incomplete batch.
-    batch_idx = batch_idx.reshape((steps_per_epoch, batch_size))
-
-    for idx in batch_idx:
-        batch = dataset[idx]
-        batch = {k: np.array(v) for k, v in batch.items()}
-
+    for batch in tf_dataset:
+        batch = {k: v._numpy() for k, v in batch.items()}
         yield batch
 
 
@@ -617,8 +616,8 @@ def main():
 
     # Store some constant
     num_epochs = int(training_args.num_train_epochs)
-    train_batch_size = int(training_args.per_device_train_batch_size) * jax.device_count()
-    eval_batch_size = int(training_args.per_device_eval_batch_size) * jax.device_count()
+    train_batch_size = int(training_args.per_device_train_batch_size) * alpa.get_global_num_devices()
+    eval_batch_size = int(training_args.per_device_eval_batch_size) * alpa.get_global_num_devices()
     steps_per_epoch = len(train_dataset) // train_batch_size
     total_train_steps = steps_per_epoch * num_epochs
 
@@ -672,7 +671,7 @@ def main():
         # Fix a bug in huggingface's implementation (https://github.com/huggingface/transformers/pull/18462)
         alpa.global_config.flax_always_use_fp16_embedding = True
     else:
-        use_master_copy = dynamic_scale = False
+        use_master_copy = dynamic_scale = None
     state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer,
                               dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
 
@@ -705,12 +704,13 @@ def main():
             new_state = new_state.replace(
                 opt_state=jax.tree_map(
                     functools.partial(jnp.where, is_fin),
-                    new_state.opt_state,
-                    state.opt_state),
+                    new_state.opt_state, state.opt_state),
                 params=jax.tree_map(
                     functools.partial(jnp.where, is_fin),
-                    new_state.params,
-                    state.params),
+                    new_state.params, state.params),
+                master_copy=jax.tree_map(
+                    functools.partial(jnp.where, is_fin),
+                    new_state.master_copy, state.master_copy),
                 dynamic_scale=dynamic_scale)
 
         metrics = {"loss": loss, "learning_rate": linear_decay_lr_schedule_fn(state.step)}
@@ -771,10 +771,12 @@ def main():
             if dump_debug_info_train_step:
                 dump_debug_info_train_step = False
                 executable = p_train_step.get_last_executable()
+                executable.sync()
                 executable.dump_debug_info("alpa_debug_info")
 
             step_ct += 1
             if cur_step % training_args.logging_steps == 0 and cur_step > 0:
+                executable.sync()
                 latency = (time.time() - last_time) / step_ct
                 throughput_tokens = np.prod(batch["input_ids"].shape) / latency
                 throughput_tflops = alpa.util.compute_gpt_tflops(
@@ -786,22 +788,24 @@ def main():
                     num_gpus=alpa.get_global_num_devices(),
                     latency=latency)
                 step_ct = 0
-                last_time = time.time()
 
                 # Save metrics
                 train_time += time.time() - train_start
                 if has_tensorboard and jax.process_index() == 0:
                     write_train_metric(summary_writer, train_metrics, train_time, cur_step)
 
+                train_metric = jax.tree_map(np.mean, train_metric)
+
                 epochs.write(
                     f"Step... {cur_step} | "
                     f"Loss: {train_metric['loss'].mean():.4f}, "
-                    f"Learning Rate: {train_metric['learning_rate'].mean():.4f}, "
-                    f"Throughput: {throughput_tokens:.2f} token/s "
-                    f"Throughput: {throughput_tflops:.2f} TFLOP/s"
+                    f"Learning Rate: {train_metric['learning_rate'].mean():.5f}, "
+                    f"Throughput: {throughput_tokens:.2f} token/s, "
+                    f"{throughput_tflops:.2f} TFLOP/s"
                 )
 
                 train_metrics = []
+                last_time = time.time()
 
             if cur_step % training_args.eval_steps == 0 and cur_step > 0:
                 # ======================== Evaluating ==============================

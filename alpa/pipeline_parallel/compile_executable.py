@@ -46,25 +46,37 @@ def compile_pipeshard_executable(
         virtual_mesh: VirtualPhysicalMesh, num_microbatch: int,
         pipeline_schedule: str, default_as_option: AutoShardingOption,
         layer_option: LayerOption, stage_option: StageOption,
+        global_input_shardings: Optional[Sequence[pxla.ShardingSpec]],
         stage_input_shardings: Optional[Sequence[Sequence[pxla.ShardingSpec]]],
         *avals: Sequence[AbstractValue]):
     """
     Compile a callable for pipeshard parallel which combines
     pipeline parallelism and 2d shard parallelsim.
+
+    Args:
+        fun: The function to be parallelized.
+        global_input_shardings: Forcibly set sharding specs of global
+          input vars.
+        stage_input_shardings: Forcibly set sharding specs of input vars of
+          each stage.
     """
     debug_compilation_time(None)
     name_base = f"{fun.__name__}_pipeshard_parallel"
 
-    if pipeline_schedule == "inference":
-        fun.f = layer_option.transform(fun.f)
-
+    # Apply layer construction to add pipeline markers.
     with GradFuncTransformContext(layer_option.transform):
-        # Trace the function wit a micro batch to get the jaxpr
+        if pipeline_schedule == "inference":
+            f_backup = fun.f
+            fun.f = layer_option.transform(fun.f)
+
+        # Trace the function with a micro batch to get the jaxpr.
         closed_jaxpr, micro_batch_size = trace_jaxpr_with_micro_batch(
             fun, batch_invars, num_microbatch, avals)
 
+        # Trace again with a full batch.
+        # The full batch is used to derive the reduction operator across
+        # micro batches (e.g., addition, concatenation).
         if num_microbatch > 1:
-            # Trace again with a full batch
             for store in fun.stores:
                 if store:
                     store.reset()
@@ -72,12 +84,16 @@ def compile_pipeshard_executable(
                 fun, batch_invars, 1, avals)
         else:
             full_batch_closed_jaxpr = None
+
+        if pipeline_schedule == "inference":
+            fun.f = f_backup
     debug_compilation_time("trace")
 
     pipeshard_config = compile_pipeshard_executable_internal(
         closed_jaxpr, full_batch_closed_jaxpr, micro_batch_size, donated_invars,
         batch_invars, virtual_mesh, num_microbatch, pipeline_schedule,
-        default_as_option, stage_option, name_base, None, stage_input_shardings)
+        default_as_option, stage_option, name_base, global_input_shardings,
+        None, stage_input_shardings)
 
     executable = PipeshardDriverExecutable(
         mesh_group=virtual_mesh.launched_physical_mesh_group,
@@ -98,8 +114,19 @@ def compile_pipeshard_executable_internal(
         virtual_mesh: VirtualPhysicalMesh, num_microbatch: int,
         pipeline_schedule: str, default_as_option: AutoShardingOption,
         stage_option: StageOption, name_base: str,
-        output_shardings: Optional[Sequence[pxla.ShardingSpec]],
+        global_input_shardings: Optional[Sequence[pxla.ShardingSpec]],
+        global_output_shardings: Optional[Sequence[pxla.ShardingSpec]],
         stage_input_shardings: Optional[Sequence[Sequence[pxla.ShardingSpec]]]):
+    """
+    Args:
+        fun: The function to be parallelized.
+        global_input_shardings: Forcibly set sharding specs of global
+          input vars.
+        global_output_shardings: Forcibly set sharding specs of global
+          output vars.
+        stage_input_shardings: Forcibly set sharding specs of input vars of
+          each stage.
+    """
     global_invars = closed_jaxpr.jaxpr.invars
     global_outvars = closed_jaxpr.jaxpr.outvars
     gensym_func = gensym([closed_jaxpr.jaxpr])
@@ -193,21 +220,27 @@ def compile_pipeshard_executable_internal(
     else:
         raise ValueError(f"Invalid schedule: {pipeline_schedule}")
 
-    # Call auto-sharding pass to shard each stage
-    if output_shardings:
-        # Forcibly set the sharding specs of global outvars.
-        assert len(output_shardings) == len(global_outvars)
-        output_sharding_dict = dict(zip(global_outvars, output_shardings))
+    # Forcibly set the sharding specs of global invars and outvars.
+    if global_input_shardings:
+        assert len(global_input_shardings) == len(global_invars)
+        input_sharding_dict = dict(zip(global_invars, global_input_shardings))
+    else:
+        input_sharding_dict = {}
+    if global_output_shardings:
+        assert len(global_output_shardings) == len(global_outvars)
+        output_sharding_dict = dict(zip(global_outvars,
+                                        global_output_shardings))
     else:
         output_sharding_dict = {}
 
+    # Call auto-sharding pass to shard each stage
     xla_stages, total_flops = shard_each_stage(
         jax_all_stages, sliced_virtual_meshes, schedule, n_stages, num_meshes,
         grad_in_to_out, global_invars, acc_grad_outvars, donate_invars_dict,
         num_microbatch, manual_stage_option.submesh_logical_shapes,
         manual_stage_option.submesh_autosharding_option_dicts,
-        default_as_option, output_sharding_dict, stage_input_shardings,
-        name_base, gensym_func)
+        default_as_option, input_sharding_dict, output_sharding_dict,
+        stage_input_shardings, name_base, gensym_func)
     total_flops *= num_microbatch
     debug_compilation_time("shard stages")
 
@@ -240,8 +273,9 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                      num_meshes, grad_in_to_out, global_invars,
                      acc_grad_outvars, donate_invars_dict, num_microbatch,
                      logical_mesh_shapes, autosharding_option_dicts,
-                     default_as_option, output_sharding_dict,
-                     stage_input_shardings, name_base, gensym_func):
+                     default_as_option, input_sharding_dict,
+                     output_sharding_dict, stage_input_shardings, name_base,
+                     gensym_func):
     """Run intra-op parallelism compilation for a stage."""
     # Initialize donation mapping
     stage_dict = [[] for _ in range(num_meshes)]
@@ -297,7 +331,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
         if distributed_compile:
             module, flops = (generate_sharded_xla_computations_arguments(
                 f"{name_base}_mesh_{mesh_idx}", stage_dict[mesh_idx],
-                stage_donate_invars, output_sharding_dict,
+                stage_donate_invars, input_sharding_dict, output_sharding_dict,
                 stage_input_sharding))
             other_kwargs = {
                 "logical_mesh": logical_mesh,
@@ -315,7 +349,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                 f"{name_base}_mesh_{mesh_idx}", stage_dict[mesh_idx],
                 stage_donate_invars, donatable_dict[mesh_idx], acc_grad_outvars,
                 num_microbatch, logical_mesh, autosharding_option,
-                output_sharding_dict, stage_input_sharding)
+                input_sharding_dict, output_sharding_dict, stage_input_sharding)
             total_flops += flops
             for i, xla_stage in zip(stage_id_dict[mesh_idx],
                                     sharded_xla_stages):

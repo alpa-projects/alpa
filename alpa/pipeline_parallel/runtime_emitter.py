@@ -686,7 +686,7 @@ class PipelineInstEmitter:
                                                         batch_dim, num_batch)
                 input_shard_indices.append(
                     pxla.spec_to_indices(new_shape, new_spec))
-                input_shard_specs.append(new_spec)
+                input_shard_specs.append(var_to_spec[var])
             else:
                 input_shard_indices.append(
                     pxla.spec_to_indices(var.aval.shape, var_to_spec[var]))

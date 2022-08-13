@@ -22,6 +22,7 @@ from jax.tree_util import PyTreeDef
 import numpy as np
 
 from alpa.create_state_parallel import compile_create_state_executable
+from alpa.follow_parallel import compile_follow_parallel_executable
 from alpa.device_mesh import (PhysicalDeviceMesh, VirtualPhysicalMesh,
                               LocalPhysicalDeviceMesh, get_global_physical_mesh,
                               get_global_virtual_physical_mesh)
@@ -107,7 +108,7 @@ class ShardParallel(ParallelMethod):
 class DataParallel(ShardParallel):
     """
     Use vanilla data parallelism.
-    This method syncs gradient by using all-reduce.
+    This method syncs gradients by using all-reduce.
     """
 
     def __init__(self,
@@ -228,7 +229,7 @@ class PipeshardParallel(ParallelMethod):
         return compile_pipeshard_executable(
             fun, in_tree, out_tree_thunk, static_argnums, donated_invars,
             batch_invars, mesh, self.num_micro_batches, self.pipeline_schedule,
-            self.as_option, self.layer_option, self.stage_option,
+            self.as_option, self.layer_option, self.stage_option, None,
             self.stage_input_shardings, *avals)
 
 
@@ -264,7 +265,7 @@ class CreateStateParallel(ParallelMethod):
         To use thie parallel method, the function being parallelized should
         return a single output `state`. Then train_step should take `state`
         as the first argument and `other_args` as successive arguments.
-        See tests/test_create_state.py for example usages.
+        See `tests/test_create_state.py` for example usages.
     """
 
     def __init__(self, train_step: "ParallelizedFunc",
@@ -293,3 +294,58 @@ class CreateStateParallel(ParallelMethod):
                                                static_argnums, donated_invars,
                                                self.train_step, self.other_args,
                                                *avals)
+
+
+class FollowParallel(ParallelMethod):
+    """
+    Parallelize a function given its input placement specs.
+
+    Args:
+        num_micro_batches: The number of micro batches.
+        get_input_placement_specs: A callaback function that returns
+          the input placement specs.
+        pipeline_schedule: The pipeline schedule.
+          Possible choices: {"1f1b", "gpipe", "inference"}
+        layer_option: Options of grouping basic operators to layers.
+          Possible choices: {"auto", "manual"}.
+    """
+
+    def __init__(self,
+                 src_func: "ParallelizedFunc",
+                 num_micro_batches: Optional[int] = None,
+                 get_input_placement_specs: Callable = None,
+                 pipeline_schedule: str = "inference",
+                 layer_option: str = "follow"):
+        self.src_func = src_func
+        self.num_micro_batches = num_micro_batches
+
+        if get_input_placement_specs is None:
+
+            def default_get():
+                executable = src_func.get_last_executable()
+                input_placement_specs = executable.get_input_placement_specs()
+                train_state, batch = input_placement_specs
+                return train_state.params, batch
+
+            get_input_placement_specs = default_get
+
+        self.get_input_placement_specs = get_input_placement_specs
+        self.pipeline_schedule = pipeline_schedule
+        self.layer_option = layer_option
+
+    def compile_executable(
+        self,
+        fun: lu.WrappedFun,
+        in_tree: PyTreeDef,
+        out_tree_thunk: Callable[[], PyTreeDef],
+        static_argnums: Sequence[int],
+        donated_invars: Sequence[bool],
+        batch_invars: Sequence[bool],
+        *avals: Sequence[AbstractValue],
+    ):
+        input_placement_specs = self.get_input_placement_specs()
+        return compile_follow_parallel_executable(
+            fun, in_tree, out_tree_thunk, static_argnums, donated_invars,
+            batch_invars, self.src_func, self.num_micro_batches,
+            input_placement_specs, self.pipeline_schedule, self.layer_option,
+            *avals)

@@ -619,8 +619,6 @@ def generate_stage_info(all_layers, selected_indices, donation_mapping,
                         global_outvars, name, insert_hook_after,
                         apply_grad_layers, apply_grad_info):
     """Combine selected layers together for profiling."""
-    backend = xb.get_backend("gpu")
-
     # TODO(yonghao): clean up code here
     (selected_donation_mapping, used_outside,
      layers) = split_global_use_and_donate(all_layers, selected_indices,
@@ -679,7 +677,7 @@ def generate_stage_info(all_layers, selected_indices, donation_mapping,
                                                       new_outvars,
                                                       selected_donation_mapping)
 
-    hlo_module = jaxpr_to_hlo_module(name, merged, is_donated, backend)
+    hlo_module = jaxpr_to_hlo_module(name, merged, is_donated)
     proto = hlo_module.as_serialized_hlo_module_proto()
     compile_config = CompileConfig(proto, output_acc_grad_indices)
     stage_config = StageConfig(compile_config, profile_config, apply_info)

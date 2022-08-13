@@ -1483,12 +1483,16 @@ def retrieve_placement_group():
 
     # case 2:
     # Get the placement group created when alpa.init('ray')
-    if alpa.device_mesh.global_cluster.placement_group:
-        alpa_placement_group = alpa.device_mesh.global_cluster.placement_group
+    global_cluster = alpa.device_mesh.global_cluster
+    if global_cluster and global_cluster.placement_group:
+        alpa_placement_group = global_cluster.placement_group
         return alpa_placement_group
 
     # case 3:
     # Get the placement group from ray global state
+    # Note: this case happens when the placement group can not be retrieved
+    # from the global variables of alpa or not inside ray tune, and the
+    # solution is to get the placement from ray global state environment.
     ray_state = try_import_ray_state()
     for pg_id, info in ray_state.state.placement_group_table().items():
         if info["state"] == "CREATED":

@@ -818,7 +818,7 @@ def main():
                 # ======================== Evaluating ==============================
                 eval_metrics = []
                 eval_loader = data_loader(input_rng, eval_dataset, eval_batch_size)
-                eval_steps = len(eval_dataset) // eval_batch_size
+                eval_steps = max(len(eval_dataset) // eval_batch_size, 1)
                 for _ in tqdm(range(eval_steps), desc="Evaluating...", position=2, leave=False):
                     # Model forward
                     batch = next(eval_loader)
@@ -864,7 +864,7 @@ def main():
     if training_args.do_eval:
         eval_metrics = []
         eval_loader = data_loader(input_rng, eval_dataset, eval_batch_size)
-        eval_steps = len(eval_dataset) // eval_batch_size
+        eval_steps = max(len(eval_dataset) // eval_batch_size, 1)
         for _ in tqdm(range(eval_steps), desc="Evaluating...", position=2, leave=False):
             # Model forward
             batch = next(eval_loader)

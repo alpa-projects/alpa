@@ -5,7 +5,7 @@ from alpa.api import (init, shutdown, parallelize, grad, value_and_grad,
 from alpa.data_loader import DataLoader, MeshDriverDataLoader
 from alpa.device_mesh import (
     DeviceCluster, PhysicalDeviceMesh, LocalPhysicalDeviceMesh,
-    DistributedPhysicalDeviceMesh, DistributedArray, fetch, get_global_cluster,
+    DistributedPhysicalDeviceMesh, DistributedArray, prefetch, get_global_cluster,
     get_global_physical_mesh, set_global_virtual_physical_mesh, set_seed,
     get_global_num_devices)
 from alpa.global_env import global_config

@@ -801,9 +801,9 @@ def get_metrics(device_metrics):
     DistributedArray in alpa.
     """
     # pylint: disable=import-outside-toplevel
-    from alpa.device_mesh import fetch
+    from alpa.device_mesh import prefetch
 
-    fetch(device_metrics)
+    prefetch(device_metrics)
     return stack_forest(device_metrics)
 
 

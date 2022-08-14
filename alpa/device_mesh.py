@@ -1550,8 +1550,12 @@ class DistributedArray:
         self.delete()
 
 
-def fetch(dis_arrays: Sequence[Union[ShardedDeviceArray, DistributedArray]]):
-    """Fetch a pytree of DistributedArray in a batch."""
+def prefetch(dis_arrays: Sequence[Union[ShardedDeviceArray, DistributedArray]]):
+    """Prefetch a pytree of DistributedArray in a batch.
+
+    If you want to get a lot of DistributedArrays from remote workers,
+    call this batched prefetch can make the later access faster.
+    """
     group_by_mesh = defaultdict(list)
     for array in tree_leaves(dis_arrays):
         if isinstance(array, ShardedDeviceArray):

@@ -906,7 +906,7 @@ def main():
 
             if cur_step % training_args.save_steps == 0 and cur_step > 0:
                 # save checkpoint after each epoch and push checkpoint to the hub
-                alpa.fetch(state.params)
+                alpa.prefetch(state.params)
                 params = alpa.util.map_to_nparray(state.params)
                 model.save_pretrained(training_args.output_dir, params=params)
                 tokenizer.save_pretrained(training_args.output_dir)
@@ -914,7 +914,7 @@ def main():
                     repo.push_to_hub(commit_message=f"Saving weights and logs of step {cur_step}", blocking=False)
 
     # Save the final model
-    alpa.fetch(state.params)
+    alpa.prefetch(state.params)
     params = alpa.util.map_to_nparray(state.params)
     model.save_pretrained(training_args.output_dir, params=params)
     tokenizer.save_pretrained(training_args.output_dir)

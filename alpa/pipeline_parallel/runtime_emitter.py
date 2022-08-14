@@ -16,7 +16,8 @@ from alpa.device_mesh import (DistributedArray, PhysicalDeviceMeshGroup,
 from alpa.mesh_executable import next_mesh_executable_uuid
 from alpa.parallel_plan import PlacementSpec
 from alpa.pipeline_parallel.computation import (
-    ApplyGradXlaShardedPipelineComputation, XlaShardedPipelineComputation)
+    ApplyGradXlaShardedPipelineComputation, XlaPipelineComputationType,
+    XlaShardedPipelineComputation)
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     CrossMeshCommunicator, SymbolicBroadcastReshardingTask,
     SymbolicReshardingTask, ReshardingTask)
@@ -154,8 +155,6 @@ ExecutableConfig = Union[AllocateZeroWorkerExecutableConfig,
                          PartialGradWorkerExecutableConfig,
                          ConcatWorkerExecutableConfig,
                          ApplyGradWorkerExecutableConfig]
-ComputationType = Union[XlaShardedPipelineComputation,
-                        ApplyGradXlaShardedPipelineComputation]
 
 
 def flatten_uuid_set(container):
@@ -247,7 +246,7 @@ class PipeshardConfig:
     """Configurations of a Pipeshard executable."""
     # Executable configs
     instruction_lists: Dict[Any, Sequence[PipelineInstruction]]
-    xla_stages: Sequence[ComputationType]
+    xla_stages: Sequence[XlaPipelineComputationType]
     # FIXME(yonghao): share this setting within a mesh
     executable_configs: Dict[Any, Sequence[ExecutableConfig]]
     executable_uuids: Sequence[int]
@@ -275,7 +274,7 @@ class PipeshardConfig:
 class PipelineInstEmitter:
     """Pipeline Instruction Emitter."""
 
-    def __init__(self, *, stages: Sequence[ComputationType],
+    def __init__(self, *, stages: Sequence[XlaPipelineComputationType],
                  global_invars: Sequence[Var], grad_dummy_invars: Dict[Var,
                                                                        Var],
                  global_outvars: Sequence[Var], concat_vars_mapping: Dict[Var,

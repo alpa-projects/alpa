@@ -459,6 +459,50 @@ def run_backend_compilation(backend: xe.Client,
     return compiled
 
 
+def get_input_sharding_specs(hlo_module: xe.HloModule,
+                             avals: Sequence[ShapedArray], num_devices: int,
+                             logical_mesh_shape: Sequence[int]):
+    """
+    Get input tensors' sharding spec from an HloModule.
+    See docs of 'get_input_output_sharding_specs' for more details.
+    """
+    if num_devices != 1:
+        input_shardings = hlo_module.spmd_parameters_shardings()
+        input_sharding_specs = [
+            hlo_sharding_to_sharding_spec(proto, aval, logical_mesh_shape)
+            for (proto, aval) in zip(input_shardings, avals)
+        ]
+    else:
+        # The spmd partition related code will be bypassed if
+        # num_partitions == 1.
+        # Assume all sharding specs are replicated.
+        input_sharding_specs = [
+            make_replicated_spec(aval, logical_mesh_shape) for aval in avals
+        ]
+    return input_sharding_specs
+
+
+def get_output_sharding_specs(hlo_module: xe.HloModule,
+                              avals: Sequence[ShapedArray], num_devices: int,
+                              logical_mesh_shape: Sequence[int]):
+    """
+    Get output tensors' sharding spec from an HloModule.
+    See docs of 'get_input_output_sharding_specs' for more details.
+    """
+    if num_devices != 1:
+        output_shardings = hlo_module.spmd_output_sharding()
+        output_sharding_specs = hlo_sharding_to_sharding_spec(
+            output_shardings, avals, logical_mesh_shape)
+    else:
+        # The spmd partition related code will be bypassed if
+        # num_partitions == 1.
+        # Assume all sharding specs are replicated.
+        output_sharding_specs = [
+            make_replicated_spec(aval, logical_mesh_shape) for aval in avals
+        ]
+    return output_sharding_specs
+
+
 def get_input_output_sharding_specs(
     hlo_module: xe.HloModule, avals: Sequence[ShapedArray],
     out_avals: Sequence[ShapedArray], num_devices: int,

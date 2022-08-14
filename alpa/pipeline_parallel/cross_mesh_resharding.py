@@ -15,7 +15,7 @@ from alpa.device_mesh import (DistributedArray, RemoteArrayRef,
 from alpa.global_env import global_config
 from alpa.mesh_executable import (UtilMeshWorkerExecutable,
                                   next_mesh_executable_uuid)
-from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
+from alpa.pipeline_parallel.computation import XlaPipelineComputationType
 from alpa.pipeline_parallel.resharding_tensor import (VirtualDistributedArray,
                                                       TileSlice,
                                                       unflatten_tile_index)
@@ -32,13 +32,6 @@ def next_resharding_task_uuid():
     global resharding_task_counter
     resharding_task_counter = (resharding_task_counter + 1) % (1 << 60)
     return resharding_task_counter
-
-
-def _suffix_prod(ary):
-    out = [1]
-    for e in reversed(ary):
-        out.append(out[-1] * e)
-    return list(reversed(out))
 
 
 def _get_chunk_value(spec):
@@ -928,9 +921,8 @@ class CrossMeshCommunicator:
     def __init__(self, sharded_stages, schedule):
         if not isinstance(sharded_stages, list):
             raise RuntimeError("Require a list of stages.")
-        # FIXME(yonghao): consider the apply grad version
         for s in sharded_stages:
-            if not isinstance(s, XlaShardedPipelineComputation):
+            if type(s) in XlaPipelineComputationType:
                 raise RuntimeError("Require a list of sharded stages.")
         # Do not mutate
         self._sharded_stages = sharded_stages

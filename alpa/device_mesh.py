@@ -1010,13 +1010,13 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 })
 
             # Launch the DaemonMoveWorker
-            cls = ray.remote(DaemonMoveWorker)
+            cls = ray.remote(num_cpus=1e-3)(DaemonMoveWorker)
             move_worker = cls.options(
                 placement_group=placement_group,
                 placement_group_bundle_index=bundle_index).remote()
 
             # Launch the MeshHostWorker
-            cls = ray.remote(num_cpus=0,
+            cls = ray.remote(num_cpus=1e-3,
                              num_gpus=self.num_devices_per_host)(MeshHostWorker)
             worker = cls.options(placement_group=placement_group,
                                  placement_group_bundle_index=bundle_index,

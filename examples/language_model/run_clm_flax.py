@@ -94,6 +94,7 @@ class TrainingArguments:
     per_device_eval_batch_size: int = field(
         default=8, metadata={"help": "Batch size per GPU/TPU core/CPU for evaluation."}
     )
+    num_micro_batches: int = field(default=1, metadata={"help": "The number of micro batches for gradient accumulation."})
     learning_rate: float = field(default=5e-5, metadata={"help": "The initial learning rate for AdamW."})
     weight_decay: float = field(default=0.0, metadata={"help": "Weight decay for AdamW if we apply some."})
     adam_beta1: float = field(default=0.9, metadata={"help": "Beta1 for AdamW optimizer"})
@@ -262,12 +263,16 @@ class DataTrainingArguments:
                 assert extension in ["csv", "json", "txt"], "`validation_file` should be a csv, a json or a txt file."
 
 
-def data_loader(rng: jax.random.PRNGKey, dataset: Dataset, batch_size: int, shuffle: bool = False):
+def data_loader(rng: jax.random.PRNGKey, dataset: Dataset, batch_size: int,
+                min_batch_size: int, shuffle: bool = False):
     """
     Returns batches of size `batch_size` from truncated `dataset`, sharded over all local devices.
     Shuffle batches if `shuffle` is `True`.
     """
-    batch_size = min(batch_size, len(dataset))
+    if len(dataset) < batch_size:
+        assert len(dataset) >= min_batch_size
+        batch_size = len(dataset) // min_batch_size * min_batch_size
+
     data_collator = transformers.DefaultDataCollator("np")
     tf_dataset = dataset.to_tf_dataset(batch_size=batch_size,
                                        columns=dataset.column_names,
@@ -728,18 +733,19 @@ def main():
         return metrics
 
     # Create parallel version of the train and eval step
-    method = alpa.Zero2Parallel(num_micro_batches=4)
+    method = alpa.Zero2Parallel(num_micro_batches=training_args.num_micro_batches)
     p_train_step = alpa.parallelize(train_step,
                                     method=method,
                                     donate_argnums=(0,))
     p_eval_step = alpa.parallelize(eval_step)
 
+    min_batch_size = alpa.get_global_num_devices() * training_args.num_micro_batches
     dump_debug_info_train_step = dump_debug_info_eval_step = True
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {num_epochs}")
-    logger.info(f"  Batch size per device (w. accumulation)= {training_args.per_device_train_batch_size}")
+    logger.info(f"  Batch size per device (w. accumulation) = {training_args.per_device_train_batch_size}")
     logger.info(f"  Global train batch size (w. parallel & distributed) = {train_batch_size}")
     logger.info(f"  Total optimization steps = {total_train_steps}")
 
@@ -760,7 +766,7 @@ def main():
         rng, input_rng = jax.random.split(rng)
 
         # Generate an epoch by shuffling sampling indices from the train dataset
-        train_loader = data_loader(input_rng, train_dataset, train_batch_size, shuffle=True)
+        train_loader = data_loader(input_rng, train_dataset, train_batch_size, min_batch_size, shuffle=True)
         steps_per_epoch = len(train_dataset) // train_batch_size
         # train
         for step in tqdm(range(steps_per_epoch), desc="Training...", position=1, leave=False):
@@ -817,7 +823,7 @@ def main():
             if cur_step % training_args.eval_steps == 0 and cur_step > 0:
                 # ======================== Evaluating ==============================
                 eval_metrics = []
-                eval_loader = data_loader(input_rng, eval_dataset, eval_batch_size)
+                eval_loader = data_loader(input_rng, eval_dataset, eval_batch_size, min_batch_size)
                 eval_steps = max(len(eval_dataset) // eval_batch_size, 1)
                 for _ in tqdm(range(eval_steps), desc="Evaluating...", position=2, leave=False):
                     # Model forward
@@ -864,7 +870,7 @@ def main():
     # Eval after training
     if training_args.do_eval:
         eval_metrics = []
-        eval_loader = data_loader(input_rng, eval_dataset, eval_batch_size)
+        eval_loader = data_loader(input_rng, eval_dataset, eval_batch_size, min_batch_size)
         eval_steps = max(len(eval_dataset) // eval_batch_size, 1)
         for _ in tqdm(range(eval_steps), desc="Evaluating...", position=2, leave=False):
             # Model forward

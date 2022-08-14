@@ -1503,7 +1503,7 @@ def retrieve_placement_group():
         return alpa_placement_group
 
     # case 3:
-    # Get the placement group from ray global state
+    # Get placement group from ray global state
     # Note: this case happens when the placement group can not be retrieved
     # from the global variables of alpa or not inside ray tune, and the
     # solution is to get the placement from ray global state environment.

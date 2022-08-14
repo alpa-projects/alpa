@@ -74,8 +74,8 @@ def get_mlp_train_state_and_step(batch_size,
                                  add_manual_pipeline_marker=False):
     # Init input batch
     rngkey = jax.random.PRNGKey(0)
-    x = jax.random.normal(rngkey, (batch_size, hidden_size), dtype=jnp.float32)
-    y = jax.random.normal(rngkey, (batch_size, hidden_size), dtype=jnp.float32)
+    x = jax.random.normal(rngkey, (batch_size, hidden_size))
+    y = jax.random.normal(rngkey, (batch_size, hidden_size))
     batch = {"x": x, "y": y}
 
     # Init model and optimizer
@@ -131,11 +131,9 @@ def get_bert_layer_train_state_and_step(batch_size, seq_len, num_layers,
                                         hidden_size, num_heads,
                                         add_manual_pipeline_marker):
     rngkey = jax.random.PRNGKey(0)
-    x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
-                          dtype=jnp.float32)
-    y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
-                          dtype=jnp.float32)
-    attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
+    x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size))
+    y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size))
+    attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int8)
     batch = {"x": x, "y": y, "attention_mask": attention_mask}
 
     model = BertLayerModel(

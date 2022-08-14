@@ -11,7 +11,7 @@ from jax.interpreters import pxla
 import numpy as np
 import ray
 
-from alpa import init, parallelize, fetch, DistributedArray
+from alpa import init, parallelize, DistributedArray
 from alpa.device_mesh import get_global_physical_mesh
 from alpa.testing import assert_allclose
 

@@ -121,6 +121,7 @@ python3 run_clm_flax.py \
     --block_size="512" \
     --per_device_train_batch_size="96" \
     --per_device_eval_batch_size="96" \
+    --num_micro_batches="4" \
     --dtype="float16" \
     --learning_rate="1e-3" --warmup_steps="1000" \
     --adam_beta1="0.9" --adam_beta2="0.98" --weight_decay="0.01" \

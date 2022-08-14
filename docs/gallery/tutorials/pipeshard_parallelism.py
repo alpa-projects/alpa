@@ -75,13 +75,13 @@ batch_size = 2048
 # Generate ground truth W and b
 rngkey = jax.random.PRNGKey(0)
 k1, k2 = random.split(rngkey)
-W = random.normal(k1, (dim, dim), jnp.float32)
-b = random.normal(k2, (dim,), jnp.float32)
+W = random.normal(k1, (dim, dim))
+b = random.normal(k2, (dim,))
 
 # Generate the training data
 ksample, knoise = random.split(k1)
-x = random.normal(ksample, (batch_size, dim), jnp.float32)
-y = (x @ W + b) + 0.1 * random.normal(knoise, (batch_size, dim), jnp.float32)
+x = random.normal(ksample, (batch_size, dim))
+y = (x @ W + b) + 0.1 * random.normal(knoise, (batch_size, dim))
 
 # Initialize a train state, which includes the model paramter and optimizer
 # state.

@@ -906,6 +906,11 @@ def main():
                 if training_args.push_to_hub:
                     repo.push_to_hub(commit_message=f"Saving weights and logs of step {cur_step}", blocking=False)
 
+    # Save the final model
+    params = state.params
+    model.save_pretrained(training_args.output_dir, params=params)
+    tokenizer.save_pretrained(training_args.output_dir)
+
     # Eval after training
     if training_args.do_eval:
         eval_metrics = []

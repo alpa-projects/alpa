@@ -17,23 +17,27 @@ limitations under the License.
 # Fine-tuning OPT Language Models
 
 Quick run
+**Note**: The command below is tested on AWS p3.16xlarge with 8 x 16GB V100 GPUs). To run on other clusters,   please tune the per_device_train_batch_size/num_micro_batches/operator_parallel to avoid the out-of-memory and achieve a good throughput.
 ```
 ray start --head
 python3 run_clm_flax.py \
     --output_dir="./output" \
-    --model_name_or_path="facebook/opt-125m" \
+    --model_name_or_path="facebook/opt-2.7b" \
     --dataset_name="wikitext" \
     --dataset_config_name="wikitext-2-raw-v1" \
     --do_train --do_eval \
-    --block_size="512" \
-    --per_device_train_batch_size="96" \
-    --per_device_eval_batch_size="96" \
+    --block_size="1024" \
+    --per_device_train_batch_size="20" \
+    --per_device_eval_batch_size="20" \
+    --num_micro_batches 4 \
+    --operator_parallel 4 \
+    --pipeline_parallel 1 \
     --dtype="float16" \
     --learning_rate="5e-4" --warmup_steps="2000" \
     --adam_beta1="0.9" --adam_beta2="0.98" --weight_decay="0.01" \
     --overwrite_output_dir \
     --num_train_epochs="20" \
-    --logging_steps="100" \
+    --logging_steps="16" \
     --save_steps="2500" \
     --eval_steps="2500"
 ```

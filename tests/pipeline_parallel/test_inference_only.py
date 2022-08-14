@@ -33,8 +33,8 @@ class PipelineInferenceTest(unittest.TestCase):
                          num_layers=4,
                          add_manual_pipeline_marker=manual_pipeline_layer)
         rngkey = jax.random.PRNGKey(0)
-        x = jax.random.normal(rngkey, (batch_size, hidden_size), jnp.float32)
-        y = jax.random.normal(rngkey, (batch_size, hidden_size), jnp.float32)
+        x = jax.random.normal(rngkey, (batch_size, hidden_size))
+        y = jax.random.normal(rngkey, (batch_size, hidden_size))
         batch = {'x': x, 'y': y}
         state = create_train_state(rngkey, model, [x])
 
@@ -74,11 +74,9 @@ class PipelineInferenceTest(unittest.TestCase):
                               add_manual_pipeline_markers=manual_pipeline_layer,
                               pipeline_mp_size=n_layers))
         rngkey = jax.random.PRNGKey(0)
-        x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
-                              dtype=jnp.float32)
-        y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
-                              dtype=jnp.float32)
-        attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
+        x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size))
+        y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size))
+        attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int8)
         batch = {"x": x, "y": y, "attention_mask": attention_mask}
         state = create_train_state(rngkey, model, [x, attention_mask])
 

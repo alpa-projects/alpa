@@ -9,6 +9,8 @@ import flax
 from flax.optim import dynamic_scale as dynamic_scale_lib
 from flax.optim.dynamic_scale import DynamicScaleResult
 from flax.training import train_state
+from flax.core.lift import pack
+from flax.linen.transforms import lift_transform
 from flax import struct
 import numpy as np
 import jax
@@ -249,7 +251,7 @@ def softmax_cross_entropy(logits, labels):
 
 
 class TrainState(train_state.TrainState):
-    """This is an improved version of the original flax TrainState.
+    """This is an extended version of flax.training.train_state.TrainState.
 
     This class wraps the logic for creating the master weight copy in
     mixed precision training.
@@ -357,10 +359,10 @@ class TrainState(train_state.TrainState):
 
 
 class DynamicScale(struct.PyTreeNode):
-    """Dynamic loss scaling for mixed precision gradients.
+    """This is the same as flax.optim.DynamicScale, except that
+  jax.value_and_grad is replaced by alpa.value_and_grad.
 
-  NOTE(lmzheng): This is the same as flax.optim.DynamicScale, but with
-  jax.value_and_grad replaced by alpa.value_and_grad.
+  Dynamic loss scaling for mixed precision gradients.
 
   For many models gradient computations in float16 will result in numerical
   issues because small/large gradients being flushed to zero/infinity.
@@ -467,3 +469,91 @@ class DynamicScale(struct.PyTreeNode):
             return DynamicScaleResult(new_self, finite, aux, grad)
 
         return grad_fn_wrapper
+
+
+def concrete_remat_internal(
+    fn: Callable[..., Any],
+    variables=True,
+    rngs=True,
+    prevent_cse: bool = True,
+    policy: Optional[Callable[..., bool]] = None,
+) -> Callable[..., Any]:
+    """This is the same as ``flax.lift.checkpoint``, except that concrete is
+  always True and alpa fixes a bug when `concrete==True`.
+  """
+
+    def inner(scope_fn, repack_fn, variable_groups, rng_groups, *args,
+              **kwargs):
+        outer_kwargs = kwargs
+
+        @functools.partial(jax.remat,
+                           concrete=True,
+                           prevent_cse=prevent_cse,
+                           policy=policy)
+        @functools.wraps(fn)
+        def rematted(variable_groups, rng_groups, *args, **kwargs):
+            scope = scope_fn(variable_groups, rng_groups)
+            for key in kwargs:
+                # Overwrite kwargs that are constant.
+                # Otherwise, jax.remat has a bug when concrete=True is used
+                # without jax.grad.
+                if isinstance(outer_kwargs[key], (bool, int, float)):
+                    kwargs[key] = outer_kwargs[key]
+            y = fn(scope, *args, **kwargs)
+            return y, repack_fn(scope)
+
+        return rematted(variable_groups, rng_groups, *args, **kwargs)
+
+    return pack(inner, (variables,), (variables,), (rngs,),
+                name='remat',
+                enable_kwargs=True)
+
+
+def concrete_remat(target,
+                   variables=True,
+                   rngs=True,
+                   prevent_cse: bool = True,
+                   policy: Optional[Callable[..., bool]] = None,
+                   methods=None):
+    """This is the same as ``flax.linen.transform.checkpoint``, except that concrete is
+  always True and alpa fixes a bug when `concrete==True`.
+
+  Lifted version of ``jax.checkpoint``.
+
+  This function is aliased to ``lift.remat`` just like ``jax.remat``.
+
+  Args:
+    target: a ``Module`` or a function taking a ``Module``
+      as its first argument. intermediate computations will be
+      re-computed when computing gradients for the target.
+    variables: The variable collections that are lifted. By default all
+      collections are lifted.
+    rngs: The PRNG sequences that are lifted. By default all PRNG sequences
+      are lifted.
+    concrete: Optional, boolean indicating whether ``fun`` may involve
+      value-dependent Python control flow (default False). Support for such
+      control flow is optional, and disabled by default, because in some
+      edge-case compositions with :func:`jax.jit` it can lead to some extra
+      computation.
+    prevent_cse: Optional, boolean indicating whether to prevent common
+      subexpression elimination (CSE) optimizations in the HLO generated from
+      differentiation. This CSE prevention has costs because it can foil other
+      optimizations, and because it can incur high overheads on some backends,
+      especially GPU. The default is True because otherwise, under a ``jit`` or
+      ``pmap``, CSE can defeat the purpose of this decorator. But in some
+      settings, like when used inside a ``scan``, this CSE prevention mechanism
+      is unnecessary, in which case ``prevent_cse`` should be set to False.
+    policy: Experimental checkpoint policy, see ``jax.checkpoint``.
+    methods: If `target` is a `Module`, the methods of `Module` to checkpoint.
+
+  Returns:
+    A wrapped version of ``target``. When computing gradients intermediate
+    computations will be re-computed on the backward pass.
+  """
+    return lift_transform(concrete_remat_internal,
+                          target,
+                          variables=variables,
+                          rngs=rngs,
+                          prevent_cse=prevent_cse,
+                          policy=policy,
+                          methods=methods)

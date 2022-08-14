@@ -196,7 +196,7 @@ def restore_checkpoint(state, workdir):
 
 
 def save_checkpoint(state, workdir):
-  alpa.fetch(state)
+  alpa.prefetch(state)
   state = alpa.util.map_to_nparray(state)
   step = int(state.step)
   checkpoints.save_checkpoint(workdir, state, step, keep=3)

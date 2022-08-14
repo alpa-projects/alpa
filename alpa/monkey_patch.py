@@ -53,6 +53,7 @@ if is_worker:
 # Monkey patch random generator to use the stateful random generator.
 # This can simplify the computational graph for dropout.
 def fast_uniform(key, shape=(), dtype=dtypes.float_, minval=0.0, maxval=1.0):
+    dtype = dtypes.canonicalize_dtype(dtype)
     shape = core.as_named_shape(shape)
     minval = jnp.asarray(minval, dtype)
     maxval = jnp.asarray(maxval, dtype)
@@ -108,14 +109,15 @@ mlir.register_lowering(rng_normal_p, _rng_normal_lowering)
 
 
 def fast_normal(key, shape=(), dtype=dtypes.float_, mu=0.0, sigma=1.0):
+    dtype = dtypes.canonicalize_dtype(dtype)
     shape = core.as_named_shape(shape)
     mu = jnp.asarray(mu, dtype)
     sigma = jnp.asarray(sigma, dtype)
     return rng_normal(mu, sigma, shape.positional)
 
 
-def fast_bernoulli(key, p=0.5, shape=None):
-    dtype = dtypes.float_
+def fast_bernoulli(key, p=np.float32(0.5), shape=None):
+    dtype = dtypes.canonicalize_dtype(lax.dtype(p))
     return jax.random.uniform(key, shape, dtype) < p
 
 

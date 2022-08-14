@@ -712,7 +712,9 @@ def trace_jaxpr_with_micro_batch(fun: lu.WrappedFun,
     for aval, is_batch_var in zip(raw_avals, batch_invars):
         if is_batch_var:
             assert aval.shape[0] % num_micro_batches == 0, (
-                "The batch dimension must be divisable by num_micro_batches.")
+                f"The batch size must be divisable by num_micro_batches. "
+                f"batch_size = {aval.shape[0]}, "
+                f"num_micro_batches = {num_micro_batches}")
             if batch_size is None:
                 batch_size = aval.shape[0] // num_micro_batches
             else:
@@ -799,9 +801,9 @@ def get_metrics(device_metrics):
     DistributedArray in alpa.
     """
     # pylint: disable=import-outside-toplevel
-    from alpa.device_mesh import fetch
+    from alpa.device_mesh import prefetch
 
-    fetch(device_metrics)
+    prefetch(device_metrics)
     return stack_forest(device_metrics)
 
 

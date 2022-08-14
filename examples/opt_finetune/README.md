@@ -18,7 +18,7 @@ limitations under the License.
 
 ## Quick run
 **Note**: The command below is tested on AWS p3.16xlarge instances with 8 x 16GB V100 GPUs.
-To run on other clusters, please tune the per_device_train_batch_size/num_micro_batches/operator_parallel to avoid the out-of-memory and achieve a good throughput.
+To run on other clusters, please tune the arguments `per_device_train_batch_size/num_micro_batches/operator_parallel` to avoid the out-of-memory and achieve a good throughput.
 ```
 ray start --head
 python3 run_clm_flax.py \

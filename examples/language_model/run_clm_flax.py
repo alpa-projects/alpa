@@ -349,13 +349,9 @@ def main():
         level=logging.INFO,
     )
     # Setup logging, we only want one process per machine to log things on the screen.
-    logger.setLevel(logging.INFO if jax.process_index() == 0 else logging.ERROR)
-    if jax.process_index() == 0:
-        datasets.utils.logging.set_verbosity_warning()
-        transformers.utils.logging.set_verbosity_info()
-    else:
-        datasets.utils.logging.set_verbosity_error()
-        transformers.utils.logging.set_verbosity_error()
+    logger.setLevel(logging.INFO)
+    datasets.utils.logging.set_verbosity_warning()
+    transformers.utils.logging.set_verbosity_info()
 
     # Set the verbosity to info of the Transformers logger (on main process only):
     logger.info(f"Training/evaluation parameters {training_args}")
@@ -599,7 +595,7 @@ def main():
 
     # Enable tensorboard only on the master node
     has_tensorboard = is_tensorboard_available()
-    if has_tensorboard and jax.process_index() == 0:
+    if has_tensorboard:
         try:
             from flax.metrics.tensorboard import SummaryWriter
 
@@ -804,7 +800,7 @@ def main():
 
                 # Save metrics
                 train_time += time.time() - train_start
-                if has_tensorboard and jax.process_index() == 0:
+                if has_tensorboard:
                     write_train_metric(summary_writer, train_metrics, train_time, cur_step)
 
                 train_metric = jax.tree_map(np.mean, train_metric)
@@ -854,18 +850,17 @@ def main():
                 epochs.desc = desc
 
                 # Save metrics
-                if has_tensorboard and jax.process_index() == 0:
+                if has_tensorboard:
                     write_eval_metric(summary_writer, eval_metrics, cur_step)
 
             if cur_step % training_args.save_steps == 0 and cur_step > 0:
                 # save checkpoint after each epoch and push checkpoint to the hub
-                if jax.process_index() == 0:
-                    alpa.fetch(state.params)
-                    params = alpa.util.map_to_nparray(state.params)
-                    model.save_pretrained(training_args.output_dir, params=params)
-                    tokenizer.save_pretrained(training_args.output_dir)
-                    if training_args.push_to_hub:
-                        repo.push_to_hub(commit_message=f"Saving weights and logs of step {cur_step}", blocking=False)
+                alpa.fetch(state.params)
+                params = alpa.util.map_to_nparray(state.params)
+                model.save_pretrained(training_args.output_dir, params=params)
+                tokenizer.save_pretrained(training_args.output_dir)
+                if training_args.push_to_hub:
+                    repo.push_to_hub(commit_message=f"Saving weights and logs of step {cur_step}", blocking=False)
 
     # Eval after training
     if training_args.do_eval:
@@ -887,11 +882,10 @@ def main():
         except OverflowError:
             eval_metrics["perplexity"] = float("inf")
 
-        if jax.process_index() == 0:
-            eval_metrics = {f"eval_{metric_name}": value for metric_name, value in eval_metrics.items()}
-            path = os.path.join(training_args.output_dir, "eval_results.json")
-            with open(path, "w") as f:
-                json.dump(eval_metrics, f, indent=4, sort_keys=True)
+        eval_metrics = {f"eval_{metric_name}": value for metric_name, value in eval_metrics.items()}
+        path = os.path.join(training_args.output_dir, "eval_results.json")
+        with open(path, "w") as f:
+            json.dump(eval_metrics, f, indent=4, sort_keys=True)
 
 
 if __name__ == "__main__":

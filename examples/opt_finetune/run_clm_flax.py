@@ -40,7 +40,7 @@ from datasets import Dataset, load_dataset
 from tqdm import tqdm
 
 import alpa
-from alpa.model.model_util import DynamicScale, TrainState
+from alpa.model.model_util import DynamicScale, TrainState, concrete_remat
 from alpa import AutoShardingOption, AutoLayerOption
 import jax
 import jax.numpy as jnp
@@ -97,6 +97,9 @@ class TrainingArguments:
     per_device_eval_batch_size: int = field(
         default=8, metadata={"help": "Batch size per GPU/TPU core/CPU for evaluation."}
     )
+    num_micro_batches: int = field(metadata={"help": "The number of micro batches for gradient accumulation."})
+    operator_parallel: int = field(metadata={"help": "The degree of operator model parallelism."})
+    pipeline_parallel: int = field(metadata={"help": "The degree of pipeline model parallelism."})
     use_remat: bool = field(default=True, metadata={"help": "Whether or not to use gradient rematerilization/gradient checkpointing."})
     learning_rate: float = field(default=5e-5, metadata={"help": "The initial learning rate for AdamW."})
     weight_decay: float = field(default=0.0, metadata={"help": "Weight decay for AdamW if we apply some."})
@@ -311,6 +314,24 @@ def create_learning_rate_fn(
     )
     schedule_fn = optax.join_schedules(schedules=[warmup_fn, decay_fn], boundaries=[num_warmup_steps])
     return schedule_fn
+
+
+def monkey_patch_remat():
+    # Use monkey patch to add remat for all transformer layers.
+    from transformers.models.opt.modeling_flax_opt import FlaxOPTDecoderLayer, FlaxOPTDecoderLayerCollection
+    from flax.linen.module import wrap_method_once
+    import flax.linen as nn
+
+    @wrap_method_once
+    def setup(self):
+        self.layers = [
+            concrete_remat(FlaxOPTDecoderLayer)(
+                self.config, name=str(i), dtype=self.dtype)
+            for i in range(self.config.num_hidden_layers)
+        ]
+        self.layerdrop = self.config.layerdrop
+
+    setattr(FlaxOPTDecoderLayerCollection, "setup", setup)
 
 
 def get_3d_parallel_method(num_micro_batches, data_parallel, operator_parallel,
@@ -754,10 +775,10 @@ def main():
         return metrics
 
     # Create parallel version of the train and eval step
-    method = get_3d_parallel_method(num_micro_batches=4,
+    method = get_3d_parallel_method(num_micro_batches=training_args.num_micro_batches,
                                     data_parallel=-1,
-                                    operator_parallel=4,
-                                    pipeline_parallel=1)
+                                    operator_parallel=training_args.operator_parallel,
+                                    pipeline_parallel=training_args.pipeline_parallel)
     p_train_step = alpa.parallelize(train_step,
                                     method=method,
                                     donate_argnums=(0,))
@@ -910,25 +931,6 @@ def main():
         path = os.path.join(training_args.output_dir, "eval_results.json")
         with open(path, "w") as f:
             json.dump(eval_metrics, f, indent=4, sort_keys=True)
-
-
-def monkey_patch_remat():
-    # Use monkey patch to add remat for all transformer layers.
-    from transformers.models.opt.modeling_flax_opt import FlaxOPTDecoderLayer, FlaxOPTDecoderLayerCollection
-    from flax import linen as nn
-    from flax.linen.module import wrap_method_once
-
-    @wrap_method_once
-    def setup(self):
-        self.layers = [
-            nn.remat(FlaxOPTDecoderLayer, concrete=True)(
-                self.config, name=str(i), dtype=self.dtype)
-            for i in range(self.config.num_hidden_layers)
-        ]
-        self.layerdrop = self.config.layerdrop
-
-    setattr(FlaxOPTDecoderLayerCollection, "setup", setup)
-
 
 if __name__ == "__main__":
     main()

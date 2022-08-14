@@ -44,7 +44,7 @@ def compile_follow_parallel_executable(fun, in_tree, out_tree_thunk,
         closed_jaxpr = ClosedJaxpr(jaxpr, consts)
         out_tree = out_tree_thunk()
 
-        name = f"{fun.__name__}_follow_parallel"
+        name = f"{fun.__name__}_follow_shard_parallel"
         hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, donated_invars)
 
         # Get input sharding specs

@@ -97,9 +97,9 @@ class TrainingArguments:
     per_device_eval_batch_size: int = field(
         default=8, metadata={"help": "Batch size per GPU/TPU core/CPU for evaluation."}
     )
-    num_micro_batches: int = field(metadata={"help": "The number of micro batches for gradient accumulation."})
-    operator_parallel: int = field(metadata={"help": "The degree of operator model parallelism."})
-    pipeline_parallel: int = field(metadata={"help": "The degree of pipeline model parallelism."})
+    num_micro_batches: int = field(default=1, metadata={"help": "The number of micro batches for gradient accumulation."})
+    operator_parallel: int = field(default=1, metadata={"help": "The degree of operator model parallelism."})
+    pipeline_parallel: int = field(default=1, metadata={"help": "The degree of pipeline model parallelism."})
     use_remat: bool = field(default=True, metadata={"help": "Whether or not to use gradient rematerilization/gradient checkpointing."})
     learning_rate: float = field(default=5e-5, metadata={"help": "The initial learning rate for AdamW."})
     weight_decay: float = field(default=0.0, metadata={"help": "Weight decay for AdamW if we apply some."})
@@ -747,7 +747,6 @@ def main():
         new_state = state.apply_gradients(grads=grads)
 
         if dynamic_scale:
-            if_fin = True
             new_state = new_state.replace(
                 opt_state=jax.tree_map(
                     functools.partial(jnp.where, is_fin),

@@ -30,7 +30,6 @@ limitations under the License.
 **Note**: The command below is tested on AWS p3.16xlarge instances with 8 x 16GB V100 GPUs.
 To run on other clusters, please tune the arguments `per_device_train_batch_size/num_micro_batches/operator_parallel` to avoid out-of-memory and achieve a good throughput.
 ```
-ray start --head
 python3 run_clm_flax.py \
     --output_dir="./output" \
     --model_name_or_path="facebook/opt-2.7b" \

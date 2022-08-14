@@ -16,7 +16,17 @@ limitations under the License.
 
 # Fine-tuning OPT Language Models
 
-## Quick run
+## Instructions
+
+### Launch a Ray cluster
+
+1. Use the command below to launch ray on a head node  
+  ```ray start --head```
+2. (Optional) If you have more nodes, connect them to the head node. The command should look like this, but with the ip address and password printed by the previous command.   
+  ```ray start --address='172.31.34.216:6379' --redis-password='5241590000000000'```
+
+### Run training
+
 **Note**: The command below is tested on AWS p3.16xlarge instances with 8 x 16GB V100 GPUs.
 To run on other clusters, please tune the arguments `per_device_train_batch_size/num_micro_batches/operator_parallel` to avoid out-of-memory and achieve a good throughput.
 ```

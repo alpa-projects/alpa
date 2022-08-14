@@ -854,6 +854,7 @@ def main():
             if cur_step % training_args.save_steps == 0 and cur_step > 0:
                 # save checkpoint after each epoch and push checkpoint to the hub
                 if jax.process_index() == 0:
+                    alpa.fetch(state.params)
                     params = alpa.util.map_to_nparray(state.params)
                     model.save_pretrained(training_args.output_dir, params=params)
                     tokenizer.save_pretrained(training_args.output_dir)

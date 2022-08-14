@@ -212,8 +212,8 @@ def clear_executable_cache():
 
 
 def grad(*args, **kwargs):
-    """The functionality is the same as jax.grad,
-    but alpa inserts a gradient marker after the gradient computation.
+    """This is the same as jax.grad, except that alpa inserts a
+    gradient marker after the gradient computation.
 
     This function annotates all gradient tensors. This information is used to
     perform gradient accumulation transformation.
@@ -236,8 +236,9 @@ def grad(*args, **kwargs):
 
 
 def value_and_grad(*args, **kwargs):
-    """The functionality is the same as jax.grad,
-    but alpa inserts a gradient marker after the gradient computation.
+    """This is the same as jax.value_and_grad, except that alpa inserts a
+    gradient marker after the gradient computation.
+
 
     This function annotates all gradient tensors. This information is used to
     perform gradient accumulation transformation.

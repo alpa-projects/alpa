@@ -1398,6 +1398,10 @@ class DistributedArray:
         self._fetched_np_buffers_ref = None
         self.skip_shard_args_check = False
 
+    @property
+    def size(self):
+        return np.prod(self.shape)
+
     def get_remote_buffers_async(self):
         # TODO (yinmin): Move this function out of DistributedArray
         #  and batch different requests. Also need to add another

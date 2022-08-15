@@ -865,3 +865,8 @@ def get_participated_streams(participated_devices,
                                     if is_input else g.output_xla_cuda_streams[device])
     # print(participated_streams)
     return participated_streams
+
+def get_all_streams(group_name):
+    g = _check_and_get_group(group_name)
+    participated_streams = list(g.input_xla_cuda_streams.values()) + list(g.input_xla_cuda_streams.values())
+    return participated_streams

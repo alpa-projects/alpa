@@ -6,7 +6,8 @@ from alpa.collective.collective import (
     get_collective_group_size, allreduce, allreduce_multigpu, barrier, reduce,
     reduce_multigpu, broadcast, broadcast_partialgpu, broadcast_multigpu,
     allgather, allgather_multigpu, reducescatter, reducescatter_multigpu, send,
-    send_multigpu, recv, recv_multigpu, check_and_get_group, initialize_streams_for_groups, get_participated_streams)
+    send_multigpu, recv, recv_multigpu, check_and_get_group, initialize_streams_for_groups,
+    get_participated_streams, get_all_streams)
 
 __all__ = [
     "nccl_available", "gloo_available", "is_group_initialized",
@@ -16,4 +17,5 @@ __all__ = [
     "broadcast", "broadcast_multigpu", "allgather", "allgather_multigpu",
     "reducescatter", "reducescatter_multigpu", "send", "send_multigpu", "recv",
     "recv_multigpu", "check_and_get_group", "initialize_streams_for_groups", "get_participated_streams",
+    "get_all_streams",
 ]

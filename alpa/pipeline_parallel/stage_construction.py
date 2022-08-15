@@ -14,7 +14,8 @@ import numpy as np
 from ray.exceptions import RayActorError
 import tqdm
 
-from alpa.device_mesh import global_cluster, VirtualPhysicalMesh
+import alpa
+from alpa.device_mesh import VirtualPhysicalMesh
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.computation import (
     JaxPipelineComputation, merge_marked_jaxprs_with_named_call)
@@ -460,6 +461,7 @@ def get_compute_cost(
         num_hosts, num_devices = submesh
         tic = time()
         if global_config.profile_with_whole_ray_cluster:
+            global_cluster = alpa.device_cluster.global_cluster
             whole_cluster_virtual_mesh = global_cluster.\
                 get_virtual_physical_mesh()
             sliced_virtual_meshes = (

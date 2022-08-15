@@ -45,6 +45,7 @@ import numpy as np
 import ray
 from ray.util.placement_group import remove_placement_group
 
+import alpa
 from alpa import mesh_profiling
 import alpa.collective as col
 from alpa.global_env import global_config
@@ -962,6 +963,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # Launch workers
         self.workers = []
 
+        print(alpa.device_mesh.global_cluster)
         # retrieve the placement group
         placement_group = retrieve_placement_group()
 

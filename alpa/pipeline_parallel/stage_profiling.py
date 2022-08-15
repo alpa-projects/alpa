@@ -16,6 +16,7 @@ import ray
 from ray.exceptions import RayActorError
 from ray.util import ActorPool
 
+import alpa
 from alpa.device_mesh import (DistributedArray, PhysicalDeviceMesh,
                               VirtualPhysicalMesh, _shard_device_array)
 from alpa.global_env import global_config
@@ -247,7 +248,7 @@ class ProfileWorker:
     """
 
     def __init__(self, virtual_mesh: VirtualPhysicalMesh):
-        print('outside', virtual_mesh)
+        print('outside', virtual_mesh, 'global cluster', alpa.device_mesh.global_cluster)
         self.mesh = virtual_mesh.get_physical_mesh()
         self.virtual_mesh = virtual_mesh
     def _profile_impl(self, stage_id, compiled_output, profile_info,

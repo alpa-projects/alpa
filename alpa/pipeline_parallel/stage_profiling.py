@@ -247,9 +247,9 @@ class ProfileWorker:
     """
 
     def __init__(self, virtual_mesh: VirtualPhysicalMesh):
+        print('outside', virtual_mesh)
         self.mesh = virtual_mesh.get_physical_mesh()
         self.virtual_mesh = virtual_mesh
-        print(self.mesh, self.virtual_mesh)
     def _profile_impl(self, stage_id, compiled_output, profile_info,
                       intermediate_size, initial_size):
         """Implementation of profile function.

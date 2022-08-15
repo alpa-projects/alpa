@@ -964,7 +964,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.workers = []
 
         print(alpa.device_mesh.global_cluster)
-        import traceback; traceback.print_exc()
+        import traceback; traceback.print_stack()
         # retrieve the placement group
         placement_group = retrieve_placement_group()
 

@@ -75,20 +75,14 @@ python -m alpa.test_install
 You can also install Alpa from source for development or other CUDA versions. 
 Follow this [detailed guide](https://alpa.ai/install.html#method-2-install-from-source) to install Alpa from source or troubleshooting if you meet any errors during the process.  
 
-## Examples
-Check the following list of examples to get started with training and serving large models.
-- [Model parallelism on Mnist](https://github.com/alpa-projects/alpa/tree/main/examples/mnist)
-- [Train large language models using both inter-operator and intra-operator parallelism](https://github.com/alpa-projects/alpa/tree/main/examples/language_model)
-- [Serve OPT-175B model on your own cluster](https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving)
-- [Finetune OPT-175B language models](https://github.com/alpa-projects/alpa/tree/main/examples/opt_finetune)
-
 ## Learning more
-- [Prof. Ion Stoica introduces the Alpa system](https://www.youtube.com/watch?v=qzYoMldlyoA)
 - [Alpa OSDI 2022 paper](https://www.usenix.org/system/files/osdi22-zheng-lianmin.pdf)
 - [Google AI blog](https://ai.googleblog.com/2022/05/alpa-automated-model-parallel-deep.html)
 - [Alpa talk slides](https://docs.google.com/presentation/d/1CQ4S1ff8yURk9XmL5lpQOoMMlsjw4m0zPS6zYDcyp7Y/edit?usp=sharing)
-- [Alpa ICML 2022 Big Model Tutorial slide deck](https://sites.google.com/view/icml-2022-big-model/home)
-- [Alpa ICML 2022 Big Model Tutorial video recording](https://icml.cc/virtual/2022/tutorial/18440)
+- [ICML 2022 Big Model Tutorial slides](https://sites.google.com/view/icml-2022-big-model/home)
+- [ICML 2022 Big Model Tutorial video recording](https://icml.cc/virtual/2022/tutorial/18440)
+- [Prof. Ion Stoica introduces the Alpa system](https://www.youtube.com/watch?v=qzYoMldlyoA)
+
 
 ## Getting Involved
 - Please read the [contributor guide](https://alpa-projects.github.io/developer/developer_guide.html) if you are interested in contributing to Alpa. 

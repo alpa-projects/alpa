@@ -461,7 +461,7 @@ def get_compute_cost(
         num_hosts, num_devices = submesh
         tic = time()
         if global_config.profile_with_whole_ray_cluster:
-            global_cluster = alpa.device_cluster.global_cluster
+            global_cluster = alpa.device_mesh.global_cluster
             whole_cluster_virtual_mesh = global_cluster.\
                 get_virtual_physical_mesh()
             sliced_virtual_meshes = (

@@ -1485,8 +1485,7 @@ def retrieve_placement_group():
 
     If already inside the placement group, retrieve the current placement
     group (case I). Then, if the placement group is detected globally in
-    alpa, retrieve the global placement group (case II). Last, we can try
-    to retrieve the placement group from the ray cluster global state (III).
+    alpa, retrieve the global placement group (case II).
 
     """
     # case 1:
@@ -1501,17 +1500,6 @@ def retrieve_placement_group():
     if global_cluster and global_cluster.placement_group:
         alpa_placement_group = global_cluster.placement_group
         return alpa_placement_group
-
-    # case 3:
-    # Get placement group from ray global state
-    # Note: this case happens when the placement group can not be retrieved
-    # from the global variables of alpa or not inside ray tune, and the
-    # solution is to get the placement from ray global state environment.
-    ray_state = try_import_ray_state()
-    for pg_id, info in ray_state.state.placement_group_table().items():
-        if info["state"] == "CREATED":
-            created_placement_group = get_placement_group_from_id(pg_id)
-            return created_placement_group
 
     raise ValueError(
         "The alpa training is not inside the ray tasks or actor or "

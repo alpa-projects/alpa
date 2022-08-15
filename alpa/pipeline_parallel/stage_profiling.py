@@ -347,7 +347,7 @@ class ProfileWorkerPool(BaseWorkerPoolWrapper):
 
     def __init__(self, virtual_meshes):
         super().__init__()
-        print('out-in-out', virtual_meshes, 'global cluster', alpa.device_mesh.global_cluster)
+        print('out-in-out', virtual_meshes, 'global cluster', alpa.device_mesh.global_cluster, 'palcemebt', alpa.device_mesh.global_cluster.placement_group)
         worker_cls = ray.remote(num_cpus=1e-3)(ProfileWorker)
         self.actors = [worker_cls.remote(mesh) for mesh in virtual_meshes]
         self.pool = ActorPool(self.actors)

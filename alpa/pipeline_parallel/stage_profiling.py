@@ -38,7 +38,7 @@ from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                run_backend_compilation,
                                                hlo_sharding_to_sharding_spec)
 from alpa.util import (clone_jaxpr, get_shard_shape, jaxpr_to_hlo_module,
-                       OrderedSet)
+                       OrderedSet, retrieve_placement_group)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -248,7 +248,6 @@ class ProfileWorker:
     """
 
     def __init__(self, virtual_mesh: VirtualPhysicalMesh):
-        print('outside', virtual_mesh, 'global cluster', alpa.device_mesh.global_cluster)
         self.mesh = virtual_mesh.get_physical_mesh()
         self.virtual_mesh = virtual_mesh
     def _profile_impl(self, stage_id, compiled_output, profile_info,
@@ -347,9 +346,11 @@ class ProfileWorkerPool(BaseWorkerPoolWrapper):
 
     def __init__(self, virtual_meshes):
         super().__init__()
-        print('out-in-out', virtual_meshes, 'global cluster', alpa.device_mesh.global_cluster, 'palcemebt', alpa.device_mesh.global_cluster.placement_group)
         worker_cls = ray.remote(num_cpus=1e-3)(ProfileWorker)
-        self.actors = [worker_cls.remote(mesh) for mesh in virtual_meshes]
+        # retrieve the placement group
+        placement_group = retrieve_placement_group()
+        self.actors = [worker_cls.options(placement_group=placement_group
+                                          ).remote(mesh) for mesh in virtual_meshes]
         self.pool = ActorPool(self.actors)
 
 

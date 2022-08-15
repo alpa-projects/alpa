@@ -16,7 +16,6 @@ import ray
 from ray.exceptions import RayActorError
 from ray.util import ActorPool
 
-import alpa
 from alpa.device_mesh import (DistributedArray, PhysicalDeviceMesh,
                               VirtualPhysicalMesh, _shard_device_array)
 from alpa.global_env import global_config
@@ -250,6 +249,7 @@ class ProfileWorker:
     def __init__(self, virtual_mesh: VirtualPhysicalMesh):
         self.mesh = virtual_mesh.get_physical_mesh()
         self.virtual_mesh = virtual_mesh
+
     def _profile_impl(self, stage_id, compiled_output, profile_info,
                       intermediate_size, initial_size):
         """Implementation of profile function.
@@ -349,8 +349,10 @@ class ProfileWorkerPool(BaseWorkerPoolWrapper):
         worker_cls = ray.remote(num_cpus=1e-3)(ProfileWorker)
         # retrieve the placement group
         placement_group = retrieve_placement_group()
-        self.actors = [worker_cls.options(placement_group=placement_group
-                                          ).remote(mesh) for mesh in virtual_meshes]
+        self.actors = [
+            worker_cls.options(placement_group=placement_group).remote(mesh)
+            for mesh in virtual_meshes
+        ]
         self.pool = ActorPool(self.actors)
 
 

@@ -577,6 +577,55 @@ def _apply_grad_group_vars(closed_jaxpr: ClosedJaxpr, var_mesh, num_mesh):
     return (invars, outvars, consts, constvars), infered_global_invars
 
 
+_reducable_operators = set([add_p, and_p, or_p])
+
+
+def _reducable(eqn):
+    return eqn.primitive in _reducable_operators and is_scalar(eqn.outvars[0])
+
+
+def try_to_split(eqns, eqn_mesh, var_mesh):
+    eqn_mesh = {}
+    var_mesh = dict(var_mesh)
+    var_use: Dict[int, OrderedSet] = {}
+    # Propagate the first round
+    for eqn_idx, eqn in enumerate(eqns):
+        at_mesh = OrderedSet()
+        for invar in eqn.invars:
+            if isinstance(invar, Var):
+                at_mesh.update(var_mesh.setdefault(invar, OrderedSet()))
+                var_use.setdefault(invar, OrderedSet()).add(eqn_idx)
+        if len(at_mesh) == 1:
+            for invar in eqn.invars:
+                if isinstance(invar, Var):
+                    cur_mesh = var_mesh.setdefault(invar, OrderedSet())
+                    cur_mesh.update(at_mesh)
+            for outvar in eqn.outvars:
+                if not isinstance(outvar, DropVar):
+                    var_mesh[outvar] = OrderedSet(at_mesh)
+            eqn_mesh[eqn_idx] = OrderedSet(at_mesh)
+    # Try to match the pattern
+    for eqn_idx, eqn in enumerate(eqns):
+        if eqn_idx not in eqn_mesh and _reducable(eqn):
+            nxt_idx, nxt_eqn = eqn_idx, eqn
+            reducable_chain = []
+            while (_reducable(nxt_eqn) and
+                        nxt_eqn.primitive == eqn.primitive):
+                cur_idx, cur_eqn = nxt_idx, nxt_eqn
+                reducable_chain.append(cur_idx)
+                nxt_idx = list(var_use[cur_eqn.outvars[0]])[0]
+                nxt_eqn = eqns[nxt_idx]
+            # split eqns on the reducable chain into meshes
+            reducable_set = set(reducable_chain)
+            for eqn_idx in reducable_chain:
+                eqn = eqns[eqn_idx]
+                op0, op1 = eqn.invars
+            # rewrite according to splits
+            # record the allreduce group
+    # Propagate the second round
+    return eqn_mesh, var_mesh
+
+
 def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
                          outvar_mesh: Dict[Var, OrderedSet[int]], num_mesh,
                          num_stage, donation_mapping: Dict[Var, Var]):
@@ -612,7 +661,7 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
         changed = _reverse_propagate_var_at_mesh(closed_jaxpr, donation_mapping,
                                                  eqn_mesh, var_mesh)
     # TODO(yonghao): pattern matching and rewrite here. Some info should be output
-    # How do we rewrite it? just adding a new identity marker and then slice it somewhere?
+    # For replicated computation, try to split them.
 
     sliced_eqns = [[] for _ in range(num_mesh)]
     for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
@@ -622,6 +671,7 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
                 sliced_eqns[mesh].append(eqn)
         else:
             # all inputs are infered, all outputs are not assigned
+            # TODO(yonghao): round-robin instead of using fixed index 0
             sliced_eqns[0].append(eqn)
             logger.debug(f'{eqn} are arbitrarily assigned')
             for invar in eqn.invars:

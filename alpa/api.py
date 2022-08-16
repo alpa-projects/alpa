@@ -26,11 +26,20 @@ def init(cluster: str = "ray",
          num_nodes: int = None):
     """Initialize the global environment.
 
+    `devices_per_node, num_nodes` are used to specify the number of devices.
+    If not specified, the number of devices is determined automatically and
+    the whole cluster is used.
+
+    For simplicity, the resource specification is only supported for
+    ray cluster.
+
     Args:
       cluster: The distributed cluster.
         Possible choices: {"local", "ray"}.
         "local" means using all local devices on a single node.
         "ray" means using all devices in a ray cluster.
+      devices_per_node: The number of devices per node.
+      num_nodes: The number of nodes.
     """
     global is_initialized
 

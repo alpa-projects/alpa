@@ -18,8 +18,7 @@ The key features of Alpa include:
 
 ✨ **Tight Integration with Machine Learning Ecosystem**. Alpa is backed by open-source, high-performance, and production-ready libraries such as [Jax](https://github.com/google/jax), [XLA](https://www.tensorflow.org/xla), and [Ray](https://github.com/ray-project/ray).
 
-
-## 🌟Try Alpa-served OPT-175B!
+## 👉 Try Alpa-served OPT-175B!
 Alpa provides a free, unlimited [OPT-175B](https://github.com/facebookresearch/metaseq/tree/main/projects/OPT) text generation service. Try our service at [https://opt.alpa.ai/](https://opt.alpa.ai/) 
 and share your [prompting results](examples/opt_serving/service/img.png)!
 
@@ -27,6 +26,7 @@ Join [Alpa slack](https://forms.gle/YEZTCrtZD6EAVNBQ7) and let us know any new f
 
 ## Quick Start
 Use Alpa's decorator ``@parallelize`` to scale your single-device training code to distributed clusters.
+
 ```python
 import alpa
 
@@ -48,32 +48,6 @@ for batch in data_loader:
 ```
 
 Check out the [Alpa Documentation](https://alpa-projects.github.io) site for installation instructions, tutorials, examples, and more.
-
-## Installation
-The quickest way to get started with Alpa is via pip. We push the latest Alpa wheels to the [PyPI index](https://pypi.org/project/alpa/#description) and the Alpa-modified jaxlib to 
-our [GitHub-hosted index](https://alpa-projects.github.io/wheels.html).
-
-```bash
-# Install alpa
-pip install alpa
-
-# install alpa-jaxlib compatible with CUDA >= 11.1 and cuDNN >= 8.0.5,
-pip install jaxlib==0.3.5+cuda111.cudnn805 -f https://alpa-projects.github.io/wheels.html
-
-# You can install for other CUDA versions via:
-pip install jaxlib==0.3.5+cuda{cuda_version}.cudnn{cudnn_version} -f https://alpa-projects.github.io/wheels.html
-```
-All supported CUDA and cuDNN versions are listed on the [index page](https://alpa-projects.github.io/wheels.html).
-
-After installation, validate the installation works as expected:
-```bash
-# Start the ray cluster first
-ray start --head
-python -m alpa.test_install
-```
-
-You can also install Alpa from source for development or other CUDA versions. 
-Follow this [detailed guide](https://alpa.ai/install.html#method-2-install-from-source) to install Alpa from source or troubleshooting if you meet any errors during the process.  
 
 ## Learning more
 - [Alpa OSDI 2022 paper](https://www.usenix.org/system/files/osdi22-zheng-lianmin.pdf)

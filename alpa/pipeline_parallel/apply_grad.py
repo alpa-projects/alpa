@@ -580,8 +580,16 @@ def _apply_grad_group_vars(closed_jaxpr: ClosedJaxpr, var_mesh, num_mesh):
 _reducable_operators = set([add_p, and_p, or_p])
 
 
+# TODO(yonghao): clean up the code below
 def _reducable(eqn):
+    # the is_scalar is to avoid a large all-reduce for tied-embedding
+    # it can be improved to consider tradeoff between computation&communication
     return eqn.primitive in _reducable_operators and is_scalar(eqn.outvars[0])
+
+
+def _other_invar_at_one_mesh(src, dst):
+    op = dst.invars[0] if src == dst.invars[1] else dst.invars[1]
+    return defs[op] in eqn_mesh and len(eqn_mesh[defs[op]]) == 1
 
 
 def try_to_split(eqns, eqn_mesh, var_mesh):
@@ -610,7 +618,8 @@ def try_to_split(eqns, eqn_mesh, var_mesh):
             nxt_idx, nxt_eqn = eqn_idx, eqn
             reducable_chain = []
             while (_reducable(nxt_eqn) and
-                        nxt_eqn.primitive == eqn.primitive):
+                   nxt_eqn.primitive == eqn.primitive and
+                   _other_invar_at_one_mesh(cur_eqn, nxt_eqn)):
                 cur_idx, cur_eqn = nxt_idx, nxt_eqn
                 reducable_chain.append(cur_idx)
                 nxt_idx = list(var_use[cur_eqn.outvars[0]])[0]
@@ -620,6 +629,9 @@ def try_to_split(eqns, eqn_mesh, var_mesh):
             for eqn_idx in reducable_chain:
                 eqn = eqns[eqn_idx]
                 op0, op1 = eqn.invars
+                op0_def_idx, op1_def_idx = defs[op0], defs[op1]
+                if op0_def_idx in reducable_set:
+                    pass
             # rewrite according to splits
             # record the allreduce group
     # Propagate the second round

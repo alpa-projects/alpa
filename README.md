@@ -18,7 +18,7 @@ The key features of Alpa include:
 
 ✨ **Tight Integration with Machine Learning Ecosystem**. Alpa is backed by open-source, high-performance, and production-ready libraries such as [Jax](https://github.com/google/jax), [XLA](https://www.tensorflow.org/xla), and [Ray](https://github.com/ray-project/ray).
 
-## Try Alpa-served OPT-175B!
+## 👉 Try Alpa-served OPT-175B!
 Alpa provides a free, unlimited [OPT-175B](https://github.com/facebookresearch/metaseq/tree/main/projects/OPT) text generation service. Try our service at [https://opt.alpa.ai/](https://opt.alpa.ai/) 
 and share your [prompting results](examples/opt_serving/service/img.png)!
 

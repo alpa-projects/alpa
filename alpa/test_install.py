@@ -34,7 +34,7 @@ class InstallationTest(unittest.TestCase):
 
         state, batch, train_step = get_mlp_train_state_and_step(batch_size=128,
                                                                 hidden_size=128,
-                                                                num_layers=8)
+                                                                num_layers=6)
 
         # Serial execution
         expected_output = train_step(state, batch)

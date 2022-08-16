@@ -30,6 +30,7 @@ from alpa.pipeline_parallel.runtime_emitter import (
 from alpa.shard_parallel.auto_sharding import HloStatus
 from alpa.timer import timers, tracer
 from alpa.util import OrderedSet
+from alpa.pipeline_parallel.xla_custom_call_marker import dummy_compute_on_default_stream
 
 traceback_util.register_exclusion(__file__)
 
@@ -584,7 +585,8 @@ class PipeshardMeshWorkerExecuable:
                 self.worker.run_resharding_recv_task(
                     instruction.task_uuid, instruction.output_uuids[0],
                     instruction.opaques["set_empty_buffer"])
-                self.worker.sync_all()
+                # self.worker.sync_all()
+                # dummy_compute_on_default_stream()
                 # TODO(lmzheng): move this to run_resharding_recv_task
                 if instruction.opaques["allgather_uuid"] is not None:
                     # print("allgather")

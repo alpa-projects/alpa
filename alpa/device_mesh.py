@@ -144,6 +144,8 @@ class MeshHostWorker:
         self.local_devices = self.backend.local_devices()
         # print(self.local_devices)
         self.num_devices = len(self.local_devices)
+        
+        # initialize_memory()
 
         self.buffers = {}  # Dict[uuid -> Sequence[DeviceArray]]
         self.buffers_done_events = {} # Dict[uuid -> List[event]]

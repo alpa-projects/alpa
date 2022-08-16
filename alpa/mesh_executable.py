@@ -465,6 +465,7 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
                 [self.worker.buffers_done_events[x] for x in input_uuids])
             streams = xe.fetch_working_streams(self.compiled)
 
+            # dummy_compute_on_default_stream()
             # self.worker.sync_all() #1
             # for stream in streams: #2
             #     xe.synchronize_stream(stream)
@@ -478,7 +479,7 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
             # print(streams)
             synchronize_inputs_done_events(
                 input_done_events, streams)
-            print(f"synchronize {input_uuids}")
+            # print(f"synchronize {input_uuids}")
         # Execute the executable
         timers(self.timer_name).start(self.sync_func if sync_before else None)
         try:

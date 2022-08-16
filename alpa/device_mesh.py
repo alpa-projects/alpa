@@ -939,7 +939,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             ip = self.host_info[i]["NodeManagerAddress"]
             self.device_strs.extend(
                 [device_id_to_str(ip, j) for j in devices[i]])
-            self.device_ips.append(ip)
+            self.node_ips.append(ip)
         self._launch_xla_servers()
 
         self.to_delete_remote_refs = []

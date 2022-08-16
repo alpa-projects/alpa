@@ -2035,11 +2035,14 @@ class DeviceCluster:
             self.host_num_devices.append(int(number))
 
         # adjust the resource allocations
+        # if `num_nodes` is set, use it. 
+        # otherwise, use the number of nodes in cluster
         if num_nodes:
             num_hosts = min(num_nodes, self.num_hosts)
         else:
             num_hosts = self.num_hosts
 
+        # if `devices_per_node` is set, use it.
         if devices_per_node:
             # verify that the number of devices per node is valid
             num_valid = sum(num_device >= devices_per_node
@@ -2054,11 +2057,12 @@ class DeviceCluster:
         self.placement_group = create_placement_group(self.num_hosts,
                                                       self.host_num_devices)
 
+        # update the Device Cluster info
         if devices_per_node or num_nodes:
             self._updte_cluster_resource_from_placement_group()
 
     def _update_cluster_resource_from_placement_group(self):
-
+        """Update the cluster resource from the placement group."""
         # map: host ip to host info
         self.dict_host_ip2info = dict(zip(self.host_ips, self.host_info))
 

@@ -37,7 +37,8 @@ from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                run_backend_compilation,
                                                hlo_sharding_to_sharding_spec)
 from alpa.util import (clone_jaxpr, get_shard_shape, jaxpr_to_hlo_module,
-                       OrderedSet, retrieve_placement_group)
+                       OrderedSet, retrieve_placement_group,
+                       get_num_available_gpus)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -225,7 +226,7 @@ class CompileWorkerPool(BaseWorkerPoolWrapper):
 
     def __init__(self, num_cpus, debug_mode=False):
         super().__init__()
-        worker_cls = ray.remote(num_cpus=0)(CompileWorker)
+        worker_cls = ray.remote(num_cpus=1)(CompileWorker)
         self.actors = [worker_cls.remote() for _ in range(num_cpus)]
         self.pool = ActorPool(self.actors)
         self.local_worker = CompileWorker() if debug_mode else None
@@ -344,11 +345,9 @@ class ProfileWorker:
 class ProfileWorkerPool(BaseWorkerPoolWrapper):
     """A pool of ProfileWorker for distributed profiling."""
 
-    def __init__(self, virtual_meshes):
+    def __init__(self, virtual_meshes, placement_group):
         super().__init__()
-        worker_cls = ray.remote(num_cpus=1e-3)(ProfileWorker)
-        # retrieve the placement group
-        placement_group = retrieve_placement_group()
+        worker_cls = ray.remote(ProfileWorker)
         self.actors = [
             worker_cls.options(placement_group=placement_group).remote(mesh)
             for mesh in virtual_meshes
@@ -413,19 +412,23 @@ class HloCostModelProfileWorkerPool(BaseWorkerPoolWrapper):
     cost model to estimate the cost.
     """
 
-    def __init__(self, num_cpus, num_gpus, prof_result, mesh_num_devices,
+    def __init__(self, num_cpus, placement_group, prof_result, mesh_num_devices,
                  num_micro_batches):
         super().__init__()
+        num_gpus = get_num_available_gpus(placement_group)
         gpu_per_cpu = 1
         while gpu_per_cpu * num_cpus > num_gpus:
             gpu_per_cpu /= 2
         env_vars = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"}
-        worker_cls = ray.remote(num_cpus=1,
+        worker_cls = ray.remote(num_cpus=0,
                                 num_gpus=gpu_per_cpu)(HloCostModelProfileWorker)
         self.actors = [
-            worker_cls.options(runtime_env={
-                "env_vars": env_vars
-            }).remote(prof_result, mesh_num_devices, num_micro_batches)
+            worker_cls.options(
+                runtime_env={
+                    "env_vars": env_vars
+                },
+                placement_group=placement_group,
+            ).remote(prof_result, mesh_num_devices, num_micro_batches)
             for _ in range(num_cpus)
         ]
         self.pool = ActorPool(self.actors)
@@ -473,20 +476,22 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
     # pylint: disable=unused-argument
     compute_cost, max_n_succ_stages, is_profiled = mesh_cached_result
 
+    placement_group = retrieve_placement_group()
+
     if auto_stage_option.use_hlo_cost_model:
         num_cpus = int(
             min(max(ray.available_resources()["CPU"] // 2, 1), len(stages)))
-        num_gpus = int(ray.available_resources()["GPU"])
         mesh_num_devices = meshes[0].num_devices
         prof_database = ProfilingResultDatabase()
         prof_database.load(auto_stage_option.profiling_database_filename)
         prof_result = prof_database.query("default", meshes[0].shape)
-        profile_workers = HloCostModelProfileWorkerPool(num_cpus, num_gpus,
+        profile_workers = HloCostModelProfileWorkerPool(num_cpus,
+                                                        placement_group,
                                                         prof_result,
                                                         mesh_num_devices,
                                                         num_micro_batches)
     else:
-        profile_workers = ProfileWorkerPool(meshes)
+        profile_workers = ProfileWorkerPool(meshes, placement_group)
 
     succ_compile_ct = 0
     for stage_id, (compiled_output,

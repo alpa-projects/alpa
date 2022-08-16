@@ -10,7 +10,7 @@ PhysicalDeviceMeshGroup  (multiple device meshes)
 |
 PhysicalDeviceMesh  (one device mesh)
 |
-MeshHostWorker  (one host in a devie mesh)
+MeshHostWorker  (one host in a device mesh)
 
 Besides, we have two additional classes: VirtualPhysicalMesh and
 LogicalDeviceMesh. They are only used during compilation time. They are used to
@@ -957,7 +957,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.service_server = xla_client._xla.get_distributed_runtime_service(
             self.server_address, self.num_hosts)
         logger.debug(f"Success to start XLA gRPC server on port: {port}...")
-        time.sleep(0.5)
+        time.sleep(0.4)
 
         # Launch workers
         self.workers = []
@@ -969,8 +969,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         device_bundle_idx_list = get_bundle_idx(placement_group, self.node_ips)
 
         for i in range(self.num_hosts):
-            bundle_index = device_bundle_idx_list[i]
-
             # Set XLA environment variables
             env_vars = {
                 "ALPA_IS_WORKER":
@@ -1010,14 +1008,16 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                                                       ""),  # For libnccl-net.so
                 })
 
+            bundle_index = device_bundle_idx_list[i]
+
             # Launch the DaemonMoveWorker
-            cls = ray.remote(num_cpus=1e-3)(DaemonMoveWorker)
+            cls = ray.remote(num_cpus=0)(DaemonMoveWorker)
             move_worker = cls.options(
                 placement_group=placement_group,
                 placement_group_bundle_index=bundle_index).remote()
 
             # Launch the MeshHostWorker
-            cls = ray.remote(num_cpus=1e-3,
+            cls = ray.remote(num_cpus=0,
                              num_gpus=self.num_devices_per_host)(MeshHostWorker)
             worker = cls.options(placement_group=placement_group,
                                  placement_group_bundle_index=bundle_index,
@@ -2008,7 +2008,6 @@ class DeviceCluster:
 
     def __init__(self):
         # pylint: disable=import-outside-toplevel
-        self.placement_group = None
         ray_global_node = ray_worker._global_node
         try:
             self.head_info = ray_global_node.address_info
@@ -2032,12 +2031,9 @@ class DeviceCluster:
             assert number.is_integer()
             self.host_num_devices.append(int(number))
 
-    def create_placment_group(self):
-        """
-        Create a placement group for the current device cluster.
-        """
+        # Create placement group
         self.placement_group = create_placement_group(self.num_hosts,
-                                                      self.host_num_devices[0])
+                                                      self.host_num_devices)
 
     def delete_placement_group(self):
         """remove the placement group for the current device cluster."""
@@ -2132,7 +2128,6 @@ def init_global_cluster(cluster: str):
             ray.init(address="auto", ignore_reinit_error=True)
         update_jax_platform("cpu")
         global_cluster = DeviceCluster()
-        global_cluster.create_placment_group()
         global_virtual_physical_mesh = (
             global_cluster.get_virtual_physical_mesh())
 

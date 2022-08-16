@@ -5,7 +5,7 @@ from alpa.testing import PipelineBasicTest
 
 
 def auto_stage():
-    return AutoStageOption("small_power_of_two", "default", float("inf"), False,
+    return AutoStageOption("small_power_of_two", "same_as_physical", float("inf"), False,
                            None, None)
 
 

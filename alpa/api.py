@@ -21,7 +21,9 @@ traceback_util.register_exclusion(__file__)
 is_initialized = False
 
 
-def init(cluster: str = "ray"):
+def init(cluster: str = "ray",
+         devices_per_node: int = None,
+         num_nodes: int = None):
     """Initialize the global environment.
 
     Args:
@@ -36,7 +38,7 @@ def init(cluster: str = "ray"):
         return
     is_initialized = True
 
-    init_global_cluster(cluster)
+    init_global_cluster(cluster, devices_per_node, num_nodes)
 
 
 def shutdown():

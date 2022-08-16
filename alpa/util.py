@@ -10,7 +10,7 @@ import time
 from collections import OrderedDict
 from functools import partial, partialmethod
 import threading
-from typing import Iterable, Sequence, Any, Union
+from typing import Iterable, Sequence, Any, Union, List
 from warnings import warn
 
 import jax
@@ -32,9 +32,16 @@ import flax
 from flax.training import train_state
 from flax.training.common_utils import stack_forest
 import ray
-import tqdm
+from ray.util.placement_group import get_current_placement_group,\
+    PlacementGroup
+from ray._private.utils import hex_to_binary
+from ray._raylet import PlacementGroupID
 
+import tqdm
+import alpa
 from alpa.global_env import global_config, is_worker
+
+PLACEMENT_GROUP_TIMEOUT_S_ENV = "ALPA_PLACEMENT_GROUP_TIMEOUT_S_ENV"
 
 ########################################
 ##### Alpa API Utilities
@@ -1230,6 +1237,11 @@ def is_ray_node_resource(resource_key):
     return ishost_regex.match(resource_key)
 
 
+########################################
+##### Ray Compatibilityu API Utilities
+########################################
+
+
 def try_import_ray_worker(error: bool = False):
     """Tries importing `ray.worker` and returns the module (or None).
 
@@ -1257,3 +1269,241 @@ def try_import_ray_worker(error: bool = False):
             return ray.worker
     except ModuleNotFoundError:
         return ray._private.worker  # pylint: disable=protected-access
+
+
+def try_import_ray_state(error: bool = False):
+    """Tries importing `ray.state` and returns the module (or None).
+
+    Args:
+        error: Whether to raise an error if ray.state cannot be imported.
+
+    Returns:
+        The `ray.state` modules.
+
+    Raises:
+        ImportError: If error=True and ray's version >= 2.0.
+    """
+    # In the ray-nightly version,
+    # state = _DeprecationWrapper("state", ray._private.state)
+    # `_DeprecationWrapper` has attributes of `_real_worker`
+    try:
+        if hasattr(ray.state, "_real_worker"):
+            if error:
+                raise ImportError("Could not import `ray.state`!"
+                                  "You might use the ray-nightly "
+                                  "and `ray.state` is deprecated there"
+                                  "`pip install ray>=1.13.0`.")
+            return ray.state._real_worker  # pylint: disable=protected-access
+        else:
+            return ray.state
+    except ModuleNotFoundError:
+        return ray._private.state  # pylint: disable=protected-access
+
+
+########################################
+##### Ray Palcement Group API Utilities
+########################################
+
+
+def get_bundle2ip(pg: PlacementGroup = None):
+    """get the ip address list from placement group
+
+    The ordering of the ip address are aligned with each bundle index.
+    """
+
+    if pg:
+        pg_id = pg.id.hex()
+    # dictionary: bundle_group to node_ip
+    dict_bg2ip = {}
+
+    ray_state = try_import_ray_state()
+    resources_list = ray_state.state._available_resources_per_node(  # pylint: disable=protected-access
+    ).values()
+
+    for resource in resources_list:
+        resource_name_list = resource.keys()
+
+        node_ip = None
+        bundle_index_list = []
+        for resource_name in resource_name_list:
+            # when bundles are created, pg resources are
+            # specified as [resource]_[bundle_index]_[pg_id]
+            if pg:
+                try_bundle_index = re.findall(rf"bundle_group_(\d+)_{pg_id}",
+                                              resource_name)
+            else:
+                try_bundle_index = re.findall(r"bundle_group_(\d+)_.*",
+                                              resource_name)
+
+            try_node_ip = re.findall(
+                r"^node:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$)", resource_name)
+
+            if try_node_ip:
+                node_ip = try_node_ip[0]
+
+            if try_bundle_index:
+                bundle_index_list.append(try_bundle_index[0])
+
+        dict_bg2ip.update(
+            **dict(zip(bundle_index_list, [node_ip] * len(bundle_index_list))))
+
+    ip_list = []
+    for i in range(len(dict_bg2ip)):
+        ip_list.append(dict_bg2ip[str(i)])
+
+    return ip_list
+
+
+def env_integer(key, default):
+    if key in os.environ:
+        value = os.environ[key]
+        if value.isdigit():
+            return int(os.environ[key])
+
+        logger.debug(f"Found {key} in environment, but value must "
+                     f"be an integer. Got: {value}. Returning "
+                     f"provided default {default}.")
+        return default
+    return default
+
+
+def create_placement_group(num_hosts,
+                           num_devices_per_host,
+                           additional_resources_per_host=None):
+    """Creates a placement group if it does not exist.
+
+    If a placement group is already detected (Tune) this will be a no-op.
+
+    By default the placement group will be created with `SPREAD` strategy.
+    This is optimized for colocating GPUs on different nodes.
+
+    If a placement group is created it will be return the current
+    placement group
+
+    Args:
+        num_hosts: the number of hosts to create the placement group for
+        num_devices_per_host: the number of devices per host
+        additional_resources_per_host: additional resources per host
+
+    Returns:
+        The placement group
+    """
+    current_placement_group = get_current_placement_group()
+    ray_worker = try_import_ray_worker()
+    worker = ray_worker.global_worker  # pylint: disable=protected-access
+    should_capture_child_tasks_in_placement_group = (
+        worker.should_capture_child_tasks_in_placement_group)
+    should_create_placement_group = (
+        current_placement_group is None or
+        not should_capture_child_tasks_in_placement_group)
+
+    if should_create_placement_group:
+        # `should_create_placement_group` is always True when using alpa alone.
+        # `should_create_placement_group` can be false when integrated with Tune
+        additional_resources_per_host = (additional_resources_per_host or {})
+        bundle = {
+            "CPU": 1,
+            "GPU": num_devices_per_host,
+            **additional_resources_per_host,
+        }
+        bundles = [bundle.copy() for _ in range(num_hosts)]
+
+        # Alpa Placement Group: `SPREAD` strategy is required
+        # https://docs.ray.io/en/latest/ray-core/placement-group.html#strategy-types
+        # Each bundle must be scheduled in a separate node.
+        strategy = "SPREAD"
+
+        placement_group = ray.util.placement_group(bundles, strategy=strategy)
+        logger.debug("Waiting for placement group to start.")
+        timeout = env_integer(PLACEMENT_GROUP_TIMEOUT_S_ENV, 100)
+        ready, _ = ray.wait([placement_group.ready()], timeout=timeout)
+        if ready:
+            logger.debug("Placement group has started.")
+        else:
+            raise TimeoutError(
+                "Placement group creation timed out. Make sure your "
+                "cluster either has enough resources or use an "
+                "autoscaling cluster. If you are running on a cluster, "
+                "make sure you specify an address in `ray.init()`, for example,"
+                ' `ray.init("auto")`. You can also increase the timeout by '
+                "setting the ALPA_PLACEMENT_GROUP_TIMEOUT_S environment "
+                "variable. Current resources available: "
+                f"{ray.available_resources()}, resources requested by "
+                f"the placement group: {placement_group.bundle_specs}")
+        return placement_group
+    else:
+        return current_placement_group
+
+
+def get_bundle_idx(placement_group: PlacementGroup, node_ips: List[str]):
+    """Get the bundle index for the placement group.
+
+    The placement group is a list of resource bundles.
+    Each bundle will be assigned to **one** node.
+
+    First, we need to find the bundle index with GPU resources.
+    Then, we can find the node IP for the bundle index.
+    Lastly, we sort bundle index according to the node IP list given.
+
+    Args:
+        placement_group: The placement group.
+        node_ips: The list of node IP addresses.
+
+    Returns:
+        list: The sorted bundle index list.
+    """
+    # get the node IP for the bundle index
+    bundle_ips = get_bundle2ip(placement_group)
+    bundle_specs = placement_group.bundle_specs
+
+    # filter out the bundle index with node (GPUs)
+    node_bundle_idx_list = [
+        i for i, bundle_spec in enumerate(bundle_specs)
+        if bundle_spec.get("GPU", 0) > 0
+    ]
+
+    if len(node_bundle_idx_list) < len(node_ips):
+        raise ValueError("The number of bundles with GPU resources "
+                         "is less than the number of node IPs.")
+
+    # node IP -> bundle index
+    bundle_ip2idx = {bundle_ips[i]: i for i in node_bundle_idx_list}
+
+    # sorted bundle index according to the node IP list given
+    sorted_bundle_idx = [bundle_ip2idx[ip] for ip in node_ips]
+
+    return sorted_bundle_idx
+
+
+def get_placement_group_from_id(placement_group_id: str):
+    """Get the placement group from the unique id"""
+    return PlacementGroup(PlacementGroupID(hex_to_binary(placement_group_id)))
+
+
+def retrieve_placement_group():
+    """retrieve the placement group to support node affinity scheduling
+
+    If already inside the placement group, retrieve the current placement
+    group (case I). Then, if the placement group is detected globally in
+    alpa, retrieve the global placement group (case II).
+
+    """
+    # case 1:
+    # Get the current placement group which a task or actor is using
+    current_placement_group = get_current_placement_group()
+    if current_placement_group:
+        return current_placement_group
+
+    # case 2:
+    # Get the placement group created when alpa.init('ray')
+    global_cluster = alpa.device_mesh.global_cluster
+    if global_cluster and global_cluster.placement_group:
+        alpa_placement_group = global_cluster.placement_group
+        return alpa_placement_group
+
+    raise ValueError(
+        "The alpa training is not inside the ray tasks or actor or "
+        "the placement group is not created yet. One reason is that "
+        "Alpa is not connected to Ray cluster, and use `alpa.init('ray')`"
+        " at the beginning. Do you have override the placement group? "
+        "If not, please help file an issue on Github.")

@@ -420,9 +420,8 @@ class HloCostModelProfileWorkerPool(BaseWorkerPoolWrapper):
         while gpu_per_cpu * num_cpus > num_gpus:
             gpu_per_cpu /= 2
         env_vars = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"}
-        worker_cls = ray.remote(
-            num_cpus=1e-4,  # This is because the pg only has 1 CPU.
-            num_gpus=gpu_per_cpu)(HloCostModelProfileWorker)
+        worker_cls = ray.remote(num_cpus=0,
+                                num_gpus=gpu_per_cpu)(HloCostModelProfileWorker)
         self.actors = [
             worker_cls.options(
                 runtime_env={

@@ -2035,7 +2035,7 @@ class DeviceCluster:
             self.host_num_devices.append(int(number))
 
         # adjust the resource allocations
-        # if `num_nodes` is set, use it. 
+        # if `num_nodes` is set, use it.
         # otherwise, use the number of nodes in cluster
         if num_nodes:
             num_hosts = min(num_nodes, self.num_hosts)

@@ -85,7 +85,7 @@ install_require_list = [
     "ray>=1.13.0",
     "jax==0.3.5",
     "flax==0.4.1",
-    "pulp",
+    "pulp>=2.6.0",
     "numpy>=1.20",
     "numba",
 ]

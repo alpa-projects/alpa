@@ -2,7 +2,7 @@
 Design and Architecture
 =======================
 
-This document aims to describe the architecture of Alpa and explain several core concepts and compilation passes introduced by Alpa at a high level. It provides an overview of Alpa's architecture, including core terms and componenents introduced by Alpa. In `Alpa Compiler Walking-through <architecture/alpa_compiler_walk_through>`_, we further show the workflow of Alpa using an MLP example.
+This document aims to describe the architecture of Alpa and explain several core concepts and compilation passes introduced by Alpa at a high level. It provides an overview of Alpa's architecture, including core terms and componenents introduced by Alpa. In `Alpa Compiler Walk-Through <alpa_compiler_walk_through>`_, we further show the workflow of Alpa using an MLP example.
 
 
 You are recommended to read the the following materials as well:

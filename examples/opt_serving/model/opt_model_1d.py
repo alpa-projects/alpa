@@ -156,11 +156,10 @@ class OPTSelfAttention(nn.Module):
             qkv_combined_states.shape[:1] +
             (self.config.decoder_attention_heads, head_dim, 3))
 
-        qvk_combined_bias_trans = self.qkv_combined_bias.transpose((1, 2, 0))
-        qkv_combined_states_w_bias = qkv_combined_states + qvk_combined_bias_trans
-
         # Shape: [1D seq, 3, heads, head_dim]
         qkv_combined_states = qkv_combined_states.transpose((0, 3, 1, 2))
+
+        qkv_combined_states_w_bias = qkv_combined_states + self.qkv_combined_bias
 
         # Shape of cache_key and cache_value: [batch * max_length, heads, head_dim]
         # Shape of cache_index: [batch * max_length]
@@ -175,7 +174,7 @@ class OPTSelfAttention(nn.Module):
         # be updated outside the model.
         _, key_states, value_states = jnp.split(qkv_combined_states_w_bias,
                                                 3,
-                                                axis=3)
+                                                axis=1)
         attention_cache = (key_states, value_states)
 
         if output_attentions:

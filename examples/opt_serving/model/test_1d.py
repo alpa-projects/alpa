@@ -1,4 +1,4 @@
-"""Test the correctness of cache implementation."""
+"""Test the correctness of 1-D OPT implementation."""
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,16 +6,20 @@ import numpy as np
 from alpa.testing import assert_allclose
 from opt_serving.model import opt_model, opt_model_1d
 
-import pdb
+# If true, then we run the same batches with 2-D OPT and verify
+# the output logtis as well as cache are the same.
+VERIFY_RESULT = True
 
-from transformers import AutoTokenizer
+# If true, then the latset logits for both models will be dumped to disk
+# as "1d.npy" and "2d.npy" for debugging.
+DUMP_LOGITS = False
 
 input_id_list = [
     [45942, 2866, 16, 5, 892, 9, 44042, 8],
     [100, 261, 23888, 2426, 16, 10, 21624, 12, 4310, 3034, 9744, 25526, 11],
     [133, 589, 9, 886, 6, 10817, 16, 10, 285],
-    # [5625, 16, 10, 205, 183, 8, 38, 236, 7],
-    # [2264, 16, 5, 7440, 9, 16673, 873, 24214, 116],
+    [5625, 16, 10, 205, 183, 8, 38, 236, 7],
+    [2264, 16, 5, 7440, 9, 16673, 873, 24214, 116],
 ]
 
 
@@ -65,9 +69,12 @@ def init_2d_model(name, np_weights_folder, input_id_list):
                                updated_cache)
 
             # For debugging
-            logits_all.append(logits[cache[0][2][0]:])
-        logits_all = np.concatenate(logits_all, axis=0)
-        jnp.save("2d", logits_all)
+            if DUMP_LOGITS:
+                logits_all.append(logits)
+
+        if DUMP_LOGITS:
+            logits_all = np.concatenate(logits_all, axis=0)
+            jnp.save("2d", logits_all)
         return input_pool
 
     return runner, input_pool_2d
@@ -196,7 +203,8 @@ def init_1d_model(name, np_weights_folder, input_id_list):
                 "batch_idxs": batch_idxs,
                 "cache": cache_1d_flatten,
             })
-        jnp.save("1d", logits)
+        if DUMP_LOGITS:
+            jnp.save("1d", logits)
 
         updated_lengths = [
             len(ids) if prompt else 1
@@ -219,12 +227,6 @@ def init_1d_model(name, np_weights_folder, input_id_list):
                 new_index = curr_index + updated_lengths[bidx]
 
                 # Slice update.
-                if lidx == 0:
-                    if bidx == 0:
-                        print("Key", key_flatten.shape)
-                    print(
-                        "Seq %d update %d:%d from %d:%d" %
-                        (bidx, curr_index, new_index, update_start, update_end))
                 cache[lidx][0][curr_index:new_index] = \
                     key_flatten[update_start:update_end]
                 cache[lidx][1][curr_index:new_index] = \
@@ -250,7 +252,7 @@ def init_1d_model(name, np_weights_folder, input_id_list):
 
 def verify_status(result_1d, result_2d):
     """Verify the current sequence and cache values."""
-    print("Verifying results", flush=True)
+    print("Verifying results...", flush=True, end="")
     success = True
 
     for bidx, ((seq_1d, cache_1d),
@@ -259,7 +261,7 @@ def verify_status(result_1d, result_2d):
         try:
             assert_allclose(seq_1d, seq_2d)
         except AssertionError as err:
-            print("Result of seq %d does not match" % bidx)
+            print("Result of seq %d does not match: %s" % (bidx, str(err)))
             success = False
 
         # Verify cache.
@@ -277,61 +279,82 @@ def verify_status(result_1d, result_2d):
                     assert_allclose(col_2d, col_1d)
                 except AssertionError as err:
                     print("KV value mismatch for seq %d at layer %d column %d" %
-                            (bidx, lidx, cidx))
+                          (bidx, lidx, cidx))
                     print(str(err))
                     success = False
     if not success:
         raise RuntimeError("Failed")
-    print("Passed")
-
+    print("passed", flush=True)
 
 
 def simulate_serving(runner_n_pool, ref_runner_n_pool=None):
-    """Simulate model serviing."""
+    """Simulate model serving."""
+
+    def batch_first_N_prompt(runner, prompt_pool, msg_prefix=""):
+        """Batch 1 (prompt * 3)."""
+        ret = runner(prompt_pool[2:])
+        print("%s Batch 1 (prompt * 3) done" % msg_prefix, flush=True)
+        return ret
+
+    def batch_mixed(runner, prompt_pool, decode_pool, msg_prefix=""):
+        """Batch 2 (prompt * 2, decoding * 3)."""
+        ret = runner(prompt_pool[:2] + decode_pool)
+        print("%s Batch 2 (prompt * 2, decoding * 3) done" % msg_prefix,
+              flush=True)
+        return ret
+
+    def batch_all_decode(runner, decode_pool, msg_prefix="", batch_idx=3):
+        """Batch 3+ (decoding * 5)."""
+        ret = runner(decode_pool)
+        print("%s Batch %d (decoding * 5) done" % (msg_prefix, batch_idx),
+              flush=True)
+        return ret
+
     runner, input_pool = runner_n_pool
 
-    ref_runner = None
-    ref_input_pool = None
+    verify = False
+    ref_runner, ref_input_pool = None, None
     if ref_runner_n_pool is not None:
+        verify = True
         ref_runner, ref_input_pool = ref_runner_n_pool
 
-    # 1. Run the model with the last 2 prompts
-    updated_input_pool = runner(input_pool[1:])
-    print("Batch 1 done", flush=True)
-    if ref_runner_n_pool is not None:
-        ref_updated_input_pool = ref_runner(ref_input_pool[1:])
-        verify_status(updated_input_pool, ref_updated_input_pool)
+    decode_pool = batch_first_N_prompt(runner, input_pool, "1D")
+    if verify:
+        ref_decode_pool = batch_first_N_prompt(ref_runner, ref_input_pool, "2D")
+        verify_status(decode_pool, ref_decode_pool)
 
-    # 2. Run the model with first 1 (prompt) and 2 (auto-regressive).
-    # Note that 1-D OPT requires prompts to go first.
-    updated_input_pool = runner(input_pool[:1] + updated_input_pool)
-    print("Batch 2 done", flush=True)
-    if ref_runner_n_pool is not None:
-        ref_updated_input_pool = ref_runner(ref_input_pool[:1] +
-                                            ref_updated_input_pool)
-        verify_status(updated_input_pool, ref_updated_input_pool)
+    decode_pool = batch_mixed(runner, input_pool, decode_pool, "1D")
+    if verify:
+        ref_decode_pool = batch_mixed(ref_runner, ref_input_pool,
+                                      ref_decode_pool, "2D")
+        verify_status(decode_pool, ref_decode_pool)
 
-    # # 3. Run the model with all 3 (auto-regessive)
-    # updated_input_pool = runner(updated_input_pool)
-    # print("Batch 3 done", flush=True)
-    # if ref_runner_n_pool is not None:
-    #     ref_updated_input_pool = ref_runner(ref_updated_input_pool)
-    #     verify_status(updated_input_pool, ref_updated_input_pool)
+    for idx in range(5):
+        batch_idx = idx + 3
+        decode_pool = batch_all_decode(runner, decode_pool, "1D", batch_idx)
+        if verify:
+            ref_decode_pool = batch_all_decode(ref_runner, ref_decode_pool,
+                                               "2D", batch_idx)
+            verify_status(decode_pool, ref_decode_pool)
 
 
 def test_opt_125M():
     name = "125M"
     np_weights_folder = f"/home/ubuntu/opt_weights/{name}_np"
 
-    runner_2d, input_pool_2d = init_2d_model(name, np_weights_folder,
-                                             input_id_list)
-    runner_1d, input_pool_1d = init_1d_model(name, np_weights_folder,
-                                             input_id_list)
-    simulate_serving((runner_1d, input_pool_1d), (runner_2d, input_pool_2d))
+    model_n_pool_1d = init_1d_model(name, np_weights_folder, input_id_list)
 
-    # tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b",
-    #                                           use_fast=False)
-    # print(tokenizer.decode(result_2d[0][0]))
+    model_n_pool_2d = None
+    if VERIFY_RESULT:
+        model_n_pool_2d = init_2d_model(name, np_weights_folder, input_id_list)
+    else:
+        print("Skipping result verification")
+
+    simulate_serving(model_n_pool_1d, model_n_pool_2d)
+
+    if DUMP_LOGITS:
+        print("The latest logits are dumped to 1d.npy "
+              "(and 2d.npy if VERIFY_RESULT=True)")
 
 
 if __name__ == "__main__":

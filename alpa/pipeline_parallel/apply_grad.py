@@ -587,15 +587,16 @@ def _reducable(eqn):
     return eqn.primitive in _reducable_operators and is_scalar(eqn.outvars[0])
 
 
-def _other_invar_at_one_mesh(src, dst):
+def _other_invar_at_one_mesh(src, dst, defs, eqn_mesh):
     op = dst.invars[0] if src == dst.invars[1] else dst.invars[1]
     return defs[op] in eqn_mesh and len(eqn_mesh[defs[op]]) == 1
 
 
-def try_to_split(eqns, eqn_mesh, var_mesh):
+def forward_propagate(eqns, var_mesh):
     eqn_mesh = {}
     var_mesh = dict(var_mesh)
-    var_use: Dict[int, OrderedSet] = {}
+    var_use: Dict[Var, OrderedSet] = {}
+    var_def: Dict[Var, int] = {}
     # Propagate the first round
     for eqn_idx, eqn in enumerate(eqns):
         at_mesh = OrderedSet()
@@ -611,31 +612,62 @@ def try_to_split(eqns, eqn_mesh, var_mesh):
             for outvar in eqn.outvars:
                 if not isinstance(outvar, DropVar):
                     var_mesh[outvar] = OrderedSet(at_mesh)
+                    var_def[outvar] = eqn_idx
             eqn_mesh[eqn_idx] = OrderedSet(at_mesh)
+    return eqn_mesh, var_use, var_def
+
+
+def reducable_chain_lookup(eqns, eqn_mesh, var_use, num_mesh, var_def):
+    mesh_eqns = [[] for _ in range(num_mesh)]
+    nxt_idx, nxt_eqn = eqn_idx, eqn
+    reducable_chain = []
+    while (_reducable(nxt_eqn) and nxt_eqn.primitive == eqn.primitive and
+           _other_invar_at_one_mesh(cur_eqn, nxt_eqn)):
+        cur_idx, cur_eqn = nxt_idx, nxt_eqn
+        reducable_chain.append(cur_idx)
+        nxt_idx = list(var_use[cur_eqn.outvars[0]])[0]
+        nxt_eqn = eqns[nxt_idx]
+    # split eqns on the reducable chain into meshes
+    reducable_set = set(reducable_chain)
+    for eqn_idx in reducable_chain:
+        eqn = eqns[eqn_idx]
+        op0, op1 = eqn.invars
+        op0_def_idx, op1_def_idx = var_def[op0], var_def[op1]
+        if op0_def_idx in reducable_set:
+            mesh_eqns[eqn_mesh[op1_def_idx]].append(op1_def_idx)
+        else:
+            assert op1_def_idx in reducable_set
+            mesh_eqns[eqn_mesh[op0_def_idx]].append(op0_def_idx)
+    return mesh_eqns
+
+
+def try_to_split(eqns, eqn_mesh, var_mesh, gensym_fn):
+    eqn_mesh, var_use, var_def = forward_propagate(eqns, var_mesh)
     # Try to match the pattern
     for eqn_idx, eqn in enumerate(eqns):
         if eqn_idx not in eqn_mesh and _reducable(eqn):
-            nxt_idx, nxt_eqn = eqn_idx, eqn
-            reducable_chain = []
-            while (_reducable(nxt_eqn) and
-                   nxt_eqn.primitive == eqn.primitive and
-                   _other_invar_at_one_mesh(cur_eqn, nxt_eqn)):
-                cur_idx, cur_eqn = nxt_idx, nxt_eqn
-                reducable_chain.append(cur_idx)
-                nxt_idx = list(var_use[cur_eqn.outvars[0]])[0]
-                nxt_eqn = eqns[nxt_idx]
-            # split eqns on the reducable chain into meshes
-            reducable_set = set(reducable_chain)
-            for eqn_idx in reducable_chain:
-                eqn = eqns[eqn_idx]
-                op0, op1 = eqn.invars
-                op0_def_idx, op1_def_idx = defs[op0], defs[op1]
-                if op0_def_idx in reducable_set:
-                    pass
+            mesh_eqns = reducable_chain_lookup(eqns, eqn_mesh, var_use,
+                                               num_mesh)
             # rewrite according to splits
-            # record the allreduce group
-    # Propagate the second round
-    return eqn_mesh, var_mesh
+            primitive = eqn.primitive
+            appended_eqns = []
+            allreduce_vars = []
+            for per_mesh_eqns in mesh_eqns:
+                cur_val = None
+                for eq in per_mesh_eqns:
+                    if cur_val is None:
+                        cur_val = eq.outvars[0]
+                        continue
+                    new_var = gensym_fn(cur_val.aval)
+                    appended_eqns.append(
+                        new_jaxpr_eqn([cur_val, eq.outvars[0]], [new_var],
+                                      primitive))
+                allreduce_vars.append(cur_val)
+            allreduce_config = (allreduce_vars, primitive)
+            # TODO: insert new eqns before the previous last available eqn
+            # TODO: modify the end of reduce chain eqn into an all-reduce.
+            # The all-reduce operator will be immediately replaced into two pipeline stages
+    return new_eqns
 
 
 def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],

@@ -1,3 +1,5 @@
+.. _Alpa Compiler Walk-Through:
+
 ==========================
 Alpa Compiler Walk-Through
 ==========================

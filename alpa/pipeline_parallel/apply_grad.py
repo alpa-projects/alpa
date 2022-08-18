@@ -664,7 +664,7 @@ def reducable_chain_lookup(eqns, eqn_idx, eqn_mesh, var_use, num_mesh, var_def,
             mesh_eqns[list(eqn_mesh[op0_def_idx])[0]].append(op0_def_idx)
         if op1_def_idx not in reducable_set:
             mesh_eqns[list(eqn_mesh[op1_def_idx])[0]].append(op1_def_idx)
-    return mesh_eqns, final_var
+    return mesh_eqns, final_var, reducable_chain[:-1]
 
 
 allreduce_p = Primitive("alpa$allreduce")
@@ -674,13 +674,15 @@ def split_replicated_eqns(eqns, var_mesh, gensym_fn, num_mesh):
     eqn_mesh, var_mesh, var_use, var_def = forward_propagate(eqns, var_mesh)
     new_eqns_before_var = {}
     # Try to match the pattern
+    removed_eqns = set()
     for eqn_idx, eqn in enumerate(eqns):
         # Do not handle c = a(mesh1 and 2) + b(mesh1) case
         if (eqn_idx not in eqn_mesh and _reducable(eqn) and
                 _var_at_one_mesh(eqn.invars[0], var_mesh) and
                 _var_at_one_mesh(eqn.invars[1], var_mesh)):
-            mesh_eqns, final_var = reducable_chain_lookup(
+            mesh_eqns, final_var, removed = reducable_chain_lookup(
                 eqns, eqn_idx, eqn_mesh, var_use, num_mesh, var_def, var_mesh)
+            removed_eqns.update(removed)
             # rewrite according to splits
             primitive = eqn.primitive
             appended_eqns = []
@@ -696,6 +698,7 @@ def split_replicated_eqns(eqns, var_mesh, gensym_fn, num_mesh):
                     appended_eqns.append(
                         new_jaxpr_eqn([cur_val, eq.outvars[0]], [new_var],
                                       primitive, {}))
+                    cur_val = new_var
                 allreduce_vars.append(cur_val)
             # modify the end of reduce chain eqn into an all-reduce.
             # The allreduce will be immediately replaced by two pipeline stages
@@ -703,9 +706,10 @@ def split_replicated_eqns(eqns, var_mesh, gensym_fn, num_mesh):
                 new_jaxpr_eqn(allreduce_vars, [final_var], allreduce_p,
                               {"type": primitive}))
             new_eqns_before_var[final_var] = appended_eqns
-    # FIXME: eqns not the last of reducable chain should be removed
     new_eqns = []
-    for eqn in eqns:
+    for eqn_idx, eqn in enumerate(eqns):
+        if eqn_idx in removed_eqns:
+            continue
         outv = eqn.outvars[0] if len(eqn.outvars) > 0 else None
         # insert new eqns before the previous last available eqn
         if (not (outv is None or isinstance(outv, DropVar)) and

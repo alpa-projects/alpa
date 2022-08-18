@@ -210,8 +210,6 @@ if __name__ == "__main__":
             prompt = test_prompts[i]
             torch.manual_seed(8)
             input_ids = tokenizer(prompt,
-                                  padding="max_length",
-                                  max_length=250,
                                   return_tensors="pt").input_ids.to(args.device)
 
             # Warm up

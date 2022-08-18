@@ -740,18 +740,6 @@ def get_pipeshard_executable(config,
 
         alpa.global_config.always_donate_micro_batch_vars = False
 
-        #executable = inference_step_with_cache.get_executable(
-        #    params, {
-        #        "input_ids":
-        #            jax.core.ShapedArray((batch_size, 1), jnp.int32),
-        #        "position_ids":
-        #            jax.core.ShapedArray((batch_size, 1), jnp.int32),
-        #        "cache":
-        #            init_cache_aval(config, batch_size),
-        #        "mask":
-        #            init_mask_aval(config, batch_size),
-        #    })
-
         cache = init_cache_aval(config, batch_size)
         mask = init_mask_aval(config, batch_size)
 
@@ -1028,6 +1016,22 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
     return flat_arrays
 
 
+def init_cache_dis_array(executable, config, batch_size, dummy=False):
+    """Initialize cache with distributed arrays."""
+    cache = init_cache_np(config, batch_size)
+    alpa.global_config.use_dummy_value_for_benchmarking = dummy
+    _, batch_info = executable.get_input_placement_specs()
+    flat_args, in_tree = tree_flatten(cache)
+    flat_info = tree_leaves(batch_info["cache"])
+    if hasattr(executable, "mesh_group"):
+        ret = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
+    else:
+        ret = executable.physical_mesh.shard_args_to_arrays_ps(
+            flat_info, flat_args)
+    alpa.global_config.use_dummy_value_for_benchmarking = False
+    return ret
+
+
 def load_multi_executable_params_dis_array(path,
                                            executables,
                                            params_aval,
@@ -1066,19 +1070,3 @@ def init_multi_executable_cache_dis_array(executables,
             cache_info = batch_info["cache"]
     return init_cache_dis_array(
         list(executables.values())[0], config, batch_size, dummy)
-
-
-def init_cache_dis_array(executable, config, batch_size, dummy=False):
-    """Initialize cache with distributed arrays."""
-    cache = init_cache_np(config, batch_size)
-    alpa.global_config.use_dummy_value_for_benchmarking = dummy
-    _, batch_info = executable.get_input_placement_specs()
-    flat_args, in_tree = tree_flatten(cache)
-    flat_info = tree_leaves(batch_info["cache"])
-    if hasattr(executable, "mesh_group"):
-        ret = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
-    else:
-        ret = executable.physical_mesh.shard_args_to_arrays_ps(
-            flat_info, flat_args)
-    alpa.global_config.use_dummy_value_for_benchmarking = False
-    return ret

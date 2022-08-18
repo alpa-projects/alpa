@@ -311,6 +311,8 @@ def get_model(model_name: str,
         params = load_params_np(params_aval, path, config, dummy)
         init_cache = init_cache_np(config, batch_size=expand_size)
         params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
+
+        executables = {1: executable}
     else:
         assert "alpa/opt" in model_name
         assert is_power_of_two(num_beams), "num_beams must be a power of two"
@@ -345,7 +347,7 @@ def get_model(model_name: str,
             autoregressive=autoregressive)
 
         # Load params
-        dist_params = load_multi_executable_params_dis_array(
+        params = load_multi_executable_params_dis_array(
             path, executables, params_aval, config, dummy)
 
         if autoregressive:
@@ -362,7 +364,7 @@ def get_model(model_name: str,
         if not autoregressive:
             assert len(executables) == 1
             return list(
-                executables.values())[0], dist_params, transformer_config
+                executables.values())[0], params, transformer_config
 
     step_ct = 0
     last_token = None
@@ -372,53 +374,50 @@ def get_model(model_name: str,
                        attention_mask,
                        output_attentions=False,
                        output_hidden_states=False):
-        nonlocal step_ct
-        nonlocal last_token
+        input_ids = input_ids.cpu().numpy()
 
-        def _run_one_execuable(_executable, _params, _input_ids, _past_key_values, ):
+        def run_one(_executable, _input_ids, _past_key_values, _attention_mask):
             nonlocal step_ct
+            nonlocal last_token
 
             if _past_key_values is None:
                 _past_key_values = init_cache
-                step_ct = np.zeros_like(input_ids_step)
-                last_token = np.copy(input_ids_step)
+                step_ct = np.zeros((_input_ids.shape[0], 1), dtype=np.int32)
+                last_token = np.copy(_input_ids)
 
-            input_ids_step = input_ids.cpu().numpy()
-            last_token = input_ids_step * (input_ids_step != config.pad) + last_token * (input_ids_step == config.pad)
-            position_ids_step = step_ct  + config.pad + 1
-
-            output = _executable(
-                _params, {
-                    "input_ids": input_ids_step,
-                    "position_ids": position_ids_step,
-                    "cache": _past_key_values,
-                    "mask": attention_mask,
-                })
-            set_skip_shard_args_check(output.attention_cache)
-
-            logits_step = torch.from_numpy(np.array(output.logits)).to(device)
-
+            input_ids_step = _input_ids
+            last_token = np.where(input_ids_step != config.pad, input_ids_step, last_token)
+            position_ids_step = step_ct + config.pad + 1
             step_ct += (input_ids_step != config.pad)
 
-            return InferenceFuncOutput(logits_step, output.attention_cache,
-                                       output.hidden_states, output.attentions)
+            output = _executable(
+                params, {
+                    "input_ids": last_token,
+                    "position_ids": position_ids_step,
+                    "cache": _past_key_values,
+                    "mask": _attention_mask,
+                })
+
+            return output
 
         if input_ids.shape[1] > 1:
             if (len(executables) == 1 or input_ids.shape[1] not in executables):
-                # Break prompt for single (with decodering length=1) executable, or no executable
-                # for the input length. TODO: Support input padding.
+                # Process a prompt one token by one token.
                 for i in range(input_ids.shape[1]):
-                    ret = _run_one_execuable(executables[1], dist_params,
-                                             input_ids[:, i:i + 1], past_key_values)
-                    past_key_values = ret.past_key_values
-                return ret
+                    output = run_one(executables[1], input_ids[:, i:i + 1],
+                                     past_key_values, attention_mask)
+                    past_key_values = output.attention_cache
+            else:
+                # Use the corresponding executable to process a prompt at once
+                output = run_one(executables[input_ids.shape[1]],
+                                 input_ids, past_key_values, attention_mask)
+        else:
+            output = run_one(executables[1], input_ids, past_key_values, attention_mask)
 
-            # Use the corresponding executable.
-            return _run_one_execuable(executables[input_ids.shape[1]], dist_params,
-                                      input_ids, past_key_values)
-
-        # Single prompt.
-        return _run_one_execuable(executables[1], dist_params, input_ids, past_key_values)
+        set_skip_shard_args_check(output.attention_cache)
+        logits_step = torch.from_numpy(np.array(output.logits)).to(device)
+        return InferenceFuncOutput(logits_step, output.attention_cache,
+                                   output.hidden_states, output.attentions)
 
     inference_func_config = InferenceFuncConfig(num_beams=num_beams)
     return AlpaInferenceFunc(inference_func,
@@ -426,6 +425,7 @@ def get_model(model_name: str,
                              executable,
                              transformer_config,
                              max_target_positions=config.max_target_positions)
+
 
 def set_skip_shard_args_check(attention_cache):
     """

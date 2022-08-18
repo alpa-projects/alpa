@@ -627,6 +627,7 @@ def reducable_chain_lookup(eqns, eqn_mesh, var_use, num_mesh, var_def):
         reducable_chain.append(cur_idx)
         nxt_idx = list(var_use[cur_eqn.outvars[0]])[0]
         nxt_eqn = eqns[nxt_idx]
+    final_var = cur_eqn.outvars[0]
     # split eqns on the reducable chain into meshes
     reducable_set = set(reducable_chain)
     for eqn_idx in reducable_chain:
@@ -638,16 +639,20 @@ def reducable_chain_lookup(eqns, eqn_mesh, var_use, num_mesh, var_def):
         else:
             assert op1_def_idx in reducable_set
             mesh_eqns[eqn_mesh[op0_def_idx]].append(op0_def_idx)
-    return mesh_eqns
+    return mesh_eqns, final_var
 
 
-def try_to_split(eqns, eqn_mesh, var_mesh, gensym_fn):
+allreduce_p = Primitive("alpa$allreduce")
+
+
+def split_replicated_eqns(eqns, eqn_mesh, var_mesh, gensym_fn, num_mesh):
     eqn_mesh, var_use, var_def = forward_propagate(eqns, var_mesh)
+    new_eqns_before_var = {}
     # Try to match the pattern
     for eqn_idx, eqn in enumerate(eqns):
         if eqn_idx not in eqn_mesh and _reducable(eqn):
-            mesh_eqns = reducable_chain_lookup(eqns, eqn_mesh, var_use,
-                                               num_mesh)
+            mesh_eqns, final_var = reducable_chain_lookup(
+                eqns, eqn_mesh, var_use, num_mesh)
             # rewrite according to splits
             primitive = eqn.primitive
             appended_eqns = []
@@ -663,10 +668,21 @@ def try_to_split(eqns, eqn_mesh, var_mesh, gensym_fn):
                         new_jaxpr_eqn([cur_val, eq.outvars[0]], [new_var],
                                       primitive))
                 allreduce_vars.append(cur_val)
-            allreduce_config = (allreduce_vars, primitive)
-            # TODO: insert new eqns before the previous last available eqn
-            # TODO: modify the end of reduce chain eqn into an all-reduce.
-            # The all-reduce operator will be immediately replaced into two pipeline stages
+            # modify the end of reduce chain eqn into an all-reduce.
+            # The allreduce will be immediately replaced by two pipeline stages
+            appended_eqns.append(
+                new_jaxpr_eqn(allreduce_vars, [final_var], allreduce_p,
+                              {"type": primitive}))
+            new_eqns_before_var[final_var] = appended_eqns
+    new_eqns = []
+    for eqn in eqns:
+        outv = eqn.outvars[0] if len(eqn.outvars) > 0 else None
+        # insert new eqns before the previous last available eqn
+        if (not (outv is None or isinstance(outv, DropVar)) and
+                outv in new_eqns_before_var):
+            new_eqns.extend(new_eqns_before_var[outv])
+        else:
+            new_eqns.append(eqn)
     return new_eqns
 
 

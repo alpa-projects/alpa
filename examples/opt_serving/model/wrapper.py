@@ -217,19 +217,14 @@ def get_hf_opt_model(model_name, device, num_beams):
                        attention_mask,
                        output_attentions=False,
                        output_hidden_states=False):
-        attention_length = attention_mask.size()[-1]
         if past_key_values is None:
             past_length = 0
         else:
             past_length = past_key_values[0][0].shape[2]
-        if past_length >= attention_length:
-            attention_mask = torch.cat(
-                (attention_mask,
-                 torch.ones((input_ids.shape[0],
-                             past_length + 1 - attention_length)).to(device)),
-                dim=1)
-        elif attention_mask != None:
+        mask_length = attention_mask.size()[-1]
+        if attention_mask != None:
             attention_mask = attention_mask[:, :past_length + 1]
+        print(attention_mask)
         out = raw_model(input_ids=input_ids,
                         attention_mask=attention_mask,
                         past_key_values=past_key_values,
@@ -269,7 +264,7 @@ def get_model(model_name: str,
     """Get and load model and return a WrappedInferenceFunc compatible with HuggingFace.
 
     Args:
-        model_name: "gpt", "facebook/opt-", or "alpa/opt-".
+        model_name: "facebook/opt-", or "alpa/opt-".
         device: "cpu" or "gpu". This only controls the device used
           by pytorch. Alpa always runs on GPU.
         path: The path to opt weights.
@@ -281,8 +276,6 @@ def get_model(model_name: str,
         raise NotImplementedError(
             f"Cannot support num_micro_batches > 1 in autoregressive mode.")
 
-    if "gpt" in model_name:
-        return get_hf_gpt_model(model_name, device, num_beams)
     if "facebook/opt" in model_name:
         return get_hf_opt_model(model_name, device, num_beams)
 

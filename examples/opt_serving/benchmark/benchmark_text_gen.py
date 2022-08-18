@@ -54,7 +54,7 @@ if __name__ == "__main__":
     parser.add_argument("--multi-executable", action="store_true")
     parser.add_argument("--nb", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=1)
-    parser.add_argument("--n-warmup", type=int, default=5)
+    parser.add_argument("--n-warmup", type=int, default=2)
     parser.add_argument("--n-iter", type=int, default=10)
     parser.add_argument("--max-length", type=int, default=256)
     parser.add_argument("--num-beams", type=int, default=1)
@@ -93,11 +93,10 @@ if __name__ == "__main__":
     tflopss = []
     compute_tflopss = []
 
-    if not autoregressive:
+    if not autoregressive: # Forward mode
         # Increase the frequency of deleting buffers to avoid OOM.
         global_config.delete_remote_arrays_threshold = 1
 
-        # forward mode
         tic = time.time()
         model, params, transformer_config = get_model(
             args.model,
@@ -172,15 +171,13 @@ if __name__ == "__main__":
             decode_speeds.append(speed)
             tflopss.append(tflops)
             compute_tflopss.append(compute_tflops)
-    else:
-
+    else: # Generation mode
         decoder_length_list = [1]
         if multi_executable:
-            n_prompts = len(test_prompts)
-            prompts = test_prompts[:n_iters
-                                   if n_iters < n_prompts else n_prompts]
+            n_prompts = min(n_iters, len(test_prompts))
+            prompts = test_prompts[:n_prompts]
 
-            # Get token length of each prompt. TODO: Support input padding.
+            # Get token length of each prompt
             decoder_length_list += [
                 tokenizer(prompt, return_tensors="pt").input_ids.shape[1]
                 for prompt in prompts
@@ -190,7 +187,6 @@ if __name__ == "__main__":
             decoder_length_list = list(set(decoder_length_list))
             decoder_length_per_step = str(decoder_length_list)
 
-        # generation mode
         tic = time.time()
         model = get_model(args.model,
                           args.device,
@@ -207,18 +203,17 @@ if __name__ == "__main__":
         seq_len = model.transformer_config.seq_len
         vocab_size = model.transformer_config.vocab_size
         if "alpa" in args.model:
-            if alpa.get_global_cluster():
-                num_gpus = alpa.get_global_cluster().num_devices
-            else:
-                num_gpus = alpa.get_global_physical_mesh().num_devices
+            num_gpus = alpa.get_global_num_devices()
         else:
             num_gpus = 1
 
         # benchmark
-        for i in range(min(n_iters, len(test_prompts))):
+        for i in range(n_prompts):
             prompt = test_prompts[i]
             torch.manual_seed(8)
             input_ids = tokenizer(prompt,
+                                  #padding="max_length",
+                                  #max_length=250,
                                   return_tensors="pt").input_ids.to(args.device)
 
             # Warm up

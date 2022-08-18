@@ -688,6 +688,7 @@ def get_jax_executable(config,
                              batch["input_ids"],
                              batch["position_ids"],
                              attention_cache=batch["cache"],
+                             attention_mask=batch["mask"],
                              output_attentions=support_output_attentions,
                              output_hidden_states=support_output_hidden_states)
         return output

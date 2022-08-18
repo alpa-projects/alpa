@@ -217,17 +217,9 @@ def get_hf_opt_model(model_name, device, num_beams):
                        attention_mask,
                        output_attentions=False,
                        output_hidden_states=False):
-        if past_key_values is None:
-            past_length = 0
-        else:
-            past_length = past_key_values[0][0].shape[2]
-        mask_length = attention_mask.size()[-1]
-        if attention_mask != None:
-            attention_mask = attention_mask[:, :past_length + 1]
-        print(attention_mask)
         out = raw_model(input_ids=input_ids,
-                        attention_mask=attention_mask,
                         past_key_values=past_key_values,
+                        attention_mask=attention_mask,
                         output_attentions=output_attentions,
                         output_hidden_states=output_hidden_states)
         return InferenceFuncOutput(out.logits, out.past_key_values)

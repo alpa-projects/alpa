@@ -63,7 +63,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Some global params
-    warmup_iters = args.n_warmup
+    n_warmup = args.n_warmup
     n_iters = args.n_iter
     max_length = args.max_length
     global_config.pipeline_sync_for_timer = True
@@ -126,7 +126,7 @@ if __name__ == "__main__":
         ).num_devices if "alpa" in args.model else 1
 
         # warm up
-        for _ in range(warmup_iters):
+        for _ in range(n_warmup):
             forward_results = model(params, {
                 "input_ids": input_ids,
                 "position_ids": position_ids
@@ -172,15 +172,13 @@ if __name__ == "__main__":
             tflopss.append(tflops)
             compute_tflopss.append(compute_tflops)
     else: # Generation mode
+        n_prompts = min(n_iters, len(test_prompts))
         decoder_length_list = [1]
         if multi_executable:
-            n_prompts = min(n_iters, len(test_prompts))
-            prompts = test_prompts[:n_prompts]
-
             # Get token length of each prompt
             decoder_length_list += [
                 tokenizer(prompt, return_tensors="pt").input_ids.shape[1]
-                for prompt in prompts
+                for prompt in test_prompts[:n_prompts]
             ]
 
             # Deduplicate
@@ -212,12 +210,12 @@ if __name__ == "__main__":
             prompt = test_prompts[i]
             torch.manual_seed(8)
             input_ids = tokenizer(prompt,
-                                  #padding="max_length",
-                                  #max_length=250,
+                                  padding="max_length",
+                                  max_length=250,
                                   return_tensors="pt").input_ids.to(args.device)
 
             # Warm up
-            for _ in range(warmup_iters):
+            for _ in range(n_warmup):
                 model.generate(input_ids=input_ids,
                                max_length=max_length,
                                do_sample=False,
@@ -265,7 +263,7 @@ if __name__ == "__main__":
     avg_tflops = np.mean(tflopss)
     avg_compute_tflops = np.mean(compute_tflopss)
     latency_32_tokens = 32.0 / (avg_speed / batch_size)
-    num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
+    num_pp_stages = 2
 
     heads = [
         "Model", "Device", "Dummy", "Load (s)", "Autoregressive", "Batchsize",

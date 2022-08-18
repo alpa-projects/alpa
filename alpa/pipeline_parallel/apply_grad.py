@@ -7,6 +7,9 @@ from jax._src.util import safe_map
 from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, get_aval,
                       raise_to_shaped, JaxprEqn)
 from jax.lax import add_p, div_p
+from jax.core import (Primitive, Var, Jaxpr, ClosedJaxpr, DropVar, Literal,
+                      new_jaxpr_eqn, get_aval, raise_to_shaped, JaxprEqn)
+from jax.lax import add_p, div_p, and_p, or_p
 import numpy as np
 
 from alpa.pipeline_parallel.computation import JaxPipelineComputation
@@ -584,12 +587,19 @@ _reducable_operators = set([add_p, and_p, or_p])
 def _reducable(eqn):
     # the is_scalar is to avoid a large all-reduce for tied-embedding
     # it can be improved to consider tradeoff between computation&communication
-    return eqn.primitive in _reducable_operators and is_scalar(eqn.outvars[0])
+    return (eqn.primitive in _reducable_operators and
+            eqn.outvars[0].aval.shape == ())
 
 
-def _other_invar_at_one_mesh(src, dst, defs, eqn_mesh):
-    op = dst.invars[0] if src == dst.invars[1] else dst.invars[1]
-    return defs[op] in eqn_mesh and len(eqn_mesh[defs[op]]) == 1
+def _var_at_one_mesh(var, var_mesh):
+    if not isinstance(var, Var):
+        return True
+    return var in var_mesh and len(var_mesh[var]) == 1
+
+
+def _other_invar_at_one_mesh(var, dst, var_mesh):
+    op = dst.invars[0] if var == dst.invars[1] else dst.invars[1]
+    return _var_at_one_mesh(op, var_mesh)
 
 
 def forward_propagate(eqns, var_mesh):
@@ -607,25 +617,41 @@ def forward_propagate(eqns, var_mesh):
         if len(at_mesh) == 1:
             for invar in eqn.invars:
                 if isinstance(invar, Var):
-                    cur_mesh = var_mesh.setdefault(invar, OrderedSet())
-                    cur_mesh.update(at_mesh)
-            for outvar in eqn.outvars:
-                if not isinstance(outvar, DropVar):
-                    var_mesh[outvar] = OrderedSet(at_mesh)
-                    var_def[outvar] = eqn_idx
+                    var_mesh.setdefault(invar, OrderedSet()).update(at_mesh)
             eqn_mesh[eqn_idx] = OrderedSet(at_mesh)
-    return eqn_mesh, var_use, var_def
+        for outvar in eqn.outvars:
+            if not isinstance(outvar, DropVar):
+                var_mesh[outvar] = OrderedSet(at_mesh)
+                var_def[outvar] = eqn_idx
+    var_mesh = {}
+    for eqn_idx, eqn in enumerate(eqns):
+        if eqn_idx in eqn_mesh:
+            meshes = eqn_mesh[eqn_idx]
+            for var in eqn.invars:
+                if isinstance(var, Var):
+                    var_mesh[var] = OrderedSet(meshes)
+            for var in eqn.outvars:
+                if not isinstance(var, DropVar):
+                    var_mesh[var] = OrderedSet(meshes)
+    return eqn_mesh, var_mesh, var_use, var_def
 
 
-def reducable_chain_lookup(eqns, eqn_mesh, var_use, num_mesh, var_def):
+def reducable_chain_lookup(eqns, eqn_idx, eqn_mesh, var_use, num_mesh, var_def,
+                           var_mesh):
     mesh_eqns = [[] for _ in range(num_mesh)]
+    eqn = eqns[eqn_idx]
+    cur_var = eqn.invars[0]
     nxt_idx, nxt_eqn = eqn_idx, eqn
     reducable_chain = []
     while (_reducable(nxt_eqn) and nxt_eqn.primitive == eqn.primitive and
-           _other_invar_at_one_mesh(cur_eqn, nxt_eqn)):
+           _other_invar_at_one_mesh(cur_var, nxt_eqn, var_mesh)):
         cur_idx, cur_eqn = nxt_idx, nxt_eqn
+        cur_var = cur_eqn.outvars[0]
         reducable_chain.append(cur_idx)
-        nxt_idx = list(var_use[cur_eqn.outvars[0]])[0]
+        outv_use = var_use.setdefault(cur_eqn.outvars[0], OrderedSet())
+        if len(outv_use) == 0:
+            break
+        nxt_idx = list(outv_use)[0]
         nxt_eqn = eqns[nxt_idx]
     final_var = cur_eqn.outvars[0]
     # split eqns on the reducable chain into meshes
@@ -634,39 +660,42 @@ def reducable_chain_lookup(eqns, eqn_mesh, var_use, num_mesh, var_def):
         eqn = eqns[eqn_idx]
         op0, op1 = eqn.invars
         op0_def_idx, op1_def_idx = var_def[op0], var_def[op1]
-        if op0_def_idx in reducable_set:
-            mesh_eqns[eqn_mesh[op1_def_idx]].append(op1_def_idx)
-        else:
-            assert op1_def_idx in reducable_set
-            mesh_eqns[eqn_mesh[op0_def_idx]].append(op0_def_idx)
+        if op0_def_idx not in reducable_set:
+            mesh_eqns[list(eqn_mesh[op0_def_idx])[0]].append(op0_def_idx)
+        if op1_def_idx not in reducable_set:
+            mesh_eqns[list(eqn_mesh[op1_def_idx])[0]].append(op1_def_idx)
     return mesh_eqns, final_var
 
 
 allreduce_p = Primitive("alpa$allreduce")
 
 
-def split_replicated_eqns(eqns, eqn_mesh, var_mesh, gensym_fn, num_mesh):
-    eqn_mesh, var_use, var_def = forward_propagate(eqns, var_mesh)
+def split_replicated_eqns(eqns, var_mesh, gensym_fn, num_mesh):
+    eqn_mesh, var_mesh, var_use, var_def = forward_propagate(eqns, var_mesh)
     new_eqns_before_var = {}
     # Try to match the pattern
     for eqn_idx, eqn in enumerate(eqns):
-        if eqn_idx not in eqn_mesh and _reducable(eqn):
+        # Do not handle c = a(mesh1 and 2) + b(mesh1) case
+        if (eqn_idx not in eqn_mesh and _reducable(eqn) and
+                _var_at_one_mesh(eqn.invars[0], var_mesh) and
+                _var_at_one_mesh(eqn.invars[1], var_mesh)):
             mesh_eqns, final_var = reducable_chain_lookup(
-                eqns, eqn_mesh, var_use, num_mesh)
+                eqns, eqn_idx, eqn_mesh, var_use, num_mesh, var_def, var_mesh)
             # rewrite according to splits
             primitive = eqn.primitive
             appended_eqns = []
             allreduce_vars = []
             for per_mesh_eqns in mesh_eqns:
                 cur_val = None
-                for eq in per_mesh_eqns:
+                for eq_idx in per_mesh_eqns:
+                    eq = eqns[eq_idx]
                     if cur_val is None:
                         cur_val = eq.outvars[0]
                         continue
                     new_var = gensym_fn(cur_val.aval)
                     appended_eqns.append(
                         new_jaxpr_eqn([cur_val, eq.outvars[0]], [new_var],
-                                      primitive))
+                                      primitive, {}))
                 allreduce_vars.append(cur_val)
             # modify the end of reduce chain eqn into an all-reduce.
             # The allreduce will be immediately replaced by two pipeline stages
@@ -674,6 +703,7 @@ def split_replicated_eqns(eqns, eqn_mesh, var_mesh, gensym_fn, num_mesh):
                 new_jaxpr_eqn(allreduce_vars, [final_var], allreduce_p,
                               {"type": primitive}))
             new_eqns_before_var[final_var] = appended_eqns
+    # FIXME: eqns not the last of reducable chain should be removed
     new_eqns = []
     for eqn in eqns:
         outv = eqn.outvars[0] if len(eqn.outvars) > 0 else None

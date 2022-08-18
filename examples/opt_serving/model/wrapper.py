@@ -74,15 +74,13 @@ class WrappedInferenceFunc(GenerationMixin):
     """
     Wrap an inference func as a GenerationMixin.
     This class implements the minimal interface for using huggingface's generator.
-
-    This class also decomposes the first call of prompt during generation to one token by one token.
     """
 
     def __init__(self, inference_func, config, executable, transformer_config):
         self.inference_func = inference_func
         self.config = config
         self.main_input_name = "input_ids"
-        self.executable = executable
+        self.executable = executable  # An alpa executable
         self.transformer_config = transformer_config
         self.index_select_executables = {}
         self.cache_location = None
@@ -92,7 +90,8 @@ class WrappedInferenceFunc(GenerationMixin):
         raise NotImplementedError()
 
     def prepare_inputs_for_generation(self, input_ids, past=None, **kwargs):
-        # only last token for input_ids if past is defined in kwargs
+        # If past is defined, it means we are in the decoding stage,
+        # so we only process the last token 
         if past:
             input_ids = input_ids[:, -1].unsqueeze(-1)
 
@@ -114,6 +113,7 @@ class WrappedInferenceFunc(GenerationMixin):
                  return_dict=None):
         ret = self.inference_func(input_ids,
                                   past_key_values,
+                                  attention_mask=attention_mask,
                                   output_hidden_states=output_hidden_states,
                                   output_attentions=output_attentions)
         return ret
@@ -197,39 +197,13 @@ class AlpaInferenceFunc(WrappedInferenceFunc):
     def _process_attention_mask(self, attention_mask):
         if isinstance(attention_mask, torch.Tensor):
             attention_mask = attention_mask.cpu().numpy()
+        # Pad attention_mask
         batch_size = attention_mask.shape[0]
         ret_mask = np.zeros((batch_size, self._max_target_positions),
-                                  dtype=np.bool)
+                            dtype=np.bool)
         ret_mask[:, :attention_mask.shape[-1]] = attention_mask
         ret_mask = ret_mask[:, np.newaxis, np.newaxis, :]
         return ret_mask
-
-
-def get_hf_gpt_model(model_name, device, num_beams):
-    raw_model = GPT2LMHeadModel.from_pretrained(model_name)
-    raw_model = raw_model.to(device)
-
-    def inference_func(input_ids,
-                       past_key_values,
-                       output_attentions=False,
-                       output_hidden_states=False):
-        out = raw_model(input_ids=input_ids,
-                        past_key_values=past_key_values,
-                        output_attentions=output_attentions,
-                        output_hidden_states=output_hidden_states)
-        return InferenceFuncOutput(out.logits, out.past_key_values)
-
-    inference_func_config = raw_model.config
-    inference_func_config.num_beams = num_beams
-    transformer_config = TransformerModelConfig(
-        H=raw_model.config.n_embd,
-        L=raw_model.config.n_layer,
-        n_head=raw_model.config.n_head,
-        seq_len=raw_model.config.n_positions,
-        vocab_size=raw_model.config.vocab_size)
-    executable = None
-    return WrappedInferenceFunc(inference_func, inference_func_config,
-                                executable, transformer_config)
 
 
 def get_hf_opt_model(model_name, device, num_beams):

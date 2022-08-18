@@ -83,7 +83,8 @@ def get_last_dp_result():
 
 
 @maybe_numba_jit(fastmath=True, nogil=True, cache=True)
-def get_optimal_submeshes(best_s, f_argmin, num_devices, num_layers, submesh_n_devices):
+def get_optimal_submeshes(best_s, f_argmin, num_devices, num_layers,
+                          submesh_n_devices):
     current_s = best_s
     current_layer = 0
     current_devices = num_devices
@@ -98,24 +99,24 @@ def get_optimal_submeshes(best_s, f_argmin, num_devices, num_layers, submesh_n_d
         current_s -= 1
         current_layer = next_start_layer
         current_devices -= submesh_n_devices[submesh_choice]
-    assert current_s == 0 and current_layer == num_layers and current_devices == 0
+    assert (current_s == 0 and current_layer == num_layers and
+            current_devices == 0)
 
     return res
 
 
 @maybe_numba_jit(fastmath=True, nogil=True, cache=True)
-def dp_impl_2(
-    num_layers, num_devices, submesh_sizes, valid_idxs_and_costs, max_n_succ_stages
-):
-    f = np.full(
-        (num_layers + 1, num_layers + 1, num_devices + 1), np.inf, dtype=np.float32
-    )
-    f_stage_max = np.full(
-        (num_layers + 1, num_layers + 1, num_devices + 1), 0.0, dtype=np.float32
-    )
-    f_argmin = np.full(
-        (num_layers + 1, num_layers + 1, num_devices + 1, 3), -1, dtype=np.int32
-    )
+def dp_impl_2(num_layers, num_devices, submesh_sizes, valid_idxs_and_costs,
+              max_n_succ_stages):
+    f = np.full((num_layers + 1, num_layers + 1, num_devices + 1),
+                np.inf,
+                dtype=np.float32)
+    f_stage_max = np.full((num_layers + 1, num_layers + 1, num_devices + 1),
+                          0.0,
+                          dtype=np.float32)
+    f_argmin = np.full((num_layers + 1, num_layers + 1, num_devices + 1, 3),
+                       -1,
+                       dtype=np.int32)
     f[0, num_layers, 0] = 0
     for d in maybe_prange(1, num_devices + 1):
         for l, i, submesh_id, n_config, stage_cost in valid_idxs_and_costs:
@@ -126,18 +127,24 @@ def dp_impl_2(
                     if s - 1 > max_n_succ_stages[l, i, submesh_id, n_config]:
                         continue
 
-                    new_cost = f[s - 1, i + 1, d - n_submesh_devices] + stage_cost
+                    new_cost = f[s - 1, i + 1,
+                                 d - n_submesh_devices] + stage_cost
                     if new_cost < f[s, l, d]:
                         f[s, l, d] = new_cost
                         f_argmin[s, l, d] = (i + 1, submesh_id, n_config)
                         f_stage_max[s, l, d] = max(
-                            f_stage_max[s - 1, i + 1, d - n_submesh_devices], stage_cost
-                        )
+                            f_stage_max[s - 1, i + 1, d - n_submesh_devices],
+                            stage_cost)
 
     return f, f_stage_max, f_argmin
 
 
-def dp_2(num_devices, num_microbatches, submesh_choices, compute_cost, max_n_succ_stages,
+def dp_2(
+    num_devices,
+    num_microbatches,
+    submesh_choices,
+    compute_cost,
+    max_n_succ_stages,
 ):
     """Auto stage dynamic programming."""
     timers("stage-construction-dp").start()
@@ -162,20 +169,26 @@ def dp_2(num_devices, num_microbatches, submesh_choices, compute_cost, max_n_suc
         if max_stage_cost * num_microbatches >= best_cost:
             break
 
-        # Lifts check for stage_cost <= t_max_stage_cost out of the inner dp loop.
-        valid_cost_idxs = np.transpose((compute_cost <= max_stage_cost).nonzero())
-        # This corresponds to the i of k <= i <= K from eqn. 3 in the alpa paper.
+        # Lifts check for stage_cost <= t_max_stage_cost out of the inner dp
+        # loop.
+        valid_cost_idxs = np.transpose(
+            (compute_cost <= max_stage_cost).nonzero())
+        # This corresponds to the i of k <= i <= K from eqn. 3 in the alpa
+        # paper.
         valid_cost_idxs = valid_cost_idxs[
-            valid_cost_idxs[:, 0] <= valid_cost_idxs[:, 1]
-        ]
+            valid_cost_idxs[:, 0] <= valid_cost_idxs[:, 1]]
         if len(valid_cost_idxs) == 0:
             continue
         valid_costs = compute_cost[tuple(valid_cost_idxs.T)]
-        valid_idxs_and_costs = np.hstack([valid_cost_idxs, valid_costs[:, np.newaxis]])
-        # Sort by descending layer idx because DP initializes F[0, num_layers, 0] = 0
-        valid_idxs_and_costs = valid_idxs_and_costs[np.flip(valid_cost_idxs[:, 1].argsort())]
+        valid_idxs_and_costs = np.hstack(
+            [valid_cost_idxs, valid_costs[:, np.newaxis]])
+        # Sort by descending layer idx because DP initializes
+        # F[0, num_layers, 0] = 0
+        valid_idxs_and_costs = valid_idxs_and_costs[np.flip(
+            valid_cost_idxs[:, 1].argsort())]
 
-        # Don't perform backtracking each time (do it only for the best solution).
+        # Don't perform backtracking each time (do it only for the best
+        # solution).
         f, f_stage_max, f_argmin = dp_impl_2(
             num_layers,
             num_devices,
@@ -188,18 +201,19 @@ def dp_2(num_devices, num_microbatches, submesh_choices, compute_cost, max_n_suc
         best_total_cost = f[best_s, 0, num_devices]
         if np.isinf(best_total_cost):
             continue
-        stage_cost = (num_microbatches - 1) * f_stage_max[best_s, 0, num_devices]
+        stage_cost = (num_microbatches - 1) * f_stage_max[best_s, 0,
+                                                          num_devices]
 
         if best_total_cost + stage_cost < best_cost:
             best_cost = best_total_cost + stage_cost
             best_solution = best_s, f_argmin
         last_max_stage_cost = max_stage_cost
 
-    assert best_solution is not None, "Unable to find any solution to inter-op dp."
+    assert best_solution is not None, (
+        "Unable to find any solution to inter-op dp.")
     best_s, f_argmin = best_solution
-    best_solution = get_optimal_submeshes(
-        best_s, f_argmin, num_devices, num_layers, submesh_sizes
-    )
+    best_solution = get_optimal_submeshes(best_s, f_argmin, num_devices,
+                                          num_layers, submesh_sizes)
 
     timers("stage-construction-dp").suspend()
     return best_cost, best_solution
@@ -234,7 +248,8 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
                             # TODO(zhuohan): This level of for loop is not
                             #   necessary. It can be optimized by sorting
                             #   the logical mesh shapes.
-                            for n_config in maybe_prange(num_autosharding_configs):
+                            for n_config in maybe_prange(
+                                    num_autosharding_configs):
                                 if s - 1 <= max_n_succ_stages[i, k - 1, m,
                                                               n_config]:
                                     stage_cost = compute_cost[i, k - 1, m,

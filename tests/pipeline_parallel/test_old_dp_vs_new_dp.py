@@ -4,9 +4,8 @@ from timeit import default_timer as timer
 from alpa.pipeline_parallel.stage_construction import get_submesh_choices, dp, dp_2 as dp_2
 
 
-def test_stage_construction(
-    submesh_choices, num_hosts, num_devices_per_host, num_layers, max_n_succ_stages
-):
+def test_stage_construction(submesh_choices, num_hosts, num_devices_per_host,
+                            num_layers, max_n_succ_stages):
     num_devices = num_hosts * num_devices_per_host
     num_autosharding_configs = 1
     for i in range(1, num_devices + 1):
@@ -14,9 +13,8 @@ def test_stage_construction(
             num_autosharding_configs += 1
 
     num_submesh_choices = len(submesh_choices)
-    compute_cost = np.random.rand(
-        num_layers, num_layers, num_submesh_choices, num_autosharding_configs
-    )
+    compute_cost = np.random.rand(num_layers, num_layers, num_submesh_choices,
+                                  num_autosharding_configs)
     max_n_succ_stages = np.full(
         (num_layers, num_layers, num_submesh_choices, num_autosharding_configs),
         max_n_succ_stages,
@@ -38,9 +36,8 @@ print("num_layers,num_hosts,num_devices_per_host,num_micro_batches,avg")
 for num_layers in powers_of_2:
     for num_hosts in powers_of_2:
         for num_devices_per_host in powers_of_2:
-            submesh_choices = get_submesh_choices(
-                num_hosts, num_devices_per_host, "all"
-            )
+            submesh_choices = get_submesh_choices(num_hosts,
+                                                  num_devices_per_host, "all")
             for num_micro_batches in powers_of_2:
                 tot = []
                 for i in range(num_runs):
@@ -88,17 +85,14 @@ for num_layers in powers_of_2:
 
                     assert res_mine == res_golden, (res_mine, res_golden)
 
-                print(
-                    ",".join(
-                        map(
-                            str,
-                            [
-                                num_layers,
-                                num_hosts,
-                                num_devices_per_host,
-                                num_micro_batches,
-                                sum(tot[1:]) / num_runs,
-                            ],
-                        )
-                    )
-                )
+                print(",".join(
+                    map(
+                        str,
+                        [
+                            num_layers,
+                            num_hosts,
+                            num_devices_per_host,
+                            num_micro_batches,
+                            sum(tot[1:]) / num_runs,
+                        ],
+                    )))

@@ -512,7 +512,7 @@ def _propagate_var_at_mesh(eqns, var_mesh):
     for eqn_idx, eqn in enumerate(eqns):
         at_mesh = OrderedSet()
         for invar in eqn.invars:
-            if isinstance(invar, Var):
+            if isinstance(invar, Var) and not invar in allreduce_outvars:
                 at_mesh.update(var_mesh.setdefault(invar, OrderedSet()))
         if at_mesh:
             eqn_mesh[eqn_idx] = OrderedSet(at_mesh)
@@ -661,7 +661,8 @@ class ApplyGradRewriter:
         one mesh, and c is only used once, then we can do the reduction to
         translate additions into an allreduce.
         """
-        mesh_eqns = [[] for _ in range(num_mesh)]
+        mesh_vars = [[] for _ in range(num_mesh)]
+        literals = []
         eqn = self.eqns[eqn_idx]
         cur_var = eqn.invars[0]
         nxt_idx, nxt_eqn = eqn_idx, eqn
@@ -682,28 +683,28 @@ class ApplyGradRewriter:
         reducable_set = set(reducable_chain)
         for eqn_idx in reducable_chain:
             eqn = self.eqns[eqn_idx]
-            op0, op1 = eqn.invars
-            op0_def_idx, op1_def_idx = self.var_def[op0], self.var_def[op1]
-            if op0_def_idx not in reducable_set:
-                mesh_eqns[self.eqn_mesh[op0_def_idx]].append(op0_def_idx)
-            if op1_def_idx not in reducable_set:
-                mesh_eqns[self.eqn_mesh[op1_def_idx]].append(op1_def_idx)
-        return mesh_eqns, final_var, reducable_chain[:-1]
+            for op in eqn.invars:
+                if isinstance(op, Literal):
+                    mesh_vars[0].append(op)
+                    continue
+                def_idx = self.var_def[op]
+                if def_idx not in reducable_set:
+                    mesh_vars[self.eqn_mesh[def_idx]].append(op)
+        return mesh_vars, final_var, reducable_chain[:-1], literals
 
-    def _rewrite_eqns(self, primitive, mesh_eqns, gensym_fn, outvar):
+    def _rewrite_eqns(self, primitive, mesh_eqns, gensym_fn, outvar, literals):
         # rewrite according to splits
         appended_eqns = []
         allreduce_vars = []
-        for per_mesh_eqns in mesh_eqns:
+        for per_mesh_vars in mesh_eqns:
             cur_val = None
-            for eq_idx in per_mesh_eqns:
-                eq = self.eqns[eq_idx]
+            for v in per_mesh_vars:
                 if cur_val is None:
-                    cur_val = eq.outvars[0]
+                    cur_val = v
                     continue
                 new_var = gensym_fn(cur_val.aval)
                 appended_eqns.append(
-                    new_jaxpr_eqn([cur_val, eq.outvars[0]], [new_var],
+                    new_jaxpr_eqn([cur_val, v], [new_var],
                                   primitive, {}))
                 cur_val = new_var
             allreduce_vars.append(cur_val)
@@ -725,11 +726,12 @@ class ApplyGradRewriter:
             if (eqn_idx not in self.eqn_mesh and self._reducable(eqn) and
                     self._var_at_one_mesh(eqn.invars[0]) and
                     self._var_at_one_mesh(eqn.invars[1])):
-                mesh_eqns, final_var, removed = self._reducable_chain_lookup(
-                    eqn_idx, num_mesh)
+                (mesh_vars, final_var, removed,
+                 literals) = self._reducable_chain_lookup(eqn_idx, num_mesh)
                 removed_eqns.update(removed)
-                appended_eqns = self._rewrite_eqns(eqn.primitive, mesh_eqns,
-                                                   gensym_fn, final_var)
+                appended_eqns = self._rewrite_eqns(eqn.primitive, mesh_vars,
+                                                   gensym_fn, final_var,
+                                                   literals)
                 new_eqns_before_var[final_var] = appended_eqns
         new_eqns = []
         for eqn_idx, eqn in enumerate(self.eqns):
@@ -743,6 +745,13 @@ class ApplyGradRewriter:
             else:
                 new_eqns.append(eqn)
         return clone_jaxpr(self.jaxpr, eqns=new_eqns)
+
+
+def _no_allreduce(eqns):
+    for eqn in eqns:
+        if eqn.primitive == alpa_allreduce_p:
+            return False
+    return True
 
 
 def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
@@ -814,7 +823,7 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     mesh_assignment = {}
 
     for i in range(num_mesh):
-        if not outvars[i]:
+        if not outvars[i] and _no_allreduce(sliced_eqns[i]):
             continue
         computation_idx = num_stage + len(jaxprs)
         # assign the current computation into mesh i

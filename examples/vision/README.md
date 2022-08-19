@@ -76,7 +76,5 @@ python run_image_classification.py \
     --per_device_eval_batch_size 64 \
     --overwrite_output_dir \
     --preprocessing_num_workers 32 \
-    --eval_steps 2500 \
-    --save_steps 2500
 ```
 Training should converge at a loss of 0.0614 and validation accuracy of ~98% after 5 epochs. This should take ~7 minutes on a single machine with 2 P100 GPUs. Training statistics can be accessed on https://tensorboard.dev/experiment/3Vz06C4xQKaqaHENFeIrGg/

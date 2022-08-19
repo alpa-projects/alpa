@@ -8,7 +8,8 @@ from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, get_aval,
                       raise_to_shaped, JaxprEqn)
 from jax.lax import add_p, div_p
 from jax.core import (Primitive, Var, Jaxpr, ClosedJaxpr, DropVar, Literal,
-                      new_jaxpr_eqn, get_aval, raise_to_shaped, JaxprEqn)
+                      gensym, new_jaxpr_eqn, get_aval, raise_to_shaped,
+                      JaxprEqn)
 from jax.lax import add_p, div_p, and_p, or_p
 import numpy as np
 
@@ -500,24 +501,31 @@ def apply_grad_get_mean(closed_jaxpr, global_outvars, gradients, gensym_fn,
     return new_jaxpr, global_outvars
 
 
+alpa_allreduce_p = Primitive("alpa$allreduce")
+
+
 def _propagate_var_at_mesh(eqns, var_mesh):
     """Propagate mesh assignments from input."""
     eqn_mesh = {}
     var_mesh = dict(var_mesh)
+    allreduce_outvars = set()
     for eqn_idx, eqn in enumerate(eqns):
         at_mesh = OrderedSet()
         for invar in eqn.invars:
             if isinstance(invar, Var):
                 at_mesh.update(var_mesh.setdefault(invar, OrderedSet()))
         if at_mesh:
+            eqn_mesh[eqn_idx] = OrderedSet(at_mesh)
+            for outvar in eqn.outvars:
+                if not isinstance(outvar, DropVar):
+                    var_mesh[outvar] = OrderedSet(at_mesh)
+            if eqn.primitive == alpa_allreduce_p:
+                allreduce_outvars.add(eqn.outvars[0])
+                continue
             for invar in eqn.invars:
                 if isinstance(invar, Var):
                     cur_mesh = var_mesh.setdefault(invar, OrderedSet())
                     cur_mesh.update(at_mesh)
-            for outvar in eqn.outvars:
-                if not isinstance(outvar, DropVar):
-                    var_mesh[outvar] = OrderedSet(at_mesh)
-            eqn_mesh[eqn_idx] = OrderedSet(at_mesh)
     return eqn_mesh, var_mesh
 
 
@@ -526,6 +534,8 @@ def _reverse_propagate_var_at_mesh(closed_jaxpr, donation_mapping, eqn_mesh,
     """Propagate var_at_mesh from output to make sure all operands are ready."""
     changed = False
     for reversed_idx, eqn in enumerate(reversed(closed_jaxpr.eqns)):
+        if eqn.primitive == alpa_allreduce_p:
+            continue
         eqn_idx = len(closed_jaxpr.eqns) - 1 - reversed_idx
         post_at_mesh = eqn_mesh.setdefault(eqn_idx, OrderedSet())
         at_mesh = OrderedSet()
@@ -580,144 +590,159 @@ def _apply_grad_group_vars(closed_jaxpr: ClosedJaxpr, var_mesh, num_mesh):
     return (invars, outvars, consts, constvars), infered_global_invars
 
 
+# Binary operators that satisfies the associativity and commutativity
 _reducable_operators = set([add_p, and_p, or_p])
 
 
-# TODO(yonghao): clean up the code below
-def _reducable(eqn):
-    # the is_scalar is to avoid a large all-reduce for tied-embedding
-    # it can be improved to consider tradeoff between computation&communication
-    return (eqn.primitive in _reducable_operators and
-            eqn.outvars[0].aval.shape == ())
+class ApplyGradRewriter:
 
+    def __init__(self, apply_grad_jaxpr: ClosedJaxpr, var_mesh):
+        self.jaxpr = apply_grad_jaxpr
+        self.eqns = apply_grad_jaxpr.jaxpr.eqns
+        self.outvars = apply_grad_jaxpr.jaxpr.outvars
+        self.var_mesh = dict(var_mesh)
+        self.eqn_mesh = {}
+        self.var_use: Dict[Var, OrderedSet] = {}
+        self.var_def: Dict[Var, int] = {}
 
-def _var_at_one_mesh(var, var_mesh):
-    if not isinstance(var, Var):
-        return True
-    return var in var_mesh and len(var_mesh[var]) == 1
+    def _reducable(self, eqn):
+        # the is_scalar is to avoid a large all-reduce for tied-embedding
+        # it can be improved to consider tradeoff between computation&communication
+        return (eqn.primitive in _reducable_operators and
+                eqn.outvars[0].aval.shape == ())
 
+    def _var_at_one_mesh(self, var):
+        if not isinstance(var, Var):
+            return True
+        return var in self.var_mesh and len(self.var_mesh[var]) == 1
 
-def _other_invar_at_one_mesh(var, dst, var_mesh):
-    op = dst.invars[0] if var == dst.invars[1] else dst.invars[1]
-    return _var_at_one_mesh(op, var_mesh)
+    def _other_invar_at_one_mesh(self, var, dst):
+        op = dst.invars[0] if var == dst.invars[1] else dst.invars[1]
+        return self._var_at_one_mesh(op)
 
-
-def forward_propagate(eqns, var_mesh):
-    eqn_mesh = {}
-    var_mesh = dict(var_mesh)
-    var_use: Dict[Var, OrderedSet] = {}
-    var_def: Dict[Var, int] = {}
-    # Propagate the first round
-    for eqn_idx, eqn in enumerate(eqns):
-        at_mesh = OrderedSet()
-        for invar in eqn.invars:
-            if isinstance(invar, Var):
-                at_mesh.update(var_mesh.setdefault(invar, OrderedSet()))
-                var_use.setdefault(invar, OrderedSet()).add(eqn_idx)
-        if len(at_mesh) == 1:
+    def _forward_propagate(self):
+        """
+        A conservative propagation that stops when the eqn's invars are from
+        multiple meshes.
+        """
+        self.eqn_mesh = {}
+        var_mesh = dict(self.var_mesh)
+        self.var_use = {}
+        self.var_def = {}
+        # Propagate the first round
+        for eqn_idx, eqn in enumerate(self.eqns):
+            at_mesh = OrderedSet()
             for invar in eqn.invars:
                 if isinstance(invar, Var):
-                    var_mesh.setdefault(invar, OrderedSet()).update(at_mesh)
-            eqn_mesh[eqn_idx] = OrderedSet(at_mesh)
-        for outvar in eqn.outvars:
-            if not isinstance(outvar, DropVar):
-                var_mesh[outvar] = OrderedSet(at_mesh)
-                var_def[outvar] = eqn_idx
-    var_mesh = {}
-    for eqn_idx, eqn in enumerate(eqns):
-        if eqn_idx in eqn_mesh:
-            meshes = eqn_mesh[eqn_idx]
-            for var in eqn.invars:
-                if isinstance(var, Var):
-                    var_mesh[var] = OrderedSet(meshes)
-            for var in eqn.outvars:
-                if not isinstance(var, DropVar):
-                    var_mesh[var] = OrderedSet(meshes)
-    return eqn_mesh, var_mesh, var_use, var_def
+                    at_mesh.update(var_mesh.setdefault(invar, OrderedSet()))
+                    self.var_use.setdefault(invar, OrderedSet()).add(eqn_idx)
+            if len(at_mesh) == 1:
+                for invar in eqn.invars:
+                    if isinstance(invar, Var):
+                        var_mesh.setdefault(invar, OrderedSet()).update(at_mesh)
+                self.eqn_mesh[eqn_idx] = list(at_mesh)[0]
+            for outvar in eqn.outvars:
+                if not isinstance(outvar, DropVar):
+                    var_mesh[outvar] = OrderedSet(at_mesh)
+                    self.var_def[outvar] = eqn_idx
+        for eqn_idx, eqn in enumerate(self.eqns):
+            if eqn_idx in self.eqn_mesh:
+                mesh = self.eqn_mesh[eqn_idx]
+                for var in eqn.invars:
+                    if isinstance(var, Var):
+                        self.var_mesh[var] = OrderedSet([mesh])
+                for var in eqn.outvars:
+                    if not isinstance(var, DropVar):
+                        self.var_mesh[var] = OrderedSet([mesh])
 
+    def _reducable_chain_lookup(self, eqn_idx, num_mesh):
+        """
+        Pattern matching. For: c = a + b and e = c + d, if a, b and d are all at
+        one mesh, and c is only used once, then we can do the reduction to
+        translate additions into an allreduce.
+        """
+        mesh_eqns = [[] for _ in range(num_mesh)]
+        eqn = self.eqns[eqn_idx]
+        cur_var = eqn.invars[0]
+        nxt_idx, nxt_eqn = eqn_idx, eqn
+        reducable_chain = []
+        while (self._reducable(nxt_eqn) and
+               (nxt_eqn.primitive == eqn.primitive) and
+               self._other_invar_at_one_mesh(cur_var, nxt_eqn)):
+            cur_idx, cur_eqn = nxt_idx, nxt_eqn
+            cur_var = cur_eqn.outvars[0]
+            reducable_chain.append(cur_idx)
+            outv_use = self.var_use.setdefault(cur_eqn.outvars[0], OrderedSet())
+            if len(outv_use) != 1 or cur_eqn.outvars[0] in self.outvars:
+                break
+            nxt_idx = list(outv_use)[0]
+            nxt_eqn = self.eqns[nxt_idx]
+        final_var = cur_eqn.outvars[0]
+        # split eqns on the reducable chain into meshes
+        reducable_set = set(reducable_chain)
+        for eqn_idx in reducable_chain:
+            eqn = self.eqns[eqn_idx]
+            op0, op1 = eqn.invars
+            op0_def_idx, op1_def_idx = self.var_def[op0], self.var_def[op1]
+            if op0_def_idx not in reducable_set:
+                mesh_eqns[self.eqn_mesh[op0_def_idx]].append(op0_def_idx)
+            if op1_def_idx not in reducable_set:
+                mesh_eqns[self.eqn_mesh[op1_def_idx]].append(op1_def_idx)
+        return mesh_eqns, final_var, reducable_chain[:-1]
 
-def reducable_chain_lookup(eqns, eqn_idx, eqn_mesh, var_use, num_mesh, var_def,
-                           var_mesh):
-    mesh_eqns = [[] for _ in range(num_mesh)]
-    eqn = eqns[eqn_idx]
-    cur_var = eqn.invars[0]
-    nxt_idx, nxt_eqn = eqn_idx, eqn
-    reducable_chain = []
-    while (_reducable(nxt_eqn) and nxt_eqn.primitive == eqn.primitive and
-           _other_invar_at_one_mesh(cur_var, nxt_eqn, var_mesh)):
-        cur_idx, cur_eqn = nxt_idx, nxt_eqn
-        cur_var = cur_eqn.outvars[0]
-        reducable_chain.append(cur_idx)
-        outv_use = var_use.setdefault(cur_eqn.outvars[0], OrderedSet())
-        if len(outv_use) == 0:
-            break
-        nxt_idx = list(outv_use)[0]
-        nxt_eqn = eqns[nxt_idx]
-    final_var = cur_eqn.outvars[0]
-    # split eqns on the reducable chain into meshes
-    reducable_set = set(reducable_chain)
-    for eqn_idx in reducable_chain:
-        eqn = eqns[eqn_idx]
-        op0, op1 = eqn.invars
-        op0_def_idx, op1_def_idx = var_def[op0], var_def[op1]
-        if op0_def_idx not in reducable_set:
-            mesh_eqns[list(eqn_mesh[op0_def_idx])[0]].append(op0_def_idx)
-        if op1_def_idx not in reducable_set:
-            mesh_eqns[list(eqn_mesh[op1_def_idx])[0]].append(op1_def_idx)
-    return mesh_eqns, final_var, reducable_chain[:-1]
+    def _rewrite_eqns(self, primitive, mesh_eqns, gensym_fn, outvar):
+        # rewrite according to splits
+        appended_eqns = []
+        allreduce_vars = []
+        for per_mesh_eqns in mesh_eqns:
+            cur_val = None
+            for eq_idx in per_mesh_eqns:
+                eq = self.eqns[eq_idx]
+                if cur_val is None:
+                    cur_val = eq.outvars[0]
+                    continue
+                new_var = gensym_fn(cur_val.aval)
+                appended_eqns.append(
+                    new_jaxpr_eqn([cur_val, eq.outvars[0]], [new_var],
+                                  primitive, {}))
+                cur_val = new_var
+            allreduce_vars.append(cur_val)
+        # modify the end of reduce chain eqn into an all-reduce.
+        # The allreduce will be immediately replaced by pipeline markers
+        appended_eqns.append(
+            new_jaxpr_eqn(allreduce_vars, [outvar], alpa_allreduce_p,
+                          {"type": primitive}))
+        return appended_eqns
 
-
-allreduce_p = Primitive("alpa$allreduce")
-
-
-def split_replicated_eqns(eqns, var_mesh, gensym_fn, num_mesh):
-    eqn_mesh, var_mesh, var_use, var_def = forward_propagate(eqns, var_mesh)
-    new_eqns_before_var = {}
-    # Try to match the pattern
-    removed_eqns = set()
-    for eqn_idx, eqn in enumerate(eqns):
-        # Do not handle c = a(mesh1 and 2) + b(mesh1) case
-        if (eqn_idx not in eqn_mesh and _reducable(eqn) and
-                _var_at_one_mesh(eqn.invars[0], var_mesh) and
-                _var_at_one_mesh(eqn.invars[1], var_mesh)):
-            mesh_eqns, final_var, removed = reducable_chain_lookup(
-                eqns, eqn_idx, eqn_mesh, var_use, num_mesh, var_def, var_mesh)
-            removed_eqns.update(removed)
-            # rewrite according to splits
-            primitive = eqn.primitive
-            appended_eqns = []
-            allreduce_vars = []
-            for per_mesh_eqns in mesh_eqns:
-                cur_val = None
-                for eq_idx in per_mesh_eqns:
-                    eq = eqns[eq_idx]
-                    if cur_val is None:
-                        cur_val = eq.outvars[0]
-                        continue
-                    new_var = gensym_fn(cur_val.aval)
-                    appended_eqns.append(
-                        new_jaxpr_eqn([cur_val, eq.outvars[0]], [new_var],
-                                      primitive, {}))
-                    cur_val = new_var
-                allreduce_vars.append(cur_val)
-            # modify the end of reduce chain eqn into an all-reduce.
-            # The allreduce will be immediately replaced by two pipeline stages
-            appended_eqns.append(
-                new_jaxpr_eqn(allreduce_vars, [final_var], allreduce_p,
-                              {"type": primitive}))
-            new_eqns_before_var[final_var] = appended_eqns
-    new_eqns = []
-    for eqn_idx, eqn in enumerate(eqns):
-        if eqn_idx in removed_eqns:
-            continue
-        outv = eqn.outvars[0] if len(eqn.outvars) > 0 else None
-        # insert new eqns before the previous last available eqn
-        if (not (outv is None or isinstance(outv, DropVar)) and
-                outv in new_eqns_before_var):
-            new_eqns.extend(new_eqns_before_var[outv])
-        else:
-            new_eqns.append(eqn)
-    return new_eqns
+    def split_replicated_eqns(self, gensym_fn, num_mesh):
+        """Rewrite apply grad jaxpr to eqns so as to """
+        self._forward_propagate()
+        new_eqns_before_var = {}
+        # Try to match the pattern
+        removed_eqns = set()
+        for eqn_idx, eqn in enumerate(self.eqns):
+            # Do not handle c = a(mesh1 and 2) + b(mesh1) case
+            if (eqn_idx not in self.eqn_mesh and self._reducable(eqn) and
+                    self._var_at_one_mesh(eqn.invars[0]) and
+                    self._var_at_one_mesh(eqn.invars[1])):
+                mesh_eqns, final_var, removed = self._reducable_chain_lookup(
+                    eqn_idx, num_mesh)
+                removed_eqns.update(removed)
+                appended_eqns = self._rewrite_eqns(eqn.primitive, mesh_eqns,
+                                                   gensym_fn, final_var)
+                new_eqns_before_var[final_var] = appended_eqns
+        new_eqns = []
+        for eqn_idx, eqn in enumerate(self.eqns):
+            if eqn_idx in removed_eqns:
+                continue
+            outv = eqn.outvars[0] if len(eqn.outvars) > 0 else None
+            # insert new eqns before the previous last available eqn
+            if (not (outv is None or isinstance(outv, DropVar)) and
+                    outv in new_eqns_before_var):
+                new_eqns.extend(new_eqns_before_var[outv])
+            else:
+                new_eqns.append(eqn)
+        return clone_jaxpr(self.jaxpr, eqns=new_eqns)
 
 
 def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
@@ -748,14 +773,15 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     var_mesh = {var: OrderedSet([mesh]) for var, mesh in grad_mesh.items()}
     for var in outvar_mesh:
         var_mesh.setdefault(var, OrderedSet()).update(outvar_mesh[var])
+    closed_jaxpr = ApplyGradRewriter(closed_jaxpr,
+                                     var_mesh).split_replicated_eqns(
+                                         gensym([closed_jaxpr.jaxpr]), num_mesh)
     # propagate to get var_at_mesh
     eqn_mesh, var_mesh = _propagate_var_at_mesh(closed_jaxpr.eqns, var_mesh)
     changed = True
     while changed:
         changed = _reverse_propagate_var_at_mesh(closed_jaxpr, donation_mapping,
                                                  eqn_mesh, var_mesh)
-    # TODO(yonghao): pattern matching and rewrite here. Some info should be output
-    # For replicated computation, try to split them.
 
     sliced_eqns = [[] for _ in range(num_mesh)]
     for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):

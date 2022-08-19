@@ -1489,9 +1489,6 @@ _DISABLE_NUMBA = False
 
 try:
     from numba import njit
-    # pylint: disable=unused-import
-    from numba.typed import List as MaybeNumbaList
-    from numba import prange as maybe_prange
 
     def maybe_numba_jit(*args, **kwargs):
         """Decorator to mark a function as numba jitted if numba is available
@@ -1513,6 +1510,3 @@ except ImportError:
             return func
 
         return wrapper
-
-    MaybeNumbaList = list
-    maybe_prange = range  # pylint: disable=invalid-name

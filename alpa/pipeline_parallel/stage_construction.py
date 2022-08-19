@@ -24,7 +24,7 @@ from alpa.pipeline_parallel.stage_profiling import (generate_stage_info,
 from alpa.shard_parallel.auto_sharding import (AutoShardingOption,
                                                LogicalDeviceMesh)
 from alpa.timer import timers
-from alpa.util import OrderedSet, maybe_numba_jit, maybe_prange, MaybeNumbaList
+from alpa.util import OrderedSet, maybe_numba_jit
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -118,12 +118,12 @@ def dp_impl_2(num_layers, num_devices, submesh_sizes, valid_idxs_and_costs,
                        -1,
                        dtype=np.int32)
     f[0, num_layers, 0] = 0
-    for d in maybe_prange(1, num_devices + 1):
+    for d in range(1, num_devices + 1):
         for l, i, submesh_id, n_config, stage_cost in valid_idxs_and_costs:
             l, i, submesh_id, n_config = map(int, (l, i, submesh_id, n_config))
             n_submesh_devices = submesh_sizes[submesh_id]
             if n_submesh_devices <= d:
-                for s in maybe_prange(1, num_layers + 1):
+                for s in range(1, num_layers + 1):
                     if s - 1 > max_n_succ_stages[l, i, submesh_id, n_config]:
                         continue
 
@@ -159,7 +159,7 @@ def dp_2(
     assert len(
         all_possible_stage_costs), "no solution in auto stage construction."
 
-    submesh_sizes: list = MaybeNumbaList()
+    submesh_sizes = np.empty((len(submesh_choices),), dtype=np.int64)
     for n, m in submesh_choices:
         submesh_sizes.append(n * m)
 
@@ -238,17 +238,17 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
                        -1,
                        dtype=np.int32)
     f[0, num_layers, 0] = 0
-    for s in maybe_prange(1, num_layers + 1):  # pylint: disable=too-many-nested-blocks
-        for i in maybe_prange(num_layers - 1, -1, -1):
-            for j in maybe_prange(1, num_devices + 1):
-                for k in maybe_prange(num_layers, i, -1):
+    for s in range(1, num_layers + 1):  # pylint: disable=too-many-nested-blocks
+        for i in range(num_layers - 1, -1, -1):
+            for j in range(1, num_devices + 1):
+                for k in range(num_layers, i, -1):
                     for m, submesh in enumerate(submesh_choices):
                         n_submesh_devices = np.prod(np.array(submesh))
                         if n_submesh_devices <= j:
                             # TODO(zhuohan): This level of for loop is not
                             #   necessary. It can be optimized by sorting
                             #   the logical mesh shapes.
-                            for n_config in maybe_prange(
+                            for n_config in range(
                                     num_autosharding_configs):
                                 if s - 1 <= max_n_succ_stages[i, k - 1, m,
                                                               n_config]:

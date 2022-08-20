@@ -5,7 +5,7 @@ from functools import partial
 import itertools
 import math
 import os
-from typing import Callable, Optional, Tuple, Dict
+from typing import Callable, Optional, Tuple, Dict, Sequence
 
 import alpa
 from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
@@ -577,6 +577,7 @@ def init_cache_aval(config, batch_size):
 
 
 def init_mask_aval(config, batch_size):
+    """Initialize attention mask with abstract values (shape-only arrays)."""
     mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_target_positions), dtype=np.bool)
     return mask
 
@@ -613,7 +614,7 @@ def inference_step_no_cache(params, batch, apply_func):
 
 
 def load_params_np(params, path, config, dummy=False):
-    """Load parameterswith numpy arrays."""
+    """Load parameters with numpy arrays."""
     if dummy:
         np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
         return jax.tree_map(lambda x: np.full(x.shape, 1e-9, np_dtype), params)
@@ -689,10 +690,11 @@ def load_params_np(params, path, config, dummy=False):
     return flax.core.freeze(params)
 
 
-def get_jax_executable(config,
-                       encoder_seq_lengths,
-                       output_attentions=False,
-                       output_hidden_states=False):
+def get_jax_executable(config: OPTConfig,
+                       encoder_seq_lengths: Sequence[int],
+                       output_attentions: bool = False,
+                       output_hidden_states:bool = False):
+    """Get a single-gpu executable."""
     model, params = init_model_aval(config)
 
     @jax.jit
@@ -712,13 +714,14 @@ def get_jax_executable(config,
     return executables, params
 
 
-def get_pipeshard_executable(config,
-                             batch_size,
-                             decoding_length_per_step=1,
-                             num_micro_batches=1,
-                             support_output_attentions=False,
-                             support_output_hidden_states=False,
-                             autoregressive=True):
+def get_pipeshard_executable(config: OPTConfig,
+                             batch_size: int,
+                             encoder_seq_lengths: Sequence[int],
+                             num_micro_batches: int = 1,
+                             output_attentions: bool = False,
+                             output_hidden_states: bool = False,
+                             autoregressive: bool = True):
+    """Get a parallel executable."""
     # Init model
     model, params = init_model_aval(config)
 
@@ -745,8 +748,8 @@ def get_pipeshard_executable(config,
                 batch["position_ids"],
                 attention_cache=batch["cache"],
                 attention_mask=batch["mask"],
-                output_attentions=support_output_attentions,
-                output_hidden_states=support_output_hidden_states)
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states)
             return output
 
         alpa.global_config.always_donate_micro_batch_vars = False
@@ -754,15 +757,7 @@ def get_pipeshard_executable(config,
         cache = init_cache_aval(config, batch_size)
         mask = init_mask_aval(config, batch_size)
 
-        if not isinstance(decoding_length_per_step, list):
-            decoding_length_per_step = [decoding_length_per_step]
-
-        if 1 not in decoding_length_per_step:
-            print("WARNING: missing step=1 in multiple decoding steps. Added")
-            decoding_length_per_step.append(1)
-
-        print("Compiling %d executable(s) for decoding length %s" %
-              (len(decoding_length_per_step), str(decoding_length_per_step)))
+        print(f"Compiling executable(s) for encoding lengths {encoder_seq_lengths}")
         executables = {}
 
         # Compile an executable with sequence length 1
@@ -797,10 +792,7 @@ def get_pipeshard_executable(config,
             stage_input_shardings=executable.stage_input_shard_specs)
 
         # Compile other executables
-        for decoding_length in decoding_length_per_step:
-            if decoding_length == 1:
-                # Step=1 has been compiled above
-                continue
+        for seq_len in encoder_seq_lengths:
             executable = alpa.parallelize(
                 inference_step_with_cache,
                 batch_argnums=(1,),
@@ -808,21 +800,21 @@ def get_pipeshard_executable(config,
                     params, {
                         "input_ids":
                             jax.core.ShapedArray(
-                                (batch_size, decoding_length), jnp.int32),
+                                (batch_size, seq_len), jnp.int32),
                         "position_ids":
                             jax.core.ShapedArray(
-                                (batch_size, decoding_length), jnp.int32),
+                                (batch_size, seq_len), jnp.int32),
                         "cache":
                             cache,
                         "mask":
                             mask,
                     })
-            executable.dump_debug_info("tmp_executable_%d" % decoding_length)
-            executables[decoding_length] = executable
+            executable.dump_debug_info("tmp_executable_%d" % seq_len)
+            executables[seq_len] = executable
         return executables, params
     else:
-        assert not isinstance(decoding_length_per_step, list), \
-            "we only support multiple executables for autoregressive!"
+        assert len(encoder_seq_lengths) == 1
+        seq_len = encoder_seq_lengths[0]
 
         @alpa.parallelize(batch_argnums=(1,), method=method)
         def inference_step(params, batch):
@@ -841,14 +833,14 @@ def get_pipeshard_executable(config,
             params, {
                 "input_ids":
                     jax.core.ShapedArray(
-                        (batch_size, decoding_length_per_step), jnp.int32),
+                        (batch_size, seq_len), jnp.int32),
                 "position_ids":
                     jax.core.ShapedArray(
-                        (batch_size, decoding_length_per_step), jnp.int32),
+                        (batch_size, seq_len), jnp.int32),
             })
 
         executable.dump_debug_info("tmp")
-    return {decoding_length_per_step: executable}, params
+    return {seq_len: executable}, params
 
 
 def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,

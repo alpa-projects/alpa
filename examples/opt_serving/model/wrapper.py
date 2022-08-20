@@ -221,29 +221,32 @@ def get_model(model_name: str,
               device: str,
               # Weights
               path: str,
-              dummy=False,
+              dummy: bool = False,
               # Model parameters
-              autoregressive=True,
+              autoregressive: bool = True,
               dtype=jnp.float16,
               # Batch size and seq length
-              batch_size=1,
-              num_micro_batches=1,
-              max_target_positions=2048,
-              encoder_seq_lengths=[1],
+              batch_size: int = 1,
+              num_micro_batches: int = 1,
+              max_target_positions: int = 2048,
+              encoder_seq_lengths: Sequence[int] = [1],
               # Shared arguments with model.generate
-              do_sample=False,
-              num_beams=1,
-              num_return_sequences=1,
-              return_dict_in_generate=True,
-              output_attentions=False,
-              output_hidden_states=False):
-    """Get and load model and return a WrappedInferenceFunc compatible with HuggingFace.
+              do_sample: bool = False,
+              num_beams: int = 1,
+              num_return_sequences: int = 1,
+              return_dict_in_generate: bool = True,
+              output_attentions: bool = False,
+              output_hidden_states: bool = False):
+    """Get a model that is compatible with HuggingFace's generation API.
 
     Args:
         model_name: "facebook/opt-", or "alpa/opt-".
         device: "cpu" or "gpu". This only controls the device used
           by pytorch. Alpa always runs on GPU.
         path: The path to opt weights.
+        dummy: Use dummy weights for faster debugging.
+        encoder_seq_lengths: compile mutliple executables for multiple
+          encoder sequence lengths.
     """
     if not model_name.startswith("alpa") and not autoregressive:
         raise NotImplementedError(

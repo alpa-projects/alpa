@@ -1,11 +1,11 @@
 """Benchmark generation performance.
 
 Usages:
-1. benchmark huggingface torch-based OPT or GPT-2 generation:
+1. benchmark huggingface torch-based OPT generation:
 python benchmark_text_gen.py --model facebook/opt-125m --debug
 
 2. benchmark jax.jit based OPT generation without alpa, on a single GPU:
-python benchmark_text_gen.py --model jax/opt-125m
+python benchmark_text_gen.py --model jax/opt-125m --debug
 
 3. benchmark alpa parallelized OPT generation:
 python benchmark_text_gen.py --model alpa/opt-2.7b --debug
@@ -13,9 +13,6 @@ python benchmark_text_gen.py --model alpa/opt-2.7b --debug
 4. benchmark alpa parallelized OPT forward computation, batch_size, decoder length, and #micro_batches can be configured.
 python benchmark_text_gen.py --model alpa/opt-2.7b --forward
     --decoder_length 1024 --nb 1 --batch-size 256 --debug
-
-Notes:
-1. fp32 does not work now because of embedding
 """
 import argparse
 
@@ -54,9 +51,10 @@ if __name__ == "__main__":
     parser.add_argument("--multi-executable", action="store_true")
     parser.add_argument("--nb", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=1)
-    parser.add_argument("--n-warmup", type=int, default=2)
+    parser.add_argument("--n-warmup", type=int, default=1)
     parser.add_argument("--n-iter", type=int, default=10)
     parser.add_argument("--max-length", type=int, default=256)
+    parser.add_argument("--pad-to-max-length", type=int)
     parser.add_argument("--num-beams", type=int, default=1)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--dtype", type=str, default="fp16")
@@ -85,7 +83,6 @@ if __name__ == "__main__":
 
     if autoregressive:
         assert num_micro_batches == 1, "we only support num_micro_batches=1 for autoregressive!"
-        assert batch_size == 1, "batch_size > 1 in autoregressive is not tested!"
     else:
         assert not multi_executable, "multi_executable in forward-only mode is not allowed!"
 
@@ -172,28 +169,26 @@ if __name__ == "__main__":
             tflopss.append(tflops)
             compute_tflopss.append(compute_tflops)
     else: # Generation mode
-        n_prompts = min(n_iters, len(test_prompts))
-        decoder_length_list = [1]
         if multi_executable:
-            # Get token length of each prompt
-            decoder_length_list += [
-                tokenizer(prompt, return_tensors="pt").input_ids.shape[1]
-                for prompt in test_prompts[:n_prompts]
-            ]
+            encoder_seq_lengths = [1, 8, 128]
+        else:
+            encoder_seq_lengths = [1]
 
-            # Deduplicate
-            decoder_length_list = list(set(decoder_length_list))
-            decoder_length_per_step = str(decoder_length_list)
+        generate_args = {
+            "do_sample": False,
+            "num_beams": num_beams,
+            "return_dict_in_generate": True
+        }
 
         tic = time.time()
         model = get_model(args.model,
                           args.device,
                           args.path,
-                          autoregressive,
-                          dtype=dtype,
-                          decoding_length_per_step=decoder_length_list,
                           dummy=args.dummy,
-                          num_beams=num_beams)
+                          autoregressive=autoregressive,
+                          dtype=dtype,
+                          encoder_seq_lengths=encoder_seq_lengths,
+                          **generate_args)
         load_time = time.time() - tic
 
         H = model.transformer_config.H
@@ -205,29 +200,30 @@ if __name__ == "__main__":
         else:
             num_gpus = 1
 
-        # benchmark
-        for i in range(n_prompts):
+        # Benchmark all prompts
+        for i in range(min(args.n_iter, len(test_prompts))):
             prompt = test_prompts[i]
             torch.manual_seed(8)
-            input_ids = tokenizer(prompt,
-                                  return_tensors="pt").input_ids.to(args.device)
+            if args.pad_to_max_length:
+                input_ids = tokenizer(prompt,
+                                      padding="max_length",
+                                      max_length=args.pad_to_max_length,
+                                      return_tensors="pt").input_ids.to(args.device)
+            else:
+                input_ids = tokenizer(prompt,
+                                      return_tensors="pt").input_ids.to(args.device)
 
             # Warm up
             for _ in range(n_warmup):
                 model.generate(input_ids=input_ids,
                                max_length=max_length,
-                               do_sample=False,
-                               return_dict_in_generate=True,
-                               output_hidden_states=False,
-                               num_beams=num_beams)
+                               **generate_args)
 
+            # Benchmark a prompt
             tic = time.time()
             output = model.generate(input_ids=input_ids,
                                     max_length=max_length,
-                                    do_sample=False,
-                                    return_dict_in_generate=True,
-                                    output_hidden_states=False,
-                                    num_beams=num_beams)
+                                    **generate_args)
             latency = time.time() - tic
             generated_ids = output.sequences
             generated_string = tokenizer.batch_decode(generated_ids,
@@ -265,13 +261,13 @@ if __name__ == "__main__":
 
     heads = [
         "Model", "Device", "Dummy", "Load (s)", "Autoregressive", "Batchsize",
-        "#Microbatches", "#Beams", "#Stages", "Decoder step length", "TFlops",
+        "#Microbatches", "#Beams", "#Stages", "Encoder seq length", "TFlops",
         "Compute TFlops", "Speed (token/s)", "latency (32 token)"
     ]
     values = [
         args.model, args.device, args.dummy, f"{load_time:.2f}",
         f"{autoregressive}", f"{batch_size}", f"{num_micro_batches}",
-        f"{num_beams}", f"{num_pp_stages}", f"{decoder_length_per_step}",
+        f"{num_beams}", f"{num_pp_stages}", f"{encoder_seq_lengths}",
         f"{avg_tflops:.4f}", f"{avg_compute_tflops:.4f}", f"{avg_speed:.2f}",
         f"{latency_32_tokens:.2f}"
     ]

@@ -101,7 +101,6 @@ if __name__ == "__main__":
     args = arg_parser.parse_args()
 
     files = glob.glob("**/test_*.py", recursive=True)
-
     if args.order == "sorted":
         files.sort()
     elif args.order == "random":

@@ -839,8 +839,8 @@ def get_pipeshard_executable(config: OPTConfig,
                 params,
                 batch["input_ids"],
                 batch["position_ids"],
-                output_attentions=support_output_attentions,
-                output_hidden_states=support_output_hidden_states)
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states)
             return output
 
         assert batch_size % num_micro_batches == 0, "cannot divide batch_size by num_micro_batches"

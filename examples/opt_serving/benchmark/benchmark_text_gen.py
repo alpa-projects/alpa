@@ -10,9 +10,9 @@ python benchmark_text_gen.py --model jax/opt-125m --debug
 3. benchmark alpa parallelized OPT generation:
 python benchmark_text_gen.py --model alpa/opt-2.7b --debug
 
-4. benchmark alpa parallelized OPT forward computation, batch_size, decoder length, and #micro_batches can be configured.
+4. benchmark alpa parallelized OPT forward computation, batch_size, encoder length, and #micro_batches can be configured.
 python benchmark_text_gen.py --model alpa/opt-2.7b --forward
-    --decoder_length 1024 --nb 1 --batch-size 256 --debug
+    --forward-encoder-length 1024 --nb 1 --batch-size 256 --debug
 """
 import argparse
 
@@ -47,7 +47,7 @@ if __name__ == "__main__":
     parser.add_argument("--path", type=str, default="/home/ubuntu/opt_weights/")
     parser.add_argument("--dummy", action="store_true")
     parser.add_argument("--forward", action="store_true")
-    parser.add_argument("--decoder-length", type=int, default=1)
+    parser.add_argument("--forward-encoder-length", type=int, default=1024)
     parser.add_argument("--multi-executable", action="store_true")
     parser.add_argument("--nb", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=1)
@@ -74,7 +74,6 @@ if __name__ == "__main__":
 
     # Do some param check
     num_micro_batches = args.nb
-    decoder_length_per_step = args.decoder_length
     batch_size = args.batch_size
     num_beams = args.num_beams
     multi_executable = args.multi_executable
@@ -93,25 +92,26 @@ if __name__ == "__main__":
     if not autoregressive: # Forward mode
         # Increase the frequency of deleting buffers to avoid OOM.
         global_config.delete_remote_arrays_threshold = 1
+        seq_len = args.forward_encoder_length
+        encoder_seq_lengths = [seq_len]
 
         tic = time.time()
         model, params, transformer_config = get_model(
             args.model,
             args.device,
             args.path,
-            autoregressive,
-            dtype=dtype,
             dummy=args.dummy,
+            autoregressive=autoregressive,
+            max_target_positions=seq_len,
+            dtype=dtype,
             batch_size=batch_size,
-            decoding_length_per_step=decoder_length_per_step,
+            encoder_seq_lengths=encoder_seq_lengths,
             num_micro_batches=num_micro_batches)
         load_time = time.time() - tic
 
         # create batch
-        input_ids = jnp.ones((batch_size, decoder_length_per_step),
-                             dtype=jnp.int32)
-        position_ids = jnp.ones((batch_size, decoder_length_per_step),
-                                dtype=jnp.int32)
+        input_ids = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
+        position_ids = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
 
         # get model config
         H = transformer_config.H
@@ -146,17 +146,17 @@ if __name__ == "__main__":
 
             compute_latency = model.get_execution_time_costs()[-1]
             # print(f"input length: {input_ids.shape[1]}, output_length: {input_ids.shape[1]}, num_gpus: {num_gpus}")
-            assert decoder_length_per_step == input_ids.shape[1]
+            assert seq_len == input_ids.shape[1]
 
             memory_allocated = model.mesh_group.get_memory_allocated() / 1e9
             max_memory_allocated = model.mesh_group.get_max_memory_allocated(
             ) / 1e9
 
             tflops = compute_gpt_tflops_inference_with_padding(
-                batch_size, decoder_length_per_step, seq_len, L, H, vocab_size,
+                batch_size, seq_len, seq_len, L, H, vocab_size,
                 num_gpus, latency)
             compute_tflops = compute_gpt_tflops_inference_with_padding(
-                batch_size, decoder_length_per_step, seq_len, L, H, vocab_size,
+                batch_size, seq_len, seq_len, L, H, vocab_size,
                 num_gpus, compute_latency)
             speed = np.prod(input_ids.shape) / latency
 

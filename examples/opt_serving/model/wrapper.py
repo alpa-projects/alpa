@@ -261,7 +261,7 @@ def get_model(model_name: str,
     assert ("jax/opt" in model_name or "alpa/opt" in model_name)
     assert return_dict_in_generate
 
-    if 1 not in encoder_seq_lengths:
+    if autoregressive and 1 not in encoder_seq_lengths:
         encoder_seq_lengths += [1]
     encoder_seq_lengths.sort()
 

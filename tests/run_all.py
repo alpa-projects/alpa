@@ -100,7 +100,9 @@ if __name__ == "__main__":
                             choices=["sorted", "random", "reverse_sorted"])
     args = arg_parser.parse_args()
 
-    files = glob.glob("**/test_*.py", recursive=True)
+    # files = glob.glob("**/test_*.py", recursive=True)
+    files = glob.glob("**/test_device_mesh.py", recursive=True)
+    
     if args.order == "sorted":
         files.sort()
     elif args.order == "random":

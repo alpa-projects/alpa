@@ -337,10 +337,12 @@ def get_model(model_name: str,
             autoregressive=autoregressive)
 
         # Load params
+        print(" - Load parameters""")
         params = load_multi_executable_params_dis_array(
             path, executables, params_aval, config, dummy)
 
         if autoregressive:
+            print(" - Init cache""")
             init_cache = init_multi_executable_cache_dis_array(executables,
                                                                config,
                                                                expand_size,

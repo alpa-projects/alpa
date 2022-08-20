@@ -20,7 +20,8 @@
     <script type="text/javascript">
     // these constants are only used for providing user expectations.
     var OVERHEAD = 1;
-    var PER_TOKEN = 0.35;
+    var PROMPT_TOKEN_PER_SECOND = 40;
+    var DECODING_TOKEN_PER_SECOND = 4;
 
     // examples for the user
     var EXAMPLES = {
@@ -51,13 +52,13 @@
         },
         "cryptocurrency": {
             "prompt": "Every year, cryptocurrency experts prepare forecasts for the price of Dogecoin. In 2025, it is estimated that DOGE will",
-            "length": 32
+            "length": 64
         },
         "programming": {
             "prompt":
                 "def fib(k):\n" +
-                "    \"Returns the k-th Fibonacci number. Check the corner cases.\"",
-            "length": 32
+                "    \"\"\"Returns the k-th Fibonacci number. Check the corner cases.\"\"\"",
+            "length": 64
         },
         "math": {
             "prompt": "Question: If x is 2 and y is 5, what is x + 2y?\n" +
@@ -138,7 +139,7 @@
         event.preventDefault();
         var prompt_length = $("#textbox").val().split(' ').length;
         var length = parseInt($("#length_slider").val());
-        var eta = (PER_TOKEN * (prompt_length + length) + OVERHEAD).toFixed(1);
+        var eta = (prompt_length / PROMPT_TOKEN_PER_SECOND + length / DECODING_TOKEN_PER_SECOND + OVERHEAD).toFixed(1);
         $("#eta").text(eta);
         $("#loader_holder").css("visibility", "visible");
         $("#generate-form-button").prop("disabled", true);
@@ -347,7 +348,7 @@
     <div class="form-group row" data-html2canvas-ignore="true">
     <label for="length_slider" class="col col-form-label text-end fw-bold" style="white-space: nowrap;">Response Length:</label>
     <div class="col my-2">
-        <input type="range" value="64" min="32" max="128" step="32" class="form-range"
+        <input type="range" value="64" min="32" max="256" step="32" class="form-range"
             oninput="this.parentNode.nextElementSibling.value = this.value" name="max_tokens"
             id='length_slider'>
     </div>
@@ -645,7 +646,7 @@
       <div class="container">
         <section class="logo-carousel slider px-3 " data-arrows="true">
           <div class="slide"><img alt="berkeley-logo" src="https://raw.githubusercontent.com/zhisbug/test-alpa-ci/master/ucberkeley-logo.png" style="width: 70%;"></div>
-          <div class="slide"><img alt="mbzuai-logo" src="https://mma.prnewswire.com/media/1227419/MBZUAI_Logo.jpg?w=500" style="width: 80%;"></div>
+          <div class="slide"><img alt="mbzuai-logo" src="https://upload.wikimedia.org/wikipedia/en/5/55/Mohamed_bin_Zayed_University_of_Artificial_Intelligence_logo.png" style="width: 80%;"></div>
           <div class="slide"><img alt="anyscale-logo" src="https://lever-client-logos.s3.us-west-2.amazonaws.com/0114ec37-170e-4864-b9a9-f85452de1ce0-1633971232076.png" style="width:80%;"></div>
           <div class="slide"><img alt="aws-logo" src="https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/Amazon_Web_Services_Logo.svg/512px-Amazon_Web_Services_Logo.svg.png?20170912170050" style="width: 50%;" ></div>
           <div class="slide"><img alt="google-logo" src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTE2WoDOUPB5L3bRgbQZkU-iLCtmRLYSj29iwFqtMAKQCNALlPtbwSUoswoSvqk8sjrT5w&usqp=CAU" style="width: 60%;"></div>

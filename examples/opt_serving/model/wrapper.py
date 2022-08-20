@@ -258,9 +258,12 @@ def get_model(model_name: str,
     assert ("jax/opt" in model_name or "alpa/opt" in model_name)
     assert return_dict_in_generate
 
-    name = model_name.split("-")[1].upper()
+    if 1 not in encoder_seq_lengths:
+        encoder_seq_lengths += [1]
+    encoder_seq_lengths.sort()
 
     # weight path
+    name = model_name.split("-")[1].upper()
     path = os.path.join(path, f"{name}_np")
     if not dummy:
         assert os.path.exists(path), f"No such file or directory: '{path}'"
@@ -350,8 +353,9 @@ def get_model(model_name: str,
             return list(
                 executables.values())[0], params, transformer_config
 
-    step_ct = 0
+    num_valid_tokens = None
     last_token = None
+    step_ct = 0
 
     def inference_func(input_ids,
                        past_key_values,
@@ -362,27 +366,36 @@ def get_model(model_name: str,
         attention_mask = attention_mask.cpu().numpy()
 
         def run_one(_executable, _input_ids, _past_key_values, _attention_mask):
-            nonlocal step_ct
+            nonlocal num_valid_tokens
             nonlocal last_token
+            nonlocal step_ct
 
             if _past_key_values is None:
+                # Init all states
                 _past_key_values = init_cache
-                cumsum = np.cumsum(_attention_mask, axis=1, dtype=np.int32)
-                position_ids_step = cumsum + config.pad
+                num_valid_tokens = np.zeros((expand_size, 1), dtype=np.int32)
+                last_token = np.zeros((expand_size,), dtype=np.int32)
+                step_ct = 0
 
-                valid_token_num = cumsum[:,-1]
-                step_ct = valid_token_num.reshape(-1, 1)
-                last_token = _input_ids[:,valid_token_num - 1]
-
-                for i in range(_input_ids.shape[0]):
-                    _input_ids[i,valid_token_num[i]:] = last_token[i,0]
-            else:
-                is_not_pad = _attention_mask[:,-1]
-                step_ct += is_not_pad
-                last_token = np.where(is_not_pad, _input_ids, last_token)
-
+            if _input_ids.shape[1] == 1:
+                # A fast path for step_len = 1
+                num_valid_tokens = num_valid_tokens + _attention_mask[:, -1:]
+                position_ids_step = num_valid_tokens + config.pad
+                last_token = np.where(_attention_mask[:,-1], _input_ids, last_token)
                 _input_ids = last_token
-                position_ids_step = step_ct + config.pad
+            else:
+                # A general path that works for any step_len
+                cumsum = np.cumsum(_attention_mask[:,step_ct:], axis=1, dtype=np.int32)
+                position_ids_step = num_valid_tokens + cumsum + config.pad
+                num_valid_tokens_step = cumsum[:,-1]
+                num_valid_tokens = num_valid_tokens + num_valid_tokens_step.reshape(-1, 1)
+
+                last_token = np.where(num_valid_tokens_step > 0,
+                                      _input_ids[:, num_valid_tokens_step - 1],
+                                      last_token)
+                for i in range(expand_size):
+                    if num_valid_tokens_step[i] < _input_ids.shape[1]:
+                        _input_ids[i, ~_attention_mask[i, step_ct:]] = last_token[i]
 
             _attention_mask = pad_attention_mask(_attention_mask, max_target_positions)
 
@@ -394,21 +407,26 @@ def get_model(model_name: str,
                     "mask": _attention_mask,
                 })
 
+            step_ct += _input_ids.shape[1]
+
             return output
 
-        if input_ids.shape[1] > 1:
-            if (len(executables) == 1 or input_ids.shape[1] not in executables):
-                # Process a prompt one token by one token.
-                for i in range(input_ids.shape[1]):
-                    output = run_one(executables[1], input_ids[:, i:i + 1],
-                                     past_key_values, attention_mask[:, :i + 1])
-                    past_key_values = output.attention_cache
-            else:
-                # Use the corresponding executable to process a prompt at once
-                output = run_one(executables[input_ids.shape[1]],
-                                 input_ids, past_key_values, attention_mask)
-        else:
+        seq_len = input_ids.shape[1]
+        if seq_len == 1:
+            # A fast path for seq_len = 1
             output = run_one(executables[1], input_ids, past_key_values, attention_mask)
+        else:
+            # A general path that works for all seq_len
+            i = 0
+            while i < seq_len:
+                remaining = seq_len - i
+                step_len = largest_encoder_len(remaining, encoder_seq_lengths)
+                output = run_one(executables[step_len],
+                                 input_ids[:, i:i + step_len],
+                                 past_key_values,
+                                 attention_mask[:, :attention_mask.shape[1] - remaining + step_len])
+                past_key_values = output.attention_cache
+                i += step_len
 
         set_skip_shard_args_check(output.attention_cache)
         logits_step = torch.from_numpy(np.array(output.logits)).to(device)
@@ -420,6 +438,15 @@ def get_model(model_name: str,
                                 inference_func_config,
                                 executables[1],
                                 transformer_config)
+
+
+def largest_encoder_len(length, encoder_seq_lengths):
+    """For a given length, find the largest value in encoder_seq_lengths that
+    is smaller than the given length.""" 
+    for i in range(len(encoder_seq_lengths)):
+        if i + 1 < len(encoder_seq_lengths) and encoder_seq_lengths[i+1] > length:
+            break
+    return encoder_seq_lengths[i]
 
 
 def set_skip_shard_args_check(attention_cache):
@@ -439,6 +466,7 @@ def set_skip_shard_args_check(attention_cache):
 
 
 def pad_attention_mask(mask, max_target_positions):
+    """Pad attention mask to the shape [B, 1, 1, max_target_positions]. """
     batch_size = mask.shape[0]
     ret_mask = np.zeros((batch_size, max_target_positions), dtype=np.bool)
     ret_mask[:, :mask.shape[-1]] = mask

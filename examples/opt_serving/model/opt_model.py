@@ -1,10 +1,11 @@
+"""OPT model implementation."""
 import dataclasses
 from dataclasses import dataclass
 from functools import partial
 import itertools
 import math
 import os
-from typing import Callable, Optional, Tuple, Dict
+from typing import Callable, Optional, Tuple, Dict, Sequence
 
 import alpa
 from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
@@ -144,45 +145,64 @@ class OPTSelfAttention(nn.Module):
                                                            3,
                                                            axis=3)
 
+        # shape: [B, S, #head, head_dim]
         query_states = query_states.reshape(hidden_states.shape[:2] + (
             self.config.decoder_attention_heads, head_dim))
+        # shape: [B, S, #head, head_dim]
         value_states = value_states.reshape(hidden_states.shape[:2] + (
             self.config.decoder_attention_heads, head_dim))
+        # shape: [B, S, #head, head_dim]
         key_states = key_states.reshape(hidden_states.shape[:2] +
                                         (self.config.decoder_attention_heads,
                                          head_dim))
 
+        batch_size = hidden_states.shape[0]
         if attention_cache is None:
-            attention_bias = jnp.expand_dims(
-                jnp.triu(
-                    jnp.full((query_states.shape[1], key_states.shape[1]),
-                             -1e10), 1), (0, 1))
+            query_len, key_len = query_states.shape[1], key_states.shape[1]
+            assert query_len == key_len
+            # shape: [B, 1, S_max, S_max]
+            causal_mask = nn.make_causal_mask(
+                jnp.ones((batch_size, key_len)), dtype="bool")
+            # shape: [B, 1, 1, S_max]
+            input_mask = attention_mask
+            # shape: [B, 1, S_max, S_max]
+            mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
         else:
             cache_key, cache_value, cache_index = attention_cache
             cache_index_ = cache_index[0]
-            key_states = lax.dynamic_update_slice(cache_key, key_states,
-                                                  (0, cache_index_, 0, 0))
-            value_states = lax.dynamic_update_slice(cache_value, value_states,
-                                                    (0, cache_index_, 0, 0))
-            num_updated_cache_vectors = query_states.shape[1]
-            max_length = key_states.shape[1]
+            update_indices = (0, cache_index_, 0, 0)
+            # shape: [B, S_max, #head, head_dim]
+            key_states = lax.dynamic_update_slice(cache_key, key_states, update_indices)
+            # shape: [B, S_max, #head, head_dim]
+            value_states = lax.dynamic_update_slice(cache_value, value_states, update_indices)
+            query_len, key_len = query_states.shape[1], key_states.shape[1]
 
-            # The following logic is equivalent to:
-            # attention_bias = jnp.expand_dims(
-            #     jnp.triu(jnp.full(
-            #         (num_updated_cache_vectors, max_length), -1e10), cache_index + 1), (0, 1))
-            # but "cache_index + 1" in jnp.triu results in non-static IR.
-            row_idxs = jnp.arange(num_updated_cache_vectors)
-            mask = jnp.arange(max_length) - (cache_index_ + 1)
-            attention_bias = jnp.expand_dims(
-                (row_idxs[:, None] <= mask).astype(self.dtype) * -1e10, (0, 1))
+            # Handle a special kind of internal padding added by alpa.
+            # Note that this kind of internal padding is different from
+            # the padding added by the tokenizer. This internal padding
+            # should not update cache and step_ct
+            # shape: [B, 1, 1, S_max]
+            is_internal_padding = (attention_mask == 2)
+            num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
+            attention_mask = (attention_mask == 1)
 
-            attention_cache = key_states, value_states, cache_index + num_updated_cache_vectors
+            attention_cache = key_states, value_states, cache_index + query_len - num_internal_pad
+
+            # shape: [B, 1, S_max, S_max]
+            causal_mask = nn.make_causal_mask(
+                jnp.ones((batch_size, key_len)), dtype="bool")
+            # shape: [B, 1, S, S_max]
+            causal_mask = lax.dynamic_slice(causal_mask,
+                (0, 0, cache_index_, 0), (batch_size, 1, query_len, key_len))
+            # shape: [B, 1, 1, S_max]
+            input_mask = attention_mask
+            # shape: [B, 1, S, S_max]
+            mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
+
         attn_weights = nn.attention.dot_product_attention_weights(
             query_states,
             key_states,
-            mask=attention_mask,
-            bias=attention_bias,
+            mask=mask,
             dtype=self.dtype,
             precision=None,
         )
@@ -552,7 +572,7 @@ def init_cache_aval(config, batch_size):
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
     all_cache = []
-    for i in range(config.decoder_layers):
+    for _ in range(config.decoder_layers):
         layer_cache = (
             jax.core.ShapedArray((batch_size, config.max_target_positions,
                                   config.decoder_attention_heads, head_dim),
@@ -565,9 +585,12 @@ def init_cache_aval(config, batch_size):
         all_cache.append(layer_cache)
     return tuple(all_cache)
 
+
 def init_mask_aval(config, batch_size):
-    mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_target_positions), dtype=np.bool)
+    """Initialize attention mask with abstract values (shape-only arrays)."""
+    mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_target_positions), dtype=np.int8)
     return mask
+
 
 def init_cache_np(config, batch_size):
     """Init cache with numpy arrays."""
@@ -601,7 +624,7 @@ def inference_step_no_cache(params, batch, apply_func):
 
 
 def load_params_np(params, path, config, dummy=False):
-    """Load parameterswith numpy arrays."""
+    """Load parameters with numpy arrays."""
     if dummy:
         np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
         return jax.tree_map(lambda x: np.full(x.shape, 1e-9, np_dtype), params)
@@ -609,7 +632,7 @@ def load_params_np(params, path, config, dummy=False):
     def load_array(key):
         return np.load(os.path.join(path, key))
 
-    def load_param(param_key, loaded_array):
+    def load_param(param_key, loaded_array, is_position_embedding=False):
         param_dict = params
         param_keys = param_key.split('.')
         for i, key in enumerate(param_keys):
@@ -618,8 +641,14 @@ def load_params_np(params, path, config, dummy=False):
                     param_dict[key] = jax.core.ShapedArray(
                         param_dict[key].shape, param_dict[key].dtype)
                 else:
-                    assert param_dict[key].shape == loaded_array.shape
-                    #assert param_dict[key].dtype == loaded_array.dtype
+                    if not is_position_embedding:
+                        assert param_dict[key].shape == loaded_array.shape, (
+                                f"{param_dict[key].shape} vs. {loaded_array.shape}")
+                    else:
+                        shape = param_dict[key].shape
+                        if shape != loaded_array.shape:
+                            assert shape[1] == loaded_array.shape[1]
+                            loaded_array = loaded_array[:shape[0], :]
                     param_dict[key] = loaded_array
             else:
                 param_dict = param_dict[key]
@@ -628,7 +657,8 @@ def load_params_np(params, path, config, dummy=False):
     load_param("params.transformers.embeddings.word_embeddings.embedding",
                load_array("decoder.embed_tokens.weight"))
     load_param("params.transformers.embeddings.position_embeddings.embedding",
-               load_array("decoder.embed_positions.weight"))
+               load_array("decoder.embed_positions.weight"),
+               is_position_embedding=True)
     if config.version > 2:
         load_param("params.transformers.layer_norm.scale",
                    load_array("decoder.layer_norm.weight"))
@@ -677,9 +707,11 @@ def load_params_np(params, path, config, dummy=False):
     return flax.core.freeze(params)
 
 
-def get_jax_executable(config,
-                       support_output_attentions=False,
-                       support_output_hidden_states=False):
+def get_jax_executable(config: OPTConfig,
+                       encoder_seq_lengths: Sequence[int],
+                       output_attentions: bool = False,
+                       output_hidden_states:bool = False):
+    """Get a single-gpu executable."""
     model, params = init_model_aval(config)
 
     @jax.jit
@@ -688,22 +720,25 @@ def get_jax_executable(config,
                              batch["input_ids"],
                              batch["position_ids"],
                              attention_cache=batch["cache"],
-                             output_attentions=support_output_attentions,
-                             output_hidden_states=support_output_hidden_states)
+                             attention_mask=batch["mask"],
+                             output_attentions=output_attentions,
+                             output_hidden_states=output_hidden_states)
         return output
 
-    executable = inference_step
-    return executable, params
+    executables = {}
+    for length in encoder_seq_lengths:
+        executables[length] = inference_step
+    return executables, params
 
 
-def get_pipeshard_executable(config,
-                             batch_size=1,
-                             num_micro_batches=1,
-                             decoding_length_per_step=1024,
-                             support_output_attentions=False,
-                             support_output_hidden_states=False,
-                             autoregressive=True):
-
+def get_pipeshard_executable(config: OPTConfig,
+                             batch_size: int,
+                             encoder_seq_lengths: Sequence[int],
+                             num_micro_batches: int = 1,
+                             output_attentions: bool = False,
+                             output_hidden_states: bool = False,
+                             autoregressive: bool = True):
+    """Get a parallel executable."""
     # Init model
     model, params = init_model_aval(config)
 
@@ -723,7 +758,6 @@ def get_pipeshard_executable(config,
 
     if autoregressive:
 
-        @alpa.parallelize(batch_argnums=(1,), method=method)
         def inference_step_with_cache(params, batch):
             output = model.apply(
                 params,
@@ -731,23 +765,73 @@ def get_pipeshard_executable(config,
                 batch["position_ids"],
                 attention_cache=batch["cache"],
                 attention_mask=batch["mask"],
-                output_attentions=support_output_attentions,
-                output_hidden_states=support_output_hidden_states)
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states)
             return output
 
         alpa.global_config.always_donate_micro_batch_vars = False
-        executable = inference_step_with_cache.get_executable(
-            params, {
-                "input_ids":
-                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
-                "position_ids":
-                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
-                "cache":
-                    init_cache_aval(config, batch_size),
-                "mask":
-                    init_mask_aval(config, batch_size),
-            })
+
+        cache = init_cache_aval(config, batch_size)
+        mask = init_mask_aval(config, batch_size)
+
+        print(f"Compiling executable(s) for encoding lengths {encoder_seq_lengths}")
+        executables = {}
+
+        # Compile an executable with sequence length 1
+        executable = alpa.parallelize(
+            inference_step_with_cache, batch_argnums=(1,),
+            method=method).get_executable(
+                params, {
+                    "input_ids":
+                        jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                    "position_ids":
+                        jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                    "cache":
+                        cache,
+                    "mask":
+                        mask,
+                })
+        executable.dump_debug_info("tmp_executable_1")
+        executables[1] = executable
+
+        # Create another parallel method with assigned input sharding specs
+        method_with_input_sharding = alpa.PipeshardParallel(
+            num_micro_batches=num_micro_batches,
+            pipeline_schedule="inference",
+            layer_option="manual",
+            default_auto_sharding_option=alpa.AutoShardingOption(
+                # Force operator model parallel
+                force_batch_dim_to_mesh_dim=None if batch_size == 1 else 0,
+                # Disabling all-to-all and all-gather generates better intra-op strategies.
+                allow_all_to_all=False,
+                allow_all_gather=False,
+            ),
+            stage_input_shardings=executable.stage_input_shard_specs)
+
+        # Compile other executables
+        for seq_len in encoder_seq_lengths:
+            executable = alpa.parallelize(
+                inference_step_with_cache,
+                batch_argnums=(1,),
+                method=method_with_input_sharding).get_executable(
+                    params, {
+                        "input_ids":
+                            jax.core.ShapedArray(
+                                (batch_size, seq_len), jnp.int32),
+                        "position_ids":
+                            jax.core.ShapedArray(
+                                (batch_size, seq_len), jnp.int32),
+                        "cache":
+                            cache,
+                        "mask":
+                            mask,
+                    })
+            executable.dump_debug_info("tmp_executable_%d" % seq_len)
+            executables[seq_len] = executable
+        return executables, params
     else:
+        assert len(encoder_seq_lengths) == 1
+        seq_len = encoder_seq_lengths[0]
 
         @alpa.parallelize(batch_argnums=(1,), method=method)
         def inference_step(params, batch):
@@ -755,8 +839,8 @@ def get_pipeshard_executable(config,
                 params,
                 batch["input_ids"],
                 batch["position_ids"],
-                output_attentions=support_output_attentions,
-                output_hidden_states=support_output_hidden_states)
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states)
             return output
 
         assert batch_size % num_micro_batches == 0, "cannot divide batch_size by num_micro_batches"
@@ -766,14 +850,14 @@ def get_pipeshard_executable(config,
             params, {
                 "input_ids":
                     jax.core.ShapedArray(
-                        (batch_size, decoding_length_per_step), jnp.int32),
+                        (batch_size, seq_len), jnp.int32),
                 "position_ids":
                     jax.core.ShapedArray(
-                        (batch_size, decoding_length_per_step), jnp.int32),
+                        (batch_size, seq_len), jnp.int32),
             })
 
-    executable.dump_debug_info("tmp")
-    return executable, params
+        executable.dump_debug_info("tmp")
+    return {seq_len: executable}, params
 
 
 def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
@@ -968,3 +1052,43 @@ def init_cache_dis_array(executable, config, batch_size, dummy=False):
             flat_info, flat_args)
     alpa.global_config.use_dummy_value_for_benchmarking = False
     return ret
+
+
+def load_multi_executable_params_dis_array(path,
+                                           executables,
+                                           params_aval,
+                                           config,
+                                           dummy=False):
+    """Load parameters to workers that will be used by all executables. Accordingly,
+    we need to make sure the parameter sharding specs are identical for all executables.
+    """
+    shared_input_shard_specs = None
+    for executable in executables.values():
+        stage_input_shard_specs = executable.stage_input_shard_specs
+        if shared_input_shard_specs is not None:
+            assert shared_input_shard_specs == stage_input_shard_specs, \
+                "All executables must have the same input sharding specs."
+        else:
+            shared_input_shard_specs = stage_input_shard_specs
+    return load_params_dis_array(path,
+                                 list(executables.values())[0], params_aval,
+                                 config, dummy)
+
+
+def init_multi_executable_cache_dis_array(executables,
+                                          config,
+                                          batch_size,
+                                          dummy=False):
+    """Initialize cache to workers that will be used by all executables. Accordingly,
+    we need to make sure all executables are using the same cache.
+    """
+    cache_info = None
+    for executable in executables.values():
+        _, batch_info = executable.get_input_placement_specs()
+        if cache_info is not None:
+            assert cache_info == batch_info["cache"], \
+                "All executables must share the same cache"
+        else:
+            cache_info = batch_info["cache"]
+    return init_cache_dis_array(
+        list(executables.values())[0], config, batch_size, dummy)

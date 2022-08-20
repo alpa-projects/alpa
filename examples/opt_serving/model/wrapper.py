@@ -1,3 +1,4 @@
+"""Wrap models to make them compatible with huggingface's generator API."""
 from collections import defaultdict
 import os
 from typing import Sequence, Any
@@ -18,9 +19,10 @@ from transformers import OPTForCausalLM, GPT2LMHeadModel
 
 from opt_serving.model.opt_model import (get_opt_config,
                                          get_pipeshard_executable,
-                                         load_params_dis_array,
-                                         init_cache_dis_array, load_params_np,
-                                         init_cache_np, get_jax_executable)
+                                         load_multi_executable_params_dis_array,
+                                         init_multi_executable_cache_dis_array,
+                                         load_params_np, init_cache_np,
+                                         get_jax_executable)
 from opt_serving.model.opt_utils import (TransformerModelConfig,
                                          jax_index_select, is_power_of_two)
 
@@ -73,15 +75,13 @@ class WrappedInferenceFunc(GenerationMixin):
     """
     Wrap an inference func as a GenerationMixin.
     This class implements the minimal interface for using huggingface's generator.
-
-    This class also decomposes the first call of prompt during generation to one token by one token.
     """
 
     def __init__(self, inference_func, config, executable, transformer_config):
         self.inference_func = inference_func
         self.config = config
         self.main_input_name = "input_ids"
-        self.executable = executable
+        self.executable = executable  # An alpa executable
         self.transformer_config = transformer_config
         self.index_select_executables = {}
         self.cache_location = None
@@ -90,19 +90,16 @@ class WrappedInferenceFunc(GenerationMixin):
         # This function is never used
         raise NotImplementedError()
 
-    def prepare_inputs_for_generation(self, input_ids, past=None, **kwargs):
-        # only last token for input_ids if past is defined in kwargs
+    def prepare_inputs_for_generation(self, input_ids, attention_mask,
+                                      past=None, **kwargs):
+        # If past is defined, it means we are in the decoding stage,
+        # so we only process the last token
         if past:
             input_ids = input_ids[:, -1].unsqueeze(-1)
 
-        ret = {"input_ids": input_ids, "past_key_values": past}
-        if "attention_mask" in kwargs:
-            ret["attention_mask"] = self._process_attention_mask(
-                kwargs["attention_mask"])
+        ret = {"input_ids": input_ids, "past_key_values": past,
+               "attention_mask": attention_mask}
         return ret
-
-    def _process_attention_mask(self, attention_mask):
-        return attention_mask
 
     def __call__(self,
                  input_ids,
@@ -111,14 +108,11 @@ class WrappedInferenceFunc(GenerationMixin):
                  output_hidden_states=None,
                  attention_mask=None,
                  return_dict=None):
-        # Decompose the call to token by token
-        for i in range(input_ids.shape[1]):
-            ret = self.inference_func(input_ids[:, i:i + 1],
-                                      past_key_values,
-                                      attention_mask=attention_mask,
-                                      output_hidden_states=output_hidden_states,
-                                      output_attentions=output_attentions)
-            past_key_values = ret.past_key_values
+        ret = self.inference_func(input_ids,
+                                  past_key_values,
+                                  attention_mask=attention_mask,
+                                  output_hidden_states=output_hidden_states,
+                                  output_attentions=output_attentions)
         return ret
 
     def _reorder_cache(self, past, beam_idx):
@@ -191,50 +185,6 @@ class WrappedInferenceFunc(GenerationMixin):
             for layer_loc in self.cache_location)
 
 
-class AlpaInferenceFunc(WrappedInferenceFunc):
-
-    def __init__(self, *args, max_target_positions):
-        super().__init__(*args)
-        self._max_target_positions = max_target_positions
-
-    def _process_attention_mask(self, attention_mask):
-        if isinstance(attention_mask, torch.Tensor):
-            attention_mask = attention_mask.cpu().numpy()
-        batch_size = attention_mask.shape[0]
-        ret_mask = np.zeros((batch_size, self._max_target_positions),
-                                  dtype=np.bool)
-        ret_mask[:, :attention_mask.shape[-1]] = attention_mask
-        ret_mask = ret_mask[:, np.newaxis, np.newaxis, :]
-        return ret_mask
-
-
-def get_hf_gpt_model(model_name, device, num_beams):
-    raw_model = GPT2LMHeadModel.from_pretrained(model_name)
-    raw_model = raw_model.to(device)
-
-    def inference_func(input_ids,
-                       past_key_values,
-                       output_attentions=False,
-                       output_hidden_states=False):
-        out = raw_model(input_ids=input_ids,
-                        past_key_values=past_key_values,
-                        output_attentions=output_attentions,
-                        output_hidden_states=output_hidden_states)
-        return InferenceFuncOutput(out.logits, out.past_key_values)
-
-    inference_func_config = raw_model.config
-    inference_func_config.num_beams = num_beams
-    transformer_config = TransformerModelConfig(
-        H=raw_model.config.n_embd,
-        L=raw_model.config.n_layer,
-        n_head=raw_model.config.n_head,
-        seq_len=raw_model.config.n_positions,
-        vocab_size=raw_model.config.vocab_size)
-    executable = None
-    return WrappedInferenceFunc(inference_func, inference_func_config,
-                                executable, transformer_config)
-
-
 def get_hf_opt_model(model_name, device, num_beams):
     raw_model = OPTForCausalLM.from_pretrained(
         model_name,
@@ -244,24 +194,11 @@ def get_hf_opt_model(model_name, device, num_beams):
     def inference_func(input_ids,
                        past_key_values,
                        attention_mask,
-                       output_attentions=False,
-                       output_hidden_states=False):
-        attention_length = attention_mask.size()[-1]
-        if past_key_values is None:
-            past_length = 0
-        else:
-            past_length = past_key_values[0][0].shape[2]
-        if past_length >= attention_length:
-            attention_mask = torch.cat(
-                (attention_mask,
-                 torch.ones((input_ids.shape[0],
-                             past_length + 1 - attention_length)).to(device)),
-                dim=1)
-        elif attention_mask != None:
-            attention_mask = attention_mask[:, :past_length + 1]
+                       output_attentions,
+                       output_hidden_states):
         out = raw_model(input_ids=input_ids,
-                        attention_mask=attention_mask,
                         past_key_values=past_key_values,
+                        attention_mask=attention_mask,
                         output_attentions=output_attentions,
                         output_hidden_states=output_hidden_states)
         return InferenceFuncOutput(out.logits, out.past_key_values)
@@ -282,46 +219,54 @@ def get_hf_opt_model(model_name, device, num_beams):
 
 def get_model(model_name: str,
               device: str,
+              # Weights
               path: str,
-              autoregressive=True,
+              dummy: bool = False,
+              # Model parameters
+              autoregressive: bool = True,
               dtype=jnp.float16,
-              dummy=False,
-              do_sample=False,
-              batch_size=1,
-              num_beams=1,
-              num_return_sequences=1,
-              decoding_length_per_step=1,
-              num_micro_batches=1,
-              max_target_positions=2048,
-              support_output_attentions=False,
-              support_output_hidden_states=False):
-    """Get and load model and return a WrappedInferenceFunc compatible with HuggingFace.
+              # Batch size and seq length
+              batch_size: int = 1,
+              num_micro_batches: int = 1,
+              max_target_positions: int = 2048,
+              encoder_seq_lengths: Sequence[int] = [1],
+              # Shared arguments with model.generate
+              do_sample: bool = False,
+              num_beams: int = 1,
+              num_return_sequences: int = 1,
+              return_dict_in_generate: bool = True,
+              output_attentions: bool = False,
+              output_hidden_states: bool = False):
+    """Get a model that is compatible with HuggingFace's generation API.
 
     Args:
-        model_name: "gpt", "facebook/opt-", or "alpa/opt-".
+        model_name: "facebook/opt-", or "alpa/opt-".
         device: "cpu" or "gpu". This only controls the device used
           by pytorch. Alpa always runs on GPU.
         path: The path to opt weights.
+        dummy: Use dummy weights for faster debugging.
+        encoder_seq_lengths: compile mutliple executables for multiple
+          encoder sequence lengths.
     """
     if not model_name.startswith("alpa") and not autoregressive:
         raise NotImplementedError(
             f"Cannot support {model_name} in forward-only mode.")
-    if autoregressive and decoding_length_per_step > 1:
-        raise RuntimeError(
-            f"Autoregressive requires decoder_length_per_step == 1")
     if autoregressive and num_micro_batches > 1:
         raise NotImplementedError(
             f"Cannot support num_micro_batches > 1 in autoregressive mode.")
 
-    if "gpt" in model_name:
-        return get_hf_gpt_model(model_name, device, num_beams)
     if "facebook/opt" in model_name:
         return get_hf_opt_model(model_name, device, num_beams)
 
     assert ("jax/opt" in model_name or "alpa/opt" in model_name)
-    name = model_name.split("-")[1].upper()
+    assert return_dict_in_generate
+
+    if autoregressive and 1 not in encoder_seq_lengths:
+        encoder_seq_lengths += [1]
+    encoder_seq_lengths.sort()
 
     # weight path
+    name = model_name.split("-")[1].upper()
     path = os.path.join(path, f"{name}_np")
     if not dummy:
         assert os.path.exists(path), f"No such file or directory: '{path}'"
@@ -349,10 +294,10 @@ def get_model(model_name: str,
             seq_len=config.max_target_positions,
             vocab_size=config.vocab_size)
 
-        executable, params_aval = get_jax_executable(
-            config,
-            support_output_attentions=support_output_attentions,
-            support_output_hidden_states=support_output_hidden_states)
+        executables, params_aval = get_jax_executable(
+            config, encoder_seq_lengths,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states)
 
         # load params
         params = load_params_np(params_aval, path, config, dummy)
@@ -382,75 +327,150 @@ def get_model(model_name: str,
             seq_len=config.max_target_positions,
             vocab_size=config.vocab_size)
 
-        executable, params_aval = get_pipeshard_executable(
+        executables, params_aval = get_pipeshard_executable(
             config,
             batch_size=expand_size,
             num_micro_batches=num_micro_batches,
-            decoding_length_per_step=decoding_length_per_step,
-            support_output_attentions=support_output_attentions,
-            support_output_hidden_states=support_output_hidden_states,
+            encoder_seq_lengths=encoder_seq_lengths,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
             autoregressive=autoregressive)
 
-        # load params
-        params = load_params_dis_array(path, executable, params_aval, config,
-                                       dummy)
+        # Load params
+        params = load_multi_executable_params_dis_array(
+            path, executables, params_aval, config, dummy)
+
         if autoregressive:
-            init_cache = init_cache_dis_array(executable,
-                                              config,
-                                              expand_size,
-                                              dummy=dummy)
+            init_cache = init_multi_executable_cache_dis_array(executables,
+                                                               config,
+                                                               expand_size,
+                                                               dummy=dummy)
             set_skip_shard_args_check(init_cache)
-        executable.sync()
+
+        for executable in executables.values():
+            executable.sync()
 
         # return executable directly if not autoregressive
         if not autoregressive:
-            return executable, params, transformer_config
+            assert len(executables) == 1
+            return list(
+                executables.values())[0], params, transformer_config
 
-    step_ct = 0
+    num_valid_tokens = None
     last_token = None
+    step_ct = 0
 
     def inference_func(input_ids,
                        past_key_values,
                        attention_mask,
-                       output_attentions=False,
-                       output_hidden_states=False):
-        nonlocal step_ct
-        nonlocal last_token
+                       output_attentions,
+                       output_hidden_states):
+        input_ids = input_ids.cpu().numpy()
+        attention_mask = attention_mask.cpu().numpy()
 
-        input_ids_step = input_ids.cpu().numpy()
-        if past_key_values is None:
-            past_key_values = init_cache
-            step_ct = np.zeros_like(input_ids_step)
-            last_token = np.copy(input_ids_step)
+        def run_one(_executable, _input_ids, _past_key_values, _attention_mask, num_internal_pad):
+            nonlocal num_valid_tokens
+            nonlocal last_token
+            nonlocal step_ct
 
-        # print(f"before: {last_token}")
-        last_token = input_ids_step * (input_ids_step != config.pad) + last_token * (input_ids_step == config.pad)
-        # print(f"after: {last_token}")
+            if _past_key_values is None:
+                # Init all states
+                _past_key_values = init_cache
+                num_valid_tokens = np.zeros((expand_size, 1), dtype=np.int32)
+                last_token = np.zeros((expand_size, 1), dtype=np.int32)
+                step_ct = 0
 
-        position_ids_step = step_ct  + config.pad + 1
+            if _input_ids.shape[1] == 1:
+                # A fast path for step_len = 1
+                cum_sum = _attention_mask[:, -1:]
+                num_valid_tokens = num_valid_tokens + cum_sum
+                position_ids_step = num_valid_tokens + config.pad
+                last_token = np.where(cum_sum, _input_ids, last_token)
+                _input_ids = last_token
+            else:
+                # A general path that works for any step_len
+                cumsum = np.cumsum(_attention_mask[:,step_ct:], axis=1, dtype=np.int32)
+                position_ids_step = num_valid_tokens + cumsum + config.pad
+                num_valid_tokens_step = cumsum[:,-1:]
+                num_valid_tokens = num_valid_tokens + num_valid_tokens_step
 
-        output = executable(
-            params, {
-                "input_ids": last_token,
-                "position_ids": position_ids_step,
-                "cache": past_key_values,
-                "mask": attention_mask,
-            })
-        set_skip_shard_args_check(output.attention_cache)
+                last_token = np.where(num_valid_tokens_step > 0,
+                     np.take_along_axis(_input_ids, num_valid_tokens_step - 1, axis=1),
+                     last_token)
+                _input_ids = np.where(_attention_mask[:, step_ct:], _input_ids, last_token)
+
+            # Use value "2" as a special mask to represent internal padding
+            if num_internal_pad:
+                _attention_mask[:,-num_internal_pad:] = 2
+            _attention_mask = pad_attention_mask(_attention_mask, max_target_positions)
+
+            output = _executable(
+                params, {
+                    "input_ids": _input_ids,
+                    "position_ids": position_ids_step,
+                    "cache": _past_key_values,
+                    "mask": _attention_mask,
+                })
+
+            step_ct += _input_ids.shape[1] - num_internal_pad
+            set_skip_shard_args_check(output.attention_cache)
+
+            return output
+
+        seq_len = input_ids.shape[1]
+        if seq_len == 1:
+            # A fast path for seq_len = 1
+            output = run_one(executables[1], input_ids, past_key_values, attention_mask, 0)
+        else:
+            # A general path that works for all seq_len
+            i = 0
+            while i < seq_len:
+                remaining = seq_len - i
+                step_len = get_padded_step_len(remaining, encoder_seq_lengths)
+
+                step_input_ids = input_ids[:, i:i + step_len]
+                step_attention_mask = (
+                    attention_mask[:, :attention_mask.shape[1] - remaining + step_len])
+
+                if step_input_ids.shape[1] != step_len:
+                    # Pad the inputs and masks to step_len
+                    # Note that this kind of internal padding is different from
+                    # the padding added by the tokenizer. This internal padding
+                    # should not update cache and step_ct
+                    num_internal_pad = step_len - step_input_ids.shape[1]
+                    pad_shape = (expand_size, num_internal_pad)
+                    step_input_ids = np.concatenate(
+                        (step_input_ids, np.zeros(pad_shape, dtype=np.int32)), axis=1)
+                    step_attention_mask = np.concatenate(
+                        (step_attention_mask, np.zeros(pad_shape, dtype=np.int8)), axis=1)
+                else:
+                    num_internal_pad = 0
+
+                output = run_one(executables[step_len], step_input_ids,
+                                 past_key_values, step_attention_mask,
+                                 num_internal_pad)
+                past_key_values = output.attention_cache
+                i += step_input_ids.shape[1]
 
         logits_step = torch.from_numpy(np.array(output.logits)).to(device)
-
-        step_ct += (input_ids_step != config.pad)
-
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)
 
     inference_func_config = InferenceFuncConfig(num_beams=num_beams)
-    return AlpaInferenceFunc(inference_func,
-                             inference_func_config,
-                             executable,
-                             transformer_config,
-                             max_target_positions=config.max_target_positions)
+    return WrappedInferenceFunc(inference_func,
+                                inference_func_config,
+                                executables[1],
+                                transformer_config)
+
+
+def get_padded_step_len(length, encoder_seq_lengths):
+    """For a given length, find the smallest value in encoder_seq_lengths that
+    is greater than the given length."""
+    for i in range(len(encoder_seq_lengths)):
+        if encoder_seq_lengths[i] >= length:
+            break
+    return encoder_seq_lengths[i]
+
 
 def set_skip_shard_args_check(attention_cache):
     """
@@ -466,3 +486,12 @@ def set_skip_shard_args_check(attention_cache):
             for x in y:
                 if isinstance(x, alpa.device_mesh.DistributedArray):
                     x.skip_shard_args_check = True
+
+
+def pad_attention_mask(mask, max_target_positions):
+    """Pad attention mask to the shape [B, 1, 1, max_target_positions]. """
+    batch_size = mask.shape[0]
+    ret_mask = np.zeros((batch_size, max_target_positions), dtype=np.int8)
+    ret_mask[:, :mask.shape[-1]] = mask
+    ret_mask = ret_mask[:, np.newaxis, np.newaxis, :]
+    return ret_mask

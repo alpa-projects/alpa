@@ -365,8 +365,6 @@ def get_model(model_name: str,
                        attention_mask,
                        output_attentions,
                        output_hidden_states):
-        nonlocal step_ct
-
         input_ids = input_ids.cpu().numpy()
         attention_mask = attention_mask.cpu().numpy()
 
@@ -414,7 +412,8 @@ def get_model(model_name: str,
                     "mask": _attention_mask,
                 })
 
-            step_ct += _input_ids.shape[1]
+            step_ct += _input_ids.shape[1] - num_internal_pad
+            set_skip_shard_args_check(output.attention_cache)
 
             return output
 
@@ -451,10 +450,8 @@ def get_model(model_name: str,
                                  past_key_values, step_attention_mask,
                                  num_internal_pad)
                 past_key_values = output.attention_cache
-                step_ct -= num_internal_pad
                 i += step_input_ids.shape[1]
 
-        set_skip_shard_args_check(output.attention_cache)
         logits_step = torch.from_numpy(np.array(output.logits)).to(device)
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)

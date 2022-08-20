@@ -93,7 +93,7 @@ class WrappedInferenceFunc(GenerationMixin):
     def prepare_inputs_for_generation(self, input_ids, attention_mask,
                                       past=None, **kwargs):
         # If past is defined, it means we are in the decoding stage,
-        # so we only process the last token 
+        # so we only process the last token
         if past:
             input_ids = input_ids[:, -1].unsqueeze(-1)
 
@@ -356,8 +356,6 @@ def get_model(model_name: str,
             return list(
                 executables.values())[0], params, transformer_config
 
-    use_fast_path = True
-
     num_valid_tokens = None
     last_token = None
     step_ct = 0
@@ -367,10 +365,12 @@ def get_model(model_name: str,
                        attention_mask,
                        output_attentions,
                        output_hidden_states):
+        nonlocal step_ct
+
         input_ids = input_ids.cpu().numpy()
         attention_mask = attention_mask.cpu().numpy()
 
-        def run_one(_executable, _input_ids, _past_key_values, _attention_mask):
+        def run_one(_executable, _input_ids, _past_key_values, _attention_mask, num_internal_pad):
             nonlocal num_valid_tokens
             nonlocal last_token
             nonlocal step_ct
@@ -382,7 +382,7 @@ def get_model(model_name: str,
                 last_token = np.zeros((expand_size, 1), dtype=np.int32)
                 step_ct = 0
 
-            if use_fast_path and _input_ids.shape[1] == 1:
+            if _input_ids.shape[1] == 1:
                 # A fast path for step_len = 1
                 cum_sum = _attention_mask[:, -1:]
                 num_valid_tokens = num_valid_tokens + cum_sum
@@ -397,12 +397,13 @@ def get_model(model_name: str,
                 num_valid_tokens = num_valid_tokens + num_valid_tokens_step
 
                 last_token = np.where(num_valid_tokens_step > 0,
-                     np.take_along_axis(_input_ids, (num_valid_tokens_step-1), axis=1),
+                     np.take_along_axis(_input_ids, num_valid_tokens_step - 1, axis=1),
                      last_token)
-                for i in range(expand_size):
-                    if num_valid_tokens_step[i][0] < _input_ids.shape[1]:
-                        _input_ids[i, ~_attention_mask[i, step_ct:]] = last_token[i][0]
+                _input_ids = np.where(_attention_mask[:, step_ct:], _input_ids, last_token)
 
+            # Use value "2" as a special mask to represent internal padding
+            if num_internal_pad:
+                _attention_mask[:,-num_internal_pad:] = 2
             _attention_mask = pad_attention_mask(_attention_mask, max_target_positions)
 
             output = _executable(
@@ -418,21 +419,40 @@ def get_model(model_name: str,
             return output
 
         seq_len = input_ids.shape[1]
-        if use_fast_path and seq_len == 1:
+        if seq_len == 1:
             # A fast path for seq_len = 1
-            output = run_one(executables[1], input_ids, past_key_values, attention_mask)
+            output = run_one(executables[1], input_ids, past_key_values, attention_mask, 0)
         else:
             # A general path that works for all seq_len
             i = 0
             while i < seq_len:
                 remaining = seq_len - i
-                step_len = largest_encoder_len(remaining, encoder_seq_lengths)
-                output = run_one(executables[step_len],
-                                 input_ids[:, i:i + step_len],
-                                 past_key_values,
-                                 attention_mask[:, :attention_mask.shape[1] - remaining + step_len])
+                step_len = get_padded_step_len(remaining, encoder_seq_lengths)
+
+                step_input_ids = input_ids[:, i:i + step_len]
+                step_attention_mask = (
+                    attention_mask[:, :attention_mask.shape[1] - remaining + step_len])
+
+                if step_input_ids.shape[1] != step_len:
+                    # Pad the inputs and masks to step_len
+                    # Note that this kind of internal padding is different from
+                    # the padding added by the tokenizer. This internal padding
+                    # should not update cache and step_ct
+                    num_internal_pad = step_len - step_input_ids.shape[1]
+                    pad_shape = (expand_size, num_internal_pad)
+                    step_input_ids = np.concatenate(
+                        (step_input_ids, np.zeros(pad_shape, dtype=np.int32)), axis=1)
+                    step_attention_mask = np.concatenate(
+                        (step_attention_mask, np.zeros(pad_shape, dtype=np.int8)), axis=1)
+                else:
+                    num_internal_pad = 0
+
+                output = run_one(executables[step_len], step_input_ids,
+                                 past_key_values, step_attention_mask,
+                                 num_internal_pad)
                 past_key_values = output.attention_cache
-                i += step_len
+                step_ct -= num_internal_pad
+                i += step_input_ids.shape[1]
 
         set_skip_shard_args_check(output.attention_cache)
         logits_step = torch.from_numpy(np.array(output.logits)).to(device)
@@ -446,11 +466,11 @@ def get_model(model_name: str,
                                 transformer_config)
 
 
-def largest_encoder_len(length, encoder_seq_lengths):
-    """For a given length, find the largest value in encoder_seq_lengths that
-    is smaller than the given length.""" 
+def get_padded_step_len(length, encoder_seq_lengths):
+    """For a given length, find the smallest value in encoder_seq_lengths that
+    is greater than the given length."""
     for i in range(len(encoder_seq_lengths)):
-        if i + 1 < len(encoder_seq_lengths) and encoder_seq_lengths[i+1] > length:
+        if encoder_seq_lengths[i] >= length:
             break
     return encoder_seq_lengths[i]
 
@@ -474,7 +494,7 @@ def set_skip_shard_args_check(attention_cache):
 def pad_attention_mask(mask, max_target_positions):
     """Pad attention mask to the shape [B, 1, 1, max_target_positions]. """
     batch_size = mask.shape[0]
-    ret_mask = np.zeros((batch_size, max_target_positions), dtype=np.bool)
+    ret_mask = np.zeros((batch_size, max_target_positions), dtype=np.int8)
     ret_mask[:, :mask.shape[-1]] = mask
     ret_mask = ret_mask[:, np.newaxis, np.newaxis, :]
     return ret_mask

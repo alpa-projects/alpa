@@ -176,7 +176,17 @@ class OPTSelfAttention(nn.Module):
             # shape: [B, S_max, #head, head_dim]
             value_states = lax.dynamic_update_slice(cache_value, value_states, update_indices)
             query_len, key_len = query_states.shape[1], key_states.shape[1]
-            attention_cache = key_states, value_states, cache_index + query_len
+
+            # Handle a special kind of internal padding added by alpa.
+            # Note that this kind of internal padding is different from
+            # the padding added by the tokenizer. This internal padding
+            # should not update cache and step_ct
+            # shape: [B, 1, 1, S_max]
+            is_internal_padding = (attention_mask == 2)
+            num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
+            attention_mask = (attention_mask == 1)
+
+            attention_cache = key_states, value_states, cache_index + query_len - num_internal_pad
 
             # shape: [B, 1, S_max, S_max]
             causal_mask = nn.make_causal_mask(
@@ -578,7 +588,7 @@ def init_cache_aval(config, batch_size):
 
 def init_mask_aval(config, batch_size):
     """Initialize attention mask with abstract values (shape-only arrays)."""
-    mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_target_positions), dtype=np.bool)
+    mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_target_positions), dtype=np.int8)
     return mask
 
 

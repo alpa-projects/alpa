@@ -170,7 +170,7 @@ if __name__ == "__main__":
             compute_tflopss.append(compute_tflops)
     else: # Generation mode
         if multi_executable:
-            encoder_seq_lengths = [1, 8, 128]
+            encoder_seq_lengths = [1, 256]
         else:
             encoder_seq_lengths = [1]
 

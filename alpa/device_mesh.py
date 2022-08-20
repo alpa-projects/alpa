@@ -2059,7 +2059,7 @@ class DeviceCluster:
 
         # update the Device Cluster info
         if devices_per_node or num_nodes:
-            self._updte_cluster_resource_from_placement_group()
+            self._update_cluster_resource_from_placement_group()
 
     def _update_cluster_resource_from_placement_group(self):
         """Update the cluster resource from the placement group."""

@@ -71,6 +71,7 @@ class DeviceMesh_ResourceAwareness(unittest.TestCase):
     def test_resource_check(self):
         cluster_devices = ray.cluster_resources().get("GPU", 0)
         available_devices = ray.available_resources().get("GPU", 0)
+        print(cluster_devices, available_devices, ray.cluster_resources(), ray.available_resources())
         assert available_devices + 2 == cluster_devices
 
 

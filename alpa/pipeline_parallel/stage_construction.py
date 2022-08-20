@@ -159,9 +159,8 @@ def dp_2(
     assert len(
         all_possible_stage_costs), "no solution in auto stage construction."
 
-    submesh_sizes = np.empty((len(submesh_choices),), dtype=np.int64)
-    for n, m in submesh_choices:
-        submesh_sizes.append(n * m)
+    submesh_sizes = np.array([n * m for (n, m) in submesh_choices],
+                             dtype=np.int64)
 
     for max_stage_cost in all_possible_stage_costs:
         if max_stage_cost - last_max_stage_cost < gap:
@@ -248,8 +247,7 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
                             # TODO(zhuohan): This level of for loop is not
                             #   necessary. It can be optimized by sorting
                             #   the logical mesh shapes.
-                            for n_config in range(
-                                    num_autosharding_configs):
+                            for n_config in range(num_autosharding_configs):
                                 if s - 1 <= max_n_succ_stages[i, k - 1, m,
                                                               n_config]:
                                     stage_cost = compute_cost[i, k - 1, m,

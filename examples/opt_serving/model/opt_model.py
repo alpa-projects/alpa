@@ -774,7 +774,6 @@ def get_pipeshard_executable(config: OPTConfig,
         cache = init_cache_aval(config, batch_size)
         mask = init_mask_aval(config, batch_size)
 
-        print(f" - Compiling executable(s) for encoding lengths {encoder_seq_lengths}")
         executables = {}
 
         # Compile an executable with sequence length 1

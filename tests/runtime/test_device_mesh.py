@@ -11,7 +11,7 @@ from jax.interpreters import pxla
 import numpy as np
 import ray
 
-from alpa import init, parallelize, DistributedArray
+from alpa import init, shutdown, parallelize, DistributedArray
 from alpa.device_mesh import get_global_physical_mesh
 from alpa.testing import assert_allclose
 
@@ -20,6 +20,9 @@ class DeviceMeshTest(unittest.TestCase):
 
     def setUp(self):
         init(cluster="ray")
+
+    def tearDown(self):
+        shutdown()
 
     def test_add_one(self):
 
@@ -66,6 +69,9 @@ class DeviceMesh_ResourceAwareness(unittest.TestCase):
 
     def setUp(self):
         init(cluster="ray", devices_per_node=2, num_nodes=1)
+
+    def tearDown(self):
+        shutdown()
 
     @unittest.skipIf(jax.local_device_count("gpu") < 8, "no enough device")
     def test_resource_check(self):

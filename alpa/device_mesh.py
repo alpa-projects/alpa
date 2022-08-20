@@ -1011,7 +1011,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             bundle_index = device_bundle_idx_list[i]
 
             # Launch the DaemonMoveWorker
-            cls = ray.remote(num_cpus=1e-4)(DaemonMoveWorker)
+            cls = ray.remote(num_cpus=0)(DaemonMoveWorker)
             move_worker = cls.options(
                 placement_group=placement_group,
                 placement_group_bundle_index=bundle_index).remote()

@@ -120,7 +120,8 @@ class GeneratorInterface:
     def load_model(self):
         """Load model and return the model wrapper."""
         tic = time.time()
-        self.model_wrapper = get_model(self.model_name, "cuda", self.path, True,
+        self.model_wrapper = get_model(self.model_name, "cuda", self.path,
+                                       autoregressive=True,
                                        batch_size=MAX_BS,
                                        max_target_positions=MAX_SEQ_LEN)
         load_time = time.time() - tic

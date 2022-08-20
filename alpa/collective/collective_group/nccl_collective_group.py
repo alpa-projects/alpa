@@ -457,6 +457,10 @@ class NCCLGroup(BaseGroup):
         self._dev_event_map[comm_key] = events
         return comms
 
+    def get_nccl_collective_communicator(self, devices):
+        key = _get_comm_key_from_devices(devices)
+        return self._get_nccl_collective_communicator(key, devices)
+
     @staticmethod
     def _sync_streams(device_list, events, streams):
         """Let NCCL streams wait for current streams for every device."""

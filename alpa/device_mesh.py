@@ -398,6 +398,14 @@ class MeshHostWorker:
     def destroy_collective_group(group_name: str = "default"):
         col.destroy_collective_group(group_name)
 
+    def create_and_set_cross_mesh_communicators(self, world_size, rank, backend,
+                                                group_name):
+        self.init_collective_group(world_size, rank, rank, backend, group_name)
+        g = col.check_and_get_group(group_name)
+        devices = list(range(self.num_devices))
+        comms = g.get_nccl_collective_communicator(devices)
+        # TODO(yonghao): send these comms to XLA
+
     def put_resharding_send_task(self, uuid, tasks, group_name):
         self.send_tasks[uuid] = ReshardingSendTask(tile_specs=tasks,
                                                    group_name=group_name)
@@ -2259,6 +2267,24 @@ def get_global_num_devices():
         return global_physical_mesh.num_devices
 
     raise RuntimeError("Please call alpa.init first")
+
+
+########################################
+# Register ShardArg Handler
+########################################
+def create_and_record_cross_mesh_collective_communicators(
+        meshes: Sequence[DistributedPhysicalDeviceMesh]):
+    workers = []
+    device_strs = []
+    for mesh in meshes:
+        workers.extend(mesh.workers)
+        device_strs.extend(mesh.device_strs)
+    world_size = len(workers)
+    backend = "nccl"
+    group_name = ",".join(device_strs)
+    for rank, worker in workers:
+        worker.create_and_set_cross_mesh_communicators.remote(
+            world_size, rank, backend, group_name)
 
 
 ########################################

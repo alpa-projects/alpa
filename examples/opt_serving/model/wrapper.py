@@ -356,6 +356,8 @@ def get_model(model_name: str,
             return list(
                 executables.values())[0], params, transformer_config
 
+    use_fast_path = True
+
     num_valid_tokens = None
     last_token = None
     step_ct = 0
@@ -377,28 +379,29 @@ def get_model(model_name: str,
                 # Init all states
                 _past_key_values = init_cache
                 num_valid_tokens = np.zeros((expand_size, 1), dtype=np.int32)
-                last_token = np.zeros((expand_size,), dtype=np.int32)
+                last_token = np.zeros((expand_size, 1), dtype=np.int32)
                 step_ct = 0
 
-            if _input_ids.shape[1] == 1:
+            if use_fast_path and _input_ids.shape[1] == 1:
                 # A fast path for step_len = 1
-                num_valid_tokens = num_valid_tokens + _attention_mask[:, -1:]
+                cum_sum = _attention_mask[:, -1:]
+                num_valid_tokens = num_valid_tokens + cum_sum
                 position_ids_step = num_valid_tokens + config.pad
-                last_token = np.where(_attention_mask[:,-1], _input_ids, last_token)
+                last_token = np.where(cum_sum, _input_ids, last_token)
                 _input_ids = last_token
             else:
                 # A general path that works for any step_len
                 cumsum = np.cumsum(_attention_mask[:,step_ct:], axis=1, dtype=np.int32)
                 position_ids_step = num_valid_tokens + cumsum + config.pad
-                num_valid_tokens_step = cumsum[:,-1]
-                num_valid_tokens = num_valid_tokens + num_valid_tokens_step.reshape(-1, 1)
+                num_valid_tokens_step = cumsum[:,-1:]
+                num_valid_tokens = num_valid_tokens + num_valid_tokens_step
 
                 last_token = np.where(num_valid_tokens_step > 0,
-                                      _input_ids[:, num_valid_tokens_step - 1],
-                                      last_token)
+                     np.take_along_axis(_input_ids, (num_valid_tokens_step-1), axis=1),
+                     last_token)
                 for i in range(expand_size):
-                    if num_valid_tokens_step[i] < _input_ids.shape[1]:
-                        _input_ids[i, ~_attention_mask[i, step_ct:]] = last_token[i]
+                    if num_valid_tokens_step[i][0] < _input_ids.shape[1]:
+                        _input_ids[i, ~_attention_mask[i, step_ct:]] = last_token[i][0]
 
             _attention_mask = pad_attention_mask(_attention_mask, max_target_positions)
 
@@ -415,7 +418,7 @@ def get_model(model_name: str,
             return output
 
         seq_len = input_ids.shape[1]
-        if seq_len == 1:
+        if use_fast_path and seq_len == 1:
             # A fast path for seq_len = 1
             output = run_one(executables[1], input_ids, past_key_values, attention_mask)
         else:

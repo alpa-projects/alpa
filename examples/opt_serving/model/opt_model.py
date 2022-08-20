@@ -622,7 +622,7 @@ def load_params_np(params, path, config, dummy=False):
     def load_array(key):
         return np.load(os.path.join(path, key))
 
-    def load_param(param_key, loaded_array):
+    def load_param(param_key, loaded_array, is_position_embedding=False):
         param_dict = params
         param_keys = param_key.split('.')
         for i, key in enumerate(param_keys):
@@ -631,8 +631,14 @@ def load_params_np(params, path, config, dummy=False):
                     param_dict[key] = jax.core.ShapedArray(
                         param_dict[key].shape, param_dict[key].dtype)
                 else:
-                    assert param_dict[key].shape == loaded_array.shape
-                    #assert param_dict[key].dtype == loaded_array.dtype
+                    if not is_position_embedding:
+                        assert param_dict[key].shape == loaded_array.shape, (
+                                f"{param_dict[key].shape} vs. {loaded_array.shape}")
+                    else:
+                        shape = param_dict[key].shape
+                        if shape != loaded_array.shape:
+                            assert shape[1] == loaded_array.shape[1]
+                            loaded_array = loaded_array[:shape[0], :]
                     param_dict[key] = loaded_array
             else:
                 param_dict = param_dict[key]
@@ -641,7 +647,8 @@ def load_params_np(params, path, config, dummy=False):
     load_param("params.transformers.embeddings.word_embeddings.embedding",
                load_array("decoder.embed_tokens.weight"))
     load_param("params.transformers.embeddings.position_embeddings.embedding",
-               load_array("decoder.embed_positions.weight"))
+               load_array("decoder.embed_positions.weight"),
+               is_position_embedding=True)
     if config.version > 2:
         load_param("params.transformers.layer_norm.scale",
                    load_array("decoder.layer_norm.weight"))

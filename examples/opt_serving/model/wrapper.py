@@ -342,7 +342,6 @@ def get_model(model_name: str,
             path, executables, params_aval, config, dummy)
 
         if autoregressive:
-            print(" - Init cache""")
             init_cache = init_multi_executable_cache_dis_array(executables,
                                                                config,
                                                                expand_size,

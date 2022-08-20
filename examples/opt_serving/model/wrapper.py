@@ -1,3 +1,4 @@
+"""Wrap models to make them compatible with huggingface's generator API."""
 from collections import defaultdict
 import os
 from typing import Sequence, Any
@@ -89,20 +90,16 @@ class WrappedInferenceFunc(GenerationMixin):
         # This function is never used
         raise NotImplementedError()
 
-    def prepare_inputs_for_generation(self, input_ids, past=None, **kwargs):
+    def prepare_inputs_for_generation(self, input_ids, attention_mask,
+                                      past=None, **kwargs):
         # If past is defined, it means we are in the decoding stage,
         # so we only process the last token 
         if past:
             input_ids = input_ids[:, -1].unsqueeze(-1)
 
-        ret = {"input_ids": input_ids, "past_key_values": past}
-        if "attention_mask" in kwargs:
-            ret["attention_mask"] = self._process_attention_mask(
-                kwargs["attention_mask"])
+        ret = {"input_ids": input_ids, "past_key_values": past,
+               "attention_mask": attention_mask}
         return ret
-
-    def _process_attention_mask(self, attention_mask):
-        return attention_mask
 
     def __call__(self,
                  input_ids,
@@ -188,24 +185,6 @@ class WrappedInferenceFunc(GenerationMixin):
             for layer_loc in self.cache_location)
 
 
-class AlpaInferenceFunc(WrappedInferenceFunc):
-
-    def __init__(self, *args, max_target_positions):
-        super().__init__(*args)
-        self._max_target_positions = max_target_positions
-
-    def _process_attention_mask(self, attention_mask):
-        if isinstance(attention_mask, torch.Tensor):
-            attention_mask = attention_mask.cpu().numpy()
-        # Pad attention_mask
-        batch_size = attention_mask.shape[0]
-        ret_mask = np.zeros((batch_size, self._max_target_positions),
-                            dtype=np.bool)
-        ret_mask[:, :attention_mask.shape[-1]] = attention_mask
-        ret_mask = ret_mask[:, np.newaxis, np.newaxis, :]
-        return ret_mask
-
-
 def get_hf_opt_model(model_name, device, num_beams):
     raw_model = OPTForCausalLM.from_pretrained(
         model_name,
@@ -215,8 +194,8 @@ def get_hf_opt_model(model_name, device, num_beams):
     def inference_func(input_ids,
                        past_key_values,
                        attention_mask,
-                       output_attentions=False,
-                       output_hidden_states=False):
+                       output_attentions,
+                       output_hidden_states):
         out = raw_model(input_ids=input_ids,
                         past_key_values=past_key_values,
                         attention_mask=attention_mask,
@@ -240,19 +219,24 @@ def get_hf_opt_model(model_name, device, num_beams):
 
 def get_model(model_name: str,
               device: str,
+              # Weights
               path: str,
+              dummy=False,
+              # Model parameters
               autoregressive=True,
               dtype=jnp.float16,
-              dummy=False,
-              do_sample=False,
+              # Batch size and seq length
               batch_size=1,
-              num_beams=1,
-              num_return_sequences=1,
-              decoding_length_per_step=1,
               num_micro_batches=1,
               max_target_positions=2048,
-              support_output_attentions=False,
-              support_output_hidden_states=False):
+              encoder_seq_lengths=[1],
+              # Shared arguments with model.generate
+              do_sample=False,
+              num_beams=1,
+              num_return_sequences=1,
+              return_dict_in_generate=True,
+              output_attentions=False,
+              output_hidden_states=False):
     """Get and load model and return a WrappedInferenceFunc compatible with HuggingFace.
 
     Args:
@@ -272,6 +256,8 @@ def get_model(model_name: str,
         return get_hf_opt_model(model_name, device, num_beams)
 
     assert ("jax/opt" in model_name or "alpa/opt" in model_name)
+    assert return_dict_in_generate
+
     name = model_name.split("-")[1].upper()
 
     # weight path
@@ -302,17 +288,15 @@ def get_model(model_name: str,
             seq_len=config.max_target_positions,
             vocab_size=config.vocab_size)
 
-        executable, params_aval = get_jax_executable(
-            config,
-            support_output_attentions=support_output_attentions,
-            support_output_hidden_states=support_output_hidden_states)
+        executables, params_aval = get_jax_executable(
+            config, encoder_seq_lengths,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states)
 
         # load params
         params = load_params_np(params_aval, path, config, dummy)
         init_cache = init_cache_np(config, batch_size=expand_size)
         params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
-
-        executables = {1: executable}
     else:
         assert "alpa/opt" in model_name
         assert is_power_of_two(num_beams), "num_beams must be a power of two"
@@ -341,9 +325,9 @@ def get_model(model_name: str,
             config,
             batch_size=expand_size,
             num_micro_batches=num_micro_batches,
-            decoding_length_per_step=decoding_length_per_step,
-            support_output_attentions=support_output_attentions,
-            support_output_hidden_states=support_output_hidden_states,
+            encoder_seq_lengths=encoder_seq_lengths,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
             autoregressive=autoregressive)
 
         # Load params
@@ -372,9 +356,10 @@ def get_model(model_name: str,
     def inference_func(input_ids,
                        past_key_values,
                        attention_mask,
-                       output_attentions=False,
-                       output_hidden_states=False):
+                       output_attentions,
+                       output_hidden_states):
         input_ids = input_ids.cpu().numpy()
+        attention_mask = attention_mask.cpu().numpy()
 
         def run_one(_executable, _input_ids, _past_key_values, _attention_mask):
             nonlocal step_ct
@@ -382,17 +367,28 @@ def get_model(model_name: str,
 
             if _past_key_values is None:
                 _past_key_values = init_cache
-                step_ct = np.zeros((_input_ids.shape[0], 1), dtype=np.int32)
-                last_token = np.copy(_input_ids)
+                cumsum = np.cumsum(_attention_mask, axis=1, dtype=np.int32)
+                position_ids_step = cumsum + config.pad
 
-            input_ids_step = _input_ids
-            last_token = np.where(input_ids_step != config.pad, input_ids_step, last_token)
-            position_ids_step = step_ct + config.pad + 1
-            step_ct += (input_ids_step != config.pad)
+                valid_token_num = cumsum[:,-1]
+                step_ct = valid_token_num.reshape(-1, 1)
+                last_token = _input_ids[:,valid_token_num - 1]
+
+                for i in range(_input_ids.shape[0]):
+                    _input_ids[i,valid_token_num[i]:] = last_token[i,0]
+            else:
+                is_not_pad = _attention_mask[:,-1]
+                step_ct += is_not_pad
+                last_token = np.where(is_not_pad, _input_ids, last_token)
+
+                _input_ids = last_token
+                position_ids_step = step_ct + config.pad
+
+            _attention_mask = pad_attention_mask(_attention_mask, max_target_positions)
 
             output = _executable(
                 params, {
-                    "input_ids": last_token,
+                    "input_ids": _input_ids,
                     "position_ids": position_ids_step,
                     "cache": _past_key_values,
                     "mask": _attention_mask,
@@ -405,7 +401,7 @@ def get_model(model_name: str,
                 # Process a prompt one token by one token.
                 for i in range(input_ids.shape[1]):
                     output = run_one(executables[1], input_ids[:, i:i + 1],
-                                     past_key_values, attention_mask)
+                                     past_key_values, attention_mask[:, :i + 1])
                     past_key_values = output.attention_cache
             else:
                 # Use the corresponding executable to process a prompt at once
@@ -420,11 +416,10 @@ def get_model(model_name: str,
                                    output.hidden_states, output.attentions)
 
     inference_func_config = InferenceFuncConfig(num_beams=num_beams)
-    return AlpaInferenceFunc(inference_func,
-                             inference_func_config,
-                             executable,
-                             transformer_config,
-                             max_target_positions=config.max_target_positions)
+    return WrappedInferenceFunc(inference_func,
+                                inference_func_config,
+                                executables[1],
+                                transformer_config)
 
 
 def set_skip_shard_args_check(attention_cache):
@@ -441,3 +436,11 @@ def set_skip_shard_args_check(attention_cache):
             for x in y:
                 if isinstance(x, alpa.device_mesh.DistributedArray):
                     x.skip_shard_args_check = True
+
+
+def pad_attention_mask(mask, max_target_positions):
+    batch_size = mask.shape[0]
+    ret_mask = np.zeros((batch_size, max_target_positions), dtype=np.bool)
+    ret_mask[:, :mask.shape[-1]] = mask
+    ret_mask = ret_mask[:, np.newaxis, np.newaxis, :]
+    return ret_mask

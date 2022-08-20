@@ -1,3 +1,4 @@
+"""OPT model implementation."""
 import dataclasses
 from dataclasses import dataclass
 from functools import partial
@@ -144,45 +145,54 @@ class OPTSelfAttention(nn.Module):
                                                            3,
                                                            axis=3)
 
+        # shape: [B, S, #head, head_dim]
         query_states = query_states.reshape(hidden_states.shape[:2] + (
             self.config.decoder_attention_heads, head_dim))
+        # shape: [B, S, #head, head_dim]
         value_states = value_states.reshape(hidden_states.shape[:2] + (
             self.config.decoder_attention_heads, head_dim))
+        # shape: [B, S, #head, head_dim]
         key_states = key_states.reshape(hidden_states.shape[:2] +
                                         (self.config.decoder_attention_heads,
                                          head_dim))
 
+        batch_size = hidden_states.shape[0]
         if attention_cache is None:
-            attention_bias = jnp.expand_dims(
-                jnp.triu(
-                    jnp.full((query_states.shape[1], key_states.shape[1]),
-                             -1e10), 1), (0, 1))
+            query_len, key_len = query_states.shape[1], key_states.shape[1]
+            assert query_len == key_len
+            # shape: [B, 1, S_max, S_max]
+            causal_mask = nn.make_causal_mask(
+                jnp.ones((batch_size, key_len)), dtype="bool")
+            # shape: [B, 1, 1, S_max]
+            input_mask = attention_mask
+            # shape: [B, 1, S_max, S_max]
+            mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
         else:
             cache_key, cache_value, cache_index = attention_cache
             cache_index_ = cache_index[0]
-            key_states = lax.dynamic_update_slice(cache_key, key_states,
-                                                  (0, cache_index_, 0, 0))
-            value_states = lax.dynamic_update_slice(cache_value, value_states,
-                                                    (0, cache_index_, 0, 0))
-            num_updated_cache_vectors = query_states.shape[1]
-            max_length = key_states.shape[1]
+            update_indices = (0, cache_index_, 0, 0)
+            # shape: [B, S_max, #head, head_dim]
+            key_states = lax.dynamic_update_slice(cache_key, key_states, update_indices)
+            # shape: [B, S_max, #head, head_dim]
+            value_states = lax.dynamic_update_slice(cache_value, value_states, update_indices)
+            query_len, key_len = query_states.shape[1], key_states.shape[1]
+            attention_cache = key_states, value_states, cache_index + query_len
 
-            # The following logic is equivalent to:
-            # attention_bias = jnp.expand_dims(
-            #     jnp.triu(jnp.full(
-            #         (num_updated_cache_vectors, max_length), -1e10), cache_index + 1), (0, 1))
-            # but "cache_index + 1" in jnp.triu results in non-static IR.
-            row_idxs = jnp.arange(num_updated_cache_vectors)
-            mask = jnp.arange(max_length) - (cache_index_ + 1)
-            attention_bias = jnp.expand_dims(
-                (row_idxs[:, None] <= mask).astype(self.dtype) * -1e10, (0, 1))
+            # shape: [B, 1, S_max, S_max]
+            causal_mask = nn.make_causal_mask(
+                jnp.ones((batch_size, key_len)), dtype="bool")
+            # shape: [B, 1, S, S_max]
+            causal_mask = lax.dynamic_slice(causal_mask,
+                (0, 0, cache_index_, 0), (batch_size, 1, query_len, key_len))
+            # shape: [B, 1, 1, S_max]
+            input_mask = attention_mask
+            # shape: [B, 1, S, S_max]
+            mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
 
-            attention_cache = key_states, value_states, cache_index + num_updated_cache_vectors
         attn_weights = nn.attention.dot_product_attention_weights(
             query_states,
             key_states,
-            mask=attention_mask,
-            bias=attention_bias,
+            mask=mask,
             dtype=self.dtype,
             precision=None,
         )
@@ -565,9 +575,11 @@ def init_cache_aval(config, batch_size):
         all_cache.append(layer_cache)
     return tuple(all_cache)
 
+
 def init_mask_aval(config, batch_size):
     mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_target_positions), dtype=np.bool)
     return mask
+
 
 def init_cache_np(config, batch_size):
     """Init cache with numpy arrays."""
@@ -678,8 +690,9 @@ def load_params_np(params, path, config, dummy=False):
 
 
 def get_jax_executable(config,
-                       support_output_attentions=False,
-                       support_output_hidden_states=False):
+                       encoder_seq_lengths,
+                       output_attentions=False,
+                       output_hidden_states=False):
     model, params = init_model_aval(config)
 
     @jax.jit
@@ -689,25 +702,23 @@ def get_jax_executable(config,
                              batch["position_ids"],
                              attention_cache=batch["cache"],
                              attention_mask=batch["mask"],
-                             output_attentions=support_output_attentions,
-                             output_hidden_states=support_output_hidden_states)
+                             output_attentions=output_attentions,
+                             output_hidden_states=output_hidden_states)
         return output
 
-    executable = inference_step
-    return executable, params
+    executables = {}
+    for length in encoder_seq_lengths:
+        executables[length] = inference_step
+    return executables, params
 
 
 def get_pipeshard_executable(config,
-                             batch_size=1,
+                             batch_size,
+                             decoding_length_per_step=1,
                              num_micro_batches=1,
-                             decoding_length_per_step=1024,
                              support_output_attentions=False,
                              support_output_hidden_states=False,
                              autoregressive=True):
-    if not autoregressive:
-        assert not isinstance(decoding_length_per_step, list), \
-            "we only support multiple executables for autoregressive!"
-
     # Init model
     model, params = init_model_aval(config)
 
@@ -810,6 +821,8 @@ def get_pipeshard_executable(config,
             executables[decoding_length] = executable
         return executables, params
     else:
+        assert not isinstance(decoding_length_per_step, list), \
+            "we only support multiple executables for autoregressive!"
 
         @alpa.parallelize(batch_argnums=(1,), method=method)
         def inference_step(params, batch):

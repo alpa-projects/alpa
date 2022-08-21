@@ -17,13 +17,20 @@ from opt_serving.service.queue import PriorityQueueRingShard
 from opt_serving.service.responses import OAIResponse
 from opt_serving.service.utils import encode_fn, build_logger
 from opt_serving.service.workers import WorkItem
-from opt_serving.service.constants import MAX_SEQ_LEN, MAX_BATCH_TOKENS, DEFAULT_PORT, TIMEOUT_MS, MAX_BS
+from opt_serving.service.constants import MAX_SEQ_LEN, MAX_BATCH_TOKENS, DEFAULT_PORT, TIMEOUT_MS, \
+    MAX_BS, NUM_BEAMS, NUM_RETURN_SEQ
 
 app = Flask(__name__, template_folder='service')
 BATCH_QUEUE = PriorityQueueRingShard()
 sampling_css = ""
 num_beams = 1
 num_return_sequences = 1
+
+# Do some check
+assert (
+    (NUM_BEAMS >= 1 and NUM_RETURN_SEQ == 1) or
+    (NUM_BEAMS == 1 and NUM_RETURN_SEQ >= 1)
+), "either beam search or sampling can be enabled, not both (currently)"
 
 logger = build_logger()
 
@@ -117,7 +124,7 @@ def batching_loop(timeout=TIMEOUT_MS, max_tokens=MAX_BATCH_TOKENS, max_bs=MAX_BS
                 continue
 
 
-def worker_main(model_name, path, port, num_beams, num_samples):
+def worker_main(model_name, path, port):
     # disable multithreading in tokenizers and torch, as different Flask threads
     # may then fight for resources.
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -129,18 +136,16 @@ def worker_main(model_name, path, port, num_beams, num_samples):
     torch.cuda.manual_seed(random.randint(1, 20000))
 
     global num_return_sequences
-    globals()['num_beams'] = num_beams
+    global num_beams
+    num_beams = NUM_BEAMS
     if num_beams > 1:
         # beam search is on, disable sampling
         global sampling_css
         sampling_css = 'display:none'
         num_return_sequences = num_beams
         do_sample = False
-    elif num_samples > 1:
-        num_return_sequences = num_samples
-        do_sample = True
     else:
-        num_return_sequences = 1
+        num_return_sequences = NUM_RETURN_SEQ
         do_sample = True
 
     generator = GeneratorInterface(model_name,
@@ -279,14 +284,5 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="alpa/opt-125m")
     parser.add_argument("--path", type=str, default="/home/ubuntu/opt_weights/")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--num_beams", type=int, default=1)
-    parser.add_argument("--num_samples", type=int, default=1)
     args = parser.parse_args()
-
-    assert (
-        (args.num_beams >= 1 and args.num_samples == 1) or
-        (args.num_beams == 1 and args.num_samples >= 1)
-    ), "either beam search or sampling can be enabled, not both (currently)"
-
-    worker_main(args.model, args.path, args.port, args.num_beams,
-                args.num_samples)
+    worker_main(args.model, args.path, args.port)

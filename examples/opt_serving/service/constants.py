@@ -6,3 +6,7 @@ TIMEOUT_MS = 2000
 DEFAULT_PORT = 20001
 LOGDIR = "weblogs"
 MAX_BS = 8
+
+# Generation-related params
+NUM_BEAMS = 1
+NUM_RETURN_SEQ = 1

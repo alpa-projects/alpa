@@ -573,7 +573,7 @@ class Generator:
             do_sample=self.sampling,
             # top_k=self.top_k,
             top_p=self.top_p,
-            beam_size=self.beam_size,
+            num_beams=self.beam_size,
             num_return_sequences=self.num_return_sequences,
             early_stopping=True,
             repetition_penalty=1.0,

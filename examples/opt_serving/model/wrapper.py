@@ -473,7 +473,7 @@ def get_model(model_name: str,
                 past_key_values = output.attention_cache
                 i += step_input_ids.shape[1]
 
-        logits_step = torch.from_numpy(np.array(output.logits)).to(torch_device)
+        logits_step = torch.from_numpy(np.array(output.logits)).to(torch_device).float32()
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)
 

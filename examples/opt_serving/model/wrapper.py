@@ -533,7 +533,10 @@ def pad_attention_mask(mask, max_target_positions):
 def download_weights(model_name, path):
     """Download weights from huggingface."""
     facebook_model_name = "facebook/" + model_name
-    print(f"Download pre-trained pytorch weights of {model_name} from huggingface ...")
+    print(f"Load the pre-trained pytorch weights of {model_name} from huggingface. "
+          f"The downloading and cpu loading can take dozens of minutes. "
+          f"If it seems to get stuck, you can monitor the progress by "
+          f"checking the memory usage of this process.")
     model = OPTForCausalLM.from_pretrained(facebook_model_name, torch_dtype=torch.float16)
 
     os.makedirs(path, exist_ok=True)

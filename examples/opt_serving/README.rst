@@ -88,20 +88,18 @@ Requirements
     pip3 install -e .
 
 
-Converting Weights Format
-=========================
+Convert Weights Format
+======================
 
 The weights of OPT 125M--66B models are publicly available. Huggingface hosts copies of these weights.
-For OPT 125M--66B, you **do not need** to download or convert the weights manually. Alpa will automatically download the weights from huggingface if it cannot find cached weights locally.
+For OPT 125M--66B, you **do not need** to download or convert the weights manually. Alpa will automatically download the weights from huggingface to the given path if Alpa cannot find cached weights locally.
 
 The weights of OPT-175B can be got from meta by filling a `request form <https://github.com/facebookresearch/metaseq/tree/main/projects/OPT>`_ .
 You then need to manually convert the obtained weights into Alpa format.
 
-.. _process-weights:
-
 Convert OPT-175B weights into Alpa formats
 ------------------------------------------
-We provide detailed instructions below on how to convert the original OPT-175B weights into Alpa-compatible formats.
+We provide detailed instructions below on how to convert the original OPT-175B weights into Alpa-compatible formats. You can skip this section if you only want to run smaller models.
 
   .. note::
 
@@ -143,6 +141,21 @@ We provide detailed instructions below on how to convert the original OPT-175B w
   .. note::
 
     The above script also requires 350GB free disk space to write the numpy-formatted weights.
+
+Converted weights for other models
+----------------------------------
+You do not need to download the weights manually for OPT 125M--66B. However, if you have trouble with the automatic downloading or huggingface. We also provide the converted weights for the following models.
+
+  * `OPT-125M weights <https://drive.google.com/file/d/1Ps7DFD80wNO7u2t39YCYcBX-9XwypGzl/view?usp=sharing>`_
+  * `OPT-2.7B weights <https://drive.google.com/file/d/1ayIaKRhxF9osZWgcFG-3vSkjcepSWdQd/view?usp=sharing>`_
+  * `OPT-30B weights <https://drive.google.com/file/d/1_MBcgwTqHFboV0JkGWR03AOHusrxcHlu/view?usp=sharing>`_
+
+Copy Weights to Multiple Nodes
+------------------------------
+If you want to run on multiple nodes, you can use one of the following methods.
+
+1. Put the weights under a shared network file system, so all nodes can access it.
+2. Run the script first on a driver node. The driver node will download the weights to its local disk, but the scripts will fail later because worker nodes cannot access the weights. You can manually copy all downloaded weights under ``path`` from the driver node to all worker nodes.
 
 
 Run and Benchmark Generation in the Command Line

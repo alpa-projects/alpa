@@ -17,6 +17,7 @@ import numpy as np
 import torch
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
 from transformers import OPTForCausalLM, GPT2LMHeadModel
+from tqdm import tqdm
 
 from opt_serving.model.opt_model import (get_opt_config,
                                          get_pipeshard_executable,
@@ -281,7 +282,13 @@ def get_model(model_name: str,
     name = model_name.split("-")[1].upper()
     path = os.path.join(path, f"{name}_np")
     if not dummy:
+        if not os.path.exists(path):
+            print(f"No such file or directory: '{path}'. Now, start to download the model.")
+            download_weights(model_name.split("/")[1], path)
+
         assert os.path.exists(path), f"No such file or directory: '{path}'"
+        embed_weight = os.path.join(path, "decoder.embed_tokens.weight")
+        assert os.path.exists(embed_weight), f"No such file or directory: '{embed_weight}'"
 
     # figure out the actual input size
     if do_sample:
@@ -516,3 +523,18 @@ def pad_attention_mask(mask, max_target_positions):
     ret_mask[:, :mask.shape[-1]] = mask
     ret_mask = ret_mask[:, np.newaxis, np.newaxis, :]
     return ret_mask
+
+
+def download_weights(model_name, path):
+    """Download weights from huggingface."""
+    facebook_model_name = "facebook/" + model_name
+    print(f"Download pre-trained pytorch weights of {model_name} from huggingface...")
+    model = OPTForCausalLM.from_pretrained(facebook_model_name, torch_dtype=torch.float16)
+
+    os.makedirs(path, exist_ok=True)
+
+    print(f"Convert the weights to alpa format under {path}")
+    for name, param in tqdm(list(model.model.named_parameters())):
+        param_path = os.path.join(path, name)
+        with open(param_path, "wb") as g:
+            np.save(param_path, param.detach().numpy())

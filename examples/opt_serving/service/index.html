@@ -71,7 +71,7 @@
         }
     };
 
-    function getFormData($form){
+    function getFormData($form) {
         var unindexed_array = $form.serializeArray();
         var indexed_array = {};
         $.map(unindexed_array, function(n, i){
@@ -159,10 +159,12 @@
             success: function (data) {
                 console.log("Response:");
                 console.log(data);
-                console.log(data["choices"][0]["text"]);
-                $("#promptDisplay").text(submitData["prompt"]);
-                $("#response").text(data["choices"][0]["text"]);
-                $("#error").text("");
+                for (let i = 0; i < data["choices"].length; ++i) {
+                  console.log(data["choices"][i]["text"]);
+                  $("#promptDisplay", "#result" + i + "-content").text(submitData["prompt"]);
+                  $("#response", "#result" + i + "-content").text(data["choices"][i]["text"]);
+                  $("#error", "#result" + i + "-content").text("");
+                }
             },
             error: function (xhr) {
                 $("#promptDisplay").text("");
@@ -175,7 +177,6 @@
     </script>
 </head>
 <style>
-
 .slick-slide {
   margin: 0px 20px;
 }
@@ -247,8 +248,7 @@
   margin-top: 32px;
 }
 
-
-#result {
+.result-block {
     white-space: pre-wrap;
     word-wrap: break-word;
     clear: both;
@@ -355,7 +355,7 @@
     <output class='col col-form-label' id="length_slider_output">64</output>
     </div>
 
-    <div class="form-group row" data-html2canvas-ignore="true">
+    <div class="form-group row" data-html2canvas-ignore="true" style="{{sampling_css}}">
         <label for="temperature_slider" class="col col-form-label text-end fw-bold">Temperature:</label>
         <div class="col my-2">
             <input type="range" value="0.7" min="0.1" max="1.0" step="0.10" class="form-range"
@@ -364,10 +364,10 @@
             <output class='col col-form-label'>0.7</output>
     </div>
 
-    <div class="form-group row" data-html2canvas-ignore="true">
+    <div class="form-group row" data-html2canvas-ignore="true" style="{{sampling_css}}">
         <label for="topp_slider" class="col col-form-label text-end fw-bold">Top-p:</label>
         <div class="col my-2">
-        <input type="range" value="0.5" min="0.0" max="1.0" step="0.10" class="form-range"
+        <input type="range" value="0.5" min="{{ '0.1' if num_return_sequences > 1 else '0.0' }}" max="1.0" step="0.1" class="form-range"
             oninput="this.parentNode.nextElementSibling.value = this.value" name="top_p" id="topp_slider">
         </div>
        <output class='col col-form-label'>0.5</output>
@@ -383,8 +383,23 @@
     </div>
 </div>
 
-<div id="result" class="form-control p-2" style="font-size: 20px"><span id="promptDisplay"></span><span id="response"></span>
-    <span id="error"></span>
+{% if num_return_sequences > 1 %}
+<ul class="nav nav-tabs" id="resultTabNav" role="tablist">
+  {%for i in range(0, num_return_sequences)%}
+  <li class="nav-item" role="presentation">
+    <button class="nav-link{{ ' active' if i == 0 else '' }}" id="result-tab{{i}}" data-bs-toggle="tab" data-bs-target="#result{{i}}" type="button" role="tab" aria-controls="result{{i}}" aria-selected="{{ 'tur' if i == 0 else 'false' }}">Result {{i+1}}</button>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+<div class="tab-content" id="resultTabContent">
+  {% for i in range(0, num_return_sequences) %}
+  <div class="tab-pane fade{{ ' show active' if i == 0 else '' }}" id="result{{i}}" role="tabpanel" aria-labelledby="result{{i}}-tab">
+    <div id="result{{i}}-content" class="result-block form-control p-2" style="font-size: 20px;"><span id="promptDisplay"></span><span id="response">
+        </span><span id="error"></span>
+    </div>
+  </div>
+  {% endfor %}
 </div>
 
 </div>

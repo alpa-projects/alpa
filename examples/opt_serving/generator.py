@@ -100,7 +100,10 @@ class GeneratorInterface:
                  model_name="alpa/opt-125m",
                  path="/home/ubuntu/opt_weights/",
                  tokenizer_name=None,
-                 add_bos_token=False):
+                 add_bos_token=False,
+                 num_beams=1,
+                 num_return_sequences=1,
+                 do_sample=False):
 
         self.model_name = model_name
         self.path = path
@@ -114,18 +117,26 @@ class GeneratorInterface:
         self.dataset_to_epoch_iter = dict()
 
         self.pad = 1
+        self.num_beams = num_beams
+        self.num_return_sequences = num_return_sequences
+        self.do_sample = do_sample
 
         self.load_model()
 
     def load_model(self):
         """Load model and return the model wrapper."""
         tic = time.time()
+        # For do_sample, assume that the user only wants sampling OR beam search, not multinomial sampling
+        # setting do_sample=False is safe because if beam_size=1, the model looks the same
         self.model_wrapper = get_model(self.model_name, self.path,
                                        torch_device="cuda",
                                        autoregressive=True,
                                        batch_size=MAX_BS,
                                        encoder_chunk_sizes=[1, 64],
-                                       max_target_positions=MAX_SEQ_LEN)
+                                       max_target_positions=MAX_SEQ_LEN,
+                                       num_beams=self.num_beams,
+                                       num_return_sequences=self.num_return_sequences,
+                                       do_sample=self.do_sample)
         load_time = time.time() - tic
 
         # Init tokenizer
@@ -210,18 +221,13 @@ class GeneratorInterface:
         total_inference_time = 0
 
         # Generator args
-        if not best_of:
-            best_of = n
-        assert best_of >= n
-        beam_size = best_of
-
-        # TODO (Hao & Yonghao): support beam search in web server
-        if beam_size > 1:
-            raise NotImplementedError("We only support beam = 1 now.")
-
         sampling_topp = top_p if top_p > 0 else -1
         sampling = top_p > 0.0
         temperature = temperature if temperature > 0 else 1.0
+
+        assert best_of == self.num_beams, "model must be instantiated and used with the same num_beams"
+        assert n == self.num_return_sequences, "model must be instantiated and used with the same num_return_sequences"
+        assert sampling == self.do_sample, "model must be instantiated and used with the same do_sample"
 
         # Resolve max sequence length from multiple sources.
         max_seq_len = self.max_sequence_len()
@@ -256,7 +262,8 @@ class GeneratorInterface:
             max_len = total_max_tokens
 
             generator_args = {
-                "beam_size": beam_size,
+                "beam_size": best_of,
+                "num_return_sequences": n,
                 "max_len": max_len,
                 "min_len": min_len,
                 "temperature": temperature,
@@ -330,12 +337,10 @@ class GeneratorInterface:
 
     def estimate_performance(self, translations, latency):
         """Report the tflops, decoding speed, and latency for decoding 32 tokens."""
-        # TODO(Hao): (1) we are still over-computing (2) support beam > 1
+        # TODO(Hao): (1) we are still over-computing
         transformer_config = self.model_wrapper.transformer_config
 
-        beam_size = len(translations[0])
-        assert beam_size == 1, "we do not support beam > 1 now."
-        batch_size = beam_size * len(translations)
+        batch_size = self.num_beams * len(translations)
         gen_len = max(t[0]["tokens"].shape[0] for t in translations)
         seq_len = transformer_config.seq_len
         H = transformer_config.H
@@ -532,6 +537,7 @@ class Generator:
     def __init__(self,
                  model_wrapper,
                  beam_size: int = 1,
+                 num_return_sequences: int = 1,
                  max_len: int = 200,
                  min_len: int = 1,
                  temperature: float = 1.0,
@@ -544,7 +550,6 @@ class Generator:
         # TODO: fix hard code
         self.vocab_size = 50272
         # Params copied from Metaseq/SequenceGenerator
-        self.beam_size = beam_size
         # the max beam size is the dictionary size - 1, since we never select pad
         self.beam_size = min(beam_size, self.vocab_size - 1)
         self.max_len = max_len
@@ -557,6 +562,8 @@ class Generator:
         self.temperature = temperature
         assert temperature > 0, "--temperature must be greater than 0"
 
+        self.num_return_sequences = num_return_sequences
+
     def generate(self, input_ids):
         output = self.model_wrapper.generate(
             input_ids=input_ids,
@@ -566,21 +573,27 @@ class Generator:
             do_sample=self.sampling,
             # top_k=self.top_k,
             top_p=self.top_p,
+            num_beams=self.beam_size,
+            num_return_sequences=self.num_return_sequences,
             early_stopping=True,
             repetition_penalty=1.0,
             no_repeat_ngram_size=8,
             # return_dict_in_generate=True
             # output_hidden_states=True
         )
-        generated_ids = output
-        retvals = [[{} for _ in range(self.beam_size)] for _ in generated_ids]
-        for g in range(generated_ids.shape[0]):
-            for beam in range(self.beam_size):
-                retvals[g][beam] = {
+        generated_ids = torch.reshape(
+            output, (input_ids.shape[0], self.num_return_sequences, -1))
+
+        retvals = [[{}
+                    for _ in range(self.num_return_sequences)]
+                   for _ in generated_ids]
+        for g in range(input_ids.shape[0]):
+            for seq in range(self.num_return_sequences):
+                retvals[g][seq] = {
                     "tokens":
-                        generated_ids[g, 1:],
+                        generated_ids[g, seq, 1:],
                     "positional_scores":
-                        torch.zeros_like(generated_ids[g, 1:],
+                        torch.zeros_like(generated_ids[g, seq, 1:],
                                          dtype=torch.float16)
                 }
         return retvals

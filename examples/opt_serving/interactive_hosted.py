@@ -9,7 +9,7 @@ import traceback
 
 import random
 import torch
-from flask import Flask, request, jsonify
+from flask import Flask, render_template, request, jsonify
 from werkzeug.exceptions import HTTPException
 
 from opt_serving.generator import GeneratorInterface
@@ -17,10 +17,20 @@ from opt_serving.service.queue import PriorityQueueRingShard
 from opt_serving.service.responses import OAIResponse
 from opt_serving.service.utils import encode_fn, build_logger
 from opt_serving.service.workers import WorkItem
-from opt_serving.service.constants import MAX_SEQ_LEN, MAX_BATCH_TOKENS, DEFAULT_PORT, TIMEOUT_MS, MAX_BS
+from opt_serving.service.constants import MAX_SEQ_LEN, MAX_BATCH_TOKENS, DEFAULT_PORT, TIMEOUT_MS, \
+    MAX_BS, NUM_BEAMS, NUM_RETURN_SEQ
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder='service')
 BATCH_QUEUE = PriorityQueueRingShard()
+sampling_css = ""
+num_beams = 1
+num_return_sequences = 1
+
+# Do some check
+assert (
+    (NUM_BEAMS >= 1 and NUM_RETURN_SEQ == 1) or
+    (NUM_BEAMS == 1 and NUM_RETURN_SEQ >= 1)
+), "either beam search or sampling can be enabled, not both (currently)"
 
 logger = build_logger()
 
@@ -125,7 +135,24 @@ def worker_main(model_name, path, port):
     torch.manual_seed(random.randint(1, 20000))
     torch.cuda.manual_seed(random.randint(1, 20000))
 
-    generator = GeneratorInterface(model_name, path)
+    global num_return_sequences
+    global num_beams
+    num_beams = NUM_BEAMS
+    if num_beams > 1:
+        # beam search is on, disable sampling
+        global sampling_css
+        sampling_css = 'display:none'
+        num_return_sequences = num_beams
+        do_sample = False
+    else:
+        num_return_sequences = NUM_RETURN_SEQ
+        do_sample = True
+
+    generator = GeneratorInterface(model_name,
+                                   path,
+                                   num_beams=num_beams,
+                                   num_return_sequences=num_return_sequences,
+                                   do_sample=do_sample)
 
     thread = threading.Thread(target=batching_loop, daemon=True)
     thread.start()
@@ -138,15 +165,13 @@ def handle_exception(e):
     if isinstance(e, HTTPException):
         return e
     # now you're handling non-HTTP exceptions only
-    response = jsonify(
-        {
-            "error": {
-                "message": str(e),
-                "type": "oops",
-                # "stacktrace": traceback.format_tb(e.__traceback__),
-            }
+    response = jsonify({
+        "error": {
+            "message": str(e),
+            "type": "oops",
+            # "stacktrace": traceback.format_tb(e.__traceback__),
         }
-    )
+    })
     if isinstance(e, ValueError):
         response.status = 400
     else:
@@ -193,20 +218,30 @@ def completions(engine=None):
         else:
             stop = [encode_fn(generator, s)[0] for s in stop]
         generation_args["stop"] = stop
-    if "temperature" in generation_args:
-        generation_args["temperature"] = round(
-            float(generation_args["temperature"]), 1)
-    else:
-        generation_args["temperature"] = 1.0
-    if "top_p" in generation_args:
-        generation_args["top_p"] = round(float(generation_args["top_p"]), 1)
-    else:
-        generation_args["top_p"] = 1.0
+
     # beam search top n
+    global num_beams
+    global num_return_sequences
+    generation_args["best_of"] = num_beams
     if "n" in generation_args:
         generation_args["n"] = int(generation_args["n"])
     else:
-        generation_args["n"] = 1
+        generation_args["n"] = num_return_sequences
+    if num_beams > 1:
+        # if beam search is enabled, disable all sampling
+        generation_args["temperature"] = 0.0
+        generation_args["top_p"] = 0.0
+    else:
+        if "temperature" in generation_args:
+            generation_args["temperature"] = round(
+                float(generation_args["temperature"]), 1)
+        else:
+            generation_args["temperature"] = 1.0
+        if "top_p" in generation_args:
+            generation_args["top_p"] = round(float(generation_args["top_p"]), 1)
+        else:
+            generation_args["top_p"] = 1.0
+
     logger.info(f"Received new request: prompt length {len(prompts[0])}, "
                 f"max_len: {generation_args.get('max_tokens', 0)}, "
                 f"temperature: {generation_args['temperature']}, "
@@ -237,9 +272,11 @@ def completions(engine=None):
 
 @app.route("/")
 def index():
-    fn = "./service/index.html"
-    with open(fn) as f:
-        return f.read()
+    global sampling_css
+    global num_return_sequences
+    return render_template('index.html',
+                           sampling_css=sampling_css,
+                           num_return_sequences=num_return_sequences)
 
 
 if __name__ == "__main__":
@@ -248,5 +285,4 @@ if __name__ == "__main__":
     parser.add_argument("--path", type=str, default="/home/ubuntu/opt_weights/")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     args = parser.parse_args()
-
     worker_main(args.model, args.path, args.port)

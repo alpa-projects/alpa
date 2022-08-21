@@ -126,7 +126,7 @@ class OPTSelfAttention(nn.Module):
                 f"multiple of `decoder_attention_heads`: {self.config.decoder_attention_heads}"
             )
 
-        self.qvk_combined = nn.Dense(
+        self.qkv_combined = nn.Dense(
             self.config.decoder_embed_dim * 3,
             dtype=self.dtype,
         )
@@ -138,10 +138,10 @@ class OPTSelfAttention(nn.Module):
                  attention_mask=None):
         head_dim = self.config.decoder_embed_dim // self.config.decoder_attention_heads
 
-        qvk_combined_states = self.qvk_combined(hidden_states)
-        qvk_combined_states = qvk_combined_states.reshape(
-            qvk_combined_states.shape[:2] + (-1, 3))
-        query_states, value_states, key_states = jnp.split(qvk_combined_states,
+        qkv_combined_states = self.qkv_combined(hidden_states)
+        qkv_combined_states = qkv_combined_states.reshape(
+            qkv_combined_states.shape[:2] + (-1, 3))
+        query_states, key_states, value_states = jnp.split(qkv_combined_states,
                                                            3,
                                                            axis=3)
 
@@ -672,15 +672,15 @@ def load_params_np(params, path, config, dummy=False):
         wk = load_array(load_prefix + "self_attn.k_proj.weight")
         wv = load_array(load_prefix + "self_attn.v_proj.weight")
         dim = wq.shape[-1]
-        w_qvk = np.concatenate([wq, wv, wk], axis=0).reshape(
+        w_qkv = np.concatenate([wq, wk, wv], axis=0).reshape(
             (3, -1, dim)).transpose([2, 1, 0]).reshape((dim, -1))
-        load_param(param_prefix + "attention.self.qvk_combined.kernel", w_qvk)
+        load_param(param_prefix + "attention.self.qkv_combined.kernel", w_qkv)
         bq = load_array(load_prefix + "self_attn.q_proj.bias")
         bk = load_array(load_prefix + "self_attn.k_proj.bias")
         bv = load_array(load_prefix + "self_attn.v_proj.bias")
-        b_qvk = np.concatenate([bq, bv, bk], axis=0).reshape(
+        b_qkv = np.concatenate([bq, bk, bv], axis=0).reshape(
             (3, dim)).transpose([1, 0]).reshape((-1,))
-        load_param(param_prefix + "attention.self.qvk_combined.bias", b_qvk)
+        load_param(param_prefix + "attention.self.qkv_combined.bias", b_qkv)
         load_param(
             param_prefix + "attention.dense.kernel",
             np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))
@@ -908,15 +908,15 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
         wk = load_array(load_prefix + "self_attn.k_proj.weight")
         wv = load_array(load_prefix + "self_attn.v_proj.weight")
         dim = wq.shape[-1]
-        w_qvk = np.concatenate([wq, wv, wk], axis=0).reshape(
+        w_qkv = np.concatenate([wq, wk, wv], axis=0).reshape(
             (3, -1, dim)).transpose([2, 1, 0]).reshape((dim, -1))
-        load_param(param_prefix + "attention.self.qvk_combined.kernel", w_qvk)
+        load_param(param_prefix + "attention.self.qkv_combined.kernel", w_qkv)
         bq = load_array(load_prefix + "self_attn.q_proj.bias")
         bk = load_array(load_prefix + "self_attn.k_proj.bias")
         bv = load_array(load_prefix + "self_attn.v_proj.bias")
-        b_qvk = np.concatenate([bq, bv, bk], axis=0).reshape(
+        b_qkv = np.concatenate([bq, bk, bv], axis=0).reshape(
             (3, dim)).transpose([1, 0]).reshape((-1,))
-        load_param(param_prefix + "attention.self.qvk_combined.bias", b_qvk)
+        load_param(param_prefix + "attention.self.qkv_combined.bias", b_qkv)
         load_param(
             param_prefix + "attention.dense.kernel",
             np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))

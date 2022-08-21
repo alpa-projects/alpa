@@ -17,6 +17,7 @@ import numpy as np
 import torch
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
 from transformers import OPTForCausalLM, GPT2LMHeadModel
+from tqdm import tqdm
 
 from opt_serving.model.opt_model import (get_opt_config,
                                          get_pipeshard_executable,
@@ -187,10 +188,12 @@ class WrappedInferenceFunc(GenerationMixin):
 
 
 def get_hf_opt_model(model_name, device, num_beams):
+    disable_torch_init()
     raw_model = OPTForCausalLM.from_pretrained(
         model_name,
         torch_dtype=torch.float16 if "cuda" in device else torch.float32)
     raw_model = raw_model.to(device)
+    restore_torch_init()
 
     def inference_func(input_ids,
                        past_key_values,
@@ -279,9 +282,20 @@ def get_model(model_name: str,
 
     # weight path
     name = model_name.split("-")[1].upper()
-    path = os.path.join(path, f"{name}_np")
+    path = os.path.abspath(os.path.expanduser(os.path.join(path, f"{name}_np")))
     if not dummy:
+        # Check the existence of weights.
+        if not os.path.exists(path):
+            if name in ["175B"]:
+                raise ValueError(f"Cannot find cached weights under '{path}'. "
+                                  "Please follow the instructions to download "
+                                  "and convert weights manually. ")
+            print(f"Cannot find cached weights under '{path}'.")
+            download_weights(model_name.split("/")[1], path)
+
         assert os.path.exists(path), f"No such file or directory: '{path}'"
+        embed_weight = os.path.join(path, "decoder.embed_tokens.weight")
+        assert os.path.exists(embed_weight), f"No such file or directory: '{embed_weight}'"
 
     # figure out the actual input size
     if do_sample:
@@ -516,3 +530,50 @@ def pad_attention_mask(mask, max_target_positions):
     ret_mask[:, :mask.shape[-1]] = mask
     ret_mask = ret_mask[:, np.newaxis, np.newaxis, :]
     return ret_mask
+
+
+def download_weights(model_name, path):
+    """Download weights from huggingface."""
+    facebook_model_name = "facebook/" + model_name
+    print(f"Load the pre-trained pytorch weights of {model_name} from huggingface. "
+          f"The downloading and cpu loading can take dozens of minutes. "
+          f"If it seems to get stuck, you can monitor the progress by "
+          f"checking the memory usage of this process.")
+
+    disable_torch_init()
+    model = OPTForCausalLM.from_pretrained(facebook_model_name, torch_dtype=torch.float16,
+                                           _fast_init=True)
+    restore_torch_init()
+
+    os.makedirs(path, exist_ok=True)
+
+    print(f"Convert the weights to alpa format under {path} ...")
+    for name, param in tqdm(list(model.model.named_parameters())):
+        name = name.replace("decoder.final_layer_norm", "decoder.layer_norm")
+        param_path = os.path.join(path, name)
+        with open(param_path, "wb") as f:
+            np.save(f, param.cpu().detach().numpy())
+
+
+global torch_linear_init_backup
+global torch_layer_norm_init_backup
+
+
+def disable_torch_init():
+    """
+    Disable the redundant torch default initialization to accelerate model creation.
+    """
+    global torch_linear_init_backup
+    global torch_layer_norm_init_backup
+
+    torch_linear_init_backup = torch.nn.Linear.reset_parameters
+    setattr(torch.nn.Linear, "reset_parameters", lambda self: None)
+
+    torch_layer_norm_init_backup = torch.nn.LayerNorm.reset_parameters
+    setattr(torch.nn.LayerNorm, "reset_parameters", lambda self: None)
+
+
+def restore_torch_init():
+    """Rollback the change made by disable_torch_init."""
+    setattr(torch.nn.Linear, "reset_parameters", torch_linear_init_backup)
+    setattr(torch.nn.LayerNorm, "reset_parameters", torch_layer_norm_init_backup)

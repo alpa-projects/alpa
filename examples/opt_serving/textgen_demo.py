@@ -8,11 +8,11 @@ import numpy as np
 tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", use_fast=False)
 tokenizer.add_bos_token = False
 
-generate_params = {"do_sample": False, "num_beams": 1, "num_return_sequences": 1}
+generate_params = {"do_sample": True, "num_beams": 1, "num_return_sequences": 1}
 
 # Load the model
 model = get_model(model_name="alpa/opt-125m",
-                  path="/home/ubuntu/opt_weights",
+                  path="~/opt_weights",
                   batch_size=4,
                   **generate_params)
 

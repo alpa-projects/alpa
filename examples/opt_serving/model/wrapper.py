@@ -1,6 +1,7 @@
 """Wrap models to make them compatible with huggingface's generator API."""
 from collections import defaultdict
 import os
+import time
 from typing import Sequence, Any
 
 import alpa
@@ -327,6 +328,8 @@ def get_model(model_name: str,
             seq_len=config.max_target_positions,
             vocab_size=config.vocab_size)
 
+        print(f" - Compile executables for encoder_seq_lengths={encoder_seq_lengths}. ", end="", flush=True)
+        tic = time.time()
         executables, params_aval = get_pipeshard_executable(
             config,
             batch_size=expand_size,
@@ -335,8 +338,11 @@ def get_model(model_name: str,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             autoregressive=autoregressive)
+        print(f"elapsed: {time.time() - tic:.2f} second.")
 
         # Load params
+        print(" - Load parameters. ", end="", flush=True)
+        tic = time.time()
         params = load_multi_executable_params_dis_array(
             path, executables, params_aval, config, dummy)
 
@@ -347,6 +353,7 @@ def get_model(model_name: str,
                                                                dummy=dummy)
             set_skip_shard_args_check(init_cache)
 
+        print(f"elapsed: {time.time() - tic:.2f} second.")
         for executable in executables.values():
             executable.sync()
 

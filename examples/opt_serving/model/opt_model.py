@@ -774,7 +774,6 @@ def get_pipeshard_executable(config: OPTConfig,
         cache = init_cache_aval(config, batch_size)
         mask = init_mask_aval(config, batch_size)
 
-        print(f"Compiling executable(s) for encoding lengths {encoder_seq_lengths}")
         executables = {}
 
         # Compile an executable with sequence length 1
@@ -800,11 +799,7 @@ def get_pipeshard_executable(config: OPTConfig,
             pipeline_schedule="inference",
             layer_option="manual",
             default_auto_sharding_option=alpa.AutoShardingOption(
-                # Force operator model parallel
-                force_batch_dim_to_mesh_dim=None if batch_size == 1 else 0,
-                # Disabling all-to-all and all-gather generates better intra-op strategies.
-                allow_all_to_all=False,
-                allow_all_gather=False,
+                enable_auto_sharding=False,
             ),
             stage_input_shardings=executable.stage_input_shard_specs)
 

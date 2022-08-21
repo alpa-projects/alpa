@@ -3,9 +3,7 @@ Serving OPT-175B using Alpa
 ===========================
 
 This tutorial shows how to setup a serving system to serve the largest available pretrained language model `OPT-175B <https://github.com/facebookresearch/metaseq/tree/main/projects/OPT>`_.
-
-This tutorial is best to be read in its rendered version on the `Alpa documentation page <https://alpa-projects.github.io/tutorials/opt_serving.html>`_.
-
+You can also try a live demo at `Alpa-OPT Demo <https://opt.alpa.ai>`_.
 
 Overview
 ========
@@ -218,10 +216,10 @@ Launch the web server:
 
 .. code:: shell
 
-  # Serve the OPT-175B model at port 10001
-  python3 interactive_hosted.py --model alpa/opt-175b --port 10001 --path [PATH_TO_WEIGHT]
+  # Serve the OPT-175B model at port 20001
+  python3 interactive_hosted.py --model alpa/opt-175b --port 20001 --path [PATH_TO_WEIGHT]
 
-Then open ``https://[IP-ADDRESS]:10001`` in your browser to try out the model!
+Then open ``https://[IP-ADDRESS]:20001`` in your browser to try out the model!
 
 Code structure
 ==============

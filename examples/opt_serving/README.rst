@@ -48,8 +48,7 @@ Use huggingface/transformers interface and Alpa backend for distributed inferenc
   tokenizer.add_bos_token = False
 
   # Load the model. Alpa automatically downloads the weights to the specificed path
-  model = get_model(model_name="alpa/opt-2.7b",
-                    path="/home/ubuntu/opt_weights/")
+  model = get_model(model_name="alpa/opt-2.7b", path="~/opt_weights/")
 
   # Generate
   prompt = "Paris is the capital city of"
@@ -155,7 +154,8 @@ Copy Weights to Multiple Nodes
 If you want to run on multiple nodes, you can use one of the following methods.
 
 1. Put the weights under a shared network file system, so all nodes can access it.
-2. Run the script first on a driver node. The driver node will download the weights to its local disk, but the scripts will fail later because worker nodes cannot access the weights. You can manually copy all downloaded weights under ``path`` from the driver node to all worker nodes.
+2. Run the script first on a driver node. The driver node will download the weights to its local disk, but the script will fail later because worker nodes cannot access the weights.
+   You can then manually copy all downloaded weights under ``path`` from the driver node to all worker nodes.
 
 
 Run and Benchmark Generation in the Command Line
@@ -175,7 +175,7 @@ The code of this tutorial is under `examples/opt_serving <https://github.com/alp
 
   .. code:: shell
 
-    python3 benchmark_text_gen.py --model jax/opt-125m --path [PATH_TO_WEIGHT] --debug
+    python3 benchmark_text_gen.py --model jax/opt-125m --debug
 
 
 - Run model-parallel generation using the 2.7B model with Alpa on multiple GPUs:
@@ -185,7 +185,7 @@ The code of this tutorial is under `examples/opt_serving <https://github.com/alp
     # Start ray on the node
     ray start --head
 
-    python3 benchmark_text_gen.py --model alpa/opt-2.7b --path [PATH_TO_WEIGHT] --debug
+    python3 benchmark_text_gen.py --model alpa/opt-2.7b --debug
 
 
 - Run distributed generation using the 175B model with Alpa on a cluster of GPU nodes.
@@ -195,7 +195,7 @@ The code of this tutorial is under `examples/opt_serving <https://github.com/alp
 
   .. code:: shell
 
-    python3 benchmark_text_gen.py --model alpa/opt-175b --path [PATH_TO_WEIGHT] --debug
+    python3 benchmark_text_gen.py --model alpa/opt-175b --debug
 
 Launch a Web Server to Serve the OPT Models
 ===========================================
@@ -205,7 +205,7 @@ Launch the web server:
 .. code:: shell
 
   # Serve the OPT-175B model at port 20001
-  python3 interactive_hosted.py --model alpa/opt-175b --port 20001 --path [PATH_TO_WEIGHT]
+  python3 interactive_hosted.py --model alpa/opt-175b --port 20001
 
 Then open ``https://[IP-ADDRESS]:20001`` in your browser to try out the model!
 

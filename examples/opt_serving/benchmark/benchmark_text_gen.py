@@ -44,7 +44,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="alpa/opt-125m")
     parser.add_argument("--torch-device", type=str)
-    parser.add_argument("--path", type=str, default="/home/ubuntu/opt_weights/")
+    parser.add_argument("--path", type=str, default="~/opt_weights/")
     parser.add_argument("--dummy", action="store_true")
     parser.add_argument("--forward", action="store_true")
     parser.add_argument("--forward-encoder-length", type=int, default=1024)

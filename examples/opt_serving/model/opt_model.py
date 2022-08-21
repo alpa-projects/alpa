@@ -508,6 +508,17 @@ def get_opt_config(name, **kwargs):
             decoder_ffn_embed_dim=768 * 4,
             version=3,
         )
+    elif name == "350M":
+        config = OPTConfig(
+            max_target_positions=2048,
+            decoder_layers=24,
+            decoder_attention_heads=16,
+            decoder_embed_dim=1024,
+            decoder_input_dim=1024,
+            decoder_ffn_embed_dim=1024 * 4,
+            version=2,
+        )
+        raise NotImplementedError()
     elif name == "2.7B":
         config = OPTConfig(
             max_target_positions=2048,
@@ -538,6 +549,16 @@ def get_opt_config(name, **kwargs):
             decoder_ffn_embed_dim=7168 * 4,
             version=3,
         )
+    elif name == "66B":
+        config = OPTConfig(
+            max_target_positions=2048,
+            decoder_layers=64,
+            decoder_attention_heads=72,
+            decoder_embed_dim=9216,
+            decoder_input_dim=9216,
+            decoder_ffn_embed_dim=9216 * 4,
+            version=3,
+        )
     elif name == "175B":
         config = OPTConfig(
             max_target_positions=2048,
@@ -549,7 +570,7 @@ def get_opt_config(name, **kwargs):
             version=3,
         )
     else:
-        raise ValueError()
+        raise ValueError(f"Invalid model name: {name}")
 
     return dataclasses.replace(config, **kwargs)
 
@@ -870,7 +891,8 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
                 continue
 
             if not is_position_embedding:
-                assert shapes[i][j] == loaded_array.shape
+                assert shapes[i][j] == loaded_array.shape, (
+                    f"{shapes[i][j]} vs. {loaded_array.shape}")
             else:
                 if shapes[i][j] != loaded_array.shape:
                     assert shapes[i][j][1] == loaded_array.shape[1]

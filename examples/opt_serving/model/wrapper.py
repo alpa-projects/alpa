@@ -280,7 +280,7 @@ def get_model(model_name: str,
 
     # weight path
     name = model_name.split("-")[1].upper()
-    path = os.path.join(path, f"{name}_np")
+    path = os.path.abspath(os.path.expanduser(os.path.join(path, f"{name}_np")))
     if not dummy:
         # Check the existence of weights.
         if not os.path.exists(path):

@@ -282,8 +282,13 @@ def get_model(model_name: str,
     name = model_name.split("-")[1].upper()
     path = os.path.join(path, f"{name}_np")
     if not dummy:
+        # Check the existence of weights.
         if not os.path.exists(path):
-            print(f"No such file or directory: '{path}'. Now, start to download the model.")
+            if "175B" in path:
+                raise ValueError(f"Cannot find cached weights under '{path}'. "
+                                  "Please follow the instructions to download "
+                                  "and convert weights manually. ")
+            print(f"Cannot find cached weights under '{path}'.")
             download_weights(model_name.split("/")[1], path)
 
         assert os.path.exists(path), f"No such file or directory: '{path}'"
@@ -528,13 +533,14 @@ def pad_attention_mask(mask, max_target_positions):
 def download_weights(model_name, path):
     """Download weights from huggingface."""
     facebook_model_name = "facebook/" + model_name
-    print(f"Download pre-trained pytorch weights of {model_name} from huggingface...")
+    print(f"Download pre-trained pytorch weights of {model_name} from huggingface ...")
     model = OPTForCausalLM.from_pretrained(facebook_model_name, torch_dtype=torch.float16)
 
     os.makedirs(path, exist_ok=True)
 
-    print(f"Convert the weights to alpa format under {path}")
+    print(f"Convert the weights to alpa format under {path} ...")
     for name, param in tqdm(list(model.model.named_parameters())):
+        name = name.replace("decoder.final_layer_norm", "decoder.layer_norm")
         param_path = os.path.join(path, name)
-        with open(param_path, "wb") as g:
-            np.save(param_path, param.detach().numpy())
+        with open(param_path, "wb") as f:
+            np.save(f, param.cpu().detach().numpy())

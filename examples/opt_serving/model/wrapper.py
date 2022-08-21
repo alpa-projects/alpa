@@ -372,6 +372,8 @@ def get_model(model_name: str,
                        attention_mask,
                        output_attentions,
                        output_hidden_states):
+        assert input_ids.shape[0] == expand_size, (
+            f"Expect batch size = {expand_size}, but got {input_ids.shape[0]}")
         input_ids = input_ids.cpu().numpy()
         attention_mask = attention_mask.cpu().numpy()
 

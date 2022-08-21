@@ -49,13 +49,12 @@ Use huggingface/transformers interface and Alpa backend for distributed inferenc
 
   # Load the model
   model = get_model(model_name="alpa/opt-2.7b",
-                    device="cuda",
                     path="/home/ubuntu/opt_weights/")
 
   # Generate
   prompt = "Paris is the capital city of"
 
-  input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to("cuda")
+  input_ids = tokenizer(prompt, return_tensors="pt").input_ids
   output = model.generate(input_ids=input_ids, max_length=256, do_sample=True)
   generated_string = tokenizer.batch_decode(output, skip_special_tokens=True)
 
@@ -221,7 +220,19 @@ Launch the web server:
 
 Then open ``https://[IP-ADDRESS]:20001`` in your browser to try out the model!
 
-Code structure
+Improving Generation Speed
+==========================
+Here are some tips for improving the generation speed.
+
+1. Batching. Single sequence generation cannot fully utilize the GPU power.
+   Applying batching can greatly boost the performace. See ``textgen_demo.py`` for the usage.
+2. Tune the ``encoder_chunk_sizes`` argument of ``get_model``.
+   Alpa compiles multiple executables and uses these executables to encode a prompt chunk by chunk. This argument controls the possible chunk sizes. Depending on the length of your prompt, you can try different combinations. For example, if your prompt lengths are around 1000-1500, a good combination is ``[1, 256, 1024]``.
+3. Tune parallelization strategy. If you are familiar with alpa, you can tune the ``method`` argument of ``alpa.parallelize`` and try different parallelization methods.
+
+If you find the generation speed too slow and want to accelerate it, please join `Alpa slack <https://forms.gle/YEZTCrtZD6EAVNBQ7>`_ and tell us your use cases. We are acitvely working on improving the performance.
+
+Code Structure
 ==============
 
 * `examples/opt_serving/benchmark <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/benchmark>`_: Benchmark scripts for generation in the command line.

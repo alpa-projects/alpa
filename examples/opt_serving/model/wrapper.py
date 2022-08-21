@@ -2,7 +2,7 @@
 from collections import defaultdict
 import os
 import time
-from typing import Sequence, Any
+from typing import Sequence, Any, Optional
 
 import alpa
 from alpa.device_mesh import DistributedArray
@@ -219,18 +219,19 @@ def get_hf_opt_model(model_name, device, num_beams):
 
 
 def get_model(model_name: str,
-              device: str,
               # Weights
               path: str,
               dummy: bool = False,
-              # Model parameters
-              autoregressive: bool = True,
-              dtype=jnp.float16,
               # Batch size and seq length
               batch_size: int = 1,
               num_micro_batches: int = 1,
               max_target_positions: int = 2048,
-              encoder_seq_lengths: Sequence[int] = [1],
+              encoder_chunk_sizes: Sequence[int] = (1, 64),
+              num_pp_stages: Optional[int] = None,
+              # Model parameters
+              autoregressive: bool = True,
+              dtype=jnp.float16,
+              torch_device: str = "cpu",
               # Shared arguments with model.generate
               do_sample: bool = False,
               num_beams: int = 1,
@@ -242,12 +243,21 @@ def get_model(model_name: str,
 
     Args:
         model_name: "facebook/opt-", or "alpa/opt-".
-        device: "cpu" or "gpu". This only controls the device used
-          by pytorch. Alpa always runs on GPU.
         path: The path to opt weights.
         dummy: Use dummy weights for faster debugging.
-        encoder_seq_lengths: compile mutliple executables for multiple
-          encoder sequence lengths.
+        batch_size: The batch size.
+        num_micro_batches: The number of micro batch sizs in pipeline
+          parallelism.
+        max_target_positions: The max sequence length.
+        encoder_chunk_sizes: Compile mutliple executables with different
+          chunk sizes. These executables are used to encoding prompts
+          chunk by chunk.
+        num_pp_stages: The number of pipeline parallelism stages.
+        autoregressive: Whether to run the model for autoregressive generation.
+        dtype: The type of parameters.
+        torch_device: "cpu" or "gpu". This only controls the device used
+          by pytorch. Alpa always runs on GPU.
+        other parameters: shared with huggingface's model.generate API.
     """
     if not model_name.startswith("alpa") and not autoregressive:
         raise NotImplementedError(
@@ -257,14 +267,15 @@ def get_model(model_name: str,
             f"Cannot support num_micro_batches > 1 in autoregressive mode.")
 
     if "facebook/opt" in model_name:
-        return get_hf_opt_model(model_name, device, num_beams)
+        return get_hf_opt_model(model_name, torch_device, num_beams)
 
     assert ("jax/opt" in model_name or "alpa/opt" in model_name)
     assert return_dict_in_generate
 
-    if autoregressive and 1 not in encoder_seq_lengths:
-        encoder_seq_lengths += [1]
-    encoder_seq_lengths.sort()
+    if autoregressive and 1 not in encoder_chunk_sizes:
+        encoder_chunk_sizes += [1]
+    encoder_chunk_sizes = list(set(encoder_chunk_sizes))
+    encoder_chunk_sizes.sort()
 
     # weight path
     name = model_name.split("-")[1].upper()
@@ -296,7 +307,7 @@ def get_model(model_name: str,
             vocab_size=config.vocab_size)
 
         executables, params_aval = get_jax_executable(
-            config, encoder_seq_lengths,
+            config, encoder_chunk_sizes,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states)
 
@@ -314,9 +325,10 @@ def get_model(model_name: str,
             f"Load model {model_name} ... (This can take several minutes for very large models)"
         )
 
-        num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
-        num_pp_stages = min(num_pp_stages,
-                            alpa.get_global_cluster().num_devices)
+        if num_pp_stages is None:
+            num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
+            num_pp_stages = min(num_pp_stages,
+                                alpa.get_global_cluster().num_devices)
         config = get_opt_config(name,
                                 num_pp_stages=num_pp_stages,
                                 dtype=dtype,
@@ -328,13 +340,13 @@ def get_model(model_name: str,
             seq_len=config.max_target_positions,
             vocab_size=config.vocab_size)
 
-        print(f" - Compile executables for encoder_seq_lengths={encoder_seq_lengths}. ", end="", flush=True)
+        print(f" - Compile executables for encoder_chunk_sizes={encoder_chunk_sizes}. ", end="", flush=True)
         tic = time.time()
         executables, params_aval = get_pipeshard_executable(
             config,
             batch_size=expand_size,
             num_micro_batches=num_micro_batches,
-            encoder_seq_lengths=encoder_seq_lengths,
+            encoder_chunk_sizes=encoder_chunk_sizes,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             autoregressive=autoregressive)
@@ -353,9 +365,9 @@ def get_model(model_name: str,
                                                                dummy=dummy)
             set_skip_shard_args_check(init_cache)
 
-        print(f"elapsed: {time.time() - tic:.2f} second.")
         for executable in executables.values():
             executable.sync()
+        print(f"elapsed: {time.time() - tic:.2f} second.")
 
         # return executable directly if not autoregressive
         if not autoregressive:
@@ -372,6 +384,8 @@ def get_model(model_name: str,
                        attention_mask,
                        output_attentions,
                        output_hidden_states):
+        assert input_ids.shape[0] == expand_size, (
+            f"Expect batch size = {expand_size}, but got {input_ids.shape[0]}")
         input_ids = input_ids.cpu().numpy()
         attention_mask = attention_mask.cpu().numpy()
 
@@ -433,7 +447,7 @@ def get_model(model_name: str,
             i = 0
             while i < seq_len:
                 remaining = seq_len - i
-                step_len = get_padded_step_len(remaining, encoder_seq_lengths)
+                step_len = get_padded_step_len(remaining, encoder_chunk_sizes)
 
                 step_input_ids = input_ids[:, i:i + step_len]
                 step_attention_mask = (
@@ -459,7 +473,7 @@ def get_model(model_name: str,
                 past_key_values = output.attention_cache
                 i += step_input_ids.shape[1]
 
-        logits_step = torch.from_numpy(np.array(output.logits)).to(device)
+        logits_step = torch.from_numpy(np.array(output.logits)).to(torch_device).float()
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)
 
@@ -470,13 +484,13 @@ def get_model(model_name: str,
                                 transformer_config)
 
 
-def get_padded_step_len(length, encoder_seq_lengths):
-    """For a given length, find the smallest value in encoder_seq_lengths that
+def get_padded_step_len(length, encoder_chunk_sizes):
+    """For a given length, find the smallest value in encoder_chunk_sizes that
     is greater than the given length."""
-    for i in range(len(encoder_seq_lengths)):
-        if encoder_seq_lengths[i] >= length:
+    for i in range(len(encoder_chunk_sizes)):
+        if encoder_chunk_sizes[i] >= length:
             break
-    return encoder_seq_lengths[i]
+    return encoder_chunk_sizes[i]
 
 
 def set_skip_shard_args_check(attention_cache):

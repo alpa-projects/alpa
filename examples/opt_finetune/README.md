@@ -46,7 +46,7 @@ python3 run_clm_flax.py \
     --learning_rate="5e-4" --warmup_steps="2000" \
     --adam_beta1="0.9" --adam_beta2="0.98" --weight_decay="0.01" \
     --overwrite_output_dir \
-    --num_train_epochs="20" \
+    --num_train_epochs="8" \
     --logging_steps="16" \
     --save_steps="2500" \
     --eval_steps="2500"

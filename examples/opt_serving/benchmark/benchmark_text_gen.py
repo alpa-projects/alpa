@@ -1,17 +1,17 @@
-"""Benchmark generation performance.
+"""benchmark generation performance.
 
 Usages:
 1. benchmark huggingface torch-based OPT generation:
-python benchmark_text_gen.py --model facebook/opt-125m --debug
+python3 benchmark_text_gen.py --model facebook/opt-125m --debug
 
 2. benchmark jax.jit based OPT generation without alpa, on a single GPU:
-python benchmark_text_gen.py --model jax/opt-125m --debug
+python3 benchmark_text_gen.py --model jax/opt-125m --debug
 
 3. benchmark alpa parallelized OPT generation:
-python benchmark_text_gen.py --model alpa/opt-2.7b --debug
+python3 benchmark_text_gen.py --model alpa/opt-2.7b --debug
 
 4. benchmark alpa parallelized OPT forward computation, batch_size, encoder length, and #micro_batches can be configured.
-python benchmark_text_gen.py --model alpa/opt-2.7b --forward
+python3 benchmark_text_gen.py --model alpa/opt-2.7b --forward
     --forward-encoder-length 1024 --nb 1 --batch-size 256 --debug
 """
 import argparse
@@ -43,12 +43,11 @@ test_prompts = [
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="alpa/opt-125m")
-    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--torch-device", type=str)
     parser.add_argument("--path", type=str, default="/home/ubuntu/opt_weights/")
     parser.add_argument("--dummy", action="store_true")
     parser.add_argument("--forward", action="store_true")
     parser.add_argument("--forward-encoder-length", type=int, default=1024)
-    parser.add_argument("--multi-executable", action="store_true")
     parser.add_argument("--nb", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--n-warmup", type=int, default=1)
@@ -61,29 +60,30 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Some global params
-    n_warmup = args.n_warmup
-    n_iters = args.n_iter
-    max_length = args.max_length
     global_config.pipeline_sync_for_timer = True
     global_config.shard_parallel_sync_for_timer = True
 
-    # Note(Hao): we need to use "opt-30b" and disable "add_bos_token".
-    tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b",
-                                              use_fast=False)
-    tokenizer.add_bos_token = False
-
     # Do some param check
+    n_warmup = args.n_warmup
+    n_iters = args.n_iter
+    max_length = args.max_length
     num_micro_batches = args.nb
     batch_size = args.batch_size
     num_beams = args.num_beams
-    multi_executable = args.multi_executable
     autoregressive = not args.forward
     dtype = jnp.float16 if args.dtype == "fp16" else jnp.float32
 
     if autoregressive:
         assert num_micro_batches == 1, "we only support num_micro_batches=1 for autoregressive!"
+
+    if args.torch_device:
+        torch_device = args.torch_device
     else:
-        assert not multi_executable, "multi_executable in forward-only mode is not allowed!"
+        if "alpa" in args.model or "jax" in args.model:
+            # alpa/jax prefer cpu backend of pytorch to avoid memory conflict
+            torch_device = "cpu"
+        else:
+            torch_device = "cuda"
 
     decode_speeds = []
     tflopss = []
@@ -93,19 +93,19 @@ if __name__ == "__main__":
         # Increase the frequency of deleting buffers to avoid OOM.
         global_config.delete_remote_arrays_threshold = 1
         seq_len = args.forward_encoder_length
-        encoder_seq_lengths = [seq_len]
+        encoder_chunk_sizes = [seq_len]
 
         tic = time.time()
         model, params, transformer_config = get_model(
             args.model,
-            args.device,
-            args.path,
+            path=args.path,
+            torch_device=torch_device,
             dummy=args.dummy,
             autoregressive=autoregressive,
             max_target_positions=seq_len,
             dtype=dtype,
             batch_size=batch_size,
-            encoder_seq_lengths=encoder_seq_lengths,
+            encoder_chunk_sizes=encoder_chunk_sizes,
             num_micro_batches=num_micro_batches)
         load_time = time.time() - tic
 
@@ -169,25 +169,26 @@ if __name__ == "__main__":
             tflopss.append(tflops)
             compute_tflopss.append(compute_tflops)
     else: # Generation mode
-        if multi_executable:
-            encoder_seq_lengths = [1, 256]
-        else:
-            encoder_seq_lengths = [1]
-
+        encoder_chunk_sizes = (1, 64)
         generate_args = {
             "do_sample": False,
             "num_beams": num_beams,
             "return_dict_in_generate": True
         }
 
+        # Note(Hao): we need to use "opt-30b" and disable "add_bos_token".
+        tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b",
+                                                  use_fast=False)
+        tokenizer.add_bos_token = False
+
         tic = time.time()
         model = get_model(args.model,
-                          args.device,
                           args.path,
+                          torch_device=torch_device,
                           dummy=args.dummy,
                           autoregressive=autoregressive,
                           dtype=dtype,
-                          encoder_seq_lengths=encoder_seq_lengths,
+                          encoder_chunk_sizes=encoder_chunk_sizes,
                           **generate_args)
         load_time = time.time() - tic
 
@@ -208,10 +209,10 @@ if __name__ == "__main__":
                 input_ids = tokenizer(prompt,
                                       padding="max_length",
                                       max_length=args.pad_to_max_length,
-                                      return_tensors="pt").input_ids.to(args.device)
+                                      return_tensors="pt").input_ids.to(torch_device)
             else:
                 input_ids = tokenizer(prompt,
-                                      return_tensors="pt").input_ids.to(args.device)
+                                      return_tensors="pt").input_ids.to(torch_device)
 
             # Warm up
             for _ in range(n_warmup):
@@ -260,14 +261,14 @@ if __name__ == "__main__":
     num_pp_stages = 2
 
     heads = [
-        "Model", "Device", "Dummy", "Load (s)", "Autoregressive", "Batchsize",
-        "#Microbatches", "#Beams", "#Stages", "Encoder seq length", "TFlops",
+        "Model", "Torch device", "Dummy", "Load (s)", "Autoregressive", "Batch size",
+        "#Microbatches", "#Beams", "#Stages", "Encoder chunk sizes", "TFlops",
         "Compute TFlops", "Speed (token/s)", "latency (32 token)"
     ]
     values = [
-        args.model, args.device, args.dummy, f"{load_time:.2f}",
+        args.model, torch_device, args.dummy, f"{load_time:.2f}",
         f"{autoregressive}", f"{batch_size}", f"{num_micro_batches}",
-        f"{num_beams}", f"{num_pp_stages}", f"{encoder_seq_lengths}",
+        f"{num_beams}", f"{num_pp_stages}", f"{encoder_chunk_sizes}",
         f"{avg_tflops:.4f}", f"{avg_compute_tflops:.4f}", f"{avg_speed:.2f}",
         f"{latency_32_tokens:.2f}"
     ]

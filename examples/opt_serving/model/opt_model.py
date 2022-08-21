@@ -708,7 +708,7 @@ def load_params_np(params, path, config, dummy=False):
 
 
 def get_jax_executable(config: OPTConfig,
-                       encoder_seq_lengths: Sequence[int],
+                       encoder_chunk_sizes: Sequence[int],
                        output_attentions: bool = False,
                        output_hidden_states:bool = False):
     """Get a single-gpu executable."""
@@ -726,14 +726,14 @@ def get_jax_executable(config: OPTConfig,
         return output
 
     executables = {}
-    for length in encoder_seq_lengths:
+    for length in encoder_chunk_sizes:
         executables[length] = inference_step
     return executables, params
 
 
 def get_pipeshard_executable(config: OPTConfig,
                              batch_size: int,
-                             encoder_seq_lengths: Sequence[int],
+                             encoder_chunk_sizes: Sequence[int],
                              num_micro_batches: int = 1,
                              output_attentions: bool = False,
                              output_hidden_states: bool = False,
@@ -804,7 +804,7 @@ def get_pipeshard_executable(config: OPTConfig,
             stage_input_shardings=executable.stage_input_shard_specs)
 
         # Compile other executables
-        for seq_len in encoder_seq_lengths:
+        for seq_len in encoder_chunk_sizes:
             executable = alpa.parallelize(
                 inference_step_with_cache,
                 batch_argnums=(1,),
@@ -825,8 +825,8 @@ def get_pipeshard_executable(config: OPTConfig,
             executables[seq_len] = executable
         return executables, params
     else:
-        assert len(encoder_seq_lengths) == 1
-        seq_len = encoder_seq_lengths[0]
+        assert len(encoder_chunk_sizes) == 1
+        seq_len = encoder_chunk_sizes[0]
 
         @alpa.parallelize(batch_argnums=(1,), method=method)
         def inference_step(params, batch):

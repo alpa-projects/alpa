@@ -12,10 +12,8 @@ generate_params = {"do_sample": False, "num_beams": 1, "num_return_sequences": 1
 
 # Load the model
 model = get_model(model_name="alpa/opt-125m",
-                  device="cuda",
                   path="/home/ubuntu/opt_weights",
                   batch_size=4,
-                  max_target_positions=512,
                   **generate_params)
 
 # Generate
@@ -25,7 +23,7 @@ prompts = [
     "Computer Science studies the area of",
     "University of California Berkeley is a public university"
 ]
-input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids.to("cuda")
+input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
 output_ids = model.generate(input_ids=input_ids,
                             max_length=64,
                             **generate_params)

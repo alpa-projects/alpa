@@ -49,13 +49,12 @@ Use huggingface/transformers interface and Alpa backend for distributed inferenc
 
   # Load the model
   model = get_model(model_name="alpa/opt-2.7b",
-                    device="cuda",
                     path="/home/ubuntu/opt_weights/")
 
   # Generate
   prompt = "Paris is the capital city of"
 
-  input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to("cuda")
+  input_ids = tokenizer(prompt, return_tensors="pt").input_ids
   output = model.generate(input_ids=input_ids, max_length=256, do_sample=True)
   generated_string = tokenizer.batch_decode(output, skip_special_tokens=True)
 

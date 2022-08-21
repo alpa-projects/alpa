@@ -500,73 +500,51 @@ class OPTForLMModule(nn.Module):
 def get_opt_config(name, **kwargs):
     if name == "125M":
         config = OPTConfig(
-            max_target_positions=2048,
-            decoder_layers=12,
-            decoder_attention_heads=12,
-            decoder_embed_dim=768,
-            decoder_input_dim=768,
-            decoder_ffn_embed_dim=768 * 4,
+            max_target_positions=2048, decoder_layers=12, decoder_attention_heads=12,
+            decoder_embed_dim=768, decoder_input_dim=768, decoder_ffn_embed_dim=768 * 4,
             version=3,
         )
     elif name == "350M":
         config = OPTConfig(
-            max_target_positions=2048,
-            decoder_layers=24,
-            decoder_attention_heads=16,
-            decoder_embed_dim=1024,
-            decoder_input_dim=1024,
-            decoder_ffn_embed_dim=1024 * 4,
+            max_target_positions=2048, decoder_layers=24, decoder_attention_heads=16,
+            decoder_embed_dim=1024, decoder_input_dim=1024, decoder_ffn_embed_dim=1024 * 4,
             version=2,
         )
         raise NotImplementedError()
+    elif name == "1.3B":
+        config = OPTConfig(
+            max_target_positions=2048, decoder_layers=24, decoder_attention_heads=32,
+            decoder_embed_dim=2048, decoder_input_dim=2048, decoder_ffn_embed_dim=2048 * 4,
+            version=3,
+        )
     elif name == "2.7B":
         config = OPTConfig(
-            max_target_positions=2048,
-            decoder_layers=32,
-            decoder_attention_heads=32,
-            decoder_embed_dim=2560,
-            decoder_input_dim=2560,
-            decoder_ffn_embed_dim=2560 * 4,
+            max_target_positions=2048, decoder_layers=32, decoder_attention_heads=32,
+            decoder_embed_dim=2560, decoder_input_dim=2560, decoder_ffn_embed_dim=2560 * 4,
             version=3,
         )
     elif name == "6.7B":
         config = OPTConfig(
-            max_target_positions=2048,
-            decoder_layers=32,
-            decoder_attention_heads=32,
-            decoder_embed_dim=4096,
-            decoder_input_dim=4096,
-            decoder_ffn_embed_dim=4096 * 4,
+            max_target_positions=2048, decoder_layers=32, decoder_attention_heads=32,
+            decoder_embed_dim=4096, decoder_input_dim=4096, decoder_ffn_embed_dim=4096 * 4,
             version=3,
         )
     elif name == "30B":
         config = OPTConfig(
-            max_target_positions=2048,
-            decoder_layers=48,
-            decoder_attention_heads=56,
-            decoder_embed_dim=7168,
-            decoder_input_dim=7168,
-            decoder_ffn_embed_dim=7168 * 4,
+            max_target_positions=2048, decoder_layers=48, decoder_attention_heads=56,
+            decoder_embed_dim=7168, decoder_input_dim=7168, decoder_ffn_embed_dim=7168 * 4,
             version=3,
         )
     elif name == "66B":
         config = OPTConfig(
-            max_target_positions=2048,
-            decoder_layers=64,
-            decoder_attention_heads=72,
-            decoder_embed_dim=9216,
-            decoder_input_dim=9216,
-            decoder_ffn_embed_dim=9216 * 4,
+            max_target_positions=2048, decoder_layers=64, decoder_attention_heads=72,
+            decoder_embed_dim=9216, decoder_input_dim=9216, decoder_ffn_embed_dim=9216 * 4,
             version=3,
         )
     elif name == "175B":
         config = OPTConfig(
-            max_target_positions=2048,
-            decoder_layers=96,
-            decoder_attention_heads=96,
-            decoder_embed_dim=12288,
-            decoder_input_dim=12288,
-            decoder_ffn_embed_dim=12288 * 4,
+            max_target_positions=2048, decoder_layers=96, decoder_attention_heads=96,
+            decoder_embed_dim=12288, decoder_input_dim=12288, decoder_ffn_embed_dim=12288 * 4,
             version=3,
         )
     else:

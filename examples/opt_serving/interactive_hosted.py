@@ -282,7 +282,7 @@ def index():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="alpa/opt-125m")
-    parser.add_argument("--path", type=str, default="/home/ubuntu/opt_weights/")
+    parser.add_argument("--path", type=str, default="~/opt_weights/")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     args = parser.parse_args()
     worker_main(args.model, args.path, args.port)

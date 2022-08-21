@@ -97,8 +97,9 @@ class GeneratorInterface:
     """Alpa generator interface."""
 
     def __init__(self,
-                 model_name="alpa/opt-125m",
-                 path="/home/ubuntu/opt_weights/",
+                 model_name,
+                 path,
+                 torch_device="cpu",
                  tokenizer_name=None,
                  add_bos_token=False,
                  num_beams=1,
@@ -121,6 +122,7 @@ class GeneratorInterface:
         self.num_return_sequences = num_return_sequences
         self.do_sample = do_sample
 
+        self.torch_device = torch_device
         self.load_model()
 
     def load_model(self):
@@ -129,7 +131,7 @@ class GeneratorInterface:
         # For do_sample, assume that the user only wants sampling OR beam search, not multinomial sampling
         # setting do_sample=False is safe because if beam_size=1, the model looks the same
         self.model_wrapper = get_model(self.model_name, self.path,
-                                       torch_device="cuda",
+                                       torch_device=self.torch_device,
                                        autoregressive=True,
                                        batch_size=MAX_BS,
                                        encoder_chunk_sizes=[1, 64],
@@ -164,7 +166,6 @@ class GeneratorInterface:
         echo: bool = False,
         stop: Optional[List[int]] = None,
         seed: Optional[int] = None,
-        use_cuda: bool = True,
     ):
         """
         Generate from sequences.
@@ -182,7 +183,6 @@ class GeneratorInterface:
             This is useful for getting PPL evaluations.
         stop: a list of terminating tokens
         seed: an integer if desired
-        use_cuda: should we use GPUs.
         """
         # if seed:
         #     utils.set_torch_seed(seed)
@@ -276,7 +276,7 @@ class GeneratorInterface:
                         max(src_lengths), src_lengths, generator_args))
             generator = Generator(self.model_wrapper, **generator_args)
             # okay actually generate
-            if use_cuda:
+            if self.torch_device == "cuda":
                 batch = move_to_cuda(batch)
 
             inference_start_time = time.time()

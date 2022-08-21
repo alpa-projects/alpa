@@ -13,17 +13,7 @@ Regardless of installing from wheels or from source, there are a few prerequisit
   Follow the official guides to install `CUDA <https://developer.nvidia.com/cuda-toolkit>`_ and `cuDNN <https://developer.nvidia.com/cudnn>`_.
   Alpa requires CUDA >= 11.1 and  cuDNN >= 8.0.5.
 
-2. Install the ILP solver used by Alpa:
-
-    If you have sudo permission, use
-
-      .. code:: bash
-
-        sudo apt install coinor-cbc
-
-    Otherwise, please try to install via `binary <https://projects.coin-or.org/Cbc#DownloadandInstall>`_ or `conda <https://anaconda.org/conda-forge/coincbc>`_.
-
-3. Update pip version and install cupy:
+2. Update pip version and install cupy:
 
   .. code:: bash
 

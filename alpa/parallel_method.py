@@ -16,6 +16,7 @@ from abc import ABC, abstractmethod
 from typing import Callable, Optional, Sequence, Union, Any
 
 from jax import linear_util as lu
+from jax._src import traceback_util
 from jax.core import AbstractValue
 from jax.interpreters import pxla
 from jax.tree_util import PyTreeDef
@@ -36,6 +37,8 @@ from alpa.pipeline_parallel.stage_construction import (StageOption,
                                                        UniformStageOption)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption, LogicalDeviceMesh
 from alpa.shard_parallel.compile_executable import compile_shard_executable
+
+traceback_util.register_exclusion(__file__)
 
 
 class ParallelMethod(ABC):

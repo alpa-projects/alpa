@@ -837,17 +837,14 @@ def _call_solver_serialized_args(N,
 
     msg = verbose
     time_limit = 600
-    assert "COIN_CMD" in pulp.listSolvers(onlyAvailable=True), (
+    assert "PULP_CBC_CMD" in pulp.listSolvers(onlyAvailable=True), (
         "Please install ILP solvers by 'sudo apt install coinor-cbc'")
 
-    with warnings.catch_warnings():  # disable CBC warnings
-        warnings.simplefilter("ignore")
-        solver = pulp.COIN_CMD(mip=True,
+    solver = pulp.PULP_CBC_CMD(mip=True,
                                msg=msg,
                                timeLimit=time_limit,
                                threads=multiprocessing.cpu_count())
-        # solver = pulp.GLPK_CMD(mip=True, msg=msg, timeLimit=time_limit)
-        prob.solve(solver)
+    prob.solve(solver)
 
     status = prob.status
     objective = pulp.value(prob.objective)

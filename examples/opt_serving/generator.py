@@ -128,8 +128,11 @@ class GeneratorInterface:
         tic = time.time()
         # For do_sample, assume that the user only wants sampling OR beam search, not multinomial sampling
         # setting do_sample=False is safe because if beam_size=1, the model looks the same
-        self.model_wrapper = get_model(self.model_name, "cuda", self.path, True,
+        self.model_wrapper = get_model(self.model_name, self.path,
+                                       torch_device="cuda",
+                                       autoregressive=True,
                                        batch_size=MAX_BS,
+                                       encoder_chunk_sizes=[1, 64],
                                        max_target_positions=MAX_SEQ_LEN,
                                        num_beams=self.num_beams,
                                        num_return_sequences=self.num_return_sequences,

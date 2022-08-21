@@ -33,8 +33,8 @@ class PipelineInferenceTest(unittest.TestCase):
                          num_layers=4,
                          add_manual_pipeline_marker=manual_pipeline_layer)
         rngkey = jax.random.PRNGKey(0)
-        x = jax.random.normal(rngkey, (batch_size, hidden_size), jnp.float32)
-        y = jax.random.normal(rngkey, (batch_size, hidden_size), jnp.float32)
+        x = jax.random.normal(rngkey, (batch_size, hidden_size))
+        y = jax.random.normal(rngkey, (batch_size, hidden_size))
         batch = {'x': x, 'y': y}
         state = create_train_state(rngkey, model, [x])
 
@@ -74,11 +74,9 @@ class PipelineInferenceTest(unittest.TestCase):
                               add_manual_pipeline_markers=manual_pipeline_layer,
                               pipeline_mp_size=n_layers))
         rngkey = jax.random.PRNGKey(0)
-        x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
-                              dtype=jnp.float32)
-        y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size),
-                              dtype=jnp.float32)
-        attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.float32)
+        x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size))
+        y = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size))
+        attention_mask = jnp.ones((batch_size, seq_len), dtype=jnp.int8)
         batch = {"x": x, "y": y, "attention_mask": attention_mask}
         state = create_train_state(rngkey, model, [x, attention_mask])
 
@@ -106,21 +104,22 @@ class PipelineInferenceTest(unittest.TestCase):
         self.run_bert_layer_collection_inference(True)
 
     def test_output(self):
-        method = PipeshardParallel(num_micro_batches=1,
+        method = PipeshardParallel(num_micro_batches=2,
                                    pipeline_schedule="inference",
                                    layer_option="manual")
 
-        @parallelize(method=method)
-        def func():
-            a = jnp.ones(32)
+        @parallelize(method=method, batch_argnums=(0,))
+        def func(x):
+            a = jnp.ones_like(x) + x
             mark_pipeline_boundary()
-            b = jnp.ones(32) * 2
+            b = jnp.ones_like(x) * 2 + x
             return a, b, 3
 
-        a, b, c = func()
+        x = np.ones(32, dtype=np.float32)
+        a, b, c = func(x)
 
-        assert_allclose(a, np.ones(32))
-        assert_allclose(b, np.ones(32) * 2)
+        assert_allclose(a, np.ones(32) * 2)
+        assert_allclose(b, np.ones(32) * (2 + 1))
         assert_allclose(c, 3)
 
 

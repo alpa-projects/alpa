@@ -40,7 +40,8 @@ from datasets import Dataset, load_dataset
 from tqdm import tqdm
 
 import alpa
-from alpa.model.model_util import DynamicScale, TrainState
+from alpa.model.model_util import DynamicScale, TrainState, concrete_remat
+from alpa import AutoShardingOption, AutoLayerOption
 import jax
 import jax.numpy as jnp
 import optax
@@ -60,10 +61,12 @@ from transformers import (
     is_tensorboard_available,
     set_seed,
 )
+
+alpa.init(cluster="ray")
+
 from transformers.testing_utils import CaptureLogger
 from transformers.utils import get_full_repo_name, send_example_telemetry
 
-alpa.init(cluster="ray")
 tf.config.experimental.set_visible_devices([], 'GPU')
 
 logger = logging.getLogger(__name__)
@@ -95,6 +98,9 @@ class TrainingArguments:
         default=8, metadata={"help": "Batch size per GPU/TPU core/CPU for evaluation."}
     )
     num_micro_batches: int = field(default=1, metadata={"help": "The number of micro batches for gradient accumulation."})
+    operator_parallel: int = field(default=1, metadata={"help": "The degree of operator model parallelism."})
+    pipeline_parallel: int = field(default=1, metadata={"help": "The degree of pipeline model parallelism."})
+    use_remat: bool = field(default=True, metadata={"help": "Whether or not to use gradient rematerilization/gradient checkpointing."})
     learning_rate: float = field(default=5e-5, metadata={"help": "The initial learning rate for AdamW."})
     weight_decay: float = field(default=0.0, metadata={"help": "Weight decay for AdamW if we apply some."})
     adam_beta1: float = field(default=0.9, metadata={"help": "Beta1 for AdamW optimizer"})
@@ -314,6 +320,45 @@ def create_learning_rate_fn(
     return schedule_fn
 
 
+def monkey_patch_remat():
+    # Use monkey patch to add remat for all transformer layers.
+    from transformers.models.opt.modeling_flax_opt import FlaxOPTDecoderLayer, FlaxOPTDecoderLayerCollection
+    from flax.linen.module import wrap_method_once
+    import flax.linen as nn
+
+    @wrap_method_once
+    def setup(self):
+        self.layers = [
+            concrete_remat(FlaxOPTDecoderLayer)(
+                self.config, name=str(i), dtype=self.dtype)
+            for i in range(self.config.num_hidden_layers)
+        ]
+        self.layerdrop = self.config.layerdrop
+
+    setattr(FlaxOPTDecoderLayerCollection, "setup", setup)
+
+
+def get_3d_parallel_method(num_micro_batches, data_parallel, operator_parallel,
+                           pipeline_parallel):
+    assert pipeline_parallel == 1, "TODO(lmzheng): Will be added later."
+    num_devices = alpa.get_global_num_devices()
+    if data_parallel == -1:
+        data_parallel = num_devices // operator_parallel // pipeline_parallel
+    assert num_devices % data_parallel == 0
+    assert num_devices % operator_parallel == 0
+    assert num_devices % pipeline_parallel == 0
+    assert num_devices == data_parallel * operator_parallel * pipeline_parallel
+
+    method = alpa.ShardParallel(
+        num_micro_batches=num_micro_batches,
+        auto_sharding_option=alpa.AutoShardingOption(
+            prefer_reduce_scatter=True,
+            force_batch_dim_to_mesh_dim=0),
+        devices=alpa.get_global_physical_mesh(create_if_not_exist=True)
+                    .get_logical_mesh([data_parallel, operator_parallel]))
+    return method
+
+
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
@@ -463,6 +508,9 @@ def main():
         config = CONFIG_MAPPING[model_args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")
 
+    if training_args.use_remat:
+        monkey_patch_remat()
+
     if model_args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(
             model_args.tokenizer_name,
@@ -474,8 +522,9 @@ def main():
         tokenizer = AutoTokenizer.from_pretrained(
             model_args.model_name_or_path,
             cache_dir=model_args.cache_dir,
-            use_fast=model_args.use_fast_tokenizer,
+            #use_fast=model_args.use_fast_tokenizer,
             use_auth_token=True if model_args.use_auth_token else None,
+            use_fast=False,
         )
     else:
         raise ValueError(
@@ -687,7 +736,7 @@ def main():
 
         def compute_loss(params):
             labels = batch.pop("labels")
-            logits = state.apply_fn(**batch, params=params, train=True)[0]
+            logits = state.apply_fn(**batch, params=params, deterministic=True)[0]
             loss = loss_fn(logits, labels)
             return loss
 
@@ -721,7 +770,7 @@ def main():
     # Define eval fn
     def eval_step(params, batch):
         labels = batch.pop("labels")
-        logits = model(**batch, params=params, train=False)[0]
+        logits = model(**batch, params=params, deterministic=True)[0]
         loss = loss_fn(logits, labels)
 
         # summarize metrics
@@ -729,13 +778,18 @@ def main():
         return metrics
 
     # Create parallel version of the train and eval step
-    method = alpa.Zero2Parallel(num_micro_batches=training_args.num_micro_batches)
+    method = get_3d_parallel_method(num_micro_batches=training_args.num_micro_batches,
+                                    data_parallel=-1,
+                                    operator_parallel=training_args.operator_parallel,
+                                    pipeline_parallel=training_args.pipeline_parallel)
     p_train_step = alpa.parallelize(train_step,
                                     method=method,
                                     donate_argnums=(0,))
-    p_eval_step = alpa.parallelize(eval_step)
+    p_eval_step = alpa.parallelize(eval_step,
+                                   method=alpa.FollowParallel(p_train_step))
 
-    min_batch_size = alpa.get_global_num_devices() * training_args.num_micro_batches
+    min_batch_size = (alpa.get_global_num_devices() // training_args.operator_parallel //
+                      training_args.pipeline_parallel * training_args.num_micro_batches)
     dump_debug_info_train_step = dump_debug_info_eval_step = True
 
     logger.info("***** Running training *****")
@@ -794,9 +848,6 @@ def main():
                     num_gpus=alpa.get_global_num_devices(),
                     latency=latency)
                 step_ct = 0
-
-                #print(f"driver latency: {latency:.2f}, "
-                #      f"worker latency: {executable.get_execution_time_costs()[-1]:.2f}")
 
                 # Save metrics
                 train_time += time.time() - train_start
@@ -862,10 +913,16 @@ def main():
                 if training_args.push_to_hub:
                     repo.push_to_hub(commit_message=f"Saving weights and logs of step {cur_step}", blocking=False)
 
+    # Save the final model
+    alpa.prefetch(state.params)
+    params = alpa.util.map_to_nparray(state.params)
+    model.save_pretrained(training_args.output_dir, params=params)
+    tokenizer.save_pretrained(training_args.output_dir)
+
     # Eval after training
     if training_args.do_eval:
         eval_metrics = []
-        eval_loader = data_loader(input_rng, eval_dataset, eval_batch_size, min_batch_size)
+        eval_loader = data_loader(rng, eval_dataset, min_batch_size, eval_batch_size, min_batch_size)
         eval_steps = max(len(eval_dataset) // eval_batch_size, 1)
         for _ in tqdm(range(eval_steps), desc="Evaluating...", position=2, leave=False):
             # Model forward
@@ -886,7 +943,6 @@ def main():
         path = os.path.join(training_args.output_dir, "eval_results.json")
         with open(path, "w") as f:
             json.dump(eval_metrics, f, indent=4, sort_keys=True)
-
 
 if __name__ == "__main__":
     main()

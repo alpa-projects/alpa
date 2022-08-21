@@ -90,7 +90,7 @@ def train_epoch(state, train_data_loader, steps_per_epoch):
     state, loss, accuracy = train_step(state, batch_images, batch_labels)
     epoch_loss.append(loss)
     epoch_accuracy.append(accuracy)
-  alpa.fetch((epoch_loss, epoch_accuracy))
+  alpa.prefetch((epoch_loss, epoch_accuracy))
   train_loss = np.mean(epoch_loss)
   train_accuracy = np.mean(epoch_accuracy)
   return state, train_loss, train_accuracy

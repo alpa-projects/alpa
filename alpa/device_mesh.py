@@ -10,7 +10,7 @@ PhysicalDeviceMeshGroup  (multiple device meshes)
 |
 PhysicalDeviceMesh  (one device mesh)
 |
-MeshHostWorker  (one host in a devie mesh)
+MeshHostWorker  (one host in a device mesh)
 
 Besides, we have two additional classes: VirtualPhysicalMesh and
 LogicalDeviceMesh. They are only used during compilation time. They are used to
@@ -43,6 +43,7 @@ from jax.lib import xla_client
 import jax.numpy as jnp
 import numpy as np
 import ray
+from ray.util.placement_group import remove_placement_group
 
 from alpa import mesh_profiling
 import alpa.collective as col
@@ -53,7 +54,8 @@ from alpa.parallel_plan import PlacementSpec
 from alpa.timer import timers
 from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
                        update_jax_platform, is_ray_node_resource,
-                       try_import_ray_worker)
+                       try_import_ray_worker, create_placement_group,
+                       get_bundle_idx, retrieve_placement_group, get_bundle2ip)
 
 ray_worker = try_import_ray_worker()
 
@@ -932,10 +934,12 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
         self.devices = devices
         self.device_strs = []
+        self.node_ips = []
         for i in range(self.num_hosts):
             ip = self.host_info[i]["NodeManagerAddress"]
             self.device_strs.extend(
                 [device_id_to_str(ip, j) for j in devices[i]])
+            self.node_ips.append(ip)
         self._launch_xla_servers()
 
         self.to_delete_remote_refs = []
@@ -953,10 +957,17 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.service_server = xla_client._xla.get_distributed_runtime_service(
             self.server_address, self.num_hosts)
         logger.debug(f"Success to start XLA gRPC server on port: {port}...")
-        time.sleep(0.5)
+        time.sleep(0.4)
 
         # Launch workers
         self.workers = []
+
+        # retrieve the placement group
+        placement_group = retrieve_placement_group()
+
+        # get the sorted bundle index list
+        device_bundle_idx_list = get_bundle_idx(placement_group, self.node_ips)
+
         for i in range(self.num_hosts):
             # Set XLA environment variables
             env_vars = {
@@ -997,18 +1008,24 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                                                       ""),  # For libnccl-net.so
                 })
 
+            bundle_index = device_bundle_idx_list[i]
+
             # Launch the DaemonMoveWorker
-            node_resource = "node:" + self.host_info[i]["NodeManagerAddress"]
-            cls = ray.remote(resources={node_resource: 1e-3})(DaemonMoveWorker)
-            move_worker = cls.remote()
+            cls = ray.remote(num_cpus=0)(DaemonMoveWorker)
+            move_worker = cls.options(
+                placement_group=placement_group,
+                placement_group_bundle_index=bundle_index).remote()
 
             # Launch the MeshHostWorker
-            cls = ray.remote(num_gpus=self.num_devices_per_host,
-                             resources={node_resource: 1e-3})(MeshHostWorker)
-            worker = cls.options(runtime_env={
-                "env_vars": env_vars
-            }).remote(self.server_address, self.num_hosts, i, self.mesh_id,
-                      move_worker, global_config.runtime_random_seed)
+            cls = ray.remote(num_cpus=0,
+                             num_gpus=self.num_devices_per_host)(MeshHostWorker)
+            worker = cls.options(placement_group=placement_group,
+                                 placement_group_bundle_index=bundle_index,
+                                 runtime_env={
+                                     "env_vars": env_vars
+                                 }).remote(self.server_address, self.num_hosts,
+                                           i, self.mesh_id, move_worker,
+                                           global_config.runtime_random_seed)
             self.workers.append(worker)
         self.launched = True
 
@@ -1398,6 +1415,10 @@ class DistributedArray:
         self._fetched_np_buffers_ref = None
         self.skip_shard_args_check = False
 
+    @property
+    def size(self):
+        return np.prod(self.shape)
+
     def get_remote_buffers_async(self):
         # TODO (yinmin): Move this function out of DistributedArray
         #  and batch different requests. Also need to add another
@@ -1546,8 +1567,12 @@ class DistributedArray:
         self.delete()
 
 
-def fetch(dis_arrays: Sequence[Union[ShardedDeviceArray, DistributedArray]]):
-    """Fetch a pytree of DistributedArray in a batch."""
+def prefetch(dis_arrays: Sequence[Union[ShardedDeviceArray, DistributedArray]]):
+    """Prefetch a pytree of DistributedArray in a batch.
+
+    If you want to get a lot of DistributedArrays from remote workers,
+    call this batched prefetch can make the later access faster.
+    """
     group_by_mesh = defaultdict(list)
     for array in tree_leaves(dis_arrays):
         if isinstance(array, ShardedDeviceArray):
@@ -1981,7 +2006,7 @@ class DeviceCluster:
     This is the top interface for alpa to interact with ray cluster's resources.
     """
 
-    def __init__(self):
+    def __init__(self, devices_per_node: int = None, num_nodes: int = None):
         # pylint: disable=import-outside-toplevel
         ray_global_node = ray_worker._global_node
         try:
@@ -1994,10 +2019,13 @@ class DeviceCluster:
 
         # Gather host ids
         self.host_info = []
+        self.host_ips = []
+
         for node in ray.nodes():
             for key in node["Resources"]:
                 if is_ray_node_resource(key):
                     self.host_info.append(node)
+                    self.host_ips.append(key.split("node:")[-1])
 
         # Gather device info
         self.host_num_devices = []
@@ -2005,6 +2033,59 @@ class DeviceCluster:
             number = host_info["Resources"]["GPU"]
             assert number.is_integer()
             self.host_num_devices.append(int(number))
+
+        # adjust the resource allocations
+        # if `num_nodes` is set, use it.
+        # otherwise, use the number of nodes in cluster
+        if num_nodes:
+            num_hosts = min(num_nodes, self.num_hosts)
+        else:
+            num_hosts = self.num_hosts
+
+        # if `devices_per_node` is set, use it.
+        if devices_per_node:
+            # verify that the number of devices per node is valid
+            num_valid = sum(num_device >= devices_per_node
+                            for num_device in self.host_num_devices)
+            if num_valid < num_nodes:
+                raise RuntimeError("The number of devices per node is invalid. "
+                                   f"There are only {num_valid} valid nodes.")
+            # NOTE: for simplicity, we assume `devices_per_node` are equal.
+            self.host_num_devices = [devices_per_node] * num_hosts
+
+        # Create placement group
+        self.placement_group = create_placement_group(self.num_hosts,
+                                                      self.host_num_devices)
+
+        # update the Device Cluster info
+        if devices_per_node or num_nodes:
+            self._update_cluster_resource_from_placement_group()
+
+    def _update_cluster_resource_from_placement_group(self):
+        """Update the cluster resource from the placement group."""
+        # map: host ip to host info
+        self.dict_host_ip2info = dict(zip(self.host_ips, self.host_info))
+
+        # get bundle's ip address
+        ips = get_bundle2ip(self.placement_group)
+        bundle_specs = self.placement_group.bundle_specs
+
+        # filter out the bundle index with device (GPUs)
+        device_bundle_idx_list = [
+            i for i, bundle_spec in enumerate(bundle_specs)
+            if bundle_spec.get("GPU", 0) > 0
+        ]
+        self.host_ips = [
+            ips[bundle_idx] for bundle_idx in device_bundle_idx_list
+        ]
+
+        # filter nodes according to the placment group
+        self.host_info = [self.dict_host_ip2info[ip] for ip in ips]
+
+    def delete_placement_group(self):
+        """remove the placement group for the current device cluster."""
+        remove_placement_group(self.placement_group)
+        self.placement_group = None
 
     @property
     def num_cpus(self):
@@ -2084,7 +2165,9 @@ global_physical_mesh: PhysicalDeviceMesh = None
 global_virtual_physical_mesh: VirtualPhysicalMesh = None
 
 
-def init_global_cluster(cluster: str):
+def init_global_cluster(cluster: str,
+                        devices_per_node: int = None,
+                        num_nodes: int = None):
     global global_cluster, global_physical_mesh, global_virtual_physical_mesh
 
     if cluster == "local":
@@ -2093,16 +2176,13 @@ def init_global_cluster(cluster: str):
         if not ray.is_initialized():
             ray.init(address="auto", ignore_reinit_error=True)
         update_jax_platform("cpu")
-        global_cluster = DeviceCluster()
+        global_cluster = DeviceCluster(devices_per_node, num_nodes)
         global_virtual_physical_mesh = (
             global_cluster.get_virtual_physical_mesh())
 
 
 def shutdown_global_cluster():
     global global_cluster, global_physical_mesh, global_virtual_physical_mesh
-
-    global_cluster = None
-    update_jax_platform("gpu")
 
     if global_physical_mesh:
         global_physical_mesh.shutdown()
@@ -2112,6 +2192,10 @@ def shutdown_global_cluster():
         if global_virtual_physical_mesh.launched_physical_mesh_group:
             global_virtual_physical_mesh.launched_physical_mesh_group.shutdown()
         global_virtual_physical_mesh = None
+
+    global_cluster.delete_placement_group()
+    global_cluster = None
+    update_jax_platform("gpu")
 
 
 def set_global_cluster(cluster: DeviceCluster):

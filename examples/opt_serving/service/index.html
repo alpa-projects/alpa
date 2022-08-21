@@ -20,7 +20,8 @@
     <script type="text/javascript">
     // these constants are only used for providing user expectations.
     var OVERHEAD = 1;
-    var PER_TOKEN = 0.35;
+    var PROMPT_TOKEN_PER_SECOND = 40;
+    var DECODING_TOKEN_PER_SECOND = 4;
 
     // examples for the user
     var EXAMPLES = {
@@ -51,7 +52,7 @@
         },
         "cryptocurrency": {
             "prompt": "Every year, cryptocurrency experts prepare forecasts for the price of Dogecoin. In 2025, it is estimated that DOGE will",
-            "length": 32
+            "length": 64
         },
         "programming": {
             "prompt":
@@ -138,7 +139,7 @@
         event.preventDefault();
         var prompt_length = $("#textbox").val().split(' ').length;
         var length = parseInt($("#length_slider").val());
-        var eta = (PER_TOKEN * (prompt_length + length) + OVERHEAD).toFixed(1);
+        var eta = (prompt_length / PROMPT_TOKEN_PER_SECOND + length / DECODING_TOKEN_PER_SECOND + OVERHEAD).toFixed(1);
         $("#eta").text(eta);
         $("#loader_holder").css("visibility", "visible");
         $("#generate-form-button").prop("disabled", true);
@@ -347,7 +348,7 @@
     <div class="form-group row" data-html2canvas-ignore="true">
     <label for="length_slider" class="col col-form-label text-end fw-bold" style="white-space: nowrap;">Response Length:</label>
     <div class="col my-2">
-        <input type="range" value="64" min="32" max="128" step="32" class="form-range"
+        <input type="range" value="64" min="32" max="256" step="32" class="form-range"
             oninput="this.parentNode.nextElementSibling.value = this.value" name="max_tokens"
             id='length_slider'>
     </div>
@@ -429,7 +430,7 @@
           <div class="accordion-body">
             <a href="https://github.com/alpa-projects/alpa" target="_blank">Alpa</a> is an open-source system for training and serving large-scale neural networks. Alpa aims to automate large-scale distributed training and serving with <strong>just a few lines of code</strong>.
               Alpa was initially developed by folks in the <a href="https://sky.cs.berkeley.edu/" target="_blank">Sky Lab, UC Berkeley</a>. Some advanced techniques used in Alpa have been written in <a href="https://arxiv.org/pdf/2201.12023.pdf" target="_blank"> a paper published in OSDI'2022</a>.
-              Alpa community is growing with new contributors from Google, Amazon, Meta, and <a href="https://github.com/alpa-projects/alpa/graphs/contributors" target="_blank">more</a>.
+              Alpa community is growing with new contributors from Google, Amazon, AnyScale, and <a href="https://github.com/alpa-projects/alpa/graphs/contributors" target="_blank">more</a>.
           </div>
         </div>
       </div>
@@ -469,8 +470,8 @@
         </h2>
         <div id="panelsStayOpen-collapseTwo" class="accordion-collapse collapse" aria-labelledby="panelsStayOpen-headingTwo">
           <div class="accordion-body">
-              OPT-175B is a GPT-3 equivalent model trained by Meta and made publicly available in the <a href="https://github.com/facebookresearch/metaseq/tree/main/metaseq" target="_blank">MetaSeq project</a>.
-              It is by far the largest pretrained language model available in open source, with 175 billion parameters. For detailed performance of OPT-175B,
+              <a href="https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/MODEL_LICENSE.md" target="_blank">OPT-175B</a> is a GPT-3 equivalent model trained by Meta. It is by far the largest pretrained language model available with 175 billion parameters.
+              You can request the access to the trained weights by filling <a href="https://forms.gle/BDB2i44QwCr2mCJN6" target="_blank">this form</a>. For detailed performance of OPT-175B,
               check the <a href="https://arxiv.org/pdf/2205.01068.pdf" target="_blank">OPT paper</a>.
           </div>
         </div>
@@ -615,7 +616,8 @@
         <div id="panelsStayOpen-collapse" class="accordion-collapse collapse" aria-labelledby="panelsStayOpen-heading">
           <div class="accordion-body">
               <strong>No</strong>. This is a public service provided by the Alpa authors and sponsors.
-              Your usage of this service is subject to Alpa's open source license. Your usage of the OPT-175B model is subject to Meta's OPT-175B license.
+              Your usage of this service is subject to Alpa's open source license. Your usage of the OPT-175B model is subject to Meta's <a href="https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/MODEL_LICENSE.md" target="_blank">OPT-175B license</a>,
+              which limits use to research purposes.
           </div>
         </div>
       </div>
@@ -659,11 +661,10 @@
       <div class="container">
         <section class="logo-carousel slider px-3 " data-arrows="true">
           <div class="slide"><img alt="berkeley-logo" src="https://raw.githubusercontent.com/zhisbug/test-alpa-ci/master/ucberkeley-logo.png" style="width: 70%;"></div>
-          <div class="slide"><img alt="mbzuai-logo" src="https://mma.prnewswire.com/media/1227419/MBZUAI_Logo.jpg?w=500" style="width: 80%;"></div>
+          <div class="slide"><img alt="mbzuai-logo" src="https://upload.wikimedia.org/wikipedia/en/5/55/Mohamed_bin_Zayed_University_of_Artificial_Intelligence_logo.png" style="width: 80%;"></div>
           <div class="slide"><img alt="anyscale-logo" src="https://lever-client-logos.s3.us-west-2.amazonaws.com/0114ec37-170e-4864-b9a9-f85452de1ce0-1633971232076.png" style="width:80%;"></div>
           <div class="slide"><img alt="aws-logo" src="https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/Amazon_Web_Services_Logo.svg/512px-Amazon_Web_Services_Logo.svg.png?20170912170050" style="width: 50%;" ></div>
           <div class="slide"><img alt="google-logo" src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTE2WoDOUPB5L3bRgbQZkU-iLCtmRLYSj29iwFqtMAKQCNALlPtbwSUoswoSvqk8sjrT5w&usqp=CAU" style="width: 60%;"></div>
-          <div class="slide"><img alt="meta-logo" src="https://upload.wikimedia.org/wikipedia/commons/7/7b/Meta_Platforms_Inc._logo.svg" style="width: 80%;"></div>
           <div class="slide"><img alt="casl-logo" src="https://www.casl-project.ai/assets/img/casl_logo-main.svg" style="width: 80%;"></div>
         </section>
       </div>

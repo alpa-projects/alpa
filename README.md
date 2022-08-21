@@ -5,9 +5,10 @@
 [![CI](https://github.com/alpa-projects/alpa/actions/workflows/ci.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/ci.yml)
 [![Build Jaxlib](https://github.com/alpa-projects/alpa/actions/workflows/build_jaxlib.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/build_jaxlib.yml)
 
-Alpa is a system for training large-scale neural networks.
-Scaling neural networks to hundreds of billions of parameters has enabled dramatic breakthroughs such as GPT-3, but training these large-scale neural networks requires complicated distributed training techniques.
-Alpa aims to automate large-scale distributed training with just a few lines of code.
+Alpa is a system for training and serving large-scale neural networks.
+
+Scaling neural networks to hundreds of billions of parameters has enabled dramatic breakthroughs such as GPT-3, but training and serving these large-scale neural networks require complicated distributed system techniques.
+Alpa aims to automate large-scale distributed training and serving with just a few lines of code.
 
 The key features of Alpa include:  
 
@@ -15,7 +16,13 @@ The key features of Alpa include:
 
 🚀 **Excellent Performance**. Alpa achieves linear scaling on training models with billions of parameters on distributed clusters.
 
-✨ **Tight Integration with Machine Learning Ecosystem**. Alpa is backed by open-source, high-performance, and production-ready libraries such as [Jax](https://github.com/google/jax), [XLA](https://www.tensorflow.org/xla), and [Ray](https://github.com/ray-project/ray)
+✨ **Tight Integration with Machine Learning Ecosystem**. Alpa is backed by open-source, high-performance, and production-ready libraries such as [Jax](https://github.com/google/jax), [XLA](https://www.tensorflow.org/xla), and [Ray](https://github.com/ray-project/ray).
+
+## 👉 Try Alpa-served OPT-175B!
+Alpa provides a free, unlimited [OPT-175B](https://github.com/facebookresearch/metaseq/tree/main/projects/OPT) text generation service. Try our service at [https://opt.alpa.ai/](https://opt.alpa.ai/) 
+and share your [prompting results](examples/opt_serving/service/img.png)!
+
+Join [Alpa slack](https://forms.gle/YEZTCrtZD6EAVNBQ7) and let us know any new features you want!
 
 ## Quick Start
 Use Alpa's decorator ``@parallelize`` to scale your single-device training code to distributed clusters.
@@ -42,11 +49,14 @@ for batch in data_loader:
 
 Check out the [Alpa Documentation](https://alpa-projects.github.io) site for installation instructions, tutorials, examples, and more.
 
-## More Information
-- [Alpa paper](https://arxiv.org/pdf/2201.12023.pdf) (OSDI'22)
+## Learning more
+- [Alpa OSDI 2022 paper](https://www.usenix.org/system/files/osdi22-zheng-lianmin.pdf)
 - [Google AI blog](https://ai.googleblog.com/2022/05/alpa-automated-model-parallel-deep.html)
 - [Alpa talk slides](https://docs.google.com/presentation/d/1CQ4S1ff8yURk9XmL5lpQOoMMlsjw4m0zPS6zYDcyp7Y/edit?usp=sharing)
-- [Big model tutorial](https://sites.google.com/view/icml-2022-big-model/home) (ICML'22)
+- [ICML 2022 Big Model Tutorial slides](https://sites.google.com/view/icml-2022-big-model/home)
+- [ICML 2022 Big Model Tutorial video recording](https://icml.cc/virtual/2022/tutorial/18440)
+- [Prof. Ion Stoica introduces the Alpa system](https://www.youtube.com/watch?v=qzYoMldlyoA)
+
 
 ## Getting Involved
 - Please read the [contributor guide](https://alpa-projects.github.io/developer/developer_guide.html) if you are interested in contributing to Alpa. 

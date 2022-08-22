@@ -115,8 +115,6 @@ class GeneratorInterface:
         # Check arguments
         assert best_of == self.num_beams, "model must be instantiated and used with the same num_beams"
         assert n == self.num_return_sequences, "model must be instantiated and used with the same num_return_sequences"
-        sampling = top_p > 0.0
-        assert sampling == self.do_sample, "model must be instantiated and used with the same do_sample"
         temperature = temperature if temperature > 0 else 1.0
         max_seq_len = self.max_sequence_len()
 
@@ -156,7 +154,7 @@ class GeneratorInterface:
                 "min_length": min_len,
                 "max_length": max_len,
                 "temperature": temperature,
-                "do_sample": sampling,
+                "do_sample": self.do_sample,
                 "top_p": top_p,
                 "num_beams": best_of,
                 "num_return_sequences": n,

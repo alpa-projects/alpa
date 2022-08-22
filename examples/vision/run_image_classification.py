@@ -515,7 +515,7 @@ def main():
             train_step_progress_bar.update(1)
 
         latency = time.time() - last_time
-        images_per_second = train_batch_size / latency
+        images_per_second = len(train_dataset) / latency
         train_time += time.time() - train_start
         last_time = time.time()
 

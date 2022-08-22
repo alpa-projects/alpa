@@ -484,6 +484,7 @@ def main():
     logger.info(f"  Total optimization steps = {total_train_steps}")
 
     train_time = 0
+    last_time = time.time()
     epochs = tqdm(range(num_epochs), desc=f"Epoch ... (1/{num_epochs})", position=0)
 
     for epoch in epochs:
@@ -513,12 +514,16 @@ def main():
                              
             train_step_progress_bar.update(1)
 
+        latency = time.time() - last_time
+        images_per_second = train_batch_size / latency
         train_time += time.time() - train_start
+        last_time = time.time()
 
         train_step_progress_bar.close()
         epochs.write(
             f"Epoch... ({epoch + 1}/{num_epochs} | Loss: {train_metric['loss']}, Learning Rate:"
-            f" {train_metric['learning_rate']})"
+            f" {train_metric['learning_rate']}), "
+            f"Throughput: {images_per_second:.2f} images/s"
         )
 
         # ======================== Evaluating ==============================

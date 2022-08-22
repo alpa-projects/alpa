@@ -601,7 +601,7 @@ def inference_step_no_cache(params, batch, apply_func):
 
 
 def load_params_np(params, path, config, dummy=False):
-    """Load parameterswith numpy arrays."""
+    """Load parameters with numpy arrays."""
     if dummy:
         np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
         return jax.tree_map(lambda x: np.full(x.shape, 1e-9, np_dtype), params)

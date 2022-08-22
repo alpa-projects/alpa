@@ -18,81 +18,6 @@ from opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_paddin
 logger = build_logger()
 
 
-def apply_to_sample(f, sample):
-    if hasattr(sample, "__len__") and len(sample) == 0:
-        return {}
-
-    def _apply(x):
-        if torch.is_tensor(x):
-            return f(x)
-        elif isinstance(x, dict):
-            return {key: _apply(value) for key, value in x.items()}
-        elif isinstance(x, list):
-            return [_apply(x) for x in x]
-        elif isinstance(x, tuple):
-            return tuple(_apply(x) for x in x)
-        elif isinstance(x, set):
-            return {_apply(x) for x in x}
-        else:
-            return x
-
-    return _apply(sample)
-
-
-def move_to_cuda(sample, device=None):
-    device = device or torch.cuda.current_device()
-
-    def _move_to_cuda(tensor):
-        # non_blocking is ignored if tensor is not pinned, so we can always set
-        # to True (see github.com/PyTorchLightning/pytorch-lightning/issues/620)
-        return tensor.to(device=device, non_blocking=True)
-
-    return apply_to_sample(_move_to_cuda, sample)
-
-
-serve_batch_counter = 0
-
-
-def next_serve_batch_uuid(number=1):
-    """Return the next uuid of a remote buffer."""
-    global serve_batch_counter
-    if number == 1:
-        ret = serve_batch_counter
-    else:
-        ret = np.arange(serve_batch_counter, serve_batch_counter + number)
-    serve_batch_counter = (serve_batch_counter + number) % (1 << 60)
-    return ret
-
-
-def filter_indices_by_size(indices,
-                           dataset,
-                           max_positions=None,
-                           ignore_invalid_inputs=False):
-    """Filter examples that are too large.
-
-    Args:
-        indices (np.array): original array of sample indices
-        dataset (~metaseq.data.BaseDataset): dataset to batch
-        max_positions (optional): max sentence length supported by the
-            model (default: None).
-        ignore_invalid_inputs (bool, optional): don't raise Exception for
-            sentences that are too long (default: False).
-    Returns:
-        np.array: array of filtered sample indices
-    """
-    indices, ignored = dataset.filter_indices_by_size(indices, max_positions)
-    if len(ignored) > 0:
-        if not ignore_invalid_inputs:
-            raise Exception(
-                ("Size of sample #{} is invalid (={}) since max_positions={}, "
-                 "skip this example with --skip-invalid-size-inputs-valid-test"
-                ).format(ignored[0], dataset.size(ignored[0]), max_positions))
-        logger.warning(("{:,} samples have invalid sizes and will be skipped, "
-                        "max_positions={}, first few sample ids={}").format(
-                            len(ignored), max_positions, ignored[:10]))
-    return indices
-
-
 class GeneratorInterface:
     """Alpa generator interface."""
 
@@ -102,34 +27,38 @@ class GeneratorInterface:
                  torch_device="cpu",
                  tokenizer_name=None,
                  add_bos_token=False,
+                 do_sample=False,
                  num_beams=1,
-                 num_return_sequences=1,
-                 do_sample=False):
+                 num_return_sequences=1):
 
+        # Model arguments
         self.model_name = model_name
         self.path = path
+        self.model_wrapper = None
+        self.torch_device = torch_device
+
+        # Tokenizer arguments
         self.tokenizer_name = "facebook/opt-30b" if not tokenizer_name else tokenizer_name
+        self.tokenizer = None
         self.add_bos_token = add_bos_token
 
-        self.model_wrapper = None
-        self.task = None
-        self.tokenizer = None
-        self.num_gpus = 1
-        self.dataset_to_epoch_iter = dict()
-
-        self.pad = 1
+        # Generation arguments
+        self.do_sample = do_sample
         self.num_beams = num_beams
         self.num_return_sequences = num_return_sequences
-        self.do_sample = do_sample
 
-        self.torch_device = torch_device
+        # Others
+        self.num_gpus = None
+        self.dataset_to_epoch_iter = dict()
+
+        # Initialize models
         self.load_model()
 
     def load_model(self):
-        """Load model and return the model wrapper."""
+        """Compile and load a model."""
         tic = time.time()
-        # For do_sample, assume that the user only wants sampling OR beam search, not multinomial sampling
-        # setting do_sample=False is safe because if beam_size=1, the model looks the same
+
+        # Init model
         self.model_wrapper = get_model(self.model_name, self.path,
                                        torch_device=self.torch_device,
                                        autoregressive=True,
@@ -143,14 +72,13 @@ class GeneratorInterface:
 
         # Init tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
-        # Disable default add_bos_token behavior and decide if to add it later.
         self.tokenizer.add_bos_token = False
-        # overwrite pad value
-        self.pad = self.tokenizer.pad_token_id
 
         if "alpa" in self.model_name:
             import alpa
             self.num_gpus = alpa.get_global_cluster().num_devices
+        else:
+            self.num_gpus = 1
         logger.info(f"Loading model time: {load_time:.2f}")
 
     def generate(
@@ -160,80 +88,40 @@ class GeneratorInterface:
         max_tokens: List[int] = None,
         temperature: float = 1.0,
         top_p: float = -1.0,
-        logprobs: int = 0,
         n: int = 1,
-        best_of: Optional[int] = None,
         echo: bool = False,
-        stop: Optional[List[int]] = None,
-        seed: Optional[int] = None,
+        best_of: Optional[int] = None,
     ):
         """
-        Generate from sequences.
+        Generation API.
         Parameters match those of the OpenAI API.
         https://beta.openai.com/docs/api-reference/completions/create
-        inputs: a list of pre-tokenized prompts
-        min_tokens: blocks EOS until at least this many tokens is provided
-        max_tokens: forces EOS after this many tokens
-        temperature: softmax temperature
-        top_p: nucleus probability
-        log_probs: return this cutoff of the probability distribution
-        n: beam size
-        best_of: number of beams to return. must be <= n
-        echo: if true, returned text/tokens/scores includes the prompt.
-            This is useful for getting PPL evaluations.
-        stop: a list of terminating tokens
-        seed: an integer if desired
+
+        Args:
+          inputs: a list of tokenized inputs.
+          min_tokens: The minimum number of tokens to generate.
+          max_tokens: The maximum number of tokens to generate.
+          temperature: What sampling temperature to use.
+          top_p: The nucleus sampling probability.
+          n: How many completions to generate for each prompt.
+          echo: if true, returned text/tokens/scores includes the prompt.
+          best_of: Generates best_of completions server-side and returns the "best" (the one with the highest log probability per token)
         """
-        # if seed:
-        #     utils.set_torch_seed(seed)
-        ori_bs = len(inputs)
-
-        # FIXME(Hao): the current batch uses the topp, reponse_length of the first sentence.
-        def pad_batch(inputs, pad_value=self.pad):
-            new_inputs = inputs
-            src_lens = [len(input) for input in inputs]
-            max_len = max(src_lens)
-            bs = len(inputs)
-
-            for new_input in new_inputs:
-                ori_len = len(new_input)
-                if len(new_input) < max_len:
-                    new_input.extend([pad_value for _ in range(max_len - ori_len)])
-            # pad to bs = MAX_BS
-            if bs < MAX_BS:
-                new_inputs.extend([[pad_value for _ in range(max_len)] for _ in range(MAX_BS - bs)])
-            return new_inputs
-
-
-        # pad the length
-        inputs = pad_batch(inputs)
-
-        batch_request_uuid = next_serve_batch_uuid()
-        if self.tokenizer is None or self.model_wrapper is None:
-            raise RuntimeError("Model is not loaded.")
-
-        if logprobs > 0:
-            # TODO(Hao): support this
-            raise NotImplementedError(
-                "logprob>0 is not supported at this moment.")
-
         start_time = time.time()
         total_inference_time = 0
+        batch_request_uuid = next_serve_batch_uuid()
+        ori_bs = len(inputs)
 
-        # Generator args
-        sampling_topp = top_p if top_p > 0 else -1
-        sampling = top_p > 0.0
-        temperature = temperature if temperature > 0 else 1.0
-
+        # Check arguments
         assert best_of == self.num_beams, "model must be instantiated and used with the same num_beams"
         assert n == self.num_return_sequences, "model must be instantiated and used with the same num_return_sequences"
-        assert sampling == self.do_sample, "model must be instantiated and used with the same do_sample"
-
-        # Resolve max sequence length from multiple sources.
+        temperature = temperature if temperature > 0 else 1.0
         max_seq_len = self.max_sequence_len()
 
+        # Pad the batch to a maximum batch size
+        inputs = pad_batch(inputs, self.tokenizer.pad_token_id, MAX_BS)
         retval = []
-        tokens = [torch.LongTensor(t) for t in inputs]
+        tokens = [torch.IntTensor(t) for t in inputs]
         lengths = [len(t) for t in inputs]
         batches = self.get_batch_iterator(
             dataset=self.build_dataset_for_inference(tokens, lengths),
@@ -242,15 +130,16 @@ class GeneratorInterface:
             max_positions=None,
             ignore_invalid_inputs=False,
         ).next_epoch_itr(shuffle=False)
+
         assert len(batches) == 1, "we have enforce inner bs = 1."
         logger.info(f"Serve batch {batch_request_uuid} with {len(batches)} compute batches.")
+
         for batch_idx, batch in enumerate(batches):
             src_tokens = batch["src_tokens"]
             src_lengths = batch["src_lengths"]
             batchsize = src_tokens.size(0)
 
-            # set generation args
-            # prevent us from ever generating past our max sequence length
+            # Set generation args
             if max_tokens is None:
                 max_tokens = [max_seq_len] * batchsize
             if min_tokens is None:
@@ -262,26 +151,45 @@ class GeneratorInterface:
             max_len = total_max_tokens
 
             generator_args = {
-                "beam_size": best_of,
-                "num_return_sequences": n,
-                "max_len": max_len,
-                "min_len": min_len,
+                "min_length": min_len,
+                "max_length": max_len,
                 "temperature": temperature,
-                "sampling": sampling,
-                "top_p": sampling_topp,
+                "do_sample": self.do_sample,
+                "top_p": top_p,
+                "num_beams": best_of,
+                "num_return_sequences": n,
+                "early_stopping": True,
+                "repetition_penalty": 1.0,
+                "no_repeat_ngram_size": 8,
             }
+
             logger.info(
                 "+ Serve batch {} / compute batch {} | #batch_size: {}, original bs: {}, max_len: {}, shape: {}, args: {}."
                 .format(batch_request_uuid, batch_idx, batchsize, ori_bs,
                         max(src_lengths), src_lengths, generator_args))
-            generator = Generator(self.model_wrapper, **generator_args)
-            # okay actually generate
+
             if self.torch_device == "cuda":
                 batch = move_to_cuda(batch)
 
+            # Run model generation
             inference_start_time = time.time()
-            translations = generator.generate(batch["src_tokens"])
+            output = self.model_wrapper.generate(
+                input_ids=batch["src_tokens"],
+                **generator_args
+            )
             inference_time = time.time() - inference_start_time
+
+            # Reorganize resuls
+            generated_ids = torch.reshape(
+                output, (batchsize, self.num_return_sequences, -1))
+            translations = [[{} for _ in range(self.num_return_sequences)]
+                               for _ in generated_ids]
+            for g in range(batchsize):
+                for seq in range(self.num_return_sequences):
+                    translations[g][seq] = {
+                        "tokens": generated_ids[g, seq, 1:],
+                    }
+
             flops, speed, token_32_latency = self.estimate_performance(
                 translations, inference_time)
             logger.info(
@@ -292,43 +200,26 @@ class GeneratorInterface:
                         inference_time, flops, speed, token_32_latency))
             total_inference_time += inference_time
 
-            # possibly cut off any bsz padding we did
-            # translations = translations[:len(inputs)]
+            # Decode results to strings
             translations = translations[:ori_bs]
-            # actually turn everything into strings
             for i in range(len(translations)):
                 decoding = translations[i]
                 beams = []
                 for beam in decoding:
-                    # first beam is always the highest scoring
-                    tokens = beam["tokens"].tolist()  # implicit move to cpu
-                    # scores = beam["positional_scores"].tolist()
+                    tokens = beam["tokens"].cpu().numpy()
 
-                    # tokens, scores, distributions = GeneratorInterface._filter_special(
-                    #     tokens, scores, distributions
-                    # )
                     prompt_len = src_lengths[i]
                     if echo:
                         # don't cut off prompt
                         tokens = tokens[:prompt_len + max_tokens[i] - 1]
-                        # scores = scores[: prompt_len + max_tokens[i] - 1]
                     else:
                         # cut off prompt
                         tokens = tokens[prompt_len - 1:][:max_tokens[i]]
-                        # scores = scores[prompt_len - 1:][: max_tokens[i]]
-                    # turn it into a string
-                    text = self.tokenizer.decode(tokens,
-                                                 skip_special_tokens=True)
-                    result = {
-                        "text": text,
-                        # "tokens": [self.tokenizer.decode([t]) for t in tokens],
-                        # text offset is useful for cutting off prompts or prefixes
-                        # or evaluating PPL on just a subset of tokens
-                        # "text_offset": None,
-                        # "token_scores": scores,
-                    }
+                    text = self.tokenizer.decode(tokens, skip_special_tokens=True)
+                    result = {"text": text,}
                     beams.append(result)
                 retval.append(beams)
+
         logger.info(
             "Serve batch {} completed!  | #samples: {},  #batches: {}, e2e latency (s): {:.2f}, inference (s): {:.2f}"
             .format(batch_request_uuid, len(lengths), len(batches),
@@ -352,42 +243,6 @@ class GeneratorInterface:
         speed = batch_size * gen_len / latency
         token_32_latency = 32.0 / (speed / len(translations))
         return flops, speed, token_32_latency
-
-    # @staticmethod
-    # def _filter_special(
-    #         tokens: List[int],
-    #         scores: List[float],
-    #         distributions,
-    #         pad_token: int = 1,
-    # ):
-    #     """
-    #     Cut off tokens after finding a special tokens.
-    #     """
-    #
-    #     # tokens is a 1D list of token IDs of length seqlen
-    #     # scores is a 1D list of log-probability scores for those tokens (length seqlen)
-    #     # distributions (optional) is a seqlen x vocab_size tensor corresponding to
-    #     # the full distribution of predictions at each timestep
-    #
-    #     output = []
-    #     mask = []
-    #     for t, s in zip(tokens, scores):
-    #         if t == pad_token:
-    #             # simply skip pads
-    #             mask.append(False)
-    #             continue
-    #         if t <= 3:
-    #             # and other special tokens should end things
-    #             break
-    #         mask.append(True)
-    #         output.append((t, s))
-    #     new_tokens, new_scores = zip(*output)
-    #
-    #     # cut off at stop and drop pads
-    #     if distributions is not None:
-    #         distributions = distributions[: len(mask)][mask]
-    #         distributions = distributions[: len(output)]
-    #     return new_tokens, new_scores, distributions
 
     def max_sequence_len(self):
         """Resolve the max sequence length allowed from multiple sources."""
@@ -532,68 +387,92 @@ class GeneratorInterface:
         return epoch_iter
 
 
-class Generator:
+def pad_batch(inputs, pad_value, max_batch_size):
+    new_inputs = inputs
+    src_lens = [len(input) for input in inputs]
+    max_len = max(src_lens)
+    bs = len(inputs)
 
-    def __init__(self,
-                 model_wrapper,
-                 beam_size: int = 1,
-                 num_return_sequences: int = 1,
-                 max_len: int = 200,
-                 min_len: int = 1,
-                 temperature: float = 1.0,
-                 sampling=False,
-                 top_k=0.0,
-                 top_p=0.0):
-        """Generator."""
-        self.model_wrapper = model_wrapper
+    for new_input in new_inputs:
+        ori_len = len(new_input)
+        if len(new_input) < max_len:
+            new_input.extend([pad_value for _ in range(max_len - ori_len)])
+    # pad to bs = MAX_BS
+    if bs < max_batch_size:
+        new_inputs.extend([[pad_value for _ in range(max_len)] for _ in range(MAX_BS - bs)])
+    return new_inputs
 
-        # TODO: fix hard code
-        self.vocab_size = 50272
-        # Params copied from Metaseq/SequenceGenerator
-        # the max beam size is the dictionary size - 1, since we never select pad
-        self.beam_size = min(beam_size, self.vocab_size - 1)
-        self.max_len = max_len
-        self.min_len = min_len
 
-        self.sampling = sampling
-        self.top_k = top_k
-        self.top_p = top_p
+def apply_to_sample(f, sample):
+    if hasattr(sample, "__len__") and len(sample) == 0:
+        return {}
 
-        self.temperature = temperature
-        assert temperature > 0, "--temperature must be greater than 0"
+    def _apply(x):
+        if torch.is_tensor(x):
+            return f(x)
+        elif isinstance(x, dict):
+            return {key: _apply(value) for key, value in x.items()}
+        elif isinstance(x, list):
+            return [_apply(x) for x in x]
+        elif isinstance(x, tuple):
+            return tuple(_apply(x) for x in x)
+        elif isinstance(x, set):
+            return {_apply(x) for x in x}
+        else:
+            return x
 
-        self.num_return_sequences = num_return_sequences
+    return _apply(sample)
 
-    def generate(self, input_ids):
-        output = self.model_wrapper.generate(
-            input_ids=input_ids,
-            min_length=self.min_len,
-            max_length=self.max_len,
-            temperature=self.temperature,
-            do_sample=self.sampling,
-            # top_k=self.top_k,
-            top_p=self.top_p,
-            num_beams=self.beam_size,
-            num_return_sequences=self.num_return_sequences,
-            early_stopping=True,
-            repetition_penalty=1.0,
-            no_repeat_ngram_size=8,
-            # return_dict_in_generate=True
-            # output_hidden_states=True
-        )
-        generated_ids = torch.reshape(
-            output, (input_ids.shape[0], self.num_return_sequences, -1))
 
-        retvals = [[{}
-                    for _ in range(self.num_return_sequences)]
-                   for _ in generated_ids]
-        for g in range(input_ids.shape[0]):
-            for seq in range(self.num_return_sequences):
-                retvals[g][seq] = {
-                    "tokens":
-                        generated_ids[g, seq, 1:],
-                    "positional_scores":
-                        torch.zeros_like(generated_ids[g, seq, 1:],
-                                         dtype=torch.float16)
-                }
-        return retvals
+def move_to_cuda(sample, device=None):
+    device = device or torch.cuda.current_device()
+
+    def _move_to_cuda(tensor):
+        # non_blocking is ignored if tensor is not pinned, so we can always set
+        # to True (see github.com/PyTorchLightning/pytorch-lightning/issues/620)
+        return tensor.to(device=device, non_blocking=True)
+
+    return apply_to_sample(_move_to_cuda, sample)
+
+
+serve_batch_counter = 0
+
+
+def next_serve_batch_uuid(number=1):
+    """Return the next uuid of a remote buffer."""
+    global serve_batch_counter
+    if number == 1:
+        ret = serve_batch_counter
+    else:
+        ret = np.arange(serve_batch_counter, serve_batch_counter + number)
+    serve_batch_counter = (serve_batch_counter + number) % (1 << 60)
+    return ret
+
+
+def filter_indices_by_size(indices,
+                           dataset,
+                           max_positions=None,
+                           ignore_invalid_inputs=False):
+    """Filter examples that are too large.
+
+    Args:
+        indices (np.array): original array of sample indices
+        dataset (~metaseq.data.BaseDataset): dataset to batch
+        max_positions (optional): max sentence length supported by the
+            model (default: None).
+        ignore_invalid_inputs (bool, optional): don't raise Exception for
+            sentences that are too long (default: False).
+    Returns:
+        np.array: array of filtered sample indices
+    """
+    indices, ignored = dataset.filter_indices_by_size(indices, max_positions)
+    if len(ignored) > 0:
+        if not ignore_invalid_inputs:
+            raise Exception(
+                ("Size of sample #{} is invalid (={}) since max_positions={}, "
+                 "skip this example with --skip-invalid-size-inputs-valid-test"
+                ).format(ignored[0], dataset.size(ignored[0]), max_positions))
+        logger.warning(("{:,} samples have invalid sizes and will be skipped, "
+                        "max_positions={}, first few sample ids={}").format(
+                            len(ignored), max_positions, ignored[:10]))
+    return indices

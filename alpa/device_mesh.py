@@ -400,11 +400,11 @@ class MeshHostWorker:
 
     def create_and_set_cross_mesh_communicators(self, world_size, rank, backend,
                                                 group_name):
-        self.init_collective_group(world_size, rank, rank, backend, group_name)
+        self.init_collective_group(world_size, rank, backend, group_name)
         g = col.check_and_get_group(group_name)
         devices = list(range(self.num_devices))
-        comms = g.get_nccl_collective_communicator(devices)
-        # TODO(yonghao): send these comms to XLA
+        comms = g.get_nccl_collective_communicator(devices, "xla")
+        xe.set_cross_mesh_communicator(comms, "")
 
     def put_resharding_send_task(self, uuid, tasks, group_name):
         self.send_tasks[uuid] = ReshardingSendTask(tile_specs=tasks,
@@ -2282,9 +2282,12 @@ def create_and_record_cross_mesh_collective_communicators(
     world_size = len(workers)
     backend = "nccl"
     group_name = ",".join(device_strs)
-    for rank, worker in workers:
-        worker.create_and_set_cross_mesh_communicators.remote(
+    refs = []
+    for rank, worker in enumerate(workers):
+        ref = worker.create_and_set_cross_mesh_communicators.remote(
             world_size, rank, backend, group_name)
+        refs.append(ref)
+    ray.get(refs)
 
 
 ########################################

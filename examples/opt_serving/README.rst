@@ -3,9 +3,7 @@ Serving OPT-175B using Alpa
 ===========================
 
 This tutorial shows how to setup a serving system to serve the largest available pretrained language model `OPT-175B <https://github.com/facebookresearch/metaseq/tree/main/projects/OPT>`_.
-
-This tutorial is best to be read in its rendered version on the `Alpa documentation page <https://alpa-projects.github.io/tutorials/opt_serving.html>`_.
-
+You can also try a live demo at `Alpa-OPT Demo <https://opt.alpa.ai>`_.
 
 Overview
 ========
@@ -49,15 +47,13 @@ Use huggingface/transformers interface and Alpa backend for distributed inferenc
   tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", use_fast=False)
   tokenizer.add_bos_token = False
 
-  # Load the model
-  model = get_model(model_name="alpa/opt-2.7b",
-                    device="cuda",
-                    path="/home/ubuntu/opt_weights/")
+  # Load the model. Alpa automatically downloads the weights to the specificed path
+  model = get_model(model_name="alpa/opt-2.7b", path="~/opt_weights/")
 
   # Generate
   prompt = "Paris is the capital city of"
 
-  input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to("cuda")
+  input_ids = tokenizer(prompt, return_tensors="pt").input_ids
   output = model.generate(input_ids=input_ids, max_length=256, do_sample=True)
   generated_string = tokenizer.batch_decode(output, skip_special_tokens=True)
 
@@ -91,16 +87,18 @@ Requirements
     pip3 install -e .
 
 
-Get Alpa-compatible OPT Weights
-===============================
-There are two ways to obtain Alpa-compatible OPT weights: converting the weights by yourself or downloading a copy of processed weights provided by the Alpa team.
+Convert Weights Format
+======================
 
-.. _process-weights:
+The weights of OPT 125M--66B models are publicly available. Huggingface hosts copies of these weights.
+For OPT 125M--66B, you **do not need** to download or convert the weights manually. Alpa will automatically download the weights from huggingface to the given path if Alpa cannot find cached weights locally.
 
-Convert weights into Alpa formats by yourself
----------------------------------------------
-We provide detailed instructions below on how to convert the original OPT-175B weights into Alpa-compatible formats.
-For processing other sizes of OPT (125M - 66B), you can skip Step 1 and start from :ref:`the latter part of Step 2<download-singleton>`.
+The weights of OPT-175B can be got from meta by filling a `request form <https://github.com/facebookresearch/metaseq/tree/main/projects/OPT>`_ .
+You then need to manually convert the obtained weights into Alpa format.
+
+Convert OPT-175B weights into Alpa formats
+------------------------------------------
+We provide detailed instructions below on how to convert the original OPT-175B weights into Alpa-compatible formats. You can skip this section if you only want to run smaller models.
 
   .. note::
 
@@ -128,21 +126,6 @@ For processing other sizes of OPT (125M - 66B), you can skip Step 1 and start fr
 
     The above script will save the model weights as a single consolidated checkpoint at ``PATH_TO_SAVE_CHECKPOINT``, hence will require at least 350GB disk space available.
 
-.. _download-singleton:
-
-  .. note::
-    If you use Alpa to target smaller versions of OPT (125M, 350M, 1.3B, 2.7B, 6.7B, 13B, 30B), you can skip the above procedures
-    and download the consolidated singleton checkpoint using the links below, then proceed to the next step.
-
-      * `OPT-125M <https://huggingface.co/patrickvonplaten/opt_metaseq_125m/blob/main/model/restored.pt>`_
-      * `OPT-350M <https://dl.fbaipublicfiles.com/opt/v1_20220502/350m/reshard.pt>`_
-      * `OPT-1.3B <https://huggingface.co/patrickvonplaten/opt_metaseq_1300m/blob/main/model/restored.pt>`_
-      * `OPT-2.7B <https://huggingface.co/patrickvonplaten/opt_metaseq_2700m/blob/main/model/restored.pt>`_
-      * `OPT-6.7B <https://huggingface.co/patrickvonplaten/opt_metaseq_6700m/blob/main/model/restored.pt>`_
-      * `OPT-13B <https://huggingface.co/patrickvonplaten/opt_metaseq_13000m/blob/main/model/restored.pt>`_
-      * `OPT-30B <https://huggingface.co/patrickvonplaten/opt_metaseq_30000m/blob/main/model/restored.pt>`_
-
-
 3. Convert the single checkpoint into Alpa-compatible formats
     Alpa ingests weights simply from numpy formats. Use the script `step_3_convert_to_numpy_weights.py <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/scripts/step_3_convert_to_numpy_weights.py>`_ to convert the
     single checkpoint into numpy formats:
@@ -158,18 +141,21 @@ For processing other sizes of OPT (125M - 66B), you can skip Step 1 and start fr
 
     The above script also requires 350GB free disk space to write the numpy-formatted weights.
 
+Converted weights for other models
+----------------------------------
+You do not need to download the weights manually for OPT 125M--66B. However, if you have trouble with the automatic downloading or huggingface. We also provide the converted weights for the following models.
 
-Download Alpa-compatible weights
---------------------------------
-Alternatively, we provide links to download the preprocessed 125M, 2.7B, 30B model weights below.
+  * `OPT-125M weights <https://drive.google.com/file/d/1Ps7DFD80wNO7u2t39YCYcBX-9XwypGzl/view?usp=sharing>`_
+  * `OPT-2.7B weights <https://drive.google.com/file/d/1ayIaKRhxF9osZWgcFG-3vSkjcepSWdQd/view?usp=sharing>`_
+  * `OPT-30B weights <https://drive.google.com/file/d/1_MBcgwTqHFboV0JkGWR03AOHusrxcHlu/view?usp=sharing>`_
 
- * `OPT-125M weights <https://drive.google.com/file/d/1Ps7DFD80wNO7u2t39YCYcBX-9XwypGzl/view?usp=sharing>`_
- * `OPT-2.7B weights <https://drive.google.com/file/d/1ayIaKRhxF9osZWgcFG-3vSkjcepSWdQd/view?usp=sharing>`_
- * `OPT-30B weights <https://drive.google.com/file/d/1_MBcgwTqHFboV0JkGWR03AOHusrxcHlu/view?usp=sharing>`_
+Copy Weights to Multiple Nodes
+------------------------------
+If you want to run on multiple nodes, you can use one of the following methods.
 
-Due to Meta's license on the OPT-175B model, we are not able to provide public links for downloading the preprocessed OPT-175B weights.
-If you need the weights for other model sizes but have trouble following :ref:`the guide<process-weights>` to perform the conversion by yourself,
-please join `Alpa slack <https://forms.gle/YEZTCrtZD6EAVNBQ7>`_ to request a copy from the Alpa developer team.
+1. Put the weights under a shared network file system, so all nodes can access it.
+2. Run the script first on a driver node. The driver node will download the weights to its local disk, but the script will fail later because worker nodes cannot access the weights.
+   You can then manually copy all downloaded weights under ``path`` from the driver node to all worker nodes.
 
 
 Run and Benchmark Generation in the Command Line
@@ -189,7 +175,7 @@ The code of this tutorial is under `examples/opt_serving <https://github.com/alp
 
   .. code:: shell
 
-    python3 benchmark_text_gen.py --model jax/opt-125m --path [PATH_TO_WEIGHT] --debug
+    python3 benchmark_text_gen.py --model jax/opt-125m --debug
 
 
 - Run model-parallel generation using the 2.7B model with Alpa on multiple GPUs:
@@ -199,7 +185,7 @@ The code of this tutorial is under `examples/opt_serving <https://github.com/alp
     # Start ray on the node
     ray start --head
 
-    python3 benchmark_text_gen.py --model alpa/opt-2.7b --path [PATH_TO_WEIGHT] --debug
+    python3 benchmark_text_gen.py --model alpa/opt-2.7b --debug
 
 
 - Run distributed generation using the 175B model with Alpa on a cluster of GPU nodes.
@@ -209,7 +195,7 @@ The code of this tutorial is under `examples/opt_serving <https://github.com/alp
 
   .. code:: shell
 
-    python3 benchmark_text_gen.py --model alpa/opt-175b --path [PATH_TO_WEIGHT] --debug
+    python3 benchmark_text_gen.py --model alpa/opt-175b --debug
 
 Launch a Web Server to Serve the OPT Models
 ===========================================
@@ -218,16 +204,27 @@ Launch the web server:
 
 .. code:: shell
 
-  # Serve the OPT-175B model at port 10001
-  python3 interactive_hosted.py --model alpa/opt-175b --port 10001 --path [PATH_TO_WEIGHT]
+  # Serve the OPT-175B model at port 20001
+  python3 interactive_hosted.py --model alpa/opt-175b --port 20001
 
-Then open ``https://[IP-ADDRESS]:10001`` in your browser to try out the model!
+Then open ``https://[IP-ADDRESS]:20001`` in your browser to try out the model!
 
-Code structure
+Improving Generation Speed
+==========================
+Here are some tips for improving the generation speed.
+
+1. Batching. Single sequence generation cannot fully utilize the GPU power.
+   Applying batching can greatly boost the performace. See ``textgen_demo.py`` for the usage.
+2. Tune the ``encoder_chunk_sizes`` argument of ``get_model``.
+   Alpa compiles multiple executables and uses these executables to encode a prompt chunk by chunk. This argument controls the possible chunk sizes. Depending on the length of your prompt, you can try different combinations. For example, if your prompt lengths are around 1000-1500, a good combination is ``[1, 256, 1024]``.
+3. Tune parallelization strategy. If you are familiar with alpa, you can tune the ``method`` argument of ``alpa.parallelize`` and try different parallelization methods.
+
+If you find the generation speed too slow and want to accelerate it, please join `Alpa slack <https://forms.gle/YEZTCrtZD6EAVNBQ7>`_ and tell us your use cases. We are acitvely working on improving the performance.
+
+Code Structure
 ==============
 
 * `examples/opt_serving/benchmark <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/benchmark>`_: Benchmark scripts for generation in the command line.
-* `examples/opt_serving/dataset <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/dataset>`_: Data loaders for serving.
 * `examples/opt_serving/service <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/service>`_: Model serving web server.
 * `examples/opt_serving/generator.py <https://github.com/alpa-projects/alpa/blob/main/examples/opt_serving/generator.py>`_: Backend for web server.
 * `examples/opt_serving/interactive_hosted.py <https://github.com/alpa-projects/alpa/blob/main/examples/opt_serving/interactive_hosted.py>`_: Web server entry point.

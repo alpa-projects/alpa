@@ -11,7 +11,7 @@ from jax.interpreters import pxla
 import numpy as np
 import ray
 
-from alpa import init, parallelize, DistributedArray
+from alpa import init, shutdown, parallelize, DistributedArray
 from alpa.device_mesh import get_global_physical_mesh
 from alpa.testing import assert_allclose
 
@@ -20,6 +20,9 @@ class DeviceMeshTest(unittest.TestCase):
 
     def setUp(self):
         init(cluster="ray")
+
+    def tearDown(self):
+        shutdown()
 
     def test_add_one(self):
 
@@ -62,11 +65,30 @@ class DeviceMeshTest(unittest.TestCase):
         assert isinstance(a, DistributedArray)
 
 
+class DeviceMesh_ResourceAwareness(unittest.TestCase):
+
+    def setUp(self):
+        init(cluster="ray", devices_per_node=2, num_nodes=1)
+
+    def tearDown(self):
+        shutdown()
+
+    @unittest.skipIf(jax.local_device_count("gpu") < 8, "no enough device")
+    def test_resource_check(self):
+        cluster_devices = ray.cluster_resources().get("GPU", 0)
+        available_devices = ray.available_resources().get("GPU", 0)
+        print(cluster_devices, available_devices, ray.cluster_resources(),
+              ray.available_resources())
+        assert available_devices + 2 == cluster_devices
+
+
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(DeviceMeshTest("test_add_one"))
     suite.addTest(DeviceMeshTest("test_distributed_array"))
     suite.addTest(DeviceMeshTest("test_preshard_args"))
+    suite.addTest(DeviceMeshTest("test_preshard_args"))
+    suite.addTest(DeviceMesh_ResourceAwareness("test_resource_check"))
 
     return suite
 

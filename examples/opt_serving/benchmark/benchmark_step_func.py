@@ -25,11 +25,12 @@ def run_benchmark(args):
     path = os.path.join(args.path, f"{name}_np")
 
     alpa.global_config.shard_parallel_sync_for_timer = True
-    alpa.global_config.pipeline_parallel_sync_for_timer = True
+    alpa.global_config.pipeline_check_alive = False
+    alpa.global_config.pipeline_sync_for_timer = True
     alpa.global_config.delete_remote_arrays_threshold = 100
 
-    batch_size = 1
-    seq_len = 16
+    batch_size = args.batch_size
+    seq_len = 10
     dummy = args.dummy
 
     def inference_step_with_cache(params, batch):
@@ -56,12 +57,11 @@ def run_benchmark(args):
 
             config = get_opt_config(name)
             model, params_aval = init_model_aval(config)
-            if args.parallel_method == "local_shard":
+            if args.parallel_method == "shard_local":
                 alpa.init(cluster="local")
-                num_gpus = len(jax.local_devices())
             else:
                 alpa.init(cluster="ray")
-                num_gpus = alpa.get_global_cluster().num_devices
+            num_gpus = alpa.get_global_num_devices()
 
             method = alpa.ShardParallel(
                 auto_sharding_option=alpa.AutoShardingOption())
@@ -70,16 +70,23 @@ def run_benchmark(args):
         else:
             assert args.parallel_method == "pipeshard"
             alpa.init(cluster="ray")
-            num_gpus = alpa.get_global_cluster().num_devices
+            num_gpus = alpa.get_global_num_devices()
             num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
             config = get_opt_config(name, num_pp_stages=num_pp_stages)
             model, params_aval = init_model_aval(config)
 
-            method = alpa.PipeshardParallel(num_micro_batches=1,
-                                            pipeline_schedule="inference")
-            infer_step = alpa.manual_layer_construction(
-                inference_step_with_cache)
-            infer_step = alpa.parallelize(infer_step, method=method)
+            method = alpa.PipeshardParallel(
+                num_micro_batches=1,
+                pipeline_schedule="inference",
+                layer_option="manual",
+                default_auto_sharding_option=alpa.AutoShardingOption(
+                    # Force operator model parallel
+                    force_batch_dim_to_mesh_dim=None if batch_size == 1 else 0,
+                    # Disabling all-to-all and all-gather generates better intra-op strategies.
+                    allow_all_to_all=False,
+                    allow_all_gather=False,
+                ))
+            infer_step = alpa.parallelize(inference_step_with_cache, method=method)
             alpa.global_config.always_donate_micro_batch_vars = False
 
         executable = infer_step.get_executable(
@@ -156,6 +163,7 @@ def run_benchmark(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="alpa/opt-2.7b")
+    parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--path", type=str, default="/home/ubuntu/opt_weights/")
     parser.add_argument("--dummy", action="store_true")
     parser.add_argument(

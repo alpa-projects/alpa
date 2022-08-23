@@ -110,32 +110,45 @@ class FlaxBloomAttention(nn.Module):
     params_dtype: jnp.dtype = jnp.float32
 
     def setup(self):
-        self.hidden_size = self.config.hidden_size
-        self.num_heads = self.config.n_head
-        self.head_dim = self.hidden_size // self.num_heads
-        self.attention_softmax_in_fp32 = self.config.attention_softmax_in_fp32
+        # Original bloom-jax-inference version
+        # self.hidden_size = self.config.hidden_size
+        # self.num_heads = self.config.n_head
+        # self.head_dim = self.hidden_size // self.num_heads
+        # self.attention_softmax_in_fp32 = self.config.attention_softmax_in_fp32
 
-        if self.head_dim * self.num_heads != self.hidden_size:
+        # if self.head_dim * self.num_heads != self.hidden_size:
+        #     raise ValueError(
+        #         f"`hidden_size` must be divisible by `num_heads` (got `hidden_size`: {self.hidden_size} and "
+        #         f"`num_heads`: {self.num_heads})."
+        #     )
+
+        # self.query_key_value = layers.DenseGeneral(
+        #     axis=-1,
+        #     features=(self.num_heads, self.head_dim * 3),
+        #     kernel_axes=('embed', 'heads', 'kv'),
+        #     dtype=self.dtype,
+        #     params_dtype=self.params_dtype,
+        # )
+        # self.dense = layers.DenseGeneral(
+        #     features=self.hidden_size,
+        #     axis=(-2, -1),
+        #     kernel_axes=('heads', 'kv', 'embed'),
+        #     dtype=self.dtype,
+        #     params_dtype=self.params_dtype,
+        # )
+        # self.resid_dropout = nn.Dropout(rate=self.config.hidden_dropout)
+
+        # Latest opt_model.py version
+        if self.config.decoder_embed_dim % self.config.decoder_attention_heads != 0:
             raise ValueError(
-                f"`hidden_size` must be divisible by `num_heads` (got `hidden_size`: {self.hidden_size} and "
-                f"`num_heads`: {self.num_heads})."
+                f"`decoder_embed_dim`: {self.config.decoder_embed_dim} has to be a "
+                f"multiple of `decoder_attention_heads`: {self.config.decoder_attention_heads}"
             )
 
-        self.query_key_value = layers.DenseGeneral(
-            axis=-1,
-            features=(self.num_heads, self.head_dim * 3),
-            kernel_axes=('embed', 'heads', 'kv'),
+        self.qkv_combined = nn.Dense(
+            self.config.decoder_embed_dim * 3,
             dtype=self.dtype,
-            params_dtype=self.params_dtype,
         )
-        self.dense = layers.DenseGeneral(
-            features=self.hidden_size,
-            axis=(-2, -1),
-            kernel_axes=('heads', 'kv', 'embed'),
-            dtype=self.dtype,
-            params_dtype=self.params_dtype,
-        )
-        self.resid_dropout = nn.Dropout(rate=self.config.hidden_dropout)
 
     def __call__(
         self,
@@ -148,6 +161,7 @@ class FlaxBloomAttention(nn.Module):
         output_attentions: bool = False,
         layer_number: int = None,
     ):  
+        # Bloom-jax-inference original:
         # batch_size, seq_length = hidden_states.shape[:2]
 
         # # proj q, k, v
@@ -202,65 +216,141 @@ class FlaxBloomAttention(nn.Module):
         #     jnp.full(attention_mask.shape, mask_value).astype(self.dtype),
         # )
 
+        # code from opt_model.py old version
+
+        # head_dim = self.config.decoder_embed_dim // self.config.decoder_attention_heads
+
+        # qvk_combined_states = self.qvk_combined(hidden_states)
+        # qvk_combined_states = qvk_combined_states.reshape(
+        #     qvk_combined_states.shape[:2] + (-1, 3))
+        # query_states, value_states, key_states = jnp.split(qvk_combined_states,
+        #                                                    3,
+        #                                                    axis=3)
+
+        # query_states = query_states.reshape(hidden_states.shape[:2] + (
+        #     self.config.decoder_attention_heads, head_dim))
+        # value_states = value_states.reshape(hidden_states.shape[:2] + (
+        #     self.config.decoder_attention_heads, head_dim))
+        # key_states = key_states.reshape(hidden_states.shape[:2] +
+        #                                 (self.config.decoder_attention_heads,
+        #                                  head_dim))
+
+        # if attention_cache is None:
+        #     attention_bias = jnp.expand_dims(
+        #         jnp.triu(
+        #             jnp.full((query_states.shape[1], key_states.shape[1]),
+        #                      -1e10), 1), (0, 1))
+        # else:
+        #     cache_key, cache_value, cache_index = attention_cache
+        #     cache_index_ = cache_index[0]
+        #     key_states = lax.dynamic_update_slice(cache_key, key_states,
+        #                                           (0, cache_index_, 0, 0))
+        #     value_states = lax.dynamic_update_slice(cache_value, value_states,
+        #                                             (0, cache_index_, 0, 0))
+        #     num_updated_cache_vectors = query_states.shape[1]
+        #     max_length = key_states.shape[1]
+
+        #     # The following logic is equivalent to:
+        #     # attention_bias = jnp.expand_dims(
+        #     #     jnp.triu(jnp.full(
+        #     #         (num_updated_cache_vectors, max_length), -1e10), cache_index + 1), (0, 1))
+        #     # but "cache_index + 1" in jnp.triu results in non-static IR.
+        #     row_idxs = jnp.arange(num_updated_cache_vectors)
+        #     mask = jnp.arange(max_length) - (cache_index_ + 1)
+        #     attention_bias = jnp.expand_dims(
+        #         (row_idxs[:, None] <= mask).astype(self.dtype) * -1e10, (0, 1))
+
+        #     attention_cache = key_states, value_states, cache_index + num_updated_cache_vectors
+
+        # attention_bias = attention_bias + alibi
+
+        # common of previous two versions
+        # # TODO: override softmax precision to fp32 if self.attention_softmax_in_fp32=True and self.dtype != fp32
+        # # usual dot product attention
+        # attn_weights = dot_product_attention_weights(
+        #     query_states,
+        #     key_states,
+        #     bias=attention_bias,
+        #     mask=attention_mask,
+        #     dropout_rate=self.config.attention_dropout,
+        #     deterministic=deterministic,
+        #     dtype=self.dtype,
+        #     precision=None,
+        # )
+
+        # attention_mask version, newest version of opt_model.py
         head_dim = self.config.decoder_embed_dim // self.config.decoder_attention_heads
 
-        qvk_combined_states = self.qvk_combined(hidden_states)
-        qvk_combined_states = qvk_combined_states.reshape(
-            qvk_combined_states.shape[:2] + (-1, 3))
-        query_states, value_states, key_states = jnp.split(qvk_combined_states,
+        qkv_combined_states = self.qkv_combined(hidden_states)
+        qkv_combined_states = qkv_combined_states.reshape(
+            qkv_combined_states.shape[:2] + (-1, 3))
+        query_states, key_states, value_states = jnp.split(qkv_combined_states,
                                                            3,
                                                            axis=3)
 
+        # shape: [B, S, #head, head_dim]
         query_states = query_states.reshape(hidden_states.shape[:2] + (
             self.config.decoder_attention_heads, head_dim))
+        # shape: [B, S, #head, head_dim]
         value_states = value_states.reshape(hidden_states.shape[:2] + (
             self.config.decoder_attention_heads, head_dim))
+        # shape: [B, S, #head, head_dim]
         key_states = key_states.reshape(hidden_states.shape[:2] +
                                         (self.config.decoder_attention_heads,
                                          head_dim))
 
+        batch_size = hidden_states.shape[0]
         if attention_cache is None:
-            attention_bias = jnp.expand_dims(
-                jnp.triu(
-                    jnp.full((query_states.shape[1], key_states.shape[1]),
-                             -1e10), 1), (0, 1))
+            query_len, key_len = query_states.shape[1], key_states.shape[1]
+            assert query_len == key_len
+            # shape: [B, 1, S_max, S_max]
+            causal_mask = nn.make_causal_mask(
+                jnp.ones((batch_size, key_len)), dtype="bool")
+            # shape: [B, 1, 1, S_max]
+            input_mask = attention_mask
+            # shape: [B, 1, S_max, S_max]
+            mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
         else:
             cache_key, cache_value, cache_index = attention_cache
             cache_index_ = cache_index[0]
-            key_states = lax.dynamic_update_slice(cache_key, key_states,
-                                                  (0, cache_index_, 0, 0))
-            value_states = lax.dynamic_update_slice(cache_value, value_states,
-                                                    (0, cache_index_, 0, 0))
-            num_updated_cache_vectors = query_states.shape[1]
-            max_length = key_states.shape[1]
+            update_indices = (0, cache_index_, 0, 0)
+            # shape: [B, S_max, #head, head_dim]
+            key_states = lax.dynamic_update_slice(cache_key, key_states, update_indices)
+            # shape: [B, S_max, #head, head_dim]
+            value_states = lax.dynamic_update_slice(cache_value, value_states, update_indices)
+            query_len, key_len = query_states.shape[1], key_states.shape[1]
 
-            # The following logic is equivalent to:
-            # attention_bias = jnp.expand_dims(
-            #     jnp.triu(jnp.full(
-            #         (num_updated_cache_vectors, max_length), -1e10), cache_index + 1), (0, 1))
-            # but "cache_index + 1" in jnp.triu results in non-static IR.
-            row_idxs = jnp.arange(num_updated_cache_vectors)
-            mask = jnp.arange(max_length) - (cache_index_ + 1)
-            attention_bias = jnp.expand_dims(
-                (row_idxs[:, None] <= mask).astype(self.dtype) * -1e10, (0, 1))
+            # Handle a special kind of internal padding added by alpa.
+            # Note that this kind of internal padding is different from
+            # the padding added by the tokenizer. This internal padding
+            # should not update cache and step_ct
+            # shape: [B, 1, 1, S_max]
+            is_internal_padding = (attention_mask == 2)
+            num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
+            attention_mask = (attention_mask == 1)
 
-            attention_cache = key_states, value_states, cache_index + num_updated_cache_vectors
+            attention_cache = key_states, value_states, cache_index + query_len - num_internal_pad
 
-        attention_bias = attention_bias + alibi
+            # shape: [B, 1, S_max, S_max]
+            causal_mask = nn.make_causal_mask(
+                jnp.ones((batch_size, key_len)), dtype="bool")
+            # shape: [B, 1, S, S_max]
+            causal_mask = lax.dynamic_slice(causal_mask,
+                (0, 0, cache_index_, 0), (batch_size, 1, query_len, key_len))
+            # shape: [B, 1, 1, S_max]
+            input_mask = attention_mask
+            # shape: [B, 1, S, S_max]
+            mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
 
-        # TODO: override softmax precision to fp32 if self.attention_softmax_in_fp32=True and self.dtype != fp32
-        # usual dot product attention
-        attn_weights = dot_product_attention_weights(
+        attn_weights = nn.attention.dot_product_attention_weights(
             query_states,
             key_states,
-            bias=attention_bias,
-            mask=attention_mask,
-            dropout_rate=self.config.attention_dropout,
-            deterministic=deterministic,
+            mask=mask,
             dtype=self.dtype,
             precision=None,
         )
 
+        # Common part for all three versions
         attn_output = jnp.einsum("...hqk,...khd->...qhd", attn_weights, value_states)
         attn_output = attn_output.reshape(attn_output.shape[:2] + (-1,))
         # attn_output = self.dense(attn_output)

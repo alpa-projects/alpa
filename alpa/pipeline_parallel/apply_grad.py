@@ -10,7 +10,9 @@ from jax.lax import add_p, div_p
 from jax.core import (Primitive, Var, Jaxpr, ClosedJaxpr, DropVar, Literal,
                       gensym, new_jaxpr_eqn, get_aval, raise_to_shaped,
                       JaxprEqn)
+from jax.interpreters import xla
 from jax.lax import add_p, div_p, and_p, or_p
+from jaxlib import xla_client as xc
 import numpy as np
 
 from alpa.pipeline_parallel.computation import JaxPipelineComputation
@@ -501,7 +503,33 @@ def apply_grad_get_mean(closed_jaxpr, global_outvars, gradients, gensym_fn,
     return new_jaxpr, global_outvars
 
 
-alpa_allreduce_p = Primitive("alpa$allreduce")
+cross_mesh_allreduce_p = Primitive("__builtin$CrossMeshAllReduce")
+_primitive_to_str = {add_p: "SUM", and_p: "AND", or_p: "OR"}
+
+
+def _cross_mesh_allreduce_xla_translation(c, *args, **kwargs):
+    call_name = b"__builtin$CrossMeshAllReduce"
+    assert len(args) == 1
+    input_params = args[0]
+    input_shape = c.get_shape(input_params)
+    op_type = _primitive_to_str[kwargs["type"]]
+
+    # Note that the custom call used here all act like an identity function,
+    # so the inputs and outputs are alias pairs. However, we do not set them
+    # here because the alias setting will be dropped during jaxpr->HLO
+    # conversion due to a bug in MLIR. We use a custom XLA pass
+    # RematIdentityFixer to set the alias for "identity" and "pipeline_marker".
+    output = xc.ops.CustomCall(c,
+                               call_name,
+                               operands=(input_params,),
+                               shape=input_shape,
+                               has_side_effect=True,
+                               opaque=op_type)
+    c.clear_sharding()
+    return output
+
+
+xla.translations[cross_mesh_allreduce_p] = _cross_mesh_allreduce_xla_translation
 
 
 def _propagate_var_at_mesh(eqns, var_mesh):
@@ -519,7 +547,7 @@ def _propagate_var_at_mesh(eqns, var_mesh):
             for outvar in eqn.outvars:
                 if not isinstance(outvar, DropVar):
                     var_mesh[outvar] = OrderedSet(at_mesh)
-            if eqn.primitive == alpa_allreduce_p:
+            if eqn.primitive == cross_mesh_allreduce_p:
                 allreduce_outvars.add(eqn.outvars[0])
                 continue
             for invar in eqn.invars:
@@ -534,7 +562,7 @@ def _reverse_propagate_var_at_mesh(closed_jaxpr, donation_mapping, eqn_mesh,
     """Propagate var_at_mesh from output to make sure all operands are ready."""
     changed = False
     for reversed_idx, eqn in enumerate(reversed(closed_jaxpr.eqns)):
-        if eqn.primitive == alpa_allreduce_p:
+        if eqn.primitive == cross_mesh_allreduce_p:
             continue
         eqn_idx = len(closed_jaxpr.eqns) - 1 - reversed_idx
         post_at_mesh = eqn_mesh.setdefault(eqn_idx, OrderedSet())
@@ -711,7 +739,7 @@ class ApplyGradRewriter:
         # modify the end of reduce chain eqn into an all-reduce.
         # The allreduce will be immediately replaced by pipeline markers
         appended_eqns.append(
-            new_jaxpr_eqn(allreduce_vars, [outvar], alpa_allreduce_p,
+            new_jaxpr_eqn(allreduce_vars, [outvar], cross_mesh_allreduce_p,
                           {"type": primitive}))
         return appended_eqns
 
@@ -746,10 +774,32 @@ class ApplyGradRewriter:
                 new_eqns.append(eqn)
         return clone_jaxpr(self.jaxpr, eqns=new_eqns)
 
+    @staticmethod
+    def rewrite_allreduce(closed_jaxpr: ClosedJaxpr):
+        """For cross-mesh allreduce, rewrite its invar to make it legal."""
+        vars = set()
+        new_eqns = []
+        vars.update([
+            inv for inv in closed_jaxpr.jaxpr.invars
+            if not isinstance(inv, Var)
+        ])
+        for eqn in closed_jaxpr.eqns:
+            if eqn.primitive == cross_mesh_allreduce_p:
+                new_invars = set(eqn.invars).intersection(vars)
+                assert len(new_invars) == 1
+                new_eqns.append(
+                    new_jaxpr_eqn(list(new_invars), list(eqn.outvars),
+                                  eqn.primitive, dict(eqn.params)))
+            else:
+                new_eqns.append(eqn)
+            for v in eqn.outvars:
+                if not isinstance(v, DropVar):
+                    vars.add(v)
+        return clone_jaxpr(closed_jaxpr, eqns=new_eqns)
 
 def _no_allreduce(eqns):
     for eqn in eqns:
-        if eqn.primitive == alpa_allreduce_p:
+        if eqn.primitive == cross_mesh_allreduce_p:
             return False
     return True
 
@@ -829,7 +879,9 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
         # assign the current computation into mesh i
         mesh_assignment[computation_idx] = i
         sliced = Jaxpr(constvars[i], invars[i], outvars[i], sliced_eqns[i])
-        jaxprs.append(ClosedJaxpr(sliced, consts[i]))
+        closed_jaxpr = ClosedJaxpr(sliced, consts[i])
+        closed_jaxpr = ApplyGradRewriter.rewrite_allreduce(closed_jaxpr)
+        jaxprs.append(closed_jaxpr)
 
     info = mesh_assignment, infered_global_invars
     return jaxprs, info

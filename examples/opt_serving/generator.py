@@ -80,6 +80,35 @@ class GeneratorInterface:
         else:
             self.num_gpus = 1
         logger.info(f"Loading model time: {load_time:.2f}")
+    
+    def __call__(
+        self,
+        inputs,
+        cache_ids,
+        pasts=None,
+    ):
+        assert len(inputs) == 1, "enforcing batch size 1 for now to avoid messy logic with caching past key values"
+        inputs = pad_batch(inputs, self.tokenizer.pad_token_id, MAX_BS)
+        tokens = [torch.LongTensor(t) for t in inputs]
+        lengths = [len(t) for t in inputs]
+        batches = self.get_batch_iterator(
+            dataset=self.build_dataset_for_inference(tokens, lengths),
+            max_tokens=None,
+            max_sentences=MAX_BS,
+            max_positions=None,
+            ignore_invalid_inputs=False,
+        ).next_epoch_itr(shuffle=False)
+        assert len(batches) == 1, "we have enforce inner bs = 1."
+        outputs = []
+        for idx, (batch, cache_id) in enumerate(zip(batches, cache_ids)):
+            if self.torch_device == "cuda":
+                input_ids = move_to_cuda(batch['src_tokens'])[:, :-1]
+            else:
+                input_ids = batch['src_tokens'][:, :-1]
+            attention_mask = self.model_wrapper._prepare_attention_mask_for_generation(input_ids, pad_token_id=self.model_wrapper.config.pad_token_id, eos_token_id=self.model_wrapper.config.eos_token_id)
+            model_inputs = self.model_wrapper.prepare_inputs_for_generation(input_ids, past=pasts[cache_id][1] if pasts is not None else None, attention_mask=attention_mask)
+            outputs.append(self.model_wrapper(**model_inputs))
+        return outputs
 
     def generate(
         self,

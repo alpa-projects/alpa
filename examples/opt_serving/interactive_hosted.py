@@ -6,6 +6,9 @@ import threading
 import os
 import logging.handlers
 import traceback
+from collections import defaultdict
+import uuid
+import time
 
 import random
 import torch
@@ -18,14 +21,17 @@ from opt_serving.service.responses import OAIResponse
 from opt_serving.service.utils import encode_fn, build_logger
 from opt_serving.service.workers import WorkItem
 from opt_serving.service.constants import MAX_SEQ_LEN, MAX_BATCH_TOKENS, TIMEOUT_MS, \
-    MAX_BS, NUM_BEAMS, NUM_RETURN_SEQ
+    MAX_BS, NUM_BEAMS, NUM_RETURN_SEQ, LOGPROBS_PAST_CACHE_SIZE_LIMIT, LOGPROBS_PAST_CACHE_TIMEOUT
 
 app = Flask(__name__, template_folder='service')
 
 # The global text generator
 generator: GeneratorInterface = None
-# The request queue
-batch_queue = PriorityQueueRingShard()
+# The request queues
+generate_batch_queue = PriorityQueueRingShard()
+logprobs_batch_queue = PriorityQueueRingShard()
+# Past key caches
+logprobs_past_cache = defaultdict(lambda: (0, None))
 # Logging
 logger = build_logger()
 
@@ -41,7 +47,7 @@ def batching_loop(timeout=TIMEOUT_MS, max_tokens=MAX_BATCH_TOKENS, max_bs=MAX_BS
     batching_loop is an infinite loop responsible for executing generations.
 
     GPUs benefit from batching requests, but we expect workloads to come
-    in non-uniformly. This loop groups requests together (via batch_queue)
+    in non-uniformly. This loop groups requests together (via generate_batch_queue)
     and executes them in one batch. In order to keep latency low, unfilled
     batches are executed within a window of :timeout: milliseconds.
 
@@ -60,13 +66,20 @@ def batching_loop(timeout=TIMEOUT_MS, max_tokens=MAX_BATCH_TOKENS, max_bs=MAX_BS
     # TODO(roller):
     # - group by generation type, topp etc, as we cannot share these
     # - modify timeout logic to be cumulative
-    batch = []
+    generate_batch = []
+    logprobs_batch = []
     while True:
-        try:
-            # for now, we only have 1 worker, so can always index to shard 0
-            target_queue = batch_queue.queue_shards[0].get_largest_queue()
-            if not target_queue:
-                continue
+        generate_batch, made_model_call = generate_loop(generate_batch, timeout=timeout, max_tokens=max_tokens, max_bs=max_bs)
+        if not made_model_call: # only process logprobs requests if we're not actively serving generate requests
+            logprobs_batch, _ = logprobs_loop(logprobs_batch, timeout=timeout, max_tokens=max_tokens, max_bs=max_bs)
+
+
+def generate_loop(generate_batch, timeout=TIMEOUT_MS, max_tokens=MAX_BATCH_TOKENS, max_bs=MAX_BS):
+    made_model_call = False
+    try: # generate endpoint
+        # for now, we only have 1 worker, so can always index to shard 0
+        target_queue = generate_batch_queue.queue_shards[0].get_largest_queue()
+        if target_queue:
             # dynamic batching: group like-sized items to reduce the cost
             # of padding. See PR#20 for additional context.
             item = target_queue.get(timeout=timeout / 1000)
@@ -76,50 +89,126 @@ def batching_loop(timeout=TIMEOUT_MS, max_tokens=MAX_BATCH_TOKENS, max_bs=MAX_BS
             # longest = max([item] + batch).cost
             # batch_cost = longest * (len(batch) + 1)
             # Below we use number of sequences as a measure to accumulate batch
-            bs = len(batch) + 1
-            if batch and bs > max_bs:
+            bs = len(generate_batch) + 1
+            if generate_batch and bs > max_bs:
                 # we're over budget, put it back in the queue
                 target_queue.put(item)
                 raise queue.Empty
             else:
                 # batch is empty or under budget
-                batch.append(item)
-        except queue.Empty:
-            logger.debug(f"Prepare to process batch: {batch}")
-            if batch:
+                generate_batch.append(item)
+    except queue.Empty:
+        logger.debug(f"Prepare to process generate batch: {generate_batch}")
+        if generate_batch:
+            made_model_call = True
+            request_object = {
+                "inputs": [],
+                "min_tokens": [],
+                "max_tokens": [],
+            }
+            for work_item in generate_batch:
+                ro = work_item.data
+                request_object["inputs"].append(ro["input"])
+                request_object["min_tokens"].append(ro.get("min_tokens", 0))
+                request_object["max_tokens"].append(
+                    ro.get("max_tokens", MAX_SEQ_LEN))
+                # assumption: everyone has the same remaining args
+                for key in [
+                        "temperature",
+                        "top_p",
+                        "n",
+                        "best_of",
+                        "echo",
+                        "logprobs",
+                        "stop",
+                ]:
+                    if key in ro:
+                        request_object[key] = ro[key]
+            # do the actual generations
+            generations = generator.generate(**request_object)
+            # broadcast them back
+            for work_item, gen in zip(generate_batch, generations):
+                work_item.return_queue.put((work_item.uid, gen))
+
+            generate_batch.clear()
+    return generate_batch, made_model_call
+
+
+def logprobs_loop(logprobs_batch, timeout=TIMEOUT_MS, max_tokens=MAX_BATCH_TOKENS, max_bs=MAX_BS):
+    made_model_call = False
+    try: # logprobs endpoint
+        target_queue = logprobs_batch_queue.queue_shards[0].get_largest_queue()
+        if target_queue:
+            item = target_queue.get(timeout=timeout / 1000)
+            logger.debug(f"Get item: {item} into batch")
+            bs = len(logprobs_batch) + 1
+            if logprobs_batch and bs > max_bs:
+                # we're over budget, put it back in the queue
+                target_queue.put(item)
+                raise queue.Empty
+            else:
+                # batch is empty or under budget
+                logprobs_batch.append(item)
+    except:
+        logger.debug(f"Prepare to process logprobs batch: {logprobs_batch}")
+        if logprobs_batch:
+            made_model_call = True
+            for work_item in logprobs_batch: # for loop over work items to keep it as batch size 1 for now, to avoid annoying logic with mixing past key values
+                cache_ids = []
                 request_object = {
                     "inputs": [],
                     "min_tokens": [],
                     "max_tokens": [],
                 }
-                for work_item in batch:
-                    ro = work_item.data
-                    request_object["inputs"].append(ro["input"])
-                    request_object["min_tokens"].append(ro.get("min_tokens", 0))
-                    request_object["max_tokens"].append(
-                        ro.get("max_tokens", MAX_SEQ_LEN))
-                    # assumption: everyone has the same remaining args
-                    for key in [
-                            "temperature",
-                            "top_p",
-                            "n",
-                            "best_of",
-                            "echo",
-                            "logprobs",
-                            "stop",
-                    ]:
-                        if key in ro:
-                            request_object[key] = ro[key]
+                ro = work_item.data
+                request_object["inputs"].append(ro["input"])
+                request_object["min_tokens"].append(ro.get("min_tokens", 0))
+                request_object["max_tokens"].append(
+                    ro.get("max_tokens", MAX_SEQ_LEN))
+                cache_ids.append(ro.get("cache_id", None))
+                # assumption: everyone has the same remaining args
+                for key in [
+                        "temperature",
+                        "top_p",
+                        "top_k",
+                        "n",
+                        "best_of",
+                        "echo",
+                        "logprobs",
+                        "stop",
+                ]:
+                    if key in ro:
+                        request_object[key] = ro[key]
                 # do the actual generations
-                generations = generator.generate(**request_object)
+                request_object["seed"] = random.randint(1, 20000)
+                outputs = generator(request_object['inputs'], cache_ids, pasts=logprobs_past_cache)
+                generations = []
+                for cache_id, output in zip(cache_ids, outputs):
+                    logprobs_past_cache[cache_id] = (time.time(), output.past_key_values) # add to or update the cache with newly computed values
+                    if len(logprobs_past_cache) > LOGPROBS_PAST_CACHE_SIZE_LIMIT: # delete oldest key in cache if cache too big
+                        oldest_key = min(list(logprobs_past_cache.keys()), key=lambda k: logprobs_past_cache[k][0])
+                        del logprobs_past_cache[oldest_key]
+                    last_position = min(output.logits.shape[1], len(request_object['inputs'][0])) - 1
+                    logprobs = torch.log_softmax(output.logits[0, last_position], dim=-1)
+                    sorted_logprobs, sorted_indices = torch.sort(logprobs, descending=True)
+                    cumulative_probs = torch.cumsum(torch.softmax(sorted_logprobs, dim=-1), dim=-1)
+                    num_to_return = 1 + (cumulative_probs < request_object['top_p']).sum().item()
+                    num_to_return = min(num_to_return, request_object["top_k"]) # return at most top_k tokens, e.g. if network limited
+                    generations.append({'logprobs': sorted_logprobs[:num_to_return].tolist(), 'indices': sorted_indices[:num_to_return].tolist()})
                 # broadcast them back
-                for work_item, gen in zip(batch, generations):
+                for work_item, gen in zip(logprobs_batch, generations):
                     work_item.return_queue.put((work_item.uid, gen))
 
-                batch.clear()
-            else:
-                # back to the loop
-                continue
+                logprobs_batch.clear()
+    
+    # clear old keys in logprobs_past_cache which haven't been used recently
+    existing_cache_ids = list(logprobs_past_cache.keys())
+    for cache_id in existing_cache_ids:
+        if time.time() - logprobs_past_cache[cache_id][0] > LOGPROBS_PAST_CACHE_TIMEOUT:
+            del logprobs_past_cache[cache_id]
+            logger.debug(f"Clear past cache: {cache_id}")
+    
+    return logprobs_batch, made_model_call
 
 
 def worker_main(model_name, path, port, torch_device):
@@ -240,7 +329,7 @@ def completions(engine=None):
         else:
             generation_args["top_p"] = 1.0
 
-    logger.info(f"Received new request: prompt length {len(prompts[0])}, "
+    logger.info(f"Received new generate request: prompt length {len(prompts[0])}, "
                 f"max_len: {generation_args.get('max_tokens', 0)}, "
                 f"temperature: {generation_args['temperature']}, "
                 f"top_p: {generation_args['top_p']}.")
@@ -255,7 +344,7 @@ def completions(engine=None):
     for i, prompt in enumerate(prompts):
         request_object = {"input": prompt, **generation_args}
         max_len = generation_args.get("max_tokens", 0)
-        batch_queue.put(
+        generate_batch_queue.put(
             WorkItem(len(prompt) + max_len, i, ret_queue, request_object))
     unordered_results = []
     for _ in prompts:
@@ -270,6 +359,63 @@ def completions(engine=None):
     return OAIResponse(results).__dict__()
 
 
+# @app.route("/logprobs", methods=["POST"]) # endpoint turned off by default
+def logprobs():
+    # prompt can be 2 types:
+    # - str. Basic case. Return one generation.
+    # - list of ints. Pretokenized. Return one generation
+    # batching currently not supported
+    prompts = request.json["prompt"]
+    del request.json["prompt"]
+    generation_args = request.json
+    if isinstance(prompts, str):
+        # single string. tokenize and turn it to the single pre-tokenized case
+        prompts = [encode_fn(generator, prompts)]
+    assert isinstance(prompts, list)
+    assert len(prompts) > 0
+    if isinstance(prompts[0], int):
+        # single pre-tokenized
+        prompts = [prompts]
+    assert isinstance(prompts[0], list)
+    if len(prompts[0]) <= 0:
+        raise Exception("The prompt must be nonempty.")
+    if "top_p" in generation_args:
+        generation_args["top_p"] = round(float(generation_args["top_p"]), 1)
+    else:
+        generation_args["top_p"] = 1.0
+    if "top_k" in generation_args:
+        generation_args["top_k"] = int(generation_args["top_k"])
+    else:
+        generation_args["top_k"] = 10000000
+    # unused arguments that the interface wants
+    generation_args["min_tokens"] = 0
+    generation_args["max_tokens"] = 0
+    generation_args["stop"] = [0]
+    generation_args["temperature"] = 1.0
+    generation_args["n"] = 1
+    logger.info(f"Received new logprobs request: prompt length {len(prompts[0])}, "
+                f"top_p: {generation_args['top_p']}, "
+                f"top_k: {generation_args['top_k']}.")
+    if len(prompts[0]) > MAX_SEQ_LEN:
+        logger.info(f"Rejected a prompt with prompt length {len(prompts[0])}.")
+        raise Exception("Your prompt length is too long. Please make sure len(prompt) <= 512. "
+                        "Since this is a public service, we have limited the max length supported. "
+                        "If you want to try longer sequence length, please consider hosting your own service using Alpa.")
+    cache_ids = [request.json["cache_id"]] if "cache_id" in request.json else [str(uuid.uuid4()) for _ in range(len(prompts))]
+    ret_queue = queue.Queue()
+    for i, (prompt, cache_id) in enumerate(zip(prompts, cache_ids)):
+        request_object = {"input": prompt, "cache_id": cache_id, "logits_request": "true", **generation_args}
+        item = WorkItem(len(prompt), i, ret_queue, request_object)
+        logprobs_batch_queue.put(item
+            )
+    unordered_results = []
+    for _ in prompts:
+        unordered_results.append(ret_queue.get())
+    # resort results by the original ordering
+    reordered = sorted(unordered_results, key=lambda x: x[0])
+    return jsonify({"cache_id": cache_ids[0], "logprobs": reordered[0][1]['logprobs'], "indices": reordered[0][1]['indices']})
+
+
 @app.route("/")
 def index():
     return render_template('index.html',
@@ -282,6 +428,13 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="alpa/opt-125m")
     parser.add_argument("--path", type=str, default="~/opt_weights/")
     parser.add_argument("--port", type=int, default=20001)
+    parser.add_argument("--serve-logprobs", action="store_true", default=False)
     parser.add_argument("--torch-device", type=str, default="cpu")
     args = parser.parse_args()
+
+    if args.serve_logprobs:
+        logprobs.provide_automatic_options = False
+        logprobs.methods = ['POST']
+        app.add_url_rule("/logprobs", view_func=logprobs)
+
     worker_main(args.model, args.path, args.port, args.torch_device)

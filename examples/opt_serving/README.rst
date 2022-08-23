@@ -225,7 +225,6 @@ Code Structure
 ==============
 
 * `examples/opt_serving/benchmark <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/benchmark>`_: Benchmark scripts for generation in the command line.
-* `examples/opt_serving/dataset <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/dataset>`_: Data loaders for serving.
 * `examples/opt_serving/service <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/service>`_: Model serving web server.
 * `examples/opt_serving/generator.py <https://github.com/alpa-projects/alpa/blob/main/examples/opt_serving/generator.py>`_: Backend for web server.
 * `examples/opt_serving/interactive_hosted.py <https://github.com/alpa-projects/alpa/blob/main/examples/opt_serving/interactive_hosted.py>`_: Web server entry point.

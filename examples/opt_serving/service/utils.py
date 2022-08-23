@@ -1,33 +1,11 @@
 """Adapted from Metaseq."""
-import socket
+import datetime
 import logging
 import logging.handlers
-import sys
 import os
-import datetime
+import sys
 
 from opt_serving.service.constants import LOGDIR
-
-
-def normalize_newlines(s: str):
-    """
-    normalizes new lines, i.e. '\r\n' to '\n'
-    """
-    # note that web browsers send \r\n but our training data uses \n.
-    return s.replace("\r\n", "\n").replace("\r", "\n")
-
-
-def get_my_ip():
-    """
-    returns ip / hostname of current host
-    """
-    return socket.gethostbyname(socket.gethostname())
-
-
-def encode_fn(generator, x):
-    """tokenization"""
-    assert generator.tokenizer is not None
-    return generator.tokenizer.encode(normalize_newlines(x))
 
 
 handler = None

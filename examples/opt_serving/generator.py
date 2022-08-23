@@ -116,7 +116,7 @@ class Generator:
         total_inference_time = 0
         batch_request_uuid = next_serve_batch_uuid()
         ori_bs = len(inputs)
-        logger.info(f"Batch {batch_request_uuid} begin. batch size = {ori_bs}")
+        logger.info(f"Batch {batch_request_uuid} begin. batch size: {ori_bs}")
 
         # Check arguments
         assert best_of == self.num_beams, "model must be instantiated and used with the same num_beams"
@@ -157,7 +157,7 @@ class Generator:
 
         logger.info(
             f"Generate begin. batch uuid: {batch_request_uuid}, "
-            f"batch_size: {batch_size}, original bs={ori_bs}, "
+            f"batch_size: {batch_size}, original bs: {ori_bs}, "
             f"generator_args: {generator_args}.")
 
         inference_start_time = time.time()
@@ -185,12 +185,12 @@ class Generator:
                 tmp_ret.append(result)
             ret.append(tmp_ret)
 
-        logger.info(f"Batch {batch_request_uuid} end. batch size = {ori_bs}, "
-                    f"e2e latency = {time.time() - start_time:.2f} s, "
-                    f"inference latency = {inference_time:.2f} s, "
-                    f"speed = {speed:.2f} token/s, "
-                    f"32 token latency = {token_32_latency:.2f} s, "
-                    f"tflops = {tflops:.2f} TFLOPS")
+        logger.info(f"Batch {batch_request_uuid} end. batch size: {ori_bs}, "
+                    f"e2e latency: {time.time() - start_time:.2f} s, "
+                    f"inference latency: {inference_time:.2f} s, "
+                    f"speed: {speed:.2f} token/s, "
+                    f"32 token latency: {token_32_latency:.2f} s, "
+                    f"tflops: {tflops:.2f} TFLOPS")
         return ret
 
     def forward(
@@ -199,7 +199,7 @@ class Generator:
         cache_ids,
         pasts=None,
     ):
-        logger.info(f"Forward begin.")
+        logger.info(f"Forward begin. cache_ids: {cache_ids}")
         time_start = time.time()
 
         assert len(inputs) == 1, "enforcing batch size 1 for now to avoid messy logic with caching past key values"

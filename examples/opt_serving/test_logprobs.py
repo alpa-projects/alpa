@@ -21,7 +21,7 @@ if __name__ == "__main__":
 
     output = client.logprobs(prompt, top_k=top_k)
 
-    for i in range(0):
+    for i in range(40):
         distribution = np.full((tokenizer.vocab_size + 10), -1e8, dtype=np.float32)
         for idx, logprob in zip(output['indices'], output['logprobs']):
             distribution[idx] = logprob

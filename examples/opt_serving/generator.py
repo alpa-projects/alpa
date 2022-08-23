@@ -177,9 +177,9 @@ class Generator:
             for tokens in output_ids[i]:
                 prompt_len = input_lens[i]
                 if echo:
-                    tokens = tokens[:prompt_len + max_tokens[i] - 1]
+                    tokens = tokens[:prompt_len + max_tokens[i]]
                 else:
-                    tokens = tokens[prompt_len - 1:][:max_tokens[i]]
+                    tokens = tokens[prompt_len:prompt_len + max_tokens[i]]
                 text = self.tokenizer.decode(tokens, skip_special_tokens=True)
                 result = {"text": text}
                 tmp_ret.append(result)

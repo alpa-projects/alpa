@@ -71,7 +71,7 @@ def batching_loop():
 
         # only process logprobs requests if we're not actively serving generate requests
         if not receive_item:
-            logprobs_batch, _ = logprobs_loop(
+            logprobs_batch = logprobs_loop(
                     logprobs_batch, timeout=LOGPROBS_BATCHING_TIMEOUT_MS, max_bs=MAX_BS)
 
 
@@ -201,7 +201,7 @@ def logprobs_loop(logprobs_batch, timeout, max_bs):
             del logprobs_past_cache[cache_id]
             logger.debug(f"Clear past cache: {cache_id}")
 
-    return logprobs_batch, made_model_call
+    return logprobs_batch
 
 
 def worker_main(model_name, path, port, torch_device):

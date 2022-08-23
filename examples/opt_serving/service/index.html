@@ -167,9 +167,12 @@
                 }
             },
             error: function (xhr) {
+                console.log("Error:");
+                console.log(xhr);
                 $("#promptDisplay").text("");
                 $("#response").text("");
-                $("#error").text(xhr.responseText);
+                $("#error").text(xhr.responseJSON.error.message + "\n\n" +
+                                 xhr.responseJSON.error.stacktrace.join())
             }
         });
       });

@@ -389,7 +389,7 @@ def _get_apply_grad_outvar_constraints(pipeline_stages, stage_to_mesh,
 def process_apply_gradient(apply_grad_jaxpr, microbatch_bound, pipeline_stages,
                            stage_to_mesh, gensym_func, num_micro_batches,
                            num_meshes, global_invars, global_outvars,
-                           donated_invars, reduction_vector):
+                           donated_invars, reduction_vector, profiling):
     """Slice apply_grad jaxpr into stages and assign them to the corresponding
     meshes."""
     # Process apply gradient:
@@ -425,7 +425,8 @@ def process_apply_gradient(apply_grad_jaxpr, microbatch_bound, pipeline_stages,
                                                    gradvar_to_mesh, outvar_mesh,
                                                    num_meshes,
                                                    len(pipeline_stages),
-                                                   donation_mapping)
+                                                   donation_mapping,
+                                                   gensym_func, profiling)
     apply_grad_placement, _ = info
     sliced_apply_grad, out_map = apply_grad_add_marker(sliced_apply_grad,
                                                        apply_in_to_acc_out,
@@ -689,6 +690,7 @@ class ApplyGradRewriter:
         one mesh, and c is only used once, then we can do the reduction to
         translate additions into an allreduce.
         """
+        # List[mesh_idx -> List[Vars]]
         mesh_vars = [[] for _ in range(num_mesh)]
         literals = []
         eqn = self.eqns[eqn_idx]
@@ -720,11 +722,13 @@ class ApplyGradRewriter:
                     mesh_vars[self.eqn_mesh[def_idx]].append(op)
         return mesh_vars, final_var, reducable_chain[:-1], literals
 
-    def _rewrite_eqns(self, primitive, mesh_eqns, gensym_fn, outvar, literals):
+    def _rewrite_eqns(self, primitive, mesh_vars, gensym_fn, outvar, literals):
         # rewrite according to splits
+        # FIXME(yonghao): support literals
         appended_eqns = []
         allreduce_vars = []
-        for per_mesh_vars in mesh_eqns:
+        mesh_ids = []
+        for mesh_id, per_mesh_vars in enumerate(mesh_vars):
             cur_val = None
             for v in per_mesh_vars:
                 if cur_val is None:
@@ -735,13 +739,15 @@ class ApplyGradRewriter:
                     new_jaxpr_eqn([cur_val, v], [new_var],
                                   primitive, {}))
                 cur_val = new_var
-            allreduce_vars.append(cur_val)
+            if cur_val is not None:
+                allreduce_vars.append(cur_val)
+                mesh_ids.append(mesh_id)
         # modify the end of reduce chain eqn into an all-reduce.
         # The allreduce will be immediately replaced by pipeline markers
         appended_eqns.append(
             new_jaxpr_eqn(allreduce_vars, [outvar], cross_mesh_allreduce_p,
                           {"type": primitive}))
-        return appended_eqns
+        return appended_eqns, (mesh_ids, outvar)
 
     def split_replicated_eqns(self, gensym_fn, num_mesh):
         """Rewrite apply grad jaxpr to eqns so as to """
@@ -749,6 +755,7 @@ class ApplyGradRewriter:
         new_eqns_before_var = {}
         # Try to match the pattern
         removed_eqns = set()
+        allreduce_keys = []
         for eqn_idx, eqn in enumerate(self.eqns):
             # Do not handle c = a(mesh1 and 2) + b(mesh1) case
             if (eqn_idx not in self.eqn_mesh and self._reducable(eqn) and
@@ -757,10 +764,10 @@ class ApplyGradRewriter:
                 (mesh_vars, final_var, removed,
                  literals) = self._reducable_chain_lookup(eqn_idx, num_mesh)
                 removed_eqns.update(removed)
-                appended_eqns = self._rewrite_eqns(eqn.primitive, mesh_vars,
-                                                   gensym_fn, final_var,
-                                                   literals)
+                appended_eqns, reduce_key = self._rewrite_eqns(
+                    eqn.primitive, mesh_vars, gensym_fn, final_var, literals)
                 new_eqns_before_var[final_var] = appended_eqns
+                allreduce_keys.append(reduce_key)
         new_eqns = []
         for eqn_idx, eqn in enumerate(self.eqns):
             if eqn_idx in removed_eqns:
@@ -772,10 +779,10 @@ class ApplyGradRewriter:
                 new_eqns.extend(new_eqns_before_var[outv])
             else:
                 new_eqns.append(eqn)
-        return clone_jaxpr(self.jaxpr, eqns=new_eqns)
+        return clone_jaxpr(self.jaxpr, eqns=new_eqns), allreduce_keys
 
     @staticmethod
-    def rewrite_allreduce(closed_jaxpr: ClosedJaxpr):
+    def rewrite_allreduce(closed_jaxpr: ClosedJaxpr, rewrite_to_dummy):
         """For cross-mesh allreduce, rewrite its invar to make it legal."""
         vars = set()
         new_eqns = []
@@ -787,9 +794,14 @@ class ApplyGradRewriter:
             if eqn.primitive == cross_mesh_allreduce_p:
                 new_invars = set(eqn.invars).intersection(vars)
                 assert len(new_invars) == 1
-                new_eqns.append(
-                    new_jaxpr_eqn(list(new_invars), list(eqn.outvars),
-                                  eqn.primitive, dict(eqn.params)))
+                if rewrite_to_dummy:
+                    zero = Literal(0, raise_to_shaped(get_aval(eqn.outvars[0])))
+                    invs = list(new_invars) + [zero]
+                    new_eqn = new_jaxpr_eqn(invs, list(eqn.outvars), add_p, {})
+                else:
+                    new_eqn = new_jaxpr_eqn(list(new_invars), list(eqn.outvars),
+                                            eqn.primitive, dict(eqn.params))
+                new_eqns.append(new_eqn)
             else:
                 new_eqns.append(eqn)
             for v in eqn.outvars:
@@ -806,7 +818,8 @@ def _no_allreduce(eqns):
 
 def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
                          outvar_mesh: Dict[Var, OrderedSet[int]], num_mesh,
-                         num_stage, donation_mapping: Dict[Var, Var]):
+                         num_stage, donation_mapping: Dict[Var, Var],
+                         gensym_fn, skip_cross_mesh_allreduce):
     """
     Slice the apply gradient jaxpr based on mesh allocation information.
 
@@ -819,6 +832,7 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
           computation, add an empty jaxpr
         num_stage: number of stages in the apply gradient computation.
         donation_mapping: donation mapping for global invars
+        skip_cross_mesh_allreduce: Skip cross mesh allreduce in profiling.
 
     Returns:
         jaxprs(List[ClosedJaxpr]): The i-th ClosedJaxpr runs at the i-th
@@ -832,9 +846,9 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     var_mesh = {var: OrderedSet([mesh]) for var, mesh in grad_mesh.items()}
     for var in outvar_mesh:
         var_mesh.setdefault(var, OrderedSet()).update(outvar_mesh[var])
-    closed_jaxpr = ApplyGradRewriter(closed_jaxpr,
-                                     var_mesh).split_replicated_eqns(
-                                         gensym([closed_jaxpr.jaxpr]), num_mesh)
+    closed_jaxpr, keys = ApplyGradRewriter(closed_jaxpr,
+                                           var_mesh).split_replicated_eqns(
+                                               gensym_fn, num_mesh)
     # propagate to get var_at_mesh
     eqn_mesh, var_mesh = _propagate_var_at_mesh(closed_jaxpr.eqns, var_mesh)
     changed = True
@@ -880,10 +894,11 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
         mesh_assignment[computation_idx] = i
         sliced = Jaxpr(constvars[i], invars[i], outvars[i], sliced_eqns[i])
         closed_jaxpr = ClosedJaxpr(sliced, consts[i])
-        closed_jaxpr = ApplyGradRewriter.rewrite_allreduce(closed_jaxpr)
+        closed_jaxpr = ApplyGradRewriter.rewrite_allreduce(
+            closed_jaxpr, skip_cross_mesh_allreduce)
         jaxprs.append(closed_jaxpr)
 
-    info = mesh_assignment, infered_global_invars
+    info = mesh_assignment, infered_global_invars, keys
     return jaxprs, info
 
 

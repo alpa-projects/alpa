@@ -292,7 +292,8 @@ def completions():
     if "stop" in generation_args:
         raise NotImplementedError("The stop argument is not implemented")
 
-    logger.info(f"Received new generate request: prompt length {len(prompts[0])}, "
+    logger.info(f"Received new generate request: "
+	        f"prompt length {[len(p) for p in prompts]}, "
                 f"max_len: {generation_args.get('max_tokens', 0)}, "
                 f"temperature: {generation_args['temperature']}, "
                 f"top_p: {generation_args['top_p']}, "
@@ -344,7 +345,8 @@ def logprobs():
     generation_args["temperature"] = -1
     generation_args["n"] = int(generation_args.get("n", num_return_sequences))
 
-    logger.info(f"Received new logprobs request: prompt length {len(prompts[0])}, "
+    logger.info(f"Received new logprobs request: "
+	        f"prompt length {[len(p) for p in prompts]}, "
                 f"top_p: {generation_args['top_p']}, "
                 f"top_k: {generation_args['top_k']}.")
 

@@ -65,14 +65,22 @@ def batching_loop():
     # - modify timeout logic to be cumulative
     generate_batch = []
     logprobs_batch = []
+
+    generate_batch_timeout = 0
     while True:
         generate_batch, receive_item = generate_loop(
-                generate_batch, timeout=BATCHING_TIMEOUT_MS, max_bs=MAX_BS)
+                generate_batch, timeout=generate_batch_timeout,
+                max_bs=MAX_BS)
+
+        if receive_item:
+            generate_batch_timeout = BATCHING_TIMEOUT_MS
+        else:
+            generate_batch_timeout = 0
 
         # only process logprobs requests if we're not actively serving generate requests
         if not receive_item:
             logprobs_batch = logprobs_loop(
-                    logprobs_batch, timeout=LOGPROBS_BATCHING_TIMEOUT_MS, max_bs=MAX_BS)
+                    logprobs_batch, timeout=0, max_bs=MAX_BS)
 
 
 def generate_loop(generate_batch, timeout, max_bs):
@@ -94,31 +102,23 @@ def generate_loop(generate_batch, timeout, max_bs):
     except queue.Empty:
         logger.debug(f"Prepare to process generate batch: {generate_batch}")
         if generate_batch:
-            request_object = {
+            request_args = {
                 "inputs": [],
                 "min_tokens": [],
                 "max_tokens": [],
             }
             for work_item in generate_batch:
                 ro = work_item.data
-                request_object["inputs"].append(ro["input"])
-                request_object["min_tokens"].append(ro.get("min_tokens", 0))
-                request_object["max_tokens"].append(
-                    ro.get("max_tokens", MAX_SEQ_LEN))
+                request_args["inputs"].append(ro["input"])
+                request_args["min_tokens"].append(ro["min_tokens"])
+                request_args["max_tokens"].append(ro["max_tokens"])
                 # assumption: everyone has the same remaining args
                 for key in [
-                        "temperature",
-                        "top_p",
-                        "n",
-                        "best_of",
-                        "echo",
-                        "logprobs",
-                        "stop",
+                    "temperature", "top_p", "n", "best_of", "echo",
                 ]:
-                    if key in ro:
-                        request_object[key] = ro[key]
+                    request_args[key] = ro[key]
             # do the actual generations
-            generations = generator.generate(**request_object)
+            generations = generator.generate(**request_args)
             # broadcast them back
             for work_item, gen in zip(generate_batch, generations):
                 work_item.return_queue.put((work_item.uid, gen))
@@ -142,33 +142,13 @@ def logprobs_loop(logprobs_batch, timeout, max_bs):
         logger.debug(f"Prepare to process logprobs batch: {logprobs_batch}")
         if logprobs_batch:
             for work_item in logprobs_batch: # for loop over work items to keep it as batch size 1 for now, to avoid annoying logic with mixing past key values
+                inputs = []
                 cache_ids = []
-                request_object = {
-                    "inputs": [],
-                    "min_tokens": [],
-                    "max_tokens": [],
-                }
                 ro = work_item.data
-                request_object["inputs"].append(ro["input"])
-                request_object["min_tokens"].append(ro.get("min_tokens", 0))
-                request_object["max_tokens"].append(
-                    ro.get("max_tokens", MAX_SEQ_LEN))
-                cache_ids.append(ro.get("cache_id", None))
-                # assumption: everyone has the same remaining args
-                for key in [
-                        "temperature",
-                        "top_p",
-                        "top_k",
-                        "n",
-                        "best_of",
-                        "echo",
-                        "logprobs",
-                        "stop",
-                ]:
-                    if key in ro:
-                        request_object[key] = ro[key]
+                inputs.append(ro["input"])
+                cache_ids.append(ro["cache_id"])
                 # do the actual generations
-                outputs = generator.forward(request_object['inputs'], cache_ids, pasts=logprobs_past_cache)
+                outputs = generator.forward(inputs, cache_ids, pasts=logprobs_past_cache)
                 generations = []
                 for cache_id, output in zip(cache_ids, outputs):
                     # add to or update the cache with newly computed values
@@ -177,13 +157,14 @@ def logprobs_loop(logprobs_batch, timeout, max_bs):
                     if len(logprobs_past_cache) > LOGPROBS_PAST_CACHE_SIZE_LIMIT:
                         oldest_key = min(list(logprobs_past_cache.keys()), key=lambda k: logprobs_past_cache[k][0])
                         del logprobs_past_cache[oldest_key]
-                    last_position = min(output.logits.shape[1], len(request_object['inputs'][0])) - 1
+
+                    last_position = min(output.logits.shape[1], len(inputs[0])) - 1
                     logprobs = torch.log_softmax(output.logits[0, last_position], dim=-1)
                     sorted_logprobs, sorted_indices = torch.sort(logprobs, descending=True)
                     cumulative_probs = torch.cumsum(torch.softmax(sorted_logprobs, dim=-1), dim=-1)
-                    num_to_return = 1 + (cumulative_probs < request_object['top_p']).sum().item()
+                    num_to_return = 1 + (cumulative_probs < ro['top_p']).sum().item()
                     # return at most top_k tokens, e.g. if network limited
-                    num_to_return = min(num_to_return, request_object["top_k"])
+                    num_to_return = min(num_to_return, ro["top_k"])
                     generations.append({
                         'logprobs': sorted_logprobs[:num_to_return].tolist(),
                         'indices': sorted_indices[:num_to_return].tolist()
@@ -283,47 +264,34 @@ def normalize_prompts(prompts):
 def completions():
     # Normalize prompts
     prompts = request.json["prompt"]
-    del request.json["prompt"]
     prompts = normalize_prompts(prompts)
 
     # Generation arguments
     generation_args = request.json
-    if "min_tokens" in generation_args:
-        generation_args["min_tokens"] = int(generation_args["min_tokens"])
-    if "max_tokens" in generation_args:
-        generation_args["max_tokens"] = int(generation_args["max_tokens"])
-    if "stop" in generation_args:
-        stop = generation_args["stop"]
-        if stop is None:
-            pass
-        elif isinstance(stop, str):
-            stop = [generator.encode(stop)[0]]
-        else:
-            stop = [generator.encode(s)[0] for s in stop]
-        generation_args["stop"] = stop
-        raise NotImplementedError("The stop argument is not implemented")
-
-    # Beam search top n
-    generation_args["best_of"] = num_beams
-    if "n" in generation_args:
-        generation_args["n"] = int(generation_args["n"])
-    else:
-        generation_args["n"] = num_return_sequences
+    generation_args["min_tokens"] = int(
+        generation_args.get("min_tokens", 0))
+    generation_args["max_tokens"] = int(
+        generation_args.get("max_tokens", MAX_SEQ_LEN))
 
     if num_beams > 1:
         # if beam search is enabled, disable all sampling
         generation_args["temperature"] = 0.0
         generation_args["top_p"] = 0.0
     else:
-        if "temperature" in generation_args:
-            generation_args["temperature"] = round(
-                float(generation_args["temperature"]), 1)
-        else:
-            generation_args["temperature"] = 1.0
-        if "top_p" in generation_args:
-            generation_args["top_p"] = round(float(generation_args["top_p"]), 1)
-        else:
-            generation_args["top_p"] = 1.0
+        generation_args["temperature"] = round(
+            float(generation_args.get("temperature", 1.0)), 1)
+        generation_args["top_p"] = round(
+            float(generation_args.get("top_p", 1.0)), 1)
+
+    assert 0 <= generation_args["top_p"] <= 1
+    assert 0 <= generation_args["temperature"]
+
+    generation_args["n"] = int(generation_args.get("n", num_return_sequences))
+    generation_args["echo"] = bool(generation_args.get("echo", False))
+    generation_args["best_of"] = num_beams
+
+    if "stop" in generation_args:
+        raise NotImplementedError("The stop argument is not implemented")
 
     logger.info(f"Received new generate request: prompt length {len(prompts[0])}, "
                 f"max_len: {generation_args.get('max_tokens', 0)}, "
@@ -331,14 +299,14 @@ def completions():
                 f"top_p: {generation_args['top_p']}, "
                 f"ip: {request.remote_addr}")
 
-    cur_len = max(len(p) for p in prompts) + generation_args.get("max_tokens", 0)
+    cur_len = max(len(p) for p in prompts)
     check_max_length_limit(cur_len, MAX_SEQ_LEN)
 
     # Push the request to the batch queue
     ret_queue = queue.Queue()
     for i, prompt in enumerate(prompts):
         request_object = {"input": prompt, **generation_args}
-        max_len = generation_args.get("max_tokens", 0)
+        max_len = generation_args["max_tokens"]
         generate_batch_queue.put(
             WorkItem(len(prompt) + max_len, i, ret_queue, request_object))
     unordered_results = []
@@ -363,33 +331,31 @@ def logprobs():
 
     # Generation arguments
     generation_args = request.json
+    generation_args["min_tokens"] = int(
+        generation_args.get("min_tokens", 0))
+    generation_args["max_tokens"] = int(
+        generation_args.get("max_tokens", MAX_SEQ_LEN))
 
-    if "top_p" in generation_args:
-        generation_args["top_p"] = round(float(generation_args["top_p"]), 1)
-    else:
-        generation_args["top_p"] = 1.0
-    if "top_k" in generation_args:
-        generation_args["top_k"] = int(generation_args["top_k"])
-    else:
-        generation_args["top_k"] = 10000000
+    generation_args["top_p"] = round(
+        float(generation_args.get("top_p", 1.0)), 1)
+    generation_args["top_k"] = int(generation_args.get("top_k", 100000))
 
-    # unused arguments that the interface wants
-    generation_args["min_tokens"] = 0
-    generation_args["max_tokens"] = 0
-    generation_args["stop"] = [0]
-    generation_args["temperature"] = 1.0
-    generation_args["n"] = 1
+    generation_args["temperature"] = -1
+    generation_args["n"] = int(generation_args.get("n", num_return_sequences))
 
     logger.info(f"Received new logprobs request: prompt length {len(prompts[0])}, "
                 f"top_p: {generation_args['top_p']}, "
                 f"top_k: {generation_args['top_k']}.")
 
-    check_max_length_limit(max(len(p) for p in prompts), MAX_SEQ_LEN)
+    cur_len = max(len(p) for p in prompts)
+    check_max_length_limit(cur_len, MAX_SEQ_LEN)
 
+    # Push the request to the batch queue
     cache_ids = [request.json["cache_id"]] if "cache_id" in request.json else [str(uuid.uuid4()) for _ in range(len(prompts))]
     ret_queue = queue.Queue()
     for i, (prompt, cache_id) in enumerate(zip(prompts, cache_ids)):
-        request_object = {"input": prompt, "cache_id": cache_id, "logits_request": "true", **generation_args}
+        request_object = {"input": prompt, "cache_id": cache_id,
+                          **generation_args}
         item = WorkItem(len(prompt), i, ret_queue, request_object)
         logprobs_batch_queue.put(item
             )

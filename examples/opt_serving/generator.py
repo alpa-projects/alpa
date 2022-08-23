@@ -89,13 +89,13 @@ class Generator:
     def generate(
         self,
         inputs: List[List[int]],
-        min_tokens: List[int] = None,
-        max_tokens: List[int] = None,
-        temperature: float = 1.0,
-        top_p: float = -1.0,
-        n: int = 1,
-        echo: bool = False,
-        best_of: Optional[int] = None,
+        min_tokens: List[int],
+        max_tokens: List[int],
+        temperature: float,
+        top_p: float,
+        n: int,
+        echo: bool,
+        best_of: int,
     ):
         """
         Generation API.
@@ -121,6 +121,10 @@ class Generator:
         # Check arguments
         assert best_of == self.num_beams, "model must be instantiated and used with the same num_beams"
         assert n == self.num_return_sequences, "model must be instantiated and used with the same num_return_sequences"
+        if temperature <= 1e-3:
+            do_sample = False
+        else:
+            do_sample = self.do_sample
         # Resolve the max sequence length allowed from multiple sources
         max_seq_len = min(MAX_SEQ_LEN, self.model_wrapper.transformer_config.seq_len)
 
@@ -142,7 +146,7 @@ class Generator:
             "min_length": min_length,
             "max_length": max_length,
             "temperature": temperature,
-            "do_sample": self.do_sample,
+            "do_sample": do_sample,
             "top_p": top_p,
             "num_beams": best_of,
             "num_return_sequences": n,

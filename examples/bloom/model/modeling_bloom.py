@@ -45,7 +45,9 @@ from .configuration_bloom import BloomConfig
 from .modeling_flax_utils import FlaxPreTrainedModel
 from . import layers
 from .layers import with_sharding_constraint
-
+import numpy as np
+import ray
+from tqdm import tqdm
 
 logger = logging.get_logger(__name__)
 
@@ -783,3 +785,79 @@ class FlaxBloomForCausalLM(FlaxBloomPreTrainedModel):
     def update_inputs_for_generation(self, model_outputs, model_kwargs):
         model_kwargs["past_key_values"] = model_outputs.past_key_values
         return model_kwargs
+
+def load_params_np(params, path, config, dummy=False):
+    """Load parameters with numpy arrays."""
+    if dummy:
+        np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
+        return jax.tree_map(lambda x: np.full(x.shape, 1e-9, np_dtype), params)
+
+    def load_array(key):
+        return np.load(os.path.join(path, key))
+
+    def load_param(param_key, loaded_array):
+        param_dict = params
+        param_keys = param_key.split('.')
+        for i, key in enumerate(param_keys):
+            if i == len(param_keys) - 1:
+                if dummy:
+                    param_dict[key] = jax.core.ShapedArray(
+                        param_dict[key].shape, param_dict[key].dtype)
+                else:
+                    assert param_dict[key].shape == loaded_array.shape
+                    #assert param_dict[key].dtype == loaded_array.dtype
+                    param_dict[key] = loaded_array
+            else:
+                param_dict = param_dict[key]
+
+    params = params.unfreeze()
+    load_param("params.transformers.embeddings.word_embeddings.embedding",
+               load_array("decoder.embed_tokens.weight"))
+    load_param("params.transformers.embeddings.position_embeddings.embedding",
+               load_array("decoder.embed_positions.weight"))
+    if config.version > 2:
+        load_param("params.transformers.layer_norm.scale",
+                   load_array("decoder.layer_norm.weight"))
+        load_param("params.transformers.layer_norm.bias",
+                   load_array("decoder.layer_norm.bias"))
+    for i in tqdm(range(config.decoder_layers)):
+        param_prefix = f"params.transformers.encoder.{i}."
+        load_prefix = f"decoder.layers.{i}."
+        # Attention weights
+        wq = load_array(load_prefix + "self_attn.q_proj.weight")
+        wk = load_array(load_prefix + "self_attn.k_proj.weight")
+        wv = load_array(load_prefix + "self_attn.v_proj.weight")
+        dim = wq.shape[-1]
+        w_qvk = np.concatenate([wq, wv, wk], axis=0).reshape(
+            (3, -1, dim)).transpose([2, 1, 0]).reshape((dim, -1))
+        load_param(param_prefix + "attention.self.qvk_combined.kernel", w_qvk)
+        bq = load_array(load_prefix + "self_attn.q_proj.bias")
+        bk = load_array(load_prefix + "self_attn.k_proj.bias")
+        bv = load_array(load_prefix + "self_attn.v_proj.bias")
+        b_qvk = np.concatenate([bq, bv, bk], axis=0).reshape(
+            (3, dim)).transpose([1, 0]).reshape((-1,))
+        load_param(param_prefix + "attention.self.qvk_combined.bias", b_qvk)
+        load_param(
+            param_prefix + "attention.dense.kernel",
+            np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))
+        load_param(param_prefix + "attention.dense.bias",
+                   load_array(load_prefix + "self_attn.out_proj.bias"))
+        load_param(param_prefix + "attention.layer_norm.scale",
+                   load_array(load_prefix + "self_attn_layer_norm.weight"))
+        load_param(param_prefix + "attention.layer_norm.bias",
+                   load_array(load_prefix + "self_attn_layer_norm.bias"))
+        # # FFN weights
+        # load_param(param_prefix + "ffn.fc1.bias",
+        #            load_array(load_prefix + "fc1.bias"))
+        # load_param(param_prefix + "ffn.fc1.kernel",
+        #            np.transpose(load_array(load_prefix + "fc1.weight")))
+        # load_param(param_prefix + "ffn.fc2.bias",
+        #            load_array(load_prefix + "fc2.bias"))
+        # load_param(param_prefix + "ffn.fc2.kernel",
+        #            np.transpose(load_array(load_prefix + "fc2.weight")))
+        # load_param(param_prefix + "ffn.layer_norm.scale",
+        #            load_array(load_prefix + "final_layer_norm.weight"))
+        # load_param(param_prefix + "ffn.layer_norm.bias",
+        #            load_array(load_prefix + "final_layer_norm.bias"))
+
+    return flax.core.freeze(params)

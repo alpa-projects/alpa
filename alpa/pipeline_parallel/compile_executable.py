@@ -186,7 +186,7 @@ def compile_pipeshard_executable_internal(
 
     # Process apply_gradient and donation
     (sliced_apply_grad_stages, n_stages, dependency, apply_grad_placement,
-     global_outvars, donated_invars) = process_apply_gradient(
+     global_outvars, donated_invars, allreduce_groups) = process_apply_gradient(
          apply_grad_jaxpr, microbatch_bound, jax_pipeline_stages, stage_to_mesh,
          gensym_func, num_microbatch, num_meshes, global_invars, global_outvars,
          donated_invars, reduction_vector, False)
@@ -263,7 +263,8 @@ def compile_pipeshard_executable_internal(
         num_batch=num_microbatch,
         default_auto_sharding_option=default_as_option,
         manual_stage_option=manual_stage_option,
-        flop_count=total_flops).compile()
+        flop_count=total_flops,
+        allreduce_groups=allreduce_groups).compile()
 
     debug_compilation_time("runtime emitter")
     return pipeshard_config
@@ -394,7 +395,7 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
         layer_to_mesh = (list(range(num_mesh)) +
                          list(reversed(range(num_mesh))))
     (layers, _, _,
-     apply_grad_placement, _, donated_invars) = process_apply_gradient(
+     apply_grad_placement, _, donated_invars, _) = process_apply_gradient(
          apply_grad_jaxpr, microbatch_bound, pipeline_layers, layer_to_mesh,
          gensym_func, num_microbatch, num_mesh, global_invars, global_outvars,
          donated_invars, reduction_vector, True)

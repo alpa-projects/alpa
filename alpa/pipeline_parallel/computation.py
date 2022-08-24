@@ -127,22 +127,6 @@ class JaxPipelineComputation(PipelineComputation):
 
 
 @dataclass
-class ApplyGradJaxPipelineComputation(JaxPipelineComputation):
-    allreduce_ops: Sequence[Sequence[Tuple[int, int, str]]] = None
-
-    @classmethod
-    def from_closed_jaxpr(cls, name, closed_jaxpr: ClosedJaxpr, allreduce_ops):
-        """Construct a JaxPipelineComputation from a Jaxpr."""
-        return cls(name=name,
-                   invars=closed_jaxpr.jaxpr.invars,
-                   outvars=closed_jaxpr.jaxpr.outvars,
-                   eqns=closed_jaxpr.eqns,
-                   consts_dir=dict(
-                       zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts)),
-                   allreduce_ops=allreduce_ops)
-
-
-@dataclass
 class XlaPipelineComputation(PipelineComputation):
     """A pipeline computation defined by XLA HLO Module."""
 
@@ -381,98 +365,6 @@ class XlaShardedPipelineComputation(PipelineComputation):
         """Get the HLO text."""
         assert self.sharding_annotated_module is not None
         return self.sharding_annotated_module.to_string()
-
-
-@dataclass
-class ApplyGradXlaShardedPipelineComputation(PipelineComputation):
-    """
-    Multiple pipeline computation defined by XLA HLO Module for apply gradient.
-    Each XLA HLO is annotated by sharding spec.
-    """
-
-    sharding_annotated_modules: Sequence[xe.HloModule] = None
-    donated_invars: Sequence[bool] = None
-    stage_plans: Sequence[StagePlan] = None
-    input_sharding_specs: Sequence[pxla.ShardingSpec] = None
-    output_sharding_specs: Sequence[pxla.ShardingSpec] = None
-    output_acc_grad_indices: Sequence[int] = None
-    donatables: OrderedSet[Var] = None
-    spmd_partitioned_hlo_modules: Sequence[xe.HloModule] = None
-    allreduce_ops: Sequence[Sequence[Tuple[int, str]]] = None
-
-    @classmethod
-    def from_auto_sharded_computation(
-            cls,
-            *,
-            jax_pipeline_computation: JaxPipelineComputation,
-            sharding_annotated_modules: Sequence[xe.HloModule],
-            stage_plans: Sequence[StagePlan],
-            donated_invars: Sequence[bool] = None,
-            acc_grad_outvars: Sequence[Var] = (),
-            donatables: OrderedSet[Var] = None):
-        """Run auto-sharding optimizer on a Jax pipeline computation."""
-        assert isinstance(jax_pipeline_computation,
-                          ApplyGradJaxPipelineComputation)
-        if donatables is None:
-            donatables = OrderedSet()
-
-        if not donated_invars:
-            donated_invars = (False,) * len(jax_pipeline_computation.invars)
-
-        acc_grad_indices = [
-            out_idx
-            for out_idx, outvar in enumerate(jax_pipeline_computation.outvars)
-            if outvar in acc_grad_outvars
-        ]
-
-        return cls(name=jax_pipeline_computation.name,
-                   sharding_annotated_modules=sharding_annotated_modules,
-                   stage_plans=stage_plans,
-                   donated_invars=donated_invars,
-                   invars=jax_pipeline_computation.invars,
-                   outvars=jax_pipeline_computation.outvars,
-                   output_acc_grad_indices=acc_grad_indices,
-                   donatables=donatables,
-                   allreduce_ops=jax_pipeline_computation.allreduce_ops)
-
-    def get_spmd_partitioned(self):
-        """Run spmd partitioner to get the input/output sharding specs after
-        partitioning."""
-        if self.spmd_partitioned_hlo_modules is not None:
-            return self.spmd_partitioned_hlo_modules
-
-        stage_plans = self.stage_plans
-        logical_mesh_shape = stage_plans[0].logical_mesh_shape
-        hlo_modules = self.sharding_annotated_modules
-        for module in hlo_modules:
-            setup_computation_alias(module, self.donated_invars)
-
-        num_devices = np.prod(logical_mesh_shape)
-        rewrite_for_grad_acc = len(self.output_acc_grad_indices) > 0
-        spmd_partitioned_hlo_modules = []
-        for module in hlo_modules:
-            spmd_partitioned_hlo_modules.append(
-                run_spmd_partitioner_pass(
-                    module,
-                    num_devices,
-                    rewrite_for_grad_acc=rewrite_for_grad_acc,
-                    rewrite_grad_acc_indices=self.output_acc_grad_indices))
-
-        in_avals = [var.aval for var in self.invars]
-        out_avals = [var.aval for var in self.outvars]
-        input_sharding_specs = (get_input_sharding_specs(
-            spmd_partitioned_hlo_modules[0], in_avals, num_devices,
-            logical_mesh_shape))
-        output_sharding_specs = (get_output_sharding_specs(
-            spmd_partitioned_hlo_modules[-1], out_avals, num_devices,
-            logical_mesh_shape))
-        self.input_sharding_specs = input_sharding_specs
-        self.output_sharding_specs = output_sharding_specs
-        # The run_spmd_partitioner_pass modifies hlo module in-place,
-        # so the old hlo module cannot be accessed anymore
-        self.sharding_annotated_modules = None
-        self.spmd_partitioned_hlo_modules = spmd_partitioned_hlo_modules
-        return spmd_partitioned_hlo_modules
 
 
 def slice_closed_jaxpr_by_full_pipeline_marks(
@@ -915,24 +807,14 @@ def rearrange_vars(vars,
     return new_vars, new_marker
 
 
-_jax_to_xla_computation_dict = {
-    JaxPipelineComputation: XlaShardedPipelineComputation,
-    ApplyGradJaxPipelineComputation: ApplyGradXlaShardedPipelineComputation
-}
-
-XlaPipelineComputationType = Union[XlaShardedPipelineComputation,
-                                   ApplyGradXlaShardedPipelineComputation]
-
-
 def generate_computations_from_modules(
         jax_computations, computation_names, computation_modules, donate_invars,
         donatable_lists, acc_grad_outvars,
-        stage_plan) -> Sequence[XlaPipelineComputationType]:
+        stage_plan) -> Sequence[XlaShardedPipelineComputation]:
     """Generate pipeline computation from HLO modules."""
     module_dict = dict(zip(computation_names, computation_modules))
     computations = [
-        _jax_to_xla_computation_dict[type(
-            computation)].from_auto_sharded_computation(
+        XlaShardedPipelineComputation.from_auto_sharded_computation(
                 sharding_annotated_module=module_dict[computation.name],
                 jax_pipeline_computation=computation,
                 stage_plan=stage_plan,

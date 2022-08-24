@@ -15,7 +15,7 @@ from alpa.device_mesh import (DistributedArray, RemoteArrayRef,
 from alpa.global_env import global_config
 from alpa.mesh_executable import (UtilMeshWorkerExecutable,
                                   next_mesh_executable_uuid)
-from alpa.pipeline_parallel.computation import XlaPipelineComputationType
+from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.pipeline_parallel.resharding_tensor import (VirtualDistributedArray,
                                                       TileSlice,
                                                       unflatten_tile_index)
@@ -922,7 +922,7 @@ class CrossMeshCommunicator:
         if not isinstance(sharded_stages, list):
             raise RuntimeError("Require a list of stages.")
         for s in sharded_stages:
-            if type(s) in XlaPipelineComputationType:
+            if not isinstance(s, XlaShardedPipelineComputation):
                 raise RuntimeError("Require a list of sharded stages.")
         # Do not mutate
         self._sharded_stages = sharded_stages

@@ -427,7 +427,7 @@ def process_apply_gradient(apply_grad_jaxpr, microbatch_bound, pipeline_stages,
                                                    len(pipeline_stages),
                                                    donation_mapping,
                                                    gensym_func, profiling)
-    apply_grad_placement, _ = info
+    apply_grad_placement, _, allreduce_groups = info
     sliced_apply_grad, out_map = apply_grad_add_marker(sliced_apply_grad,
                                                        apply_in_to_acc_out,
                                                        gensym_func,
@@ -438,7 +438,7 @@ def process_apply_gradient(apply_grad_jaxpr, microbatch_bound, pipeline_stages,
     dependency = gen_dependency_with_stages(pipeline_stages, sliced_apply_grad)
 
     return (sliced_apply_grad, n_stages, dependency, apply_grad_placement,
-            global_outvars, donated_invars)
+            global_outvars, donated_invars, allreduce_groups)
 
 
 def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
@@ -505,7 +505,7 @@ def apply_grad_get_mean(closed_jaxpr, global_outvars, gradients, gensym_fn,
 
 
 cross_mesh_allreduce_p = Primitive("__builtin$CrossMeshAllReduce")
-_primitive_to_str = {add_p: "SUM", and_p: "AND", or_p: "OR"}
+_primitive_to_str = {add_p: b"SUM", and_p: b"AND", or_p: b"OR"}
 
 
 def _cross_mesh_allreduce_xla_translation(c, *args, **kwargs):
@@ -846,7 +846,7 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     var_mesh = {var: OrderedSet([mesh]) for var, mesh in grad_mesh.items()}
     for var in outvar_mesh:
         var_mesh.setdefault(var, OrderedSet()).update(outvar_mesh[var])
-    closed_jaxpr, keys = ApplyGradRewriter(closed_jaxpr,
+    closed_jaxpr, groups = ApplyGradRewriter(closed_jaxpr,
                                            var_mesh).split_replicated_eqns(
                                                gensym_fn, num_mesh)
     # propagate to get var_at_mesh
@@ -898,7 +898,7 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
             closed_jaxpr, skip_cross_mesh_allreduce)
         jaxprs.append(closed_jaxpr)
 
-    info = mesh_assignment, infered_global_invars, keys
+    info = mesh_assignment, infered_global_invars, groups
     return jaxprs, info
 
 

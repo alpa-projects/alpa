@@ -1487,26 +1487,19 @@ def compute_gpt_tflops(batch_size,
 
 _DISABLE_NUMBA = False
 
-try:
-    from numba import njit
 
-    def maybe_numba_jit(*args, **kwargs):
-        """Decorator to mark a function as numba jitted if numba is available
-        and not disabled."""
+def maybe_numba_jit(func):
+    """Decorator to mark a function as numba jitted if numba is available."""
+    try:
+        from numba import jit  # pylint: disable=import-outside-toplevel
+        jitted_func = jit(nopython=True)(func)
 
-        def wrapper(func):
+        def wrapper(*args, **kwargs):
             if _DISABLE_NUMBA:
-                return func
-            return njit(*args, **kwargs)(func)
+                return func(*args, **kwargs)
+            return jitted_func(*args, **kwargs)
 
         return wrapper
-
-except ImportError:
-    logger.warning("Install numba to jit and accelerate the function.")
-
-    def maybe_numba_jit(*args, **kwargs):  # pylint: disable=unused-argument
-
-        def wrapper(func):
-            return func
-
-        return wrapper
+    except ImportError:
+        logger.warning("Install numba to jit and accelerate the function.")
+        return func

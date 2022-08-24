@@ -12,6 +12,7 @@ import ray
 import argparse
 
 import jax
+import alpa
 from alpa import DeviceCluster, ProfilingResultDatabase, global_config
 from alpa.util import run_cmd
 
@@ -56,8 +57,8 @@ if __name__ == "__main__":
     _ = jax.numpy.ones(1)
 
     # Connect to a ray cluster
-    ray.init(address="auto")
-    cluster = DeviceCluster()
+    alpa.init(cluster="ray")
+    cluster = alpa.get_global_cluster()
 
     prof_database = cluster.profile_all(args.cluster_key,
                                         args.max_comm_size_intra_node,

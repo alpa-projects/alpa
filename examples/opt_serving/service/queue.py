@@ -28,7 +28,8 @@ class KeyedPriorityQueueCollection:
         ### Returns the key of the queue with the most jobs
         """
         if len(self.queues):
-            return max(self.queues, key=lambda key: self.queues[key].qsize())
+            keys = list(self.queues.keys())
+            return max(keys, key=lambda key: self.queues[key].qsize())
         else:
             return None
 

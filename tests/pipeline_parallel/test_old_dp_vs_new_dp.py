@@ -27,16 +27,16 @@ class OldNewDPTest(unittest.TestCase):
     """Test the equivalence of old DP and new DP."""
 
     def test_dp(self):
-        powers_of_2 = [1, 2, 4, 8]
+        cases = [1, 4]
         max_n_succ_stages_n = 4096
         num_runs = 10
 
-        for num_layers in powers_of_2:
-            for num_hosts in powers_of_2:
-                for num_devices_per_host in powers_of_2:
+        for num_layers in cases:
+            for num_hosts in cases:
+                for num_devices_per_host in cases:
                     submesh_choices = get_submesh_choices(
                         num_hosts, num_devices_per_host, "all")
-                    for num_micro_batches in powers_of_2:
+                    for num_micro_batches in cases:
                         for i in range(num_runs):
                             (num_devices, num_autosharding_configs,
                              compute_cost,

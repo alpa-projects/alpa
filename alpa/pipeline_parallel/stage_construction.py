@@ -82,7 +82,7 @@ def get_last_dp_result():
             last_autosharding_option_dicts)
 
 
-@maybe_numba_jit(fastmath=True, nogil=True, cache=True)
+@maybe_numba_jit
 def get_optimal_submeshes(best_s, f_argmin, num_devices, num_layers,
                           submesh_n_devices):
     current_s = best_s
@@ -105,7 +105,7 @@ def get_optimal_submeshes(best_s, f_argmin, num_devices, num_layers,
     return res
 
 
-@maybe_numba_jit(fastmath=True, nogil=True, cache=True)
+@maybe_numba_jit
 def dp_impl_2(num_layers, num_devices, submesh_sizes, valid_idxs_and_costs,
               max_n_succ_stages):
     f = np.full((num_layers + 1, num_layers + 1, num_devices + 1),
@@ -218,7 +218,7 @@ def dp_2(
     return best_cost, best_solution
 
 
-@maybe_numba_jit(fastmath=True, nogil=True, cache=True)
+@maybe_numba_jit
 def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
             num_autosharding_configs, compute_cost, max_n_succ_stages,
             max_stage_cost):

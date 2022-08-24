@@ -262,7 +262,7 @@ def completions():
     check_model_loading()
 
     if "redirect_logprobs" in request.json:
-        # A redirection to walk around some security settings.
+        # A redirection to workaround some security settings.
         return logprobs()
 
     # Normalize prompts

@@ -400,7 +400,9 @@ class MeshHostWorker:
 
     def create_and_set_cross_mesh_communicators(self, world_size, rank, backend,
                                                 group_name):
-        self.init_collective_group(world_size, rank, backend, group_name)
+        """Create collective communicators for the cross mesh group."""
+        if not col.is_group_initialized(group_name):
+            self.init_collective_group(world_size, rank, backend, group_name)
         g = col.check_and_get_group(group_name)
         devices = list(range(self.num_devices))
         comms = g.get_nccl_collective_communicator(devices, "xla")

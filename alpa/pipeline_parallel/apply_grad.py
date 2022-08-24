@@ -515,11 +515,8 @@ def _cross_mesh_allreduce_xla_translation(c, *args, **kwargs):
     input_shape = c.get_shape(input_params)
     op_type = _primitive_to_str[kwargs["type"]]
 
-    # Note that the custom call used here all act like an identity function,
-    # so the inputs and outputs are alias pairs. However, we do not set them
-    # here because the alias setting will be dropped during jaxpr->HLO
-    # conversion due to a bug in MLIR. We use a custom XLA pass
-    # RematIdentityFixer to set the alias for "identity" and "pipeline_marker".
+    # TODO(yonghao): the has_side_effect is to prevent CSE of the allreduce.
+    # It might be replaced by adding its outvar to output
     output = xc.ops.CustomCall(c,
                                call_name,
                                operands=(input_params,),
@@ -795,7 +792,7 @@ class ApplyGradRewriter:
                 new_invars = set(eqn.invars).intersection(vars)
                 assert len(new_invars) == 1
                 if rewrite_to_dummy:
-                    zero = Literal(0, raise_to_shaped(get_aval(eqn.outvars[0])))
+                    zero = Literal(0, raise_to_shaped(eqn.outvars[0].aval))
                     invs = list(new_invars) + [zero]
                     new_eqn = new_jaxpr_eqn(invs, list(eqn.outvars), add_p, {})
                 else:

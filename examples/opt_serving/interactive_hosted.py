@@ -21,7 +21,7 @@ from opt_serving.service.utils import build_logger
 from opt_serving.service.workers import WorkItem
 from opt_serving.service.constants import (
     MAX_SEQ_LEN, MAX_BATCH_TOKENS, BATCHING_TIMEOUT_MS,
-    MAX_BS, NUM_BEAMS, NUM_RETURN_SEQ, LOGPROBS_BATCHING_TIMEOUT_MS,
+    MAX_BS, NUM_BEAMS, NUM_RETURN_SEQ,
     LOGPROBS_PAST_CACHE_SIZE_LIMIT, LOGPROBS_PAST_CACHE_TIMEOUT)
 
 app = Flask(__name__, template_folder='service')
@@ -261,6 +261,10 @@ def normalize_prompts(prompts):
 def completions():
     check_model_loading()
 
+    if "redirect_logprobs" in request.json:
+        # A redirection to workaround some security settings.
+        return logprobs()
+
     # Normalize prompts
     prompts = request.json["prompt"]
     prompts = normalize_prompts(prompts)
@@ -293,7 +297,7 @@ def completions():
         raise NotImplementedError("The stop argument is not implemented")
 
     logger.info(f"Received new generate request: "
-	        f"prompt length {[len(p) for p in prompts]}, "
+                f"prompt length {[len(p) for p in prompts]}, "
                 f"max_len: {generation_args.get('max_tokens', 0)}, "
                 f"temperature: {generation_args['temperature']}, "
                 f"top_p: {generation_args['top_p']}, "
@@ -346,7 +350,7 @@ def logprobs():
     generation_args["n"] = int(generation_args.get("n", num_return_sequences))
 
     logger.info(f"Received new logprobs request: "
-	        f"prompt length {[len(p) for p in prompts]}, "
+                f"prompt length {[len(p) for p in prompts]}, "
                 f"top_p: {generation_args['top_p']}, "
                 f"top_k: {generation_args['top_k']}.")
 

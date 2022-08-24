@@ -1,10 +1,11 @@
 import argparse
+import time
 
 import numpy as np
 from scipy.special import softmax
 from transformers import AutoTokenizer
 
-from opt_serving.client import Client
+from client import Client
 
 
 if __name__ == "__main__":
@@ -21,7 +22,9 @@ if __name__ == "__main__":
 
     output = client.logprobs(prompt, top_k=top_k)
 
-    for i in range(40):
+    tic = time.time()
+    num_tokens = 40
+    for i in range(num_tokens):
         distribution = np.full((tokenizer.vocab_size + 10), -1e8, dtype=np.float32)
         for idx, logprob in zip(output['indices'], output['logprobs']):
             distribution[idx] = logprob
@@ -32,3 +35,6 @@ if __name__ == "__main__":
         print(tokenizer.decode(prompt))
 
         output = client.logprobs(prompt, top_k=top_k, cache_id=output["cache_id"])
+    time_cost = time.time() - tic
+    print(f"Generation throughput: {num_tokens/time_cost:.2f} token/s")
+

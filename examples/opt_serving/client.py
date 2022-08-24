@@ -13,7 +13,7 @@ class Client(object):
             url = DEFAULT_URL
 
         self.completions_url = url + "/completions"
-        self.logprobs_url = url + "/logprobs"
+        self.logprobs_url = url + "/completions"
 
     def completions(
         self,
@@ -59,6 +59,7 @@ class Client(object):
             "prompt": prompt,
             "top_p": top_p,
             "top_k": top_k,
+            "redirect_logprobs": True
         }
         if cache_id:
             pload["cache_id"] = cache_id

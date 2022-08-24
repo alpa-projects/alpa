@@ -21,7 +21,7 @@ from opt_serving.service.utils import build_logger
 from opt_serving.service.workers import WorkItem
 from opt_serving.service.constants import (
     MAX_SEQ_LEN, MAX_BATCH_TOKENS, BATCHING_TIMEOUT_MS,
-    MAX_BS, NUM_BEAMS, NUM_RETURN_SEQ, LOGPROBS_BATCHING_TIMEOUT_MS,
+    MAX_BS, NUM_BEAMS, NUM_RETURN_SEQ,
     LOGPROBS_PAST_CACHE_SIZE_LIMIT, LOGPROBS_PAST_CACHE_TIMEOUT)
 
 app = Flask(__name__, template_folder='service')

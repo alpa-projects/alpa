@@ -4,7 +4,7 @@ import numpy as np
 from scipy.special import softmax
 from transformers import AutoTokenizer
 
-from opt_serving.client import Client
+from client import Client
 
 
 if __name__ == "__main__":

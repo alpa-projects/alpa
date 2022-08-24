@@ -1,6 +1,6 @@
 import argparse
 
-from opt_serving.client import Client
+from client import Client
 
 
 if __name__ == "__main__":

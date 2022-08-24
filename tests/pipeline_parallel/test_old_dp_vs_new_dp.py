@@ -3,7 +3,6 @@ import numpy as np
 
 from alpa.pipeline_parallel.stage_construction import (get_submesh_choices, dp,
                                                        dp_2)
-"""Test OrderedSet."""
 
 
 def test_stage_construction(submesh_choices, num_hosts, num_devices_per_host,

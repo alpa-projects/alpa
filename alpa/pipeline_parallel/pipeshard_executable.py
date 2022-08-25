@@ -98,8 +98,7 @@ class PipeshardDriverExecutable:
         ##### For cross-mesh resharding #####
         self._instantiate_nccl_groups(pipeshard_config.device_str_groups)
         self.resharding_tasks = pipeshard_config.resharding_tasks
-        for group in pipeshard_config.allreduce_groups:
-            mesh_ids, _ = group
+        for mesh_ids in pipeshard_config.allreduce_groups:
             meshes = [self.mesh_group.meshes[idx] for idx in mesh_ids]
             create_and_record_cross_mesh_collective_communicators(meshes)
         if global_config.eagerly_create_communicators:

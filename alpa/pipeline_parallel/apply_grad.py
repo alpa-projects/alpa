@@ -758,7 +758,7 @@ class ApplyGradRewriter:
         appended_eqns.append(
             new_jaxpr_eqn(allreduce_vars, [outvar], cross_mesh_allreduce_p,
                           {'type': primitive}))
-        return appended_eqns, (mesh_ids, outvar)
+        return appended_eqns, mesh_ids
 
     def split_replicated_eqns(self, gensym_fn, num_mesh):
         """Rewrite apply grad jaxpr to eqns so as to """
@@ -766,7 +766,7 @@ class ApplyGradRewriter:
         new_eqns_before_var = {}
         # Try to match the pattern
         removed_eqns = set()
-        allreduce_keys = []
+        allreduce_groups = OrderedSet()
         for eqn_idx, eqn in enumerate(self.eqns):
             # Do not handle c = a(mesh1 and 2) + b(mesh1) case
             if (eqn_idx not in self.eqn_mesh and self._reducable(eqn) and
@@ -775,10 +775,10 @@ class ApplyGradRewriter:
                 (mesh_vars, final_var, removed,
                  literals) = self._reducable_chain_lookup(eqn_idx, num_mesh)
                 removed_eqns.update(removed)
-                appended_eqns, reduce_key = self._rewrite_eqns(
+                appended_eqns, allreduce_group = self._rewrite_eqns(
                     eqn.primitive, mesh_vars, gensym_fn, final_var, literals)
                 new_eqns_before_var[final_var] = appended_eqns
-                allreduce_keys.append(reduce_key)
+                allreduce_groups.add(tuple(allreduce_group))
         new_eqns = []
         for eqn_idx, eqn in enumerate(self.eqns):
             if eqn_idx in removed_eqns:
@@ -790,7 +790,7 @@ class ApplyGradRewriter:
                 new_eqns.extend(new_eqns_before_var[outv])
             else:
                 new_eqns.append(eqn)
-        return clone_jaxpr(self.jaxpr, eqns=new_eqns), allreduce_keys
+        return clone_jaxpr(self.jaxpr, eqns=new_eqns), tuple(allreduce_groups)
 
     @staticmethod
     def rewrite_allreduce(closed_jaxpr: ClosedJaxpr, rewrite_to_dummy,

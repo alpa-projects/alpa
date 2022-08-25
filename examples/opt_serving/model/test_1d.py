@@ -7,10 +7,10 @@ from alpa.testing import assert_allclose
 from opt_serving.model import opt_model, opt_model_1d
 
 # If true, then we run the same batches with 2-D OPT and verify
-# the output logtis as well as cache are the same.
+# the output logits as well as cache are the same.
 VERIFY_RESULT = True
 
-# If true, then the latset logits for both models will be dumped to disk
+# If true, then the latest logits for both models will be dumped to disk
 # as "1d.npy" and "2d.npy" for debugging.
 DUMP_LOGITS = False
 

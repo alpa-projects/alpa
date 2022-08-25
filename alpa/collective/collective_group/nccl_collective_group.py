@@ -53,7 +53,7 @@ class NCCLGroup(BaseGroup):
             # Destroy the communicators and streams.
             for comm_key, comms in self._dev_comm_map.items():
                 for c in comms:
-                    # FIXME(yonghao): comms created in XLA should also be destroied
+                    # FIXME(yonghao): comms created in XLA should be destroied
                     if hasattr(c, "destroy"):
                         c.destroy()
                 self._dev_comm_map[comm_key] = None

@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import logging
-from typing import Sequence, Any, Dict, Optional, Tuple, Union
+from typing import Sequence, Any, Dict, Optional
 
 import jax
 from jax import jit
@@ -21,10 +21,11 @@ from alpa.parallel_plan import StagePlan
 from alpa.pipeline_parallel.primitive_def import (mark_hook_jaxpreqn,
                                                   pipeline_p,
                                                   mark_pipeline_jaxpreqn)
-from alpa.shard_parallel.auto_sharding import (
-    get_input_sharding_specs, get_output_sharding_specs, run_auto_sharding_pass,
-    run_spmd_partitioner_pass, get_input_output_sharding_specs,
-    hlo_sharding_to_sharding_spec, AutoShardingOption)
+from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
+                                               run_spmd_partitioner_pass,
+                                               get_input_output_sharding_specs,
+                                               hlo_sharding_to_sharding_spec,
+                                               AutoShardingOption)
 from alpa.global_env import global_config
 from alpa.util import (OrderedSet, clone_jaxpr, get_compile_options,
                        jaxpr_to_hlo_module, setup_computation_alias,

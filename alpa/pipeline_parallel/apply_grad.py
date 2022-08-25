@@ -8,8 +8,7 @@ from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, get_aval,
                       raise_to_shaped, JaxprEqn)
 from jax.lax import add_p, div_p
 from jax.core import (Primitive, Var, Jaxpr, ClosedJaxpr, DropVar, Literal,
-                      gensym, new_jaxpr_eqn, get_aval, raise_to_shaped,
-                      JaxprEqn)
+                      new_jaxpr_eqn, get_aval, raise_to_shaped, JaxprEqn)
 from jax.interpreters import xla
 from jax.lax import add_p, div_p, and_p, or_p
 from jaxlib import xla_client as xc
@@ -507,16 +506,16 @@ def apply_grad_get_mean(closed_jaxpr, global_outvars, gradients, gensym_fn,
     return new_jaxpr, global_outvars
 
 
-cross_mesh_allreduce_p = Primitive("__builtin$CrossMeshAllReduce")
-_primitive_to_str = {add_p: b"SUM", and_p: b"AND", or_p: b"OR"}
+cross_mesh_allreduce_p = Primitive('__builtin$CrossMeshAllReduce')
+_primitive_to_str = {add_p: b'SUM', and_p: b'AND', or_p: b'OR'}
 
 
 def _cross_mesh_allreduce_xla_translation(c, *args, **kwargs):
-    call_name = b"__builtin$CrossMeshAllReduce"
+    call_name = b'__builtin$CrossMeshAllReduce'
     assert len(args) == 1
     input_params = args[0]
     input_shape = c.get_shape(input_params)
-    op_type = _primitive_to_str[kwargs["type"]]
+    op_type = _primitive_to_str[kwargs['type']]
 
     # TODO(yonghao): the has_side_effect is to prevent CSE of the allreduce.
     # It might be replaced by adding its outvar to output
@@ -624,6 +623,10 @@ _reducable_operators = set([add_p, and_p, or_p])
 
 
 class ApplyGradRewriter:
+    """
+    Rewrite apply grad jaxpr to avoid replicated computation by inserting
+    cross-mesh allreduce.
+    """
 
     def __init__(self, apply_grad_jaxpr: ClosedJaxpr, var_mesh):
         self.jaxpr = apply_grad_jaxpr
@@ -636,7 +639,7 @@ class ApplyGradRewriter:
 
     def _reducable(self, eqn):
         # the is_scalar is to avoid a large all-reduce for tied-embedding
-        # it can be improved to consider tradeoff between computation&communication
+        # it can be improved by adding computation-communication tradeoff
         return (eqn.primitive in _reducable_operators and
                 eqn.outvars[0].aval.shape == ())
 
@@ -711,9 +714,9 @@ class ApplyGradRewriter:
         final_var = cur_eqn.outvars[0]
         # split eqns on the reducable chain into meshes
         reducable_set = set(reducable_chain)
-        for eqn_idx in reducable_chain:
-            eqn = self.eqns[eqn_idx]
-            for op in eqn.invars:
+        for reduced_idx in reducable_chain:
+            reduced_eqn = self.eqns[reduced_idx]
+            for op in reduced_eqn.invars:
                 if isinstance(op, Literal):
                     mesh_vars[0].append(op)
                     continue
@@ -745,7 +748,7 @@ class ApplyGradRewriter:
         # The allreduce will be immediately replaced by pipeline markers
         appended_eqns.append(
             new_jaxpr_eqn(allreduce_vars, [outvar], cross_mesh_allreduce_p,
-                          {"type": primitive}))
+                          {'type': primitive}))
         return appended_eqns, (mesh_ids, outvar)
 
     def split_replicated_eqns(self, gensym_fn, num_mesh):
@@ -799,7 +802,7 @@ class ApplyGradRewriter:
                     invs = list(new_invars) + [zero]
                     new_eqn = new_jaxpr_eqn(invs, list(eqn.outvars), add_p, {})
                 else:
-                    if eqn.params["type"] == add_p:
+                    if eqn.params['type'] == add_p:
                         inv = list(new_invars)[0]
                         outv = gensym_fn(inv.aval)
                         div_eqn = new_jaxpr_eqn([

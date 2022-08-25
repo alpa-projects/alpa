@@ -727,10 +727,11 @@ class ApplyGradRewriter:
 
     def _rewrite_eqns(self, primitive, mesh_vars, gensym_fn, outvar, literals):
         # rewrite according to splits
-        # FIXME(yonghao): support literals
+        # TODO: in some cases the literal can lead to final result(True&or_p)
         appended_eqns = []
         allreduce_vars = []
         mesh_ids = []
+        literal_handled = False
         for mesh_id, per_mesh_vars in enumerate(mesh_vars):
             cur_val = None
             for v in per_mesh_vars:
@@ -742,6 +743,14 @@ class ApplyGradRewriter:
                     new_jaxpr_eqn([cur_val, v], [new_var], primitive, {}))
                 cur_val = new_var
             if cur_val is not None:
+                if not literal_handled:
+                    for literal in literals:
+                        new_var = gensym_fn(cur_val.aval)
+                        appended_eqns.append(
+                            new_jaxpr_eqn([cur_val, literal], [new_var],
+                                          primitive, {}))
+                        cur_val = new_var
+                    literal_handled = True
                 allreduce_vars.append(cur_val)
                 mesh_ids.append(mesh_id)
         # modify the end of reduce chain eqn into an all-reduce.

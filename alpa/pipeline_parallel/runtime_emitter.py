@@ -142,17 +142,11 @@ PartialGradWorkerExecutableConfig = namedtuple(
         "stage_plan",
         "donated_invars",
     ])
-ApplyGradWorkerExecutableConfig = namedtuple(
-    "ApplyGradWorkerExecutableConfig", [
-        "exec_uuid", "hlo_protos", "stage_plans", "donated_invars",
-        "allreduce_ops"
-    ])
 
 ExecutableConfig = Union[AllocateZeroWorkerExecutableConfig,
                          MemZeroWorkerExecutableConfig,
                          PartialGradWorkerExecutableConfig,
-                         ConcatWorkerExecutableConfig,
-                         ApplyGradWorkerExecutableConfig]
+                         ConcatWorkerExecutableConfig]
 
 
 def flatten_uuid_set(container):

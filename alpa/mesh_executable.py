@@ -10,7 +10,7 @@ workers.
 """
 from abc import ABC, abstractmethod
 import logging
-from typing import Sequence, Optional, Tuple
+from typing import Sequence, Optional
 import os
 
 from jax import xla
@@ -1010,80 +1010,6 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
         os.environ[self.skip_allreduce_env_name] = (self.grad_sync_channel_ids
                                                     if skip_grad_sync else "")
         return profile_xla_executable(self.compiled, backend, local_devices)
-
-
-class ApplyGradMeshWorkerExecutable(MeshWorkerExecutable):
-
-    def __init__(self, worker: "MeshHostWorker", uuid: int,
-                 hlo_protos: Sequence[bytes], stage_plans: Sequence[StagePlan],
-                 donated_invars: Sequence[bool],
-                 allreduce_ops: Sequence[Sequence[Tuple[int, str]]]):
-        """
-        allreduce ops's format is idx, reduce_op = ops[exec_idx][reduce_idx]
-        """
-        num_devices = np.prod(stage_plans[0].logical_mesh_shape)
-        assert num_devices == len(worker.backend.devices())
-
-        self.executables = [
-            run_backend_compilation(worker.backend, hlo_proto, stage_plan,
-                                    num_devices)
-            for hlo_proto, stage_plan in zip(hlo_protos, stage_plans)
-        ]
-        self.allreduce_ops = allreduce_ops
-        self.donated_invars = donated_invars
-        self.worker = worker
-
-        # Set up timers
-        self.timer_name = get_execution_timer_name(uuid)
-        self.sync_func = get_sync_func_worker(worker)
-
-    def execute_on_worker(self, input_uuids: Sequence[int],
-                          output_uuids: Sequence[int], sync_before: bool,
-                          sync_after: bool):
-        """Run the executable on the worker."""
-        buffer_dict = self.worker.buffers
-
-        # Get input buffers from uuids
-        # Sequence[Sequence[DeviceBuffer]], shape(num_args, num_devices)
-        input_bufs = [buffer_dict[x] for x in input_uuids]
-
-        # Execute the executable
-        timers(self.timer_name).start(self.sync_func if sync_before else None)
-        for exec_id in range(len(self.executables)):
-            exec = self.executables[exec_id]
-            try:
-                output_bufs = exec.execute_sharded_on_local_devices(input_bufs)
-            except RuntimeError:
-                ray.actor.exit_actor()
-            input_bufs = output_bufs
-            # TODO(yonghao): run global allreduce behaviors here.
-            for op in self.allreduce_ops[exec_id]:
-                arg_idx, op_type = op
-                bufs = input_bufs[arg_idx]
-        timers(self.timer_name).stop(self.sync_func if sync_after else None)
-
-        # Store output buffers
-        for i in range(len(output_uuids)):
-            buffer_dict[output_uuids[i]] = output_bufs[i]
-
-        # Delete donated input buffers
-        delete_donated_buffers(buffer_dict, input_uuids, self.donated_invars)
-
-    def profile_with_dummy_inputs(self, backend, local_devices):
-        """Profile the time cost of this executable with dummy inputs."""
-        raise NotImplementedError()
-
-    def get_hlo_text(self):
-        return [
-            exec.hlo_modules()[0].to_string() for exec in self.executables
-        ]
-
-    def get_total_allocation_size(self):
-        raise NotImplementedError()
-
-    def __del__(self):
-        for exec in self.executables:
-            exec.delete()
 
 
 class AllocZeroBufferDriverExecutable(MeshDriverExecutable):

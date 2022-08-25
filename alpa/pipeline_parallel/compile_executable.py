@@ -185,11 +185,12 @@ def compile_pipeshard_executable_internal(
     debug_compilation_time("stage construction")
 
     # Process apply_gradient and donation
+    num_devices = [vmesh.num_devices for vmesh in sliced_virtual_meshes]
     (sliced_apply_grad_stages, n_stages, dependency, apply_grad_placement,
      global_outvars, donated_invars, allreduce_groups) = process_apply_gradient(
          apply_grad_jaxpr, microbatch_bound, jax_pipeline_stages, stage_to_mesh,
          gensym_func, num_microbatch, num_meshes, global_invars, global_outvars,
-         donated_invars, reduction_vector, False)
+         donated_invars, reduction_vector, False, num_devices)
     jax_all_stages = jax_pipeline_stages + sliced_apply_grad_stages
 
     donation_mapping = create_donation_mapping(donation_mapping, donated_invars,
@@ -398,7 +399,7 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
      apply_grad_placement, _, donated_invars, _) = process_apply_gradient(
          apply_grad_jaxpr, microbatch_bound, pipeline_layers, layer_to_mesh,
          gensym_func, num_microbatch, num_mesh, global_invars, global_outvars,
-         donated_invars, reduction_vector, True)
+         donated_invars, reduction_vector, True, None)
     apply_grad_donation = create_donation_mapping(donation_mapping,
                                                   donated_invars, global_invars,
                                                   global_outvars)

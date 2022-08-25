@@ -2,6 +2,7 @@ import unittest
 
 import jax
 from jax import numpy as jnp
+from jax._src.tree_util import tree_map
 from jax.core import gensym
 import optax
 from optax._src import linear_algebra
@@ -11,7 +12,6 @@ from alpa.model.bert_model import BertConfig
 from alpa.model.model_util import TrainState
 from alpa.pipeline_parallel.apply_grad import (ApplyGradRewriter,
                                                slice_apply_gradient)
-from alpa.pipeline_parallel.layer_construction import manual_layer_construction
 from alpa.testing import BertLayerModel, assert_allclose
 from alpa.util import OrderedSet
 
@@ -45,7 +45,8 @@ class GlobalNormTest(unittest.TestCase):
         grad_mesh = {k: list(v)[0] for k, v in var_mesh.items()}
         outvar_mesh = {}
         jaxprs, _ = slice_apply_gradient(jaxpr, grad_mesh, outvar_mesh,
-                                         num_mesh, 2, {})
+                                         num_mesh, 2, {}, gensym_fn, False,
+                                         [2, 4])
         # for jaxpr in jaxprs:
         #     print(ApplyGradRewriter.rewrite_allreduce(jaxpr))
 
@@ -61,7 +62,8 @@ class GlobalNormTest(unittest.TestCase):
             grads = grad(loss_func)(state.params, batch["x"], batch["y"],
                                     batch["attention_mask"])
             glob_norm = linear_algebra.global_norm(grads)
-            return glob_norm
+            grads = tree_map(lambda g: g / glob_norm, grads)
+            return grads
 
         batch_size = 16
         seq_len = 8
@@ -99,6 +101,7 @@ class GlobalNormTest(unittest.TestCase):
 
         # Check results
         assert_allclose(gradients, gradients_with_pipeline)
+
 
 def suite():
     suite = unittest.TestSuite()

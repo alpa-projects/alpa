@@ -30,6 +30,11 @@ unsafe_map, map = map, safe_map  # type: ignore
 APPLY_GRAD_MARKER_SUFFIX = 'apply_grad'
 
 
+def _value_to_literal(value, dtype):
+    literal_val = np.array(value, dtype)
+    return Literal(literal_val, raise_to_shaped(get_aval(literal_val)))
+
+
 # TODO(yonghao): delaying the cross layer grad accmulation increases memory
 # cost, but may not decrease communication: if c=a+b is delayed, both a and
 # b are accumulated, so the memory cost is more than when only accumulate c.
@@ -389,7 +394,8 @@ def _get_apply_grad_outvar_constraints(pipeline_stages, stage_to_mesh,
 def process_apply_gradient(apply_grad_jaxpr, microbatch_bound, pipeline_stages,
                            stage_to_mesh, gensym_func, num_micro_batches,
                            num_meshes, global_invars, global_outvars,
-                           donated_invars, reduction_vector, profiling):
+                           donated_invars, reduction_vector, profiling,
+                           mesh_num_devices):
     """Slice apply_grad jaxpr into stages and assign them to the corresponding
     meshes."""
     # Process apply gradient:
@@ -426,7 +432,8 @@ def process_apply_gradient(apply_grad_jaxpr, microbatch_bound, pipeline_stages,
                                                    num_meshes,
                                                    len(pipeline_stages),
                                                    donation_mapping,
-                                                   gensym_func, profiling)
+                                                   gensym_func, profiling,
+                                                   mesh_num_devices)
     apply_grad_placement, _, allreduce_groups = info
     sliced_apply_grad, out_map = apply_grad_add_marker(sliced_apply_grad,
                                                        apply_in_to_acc_out,
@@ -477,11 +484,10 @@ def apply_grad_get_mean(closed_jaxpr, global_outvars, gradients, gensym_fn,
             mapping[invar] = invar
             continue
         div_out = gensym_fn(invar.aval)
-        literal_val = np.array(num_microbatch, invar.aval.dtype)
         new_eqns.append(
             new_jaxpr_eqn([
                 invar,
-                Literal(literal_val, raise_to_shaped(get_aval(literal_val)))
+                _value_to_literal(num_microbatch, invar.aval.dtype),
             ], [div_out], div_p, {}))
         mapping[invar] = div_out
     replaced = replace_all_with(closed_jaxpr, mapping)
@@ -733,8 +739,7 @@ class ApplyGradRewriter:
                     continue
                 new_var = gensym_fn(cur_val.aval)
                 appended_eqns.append(
-                    new_jaxpr_eqn([cur_val, v], [new_var],
-                                  primitive, {}))
+                    new_jaxpr_eqn([cur_val, v], [new_var], primitive, {}))
                 cur_val = new_var
             if cur_val is not None:
                 allreduce_vars.append(cur_val)
@@ -779,7 +784,8 @@ class ApplyGradRewriter:
         return clone_jaxpr(self.jaxpr, eqns=new_eqns), allreduce_keys
 
     @staticmethod
-    def rewrite_allreduce(closed_jaxpr: ClosedJaxpr, rewrite_to_dummy):
+    def rewrite_allreduce(closed_jaxpr: ClosedJaxpr, rewrite_to_dummy,
+                          num_devices, gensym_fn):
         """For cross-mesh allreduce, rewrite its invar to make it legal."""
         vars = set()
         new_eqns = []
@@ -792,10 +798,19 @@ class ApplyGradRewriter:
                 new_invars = set(eqn.invars).intersection(vars)
                 assert len(new_invars) == 1
                 if rewrite_to_dummy:
-                    zero = Literal(0, raise_to_shaped(eqn.outvars[0].aval))
+                    zero = _value_to_literal(0, eqn.outvars[0].aval.dtype)
                     invs = list(new_invars) + [zero]
                     new_eqn = new_jaxpr_eqn(invs, list(eqn.outvars), add_p, {})
                 else:
+                    if eqn.params["type"] == add_p:
+                        inv = list(new_invars)[0]
+                        outv = gensym_fn(inv.aval)
+                        div_eqn = new_jaxpr_eqn([
+                            inv,
+                            _value_to_literal(num_devices, inv.aval.dtype)
+                        ], [outv], div_p, {})
+                        new_eqns.append(div_eqn)
+                        new_invars = [outv]
                     new_eqn = new_jaxpr_eqn(list(new_invars), list(eqn.outvars),
                                             eqn.primitive, dict(eqn.params))
                 new_eqns.append(new_eqn)
@@ -806,6 +821,7 @@ class ApplyGradRewriter:
                     vars.add(v)
         return clone_jaxpr(closed_jaxpr, eqns=new_eqns)
 
+
 def _no_allreduce(eqns):
     for eqn in eqns:
         if eqn.primitive == cross_mesh_allreduce_p:
@@ -815,8 +831,8 @@ def _no_allreduce(eqns):
 
 def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
                          outvar_mesh: Dict[Var, OrderedSet[int]], num_mesh,
-                         num_stage, donation_mapping: Dict[Var, Var],
-                         gensym_fn, skip_cross_mesh_allreduce):
+                         num_stage, donation_mapping: Dict[Var, Var], gensym_fn,
+                         skip_cross_mesh_allreduce, mesh_num_devices):
     """
     Slice the apply gradient jaxpr based on mesh allocation information.
 
@@ -844,8 +860,8 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     for var in outvar_mesh:
         var_mesh.setdefault(var, OrderedSet()).update(outvar_mesh[var])
     closed_jaxpr, groups = ApplyGradRewriter(closed_jaxpr,
-                                           var_mesh).split_replicated_eqns(
-                                               gensym_fn, num_mesh)
+                                             var_mesh).split_replicated_eqns(
+                                                 gensym_fn, num_mesh)
     # propagate to get var_at_mesh
     eqn_mesh, var_mesh = _propagate_var_at_mesh(closed_jaxpr.eqns, var_mesh)
     changed = True
@@ -891,8 +907,9 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
         mesh_assignment[computation_idx] = i
         sliced = Jaxpr(constvars[i], invars[i], outvars[i], sliced_eqns[i])
         closed_jaxpr = ClosedJaxpr(sliced, consts[i])
+        num_devices = None if skip_cross_mesh_allreduce else mesh_num_devices[i]
         closed_jaxpr = ApplyGradRewriter.rewrite_allreduce(
-            closed_jaxpr, skip_cross_mesh_allreduce)
+            closed_jaxpr, skip_cross_mesh_allreduce, num_devices, gensym_fn)
         jaxprs.append(closed_jaxpr)
 
     info = mesh_assignment, infered_global_invars, groups

@@ -606,8 +606,7 @@ class PipelineInstEmitter:
             hlo_module = stage.get_spmd_partitioned()
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             exec_config = PartialGradWorkerExecutableConfig(
-                exec_uuid, hlo_proto, stage.stage_plan,
-                stage.donated_invars)
+                exec_uuid, hlo_proto, stage.stage_plan, stage.donated_invars)
 
             for worker in self.mesh_group[mesh_idx].workers:
                 executable_config_lists[worker].append(exec_config)

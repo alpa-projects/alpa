@@ -398,7 +398,10 @@ class NCCLGroup(BaseGroup):
         self._point2point(tensors, p2p_fn, recv_options.src_rank,
                           recv_options.src_gpu_index)
 
-    def _get_nccl_collective_communicator(self, comm_key, device_list, lib="cupy"):
+    def _get_nccl_collective_communicator(self,
+                                          comm_key,
+                                          device_list,
+                                          lib="cupy"):
         """Create or retrieve an NCCL communicator from cache.
 
         If the communicator is found in cache, return the communicator. If not,

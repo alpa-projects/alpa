@@ -395,11 +395,12 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
         num_mesh = num_layers // 2
         layer_to_mesh = (list(range(num_mesh)) +
                          list(reversed(range(num_mesh))))
-    (layers, _, _,
-     apply_grad_placement, _, donated_invars, _) = process_apply_gradient(
-         apply_grad_jaxpr, microbatch_bound, pipeline_layers, layer_to_mesh,
-         gensym_func, num_microbatch, num_mesh, global_invars, global_outvars,
-         donated_invars, reduction_vector, True, None)
+    (layers, _, _, apply_grad_placement, _, donated_invars,
+     _) = process_apply_gradient(apply_grad_jaxpr, microbatch_bound,
+                                 pipeline_layers, layer_to_mesh, gensym_func,
+                                 num_microbatch, num_mesh, global_invars,
+                                 global_outvars, donated_invars,
+                                 reduction_vector, True, None)
     apply_grad_donation = create_donation_mapping(donation_mapping,
                                                   donated_invars, global_invars,
                                                   global_outvars)

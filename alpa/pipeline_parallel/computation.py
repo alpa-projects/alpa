@@ -815,12 +815,12 @@ def generate_computations_from_modules(
     module_dict = dict(zip(computation_names, computation_modules))
     computations = [
         XlaShardedPipelineComputation.from_auto_sharded_computation(
-                sharding_annotated_module=module_dict[computation.name],
-                jax_pipeline_computation=computation,
-                stage_plan=stage_plan,
-                donated_invars=donate_invars,
-                acc_grad_outvars=acc_grad_outvars,
-                donatables=donatables)
+            sharding_annotated_module=module_dict[computation.name],
+            jax_pipeline_computation=computation,
+            stage_plan=stage_plan,
+            donated_invars=donate_invars,
+            acc_grad_outvars=acc_grad_outvars,
+            donatables=donatables)
         for computation, donate_invars, donatables in zip(
             jax_computations, donate_invars, donatable_lists)
     ]

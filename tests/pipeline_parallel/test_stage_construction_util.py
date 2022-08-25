@@ -17,8 +17,10 @@ from alpa.pipeline_parallel.computation import (
     mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
     pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks)
 from alpa.pipeline_parallel.layer_construction import ManualLayerOption
-from alpa.pipeline_parallel.stage_profiling import (
-    ApplyGradConfig, CompileConfig, ProfileConfig, generate_stage_info)
+from alpa.pipeline_parallel.stage_profiling import (ApplyGradConfig,
+                                                    CompileConfig,
+                                                    ProfileConfig,
+                                                    generate_stage_info)
 from alpa.testing import get_bert_layer_train_state_and_step
 from alpa.util import OrderedSet, GradFuncTransformContext
 
@@ -109,12 +111,13 @@ class StageConstructUtilTest(unittest.TestCase):
                                list(reversed(range(num_forward_layers))))
         reduce_invars = [True] * len(microbatch_bound.invars)
 
-        (jax_apply_layers, _, _, _, _,
-         dummy_donated_invars, _) = process_apply_gradient(
-             apply_grad_jaxpr, microbatch_bound, jax_pipeline_layers,
-             layer_to_dummy_mesh, gensym_func, num_microbatch,
-             len(jax_pipeline_layers) // 2, global_invars, global_outvars,
-             donated_invars, reduce_invars, True, None)
+        (jax_apply_layers, _, _, _, _, dummy_donated_invars,
+         _) = process_apply_gradient(apply_grad_jaxpr, microbatch_bound,
+                                     jax_pipeline_layers, layer_to_dummy_mesh,
+                                     gensym_func, num_microbatch,
+                                     len(jax_pipeline_layers) // 2,
+                                     global_invars, global_outvars,
+                                     donated_invars, reduce_invars, True, None)
         apply_grad_donation = create_donation_mapping(donation_mapping,
                                                       dummy_donated_invars,
                                                       global_invars,

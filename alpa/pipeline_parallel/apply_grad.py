@@ -427,13 +427,10 @@ def process_apply_gradient(apply_grad_jaxpr, microbatch_bound, pipeline_stages,
                                                      donated_invars,
                                                      donation_mapping)
 
-    sliced_apply_grad, info = slice_apply_gradient(apply_grad_jaxpr,
-                                                   gradvar_to_mesh, outvar_mesh,
-                                                   num_meshes,
-                                                   len(pipeline_stages),
-                                                   donation_mapping,
-                                                   gensym_func, profiling,
-                                                   mesh_num_devices)
+    sliced_apply_grad, info = slice_apply_gradient(
+        apply_grad_jaxpr, gradvar_to_mesh, outvar_mesh, num_meshes,
+        len(pipeline_stages), donation_mapping, gensym_func, profiling,
+        mesh_num_devices)
     apply_grad_placement, _, allreduce_groups = info
     sliced_apply_grad, out_map = apply_grad_add_marker(sliced_apply_grad,
                                                        apply_in_to_acc_out,

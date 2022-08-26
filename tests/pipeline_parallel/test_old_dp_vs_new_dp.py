@@ -84,12 +84,15 @@ class OldNewDPTest(unittest.TestCase):
                         num_hosts, num_devices_per_host, "all")
                     for num_micro_batches in cases:
                         for i in range(num_runs):
+                            compute_cost_factor = np.random.rand() * 4 - 2
+                            device_memory_size_factor = np.random.rand() * 4
                             num_devices = num_hosts * num_devices_per_host
                             num_autosharding_configs = np.random.randint(1, 5)
                             (compute_cost, max_n_succ_stages
                             ) = generate_stage_construction_test_case(
                                 num_devices, submesh_choices, num_layers,
-                                num_autosharding_configs)
+                                num_autosharding_configs,
+                                compute_cost_factor, device_memory_size_factor)
 
                             res_old = dp(num_layers, num_devices,
                                          num_micro_batches, submesh_choices,

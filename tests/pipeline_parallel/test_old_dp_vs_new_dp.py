@@ -34,20 +34,24 @@ def generate_stage_construction_test_case(num_devices,
         unlimited_memory: ignore memory cost.
     """
     num_submesh_choices = len(submesh_choices)
-    compute_cost = np.full((num_layers, num_layers, num_submesh_choices,
-                            num_autosharding_configs), np.inf)
-    max_n_succ_stages = np.full((num_layers, num_layers, num_submesh_choices,
-                                 num_autosharding_configs), -1)
+    compute_cost = np.full(
+        (num_layers, num_layers, num_submesh_choices, num_autosharding_configs),
+        np.inf)
+    max_n_succ_stages = np.full(
+        (num_layers, num_layers, num_submesh_choices, num_autosharding_configs),
+        -1)
     layer_base_cost = np.random.rand(num_layers)
     memory_base_cost = np.random.rand(num_layers)
     total_memory = memory_base_cost.sum()
     for start in range(num_layers):
         for end in range(start, num_layers):
-            for s, submesh in enumerate(num_submesh_choices):
+            for s, submesh in enumerate(submesh_choices):
                 submesh_size = np.prod(submesh)
                 for l in range(num_autosharding_configs):
+                    autosharding_factor = np.random.rand() + 1
                     compute_cost[start, end, s,
                                  l] = (layer_base_cost[start:end + 1].sum() *
+                                       autosharding_factor *
                                        submesh_size**compute_cost_factor)
                     if unlimited_memory:
                         max_n_succ_stages[start, end, s, l] = 4096
@@ -59,7 +63,8 @@ def generate_stage_construction_test_case(num_devices,
                         max_n_succ_stages[start, end, s,
                                           l] = (device_memory_size_factor *
                                                 num_layers * device_percentage /
-                                                model_percentage)
+                                                model_percentage /
+                                                autosharding_factor)
 
     return compute_cost, max_n_succ_stages
 
@@ -70,6 +75,7 @@ class OldNewDPTest(unittest.TestCase):
     def test_dp(self):
         cases = [1, 4]
         num_runs = 10
+        np.random.seed(0)
 
         for num_layers in cases:
             for num_hosts in cases:
@@ -80,8 +86,8 @@ class OldNewDPTest(unittest.TestCase):
                         for i in range(num_runs):
                             num_devices = num_hosts * num_devices_per_host
                             num_autosharding_configs = np.random.randint(1, 5)
-                            (compute_cost,
-                             max_n_succ_stages) = generate_stage_construction_test_case(
+                            (compute_cost, max_n_succ_stages
+                            ) = generate_stage_construction_test_case(
                                 num_devices, submesh_choices, num_layers,
                                 num_autosharding_configs)
 

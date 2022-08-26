@@ -73,10 +73,10 @@ class OldNewDPTest(unittest.TestCase):
     """Test the equivalence of old DP and new DP."""
 
     def test_dp(self):
-        num_runs = 10
+        num_runs = 2
         np.random.seed(0)
 
-        for num_layers in [1, 4, 8]:
+        for num_layers in [4, 8]:
             for num_hosts in [1, 4]:
                 for num_devices_per_host in [1, 4]:
                     submesh_choices = get_submesh_choices(

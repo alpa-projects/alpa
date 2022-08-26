@@ -90,8 +90,8 @@ class OldNewDPTest(unittest.TestCase):
                             (compute_cost, max_n_succ_stages
                             ) = generate_stage_construction_test_case(
                                 num_devices, submesh_choices, num_layers,
-                                num_autosharding_configs,
-                                compute_cost_factor, device_memory_size_factor)
+                                num_autosharding_configs, compute_cost_factor,
+                                device_memory_size_factor)
 
                             res_old = dp(num_layers, num_devices,
                                          num_micro_batches, submesh_choices,

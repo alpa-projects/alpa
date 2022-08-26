@@ -73,16 +73,15 @@ class OldNewDPTest(unittest.TestCase):
     """Test the equivalence of old DP and new DP."""
 
     def test_dp(self):
-        cases = [1, 4]
         num_runs = 10
         np.random.seed(0)
 
-        for num_layers in cases:
-            for num_hosts in cases:
-                for num_devices_per_host in cases:
+        for num_layers in [1, 4, 8]:
+            for num_hosts in [1, 4]:
+                for num_devices_per_host in [1, 4]:
                     submesh_choices = get_submesh_choices(
                         num_hosts, num_devices_per_host, "all")
-                    for num_micro_batches in cases:
+                    for num_micro_batches in [1, 16, 512]:
                         for i in range(num_runs):
                             compute_cost_factor = np.random.rand() * 4 - 2
                             device_memory_size_factor = np.random.rand() * 4

@@ -2,9 +2,11 @@
 from abc import ABC, abstractmethod
 from collections import namedtuple
 import dataclasses
+from time import time
+from datetime import datetime
 import gc
 import logging
-from typing import Dict, Sequence
+from typing import Dict, Sequence, Tuple
 
 import jax.numpy as jnp
 from jax.core import (ClosedJaxpr, Var, gensym)
@@ -17,7 +19,8 @@ from ray.exceptions import RayActorError
 from ray.util import ActorPool
 
 from alpa.device_mesh import (DistributedArray, PhysicalDeviceMesh,
-                              VirtualPhysicalMesh, _shard_device_array)
+                              VirtualPhysicalMesh, _shard_device_array,
+                              get_global_cluster)
 from alpa.global_env import global_config
 from alpa.mesh_executable import (PartialGradAccMeshDriverExecutable,
                                   get_grad_sync_channel_ids)
@@ -31,11 +34,15 @@ from alpa.pipeline_parallel.computation import (
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     CrossMeshCommunicator, SymbolicReshardingTask, CollectiveGroup,
     ReshardingTaskSpec, SymbolicBroadcastReshardingTask)
+from alpa.pipeline_parallel.layer_stats import eqn_flops
 from alpa.pipeline_parallel.resharding_tensor import VirtualDistributedArray
-from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
+from alpa.shard_parallel.auto_sharding import (AutoShardingOption,
+                                               LogicalDeviceMesh,
+                                               run_auto_sharding_pass,
                                                run_spmd_partitioner_pass,
                                                run_backend_compilation,
                                                hlo_sharding_to_sharding_spec)
+from alpa.timer import timers
 from alpa.util import (clone_jaxpr, get_shard_shape, jaxpr_to_hlo_module,
                        OrderedSet, retrieve_placement_group,
                        get_num_available_gpus)
@@ -550,6 +557,216 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
                    f" as_config={(logical_mesh.shape, auto_sharding_dict)}")
     profile_workers.shutdown()
     return compute_cost, max_n_succ_stages, is_profiled
+
+
+def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
+                                donation_mapping, global_outvars,
+                                apply_grad_layers, apply_grad_global_info,
+                                autosharding_configs, cluster_size,
+                                layer_flops_prefix_sum, num_micro_batches,
+                                default_as_option, auto_stage_option,
+                                mesh_cached_result):
+    timers("stage-construction-compilation").start()
+    assert len(layers) % 2 == 0
+    num_layers = len(layers) // 2
+    tot_flops = layer_flops_prefix_sum[2 * num_layers]
+    num_autosharding_configs = len(autosharding_configs)
+    indices = list(range(2 * num_layers))
+    stages = []
+    compute_cost, max_n_succ_stages, is_profiled = mesh_cached_result
+
+    print("- Generate all stage infos (Jaxpr -> HLO)")
+    # TODO(yonghao): only generate these info once for all mesh shapes
+    computation_source_ratio = meshes[0].num_devices / cluster_size
+    is_full_mesh = computation_source_ratio == 1
+    tolerance = auto_stage_option.stage_imbalance_tolerance
+    for start in tqdm.tqdm(range(0, num_layers)):
+        for end in tqdm.tqdm(range(start, num_layers), leave=False):
+            if is_full_mesh and not (start == 0 and end == num_layers - 1):
+                continue
+            flops_ratio = (
+                layer_flops_prefix_sum[end + 1] - layer_flops_prefix_sum[start]
+                + layer_flops_prefix_sum[2 * num_layers - start] -
+                layer_flops_prefix_sum[2 * num_layers - end - 1]) / tot_flops
+            if (computation_source_ratio > flops_ratio * (1 + tolerance) or
+                    computation_source_ratio < flops_ratio / (1 + tolerance)):
+                continue
+            layer_indices = (
+                indices[start:end + 1] +
+                indices[2 * num_layers - end - 1:2 * num_layers - start])
+            selected_apply_grad_layers = filter(
+                lambda x: x is not None,
+                [apply_grad_layers[idx] for idx in indices[start:end + 1]])
+            stage_name = f"stage_{start}_{end}"
+            (intermediate_vars, stage_config) = generate_stage_info(
+                layers, layer_indices, donation_mapping,
+                global_outvars, stage_name, end - start,
+                list(selected_apply_grad_layers), apply_grad_global_info)
+            if is_full_mesh:
+                intermediate_vars = []
+            for config_idx, autosharding_config in enumerate(
+                    autosharding_configs):
+                if autosharding_config is not None:
+                    stage_indices = (start, end, config_idx)
+                    if is_profiled[start, end, config_idx]:
+                        continue
+                    stages.append((stage_indices, stage_config,
+                                   autosharding_config, intermediate_vars))
+
+    if len(stages) == 0:
+        # Suspend timers
+        timers("stage-construction-compilation").suspend()
+        timers("stage-construction-profiling").start()
+        timers("stage-construction-profiling").suspend()
+        return compute_cost, max_n_succ_stages, is_profiled
+
+    print("- Compile all stages")
+    try:
+        compiled_outputs = compile_all(stages, num_micro_batches,
+                                       default_as_option)
+    except RayActorError as e:
+        logger.warning(f"Compilation fatal error: {e}")
+        timers("stage-construction-compilation").suspend()
+        return compute_cost, max_n_succ_stages, is_profiled
+    timers("stage-construction-compilation").suspend()
+
+    print("- Profile all stages")
+    # shape of compute_cost and max_n_succ_stages:
+    # (num_layers, num_layers, num_autosharding_configs)
+    timers("stage-construction-profiling").start()
+    (compute_cost, max_n_succ_stages,
+     is_profiled) = profile_all(stages, compiled_outputs, meshes, num_layers,
+                                num_autosharding_configs, num_micro_batches,
+                                auto_stage_option, mesh_cached_result)
+    timers("stage-construction-profiling").suspend()
+    return compute_cost, max_n_succ_stages, is_profiled
+
+
+def _get_layer_flops_prefix_sum(layers):
+    layer_flops_prefix_sum = [0]
+    for layer in layers:
+        layer_flops = sum(eqn_flops(eqn) for eqn in layer.eqns)
+        layer_flops_prefix_sum.append(layer_flops_prefix_sum[-1] + layer_flops)
+    return layer_flops_prefix_sum
+
+
+def get_compute_cost(
+        virtual_mesh: VirtualPhysicalMesh,
+        submesh_choices: Sequence[Tuple[int]],
+        autosharding_configs: Sequence[Sequence[Tuple[LogicalDeviceMesh,
+                                                      dict]]],
+        layers: Sequence[JaxPipelineComputation],
+        donation_mapping: Dict[Var, Var], global_outvars: Sequence[Var],
+        apply_grad_layers: Sequence[JaxPipelineComputation],
+        apply_grad_global_info: Tuple, num_micro_batches: int,
+        default_as_option: AutoShardingOption,
+        auto_stage_option: "AutoStageOption"):
+    """Get computation cost for each possible (stage, mesh) configuration.
+
+    This function enumerates all given submesh choices, then profiles compute
+    cost of all stage configuration under the submesh. For each submesh, it
+    slices the given mesh or the whole device cluster into submeshes to profile.
+
+    Args:
+        virtual_mesh: The whole virtual mesh. If profile_with_whole_ray_cluster
+            is turned off in global config, virtual_mesh is sliced into pieces
+            to run profiling. Otherwise, the whole device cluster is sliced for
+            profiling.
+        submesh_choices: All available submesh shape choices.
+        autosharding_configs: All auto sharding configs for each submesh.
+        layers: Layers for computing and accumulating gradients (forward +
+            backward).
+        donation_mapping: Donation mapping for all layers.
+        global_outvars: Global output variables for all layers.
+        apply_grad_layers: Apply gradient computations corresponding to each
+            forward layers.
+        apply_grad_global_info: Donation mapping and outvars for apply gradient
+            stages.
+        default_as_option: The default auto-sharding options.
+
+    Returns:
+        Two np.ndarray, each with shape (L, L, S, C), where L is the number of
+        forward layers, S is the number of submesh choices, and C is the maximal
+        number of autosharding configs for a submesh choice.
+        At index (i, j, s, c), the array stores the value under the condition:
+        the stage contains forward layers i, i+1, ... j and corresponding
+        backward layers, and runs under the s-th submesh and c-th auto sharding
+        config for the submesh.
+        compute_cost: The compute cost of all possible configurations.
+        max_n_succ_stages: The maximal number of succeeding stages. This
+            is calculated based on memory constraints.
+    """
+    assert len(layers) % 2 == 0
+    num_layers = len(layers) // 2
+    num_submesh_choices = len(submesh_choices)
+    num_autosharding_configs = len(autosharding_configs[0])
+    cluster_size = virtual_mesh.num_devices
+    layer_flops_prefix_sum = _get_layer_flops_prefix_sum(layers)
+
+    if auto_stage_option.cached_compute_cost is not None:
+        cached_result = np.load(auto_stage_option.cached_compute_cost,
+                                allow_pickle=True)
+    else:
+        cached_result = None
+
+    if cached_result is not None:
+        (compute_cost, max_n_succ_stages, is_profiled) = cached_result
+    else:
+        compute_cost = np.full((num_layers, num_layers, num_submesh_choices,
+                                num_autosharding_configs), np.inf)
+        max_n_succ_stages = np.full(
+            (num_layers, num_layers, num_submesh_choices,
+             num_autosharding_configs), -1)
+        is_profiled = np.full((num_layers, num_layers, num_submesh_choices,
+                               num_autosharding_configs), 0)
+    print("-" * 20 + " Automatic stage clustering " + "-" * 20)
+    print(f"submesh_choices: {submesh_choices}")
+
+    # Reverse submesh_choices to test larger meshes first
+    for mesh_id, submesh in reversed(list(enumerate(submesh_choices))):
+        print(f"- Profiling for submesh {mesh_id} {submesh}:")
+        num_hosts, num_devices = submesh
+        tic = time()
+        if global_config.profile_with_whole_ray_cluster:
+            whole_cluster_virtual_mesh = get_global_cluster(
+            ).get_virtual_physical_mesh()
+            sliced_virtual_meshes = (
+                whole_cluster_virtual_mesh.slice_profiling_submeshes(
+                    num_hosts, num_devices))
+        else:
+            sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
+                num_hosts, num_devices)
+
+        mesh_cached_result = (compute_cost[:, :, mesh_id, :],
+                              max_n_succ_stages[:, :, mesh_id, :],
+                              is_profiled[:, :, mesh_id, :])
+        (mesh_compute_cost, mesh_max_n_succ_stages,
+         mesh_profiled) = distributed_profile_on_mesh(
+             sliced_virtual_meshes, layers, donation_mapping, global_outvars,
+             apply_grad_layers, apply_grad_global_info,
+             autosharding_configs[mesh_id], cluster_size,
+             layer_flops_prefix_sum, num_micro_batches, default_as_option,
+             auto_stage_option, mesh_cached_result)
+
+        compute_cost[:, :, mesh_id, :] = mesh_compute_cost
+        max_n_succ_stages[:, :, mesh_id, :] = mesh_max_n_succ_stages
+        is_profiled[:, :, mesh_id, :] = mesh_profiled
+        toc = time()
+        print(f"Profiling for submesh {mesh_id} {submesh} takes {toc - tic:.2f}"
+              f" seconds")
+        print(f"Profiled costs are: {mesh_compute_cost}")
+        print(f"Profiled max_n_succ_stages are: {mesh_max_n_succ_stages}")
+        print("-" * 50)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    compute_cost_file_name = (f"compute-cost-{timestamp}.npy")
+    np.save(compute_cost_file_name,
+            (compute_cost, max_n_succ_stages, is_profiled))
+    global last_compute_cost_file_name
+    last_compute_cost_file_name = compute_cost_file_name
+    print(f"Compute cost saved to: {compute_cost_file_name}")
+    print("-" * 70)
+    return compute_cost, max_n_succ_stages
 
 
 def split_global_use_and_donate(layers: Sequence[JaxPipelineComputation],

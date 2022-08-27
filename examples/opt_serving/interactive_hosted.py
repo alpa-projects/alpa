@@ -141,39 +141,33 @@ def logprobs_loop(logprobs_batch, timeout, max_bs):
     except:
         logger.debug(f"Prepare to process logprobs batch: {logprobs_batch}")
         if logprobs_batch:
-            for work_item in logprobs_batch: # for loop over work items to keep it as batch size 1 for now, to avoid annoying logic with mixing past key values
-                inputs = []
-                cache_ids = []
+            for work_item in logprobs_batch: # each work item should contain its own batch (not necessarily up to MAX_BS)
                 ro = work_item.data
-                inputs.append(ro["input"])
-                cache_ids.append(ro["cache_id"])
+                inputs = ro["input"]
+                num_inputs = len(inputs)
+                cache_id = ro["cache_id"]
                 # do the actual generations
-                outputs = generator.forward(inputs, cache_ids, pasts=logprobs_past_cache)
-                generations = []
-                for cache_id, output in zip(cache_ids, outputs):
-                    # add to or update the cache with newly computed values
-                    logprobs_past_cache[cache_id] = (time.time(), output.past_key_values)
-                    # delete oldest key in cache if cache too big
-                    if len(logprobs_past_cache) > LOGPROBS_PAST_CACHE_SIZE_LIMIT:
-                        oldest_key = min(list(logprobs_past_cache.keys()), key=lambda k: logprobs_past_cache[k][0])
-                        del logprobs_past_cache[oldest_key]
+                output = generator.forward(inputs, cache_id, pasts=logprobs_past_cache)
+                # add to or update the cache with newly computed values
+                logprobs_past_cache[cache_id] = (time.time(), output.past_key_values)
+                # delete oldest key in cache if cache too big
+                if len(logprobs_past_cache) > LOGPROBS_PAST_CACHE_SIZE_LIMIT:
+                    oldest_key = min(list(logprobs_past_cache.keys()), key=lambda k: logprobs_past_cache[k][0])
+                    del logprobs_past_cache[oldest_key]
 
-                    last_position = min(output.logits.shape[1], len(inputs[0])) - 1
-                    logprobs = torch.log_softmax(output.logits[0, last_position], dim=-1)
-                    sorted_logprobs, sorted_indices = torch.sort(logprobs, descending=True)
-                    cumulative_probs = torch.cumsum(torch.softmax(sorted_logprobs, dim=-1), dim=-1)
-                    num_to_return = 1 + (cumulative_probs < ro['top_p']).sum().item()
-                    # return at most top_k tokens, e.g. if network limited
-                    num_to_return = min(num_to_return, ro["top_k"])
-                    generations.append({
-                        'logprobs': sorted_logprobs[:num_to_return].tolist(),
-                        'indices': sorted_indices[:num_to_return].tolist()
-                    })
+                logits = output.logits[:num_inputs, -1]
+                logprobs = torch.log_softmax(logits, dim=-1)
+                top_logprobs, top_indices = logprobs.topk(ro["top_k"], dim=1)
+
+                # return at most top_k tokens, e.g. if network limited
+                return_dict = {
+                    'logprobs': top_logprobs.cpu().tolist(),
+                    'indices': top_indices.cpu().tolist()
+                }
                 # broadcast them back
-                for work_item, gen in zip(logprobs_batch, generations):
-                    work_item.return_queue.put((work_item.uid, gen))
+                work_item.return_queue.put((work_item.uid, return_dict))
 
-                logprobs_batch.clear()
+            logprobs_batch.clear()
 
     # clear old keys in logprobs_past_cache which haven't been used recently
     existing_cache_ids = list(logprobs_past_cache.keys())
@@ -316,7 +310,7 @@ def completions():
     unordered_results = []
     for _ in prompts:
         unordered_results.append(ret_queue.get())
-    # resort results by the original ordering
+    # re-sort results by the original ordering
     # weirdly, openai returns to you a flat list if you gave multiple prompts
     reordered = sorted(unordered_results, key=lambda x: x[0])
     results = []
@@ -328,12 +322,19 @@ def completions():
 
 @app.route("/logprobs", methods=["POST"])
 def logprobs():
+    # Note: the past_key_values cache assumes the prompts are in the same order each time
     check_model_loading()
 
     # Normalize prompts
     prompts = request.json["prompt"]
     del request.json["prompt"]
     prompts = normalize_prompts(prompts)
+
+    # we're going to cache the keys for all the prompts in the request all together, so limit batch size
+    assert len(prompts) <= MAX_BS
+    prompt_length = len(prompts[0])
+    for prompt in prompts:
+        assert len(prompt) == prompt_length, "All prompts must be the same length to work with current caching implementation"
 
     # Generation arguments
     generation_args = request.json
@@ -342,36 +343,28 @@ def logprobs():
     generation_args["max_tokens"] = int(
         generation_args.get("max_tokens", MAX_SEQ_LEN))
 
-    generation_args["top_p"] = round(
-        float(generation_args.get("top_p", 1.0)), 1)
     generation_args["top_k"] = int(generation_args.get("top_k", 100000))
 
+    generation_args['top_p'] = -1
     generation_args["temperature"] = -1
     generation_args["n"] = int(generation_args.get("n", num_return_sequences))
 
     logger.info(f"Received new logprobs request: "
                 f"prompt length {[len(p) for p in prompts]}, "
-                f"top_p: {generation_args['top_p']}, "
                 f"top_k: {generation_args['top_k']}.")
 
     cur_len = max(len(p) for p in prompts)
     check_max_length_limit(cur_len, MAX_SEQ_LEN)
 
     # Push the request to the batch queue
-    cache_ids = [request.json["cache_id"]] if "cache_id" in request.json else [str(uuid.uuid4()) for _ in range(len(prompts))]
+    cache_id = request.json["cache_id"] if "cache_id" in request.json else str(uuid.uuid4())
     ret_queue = queue.Queue()
-    for i, (prompt, cache_id) in enumerate(zip(prompts, cache_ids)):
-        request_object = {"input": prompt, "cache_id": cache_id,
-                          **generation_args}
-        item = WorkItem(len(prompt), i, ret_queue, request_object)
-        logprobs_batch_queue.put(item
-            )
-    unordered_results = []
-    for _ in prompts:
-        unordered_results.append(ret_queue.get())
-    # resort results by the original ordering
-    reordered = sorted(unordered_results, key=lambda x: x[0])
-    return jsonify({"cache_id": cache_ids[0], "logprobs": reordered[0][1]['logprobs'], "indices": reordered[0][1]['indices']})
+    request_object = {"input": prompts, "cache_id": cache_id,
+                        **generation_args}
+    item = WorkItem(cur_len, 0, ret_queue, request_object)
+    logprobs_batch_queue.put(item)
+    results = ret_queue.get()
+    return jsonify({"cache_id": cache_id, "logprobs": results[1]['logprobs'], "indices": results[1]['indices']})
 
 
 @app.route("/")
@@ -404,7 +397,6 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="alpa/opt-125m")
     parser.add_argument("--path", type=str, default="~/opt_weights/")
     parser.add_argument("--port", type=int, default=20001)
-    parser.add_argument("--serve-logprobs", action="store_true", default=False)
     parser.add_argument("--torch-device", type=str, default="cpu")
     args = parser.parse_args()
 

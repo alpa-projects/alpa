@@ -57,7 +57,6 @@ class Client(object):
         """TODO(yangkevin2)"""
         pload = {
             "prompt": prompt,
-            "top_p": top_p,
             "top_k": top_k,
             "redirect_logprobs": True
         }

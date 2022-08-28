@@ -14,7 +14,8 @@ from alpa.device_mesh import VirtualPhysicalMesh
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.computation import (
     JaxPipelineComputation, merge_marked_jaxprs_with_named_call)
-from alpa.pipeline_parallel.stage_profiling import get_compute_cost
+from alpa.pipeline_parallel.stage_profiling import (get_compute_cost,
+                                                    last_compute_cost_file_name)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption
 from alpa.timer import timers
 from alpa.util import OrderedSet, maybe_numba_jit
@@ -61,7 +62,6 @@ UniformStageOption = namedtuple("UniformStageOption", [])
 StageOption = Union[AutoStageOption, ManualStageOption, UniformStageOption]
 
 # Get results for debugging
-last_compute_cost_file_name = None
 last_forward_stage_layer_ids = None
 last_submesh_shapes = None
 last_logical_mesh_shapes = None

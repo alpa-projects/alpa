@@ -50,6 +50,8 @@ from alpa.util import (clone_jaxpr, get_shard_shape, jaxpr_to_hlo_module,
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+last_compute_cost_file_name = None
+
 INFINITY_N_STAGES = 4096
 GB = 1024**3
 
@@ -474,8 +476,7 @@ def compile_all(stages, num_micro_batches, default_as_option):
 
 
 def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
-                num_layers, num_autosharding_configs, num_micro_batches,
-                auto_stage_option, mesh_cached_result):
+                num_micro_batches, auto_stage_option, mesh_cached_result):
     """Profile all compiled outputs on given meshes.
 
     This function launches a profile worker pool and submits given tasks.
@@ -559,27 +560,25 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
     return compute_cost, max_n_succ_stages, is_profiled
 
 
-def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
-                                donation_mapping, global_outvars,
-                                apply_grad_layers, apply_grad_global_info,
-                                autosharding_configs, cluster_size,
-                                layer_flops_prefix_sum, num_micro_batches,
-                                default_as_option, auto_stage_option,
-                                mesh_cached_result):
-    timers("stage-construction-compilation").start()
+def generate_2d_training_stages(layers,
+                                layer_flops_prefix_sum,
+                                donation_mapping,
+                                global_outvars,
+                                apply_grad_layers,
+                                apply_grad_global_info,
+                                autosharding_configs,
+                                is_profiled,
+                                mesh_num_devices,
+                                cluster_size,
+                                stage_imbalance_tolerance=np.inf):
+    print("- Generate all stage infos (Jaxpr -> HLO)")
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
-    tot_flops = layer_flops_prefix_sum[2 * num_layers]
-    num_autosharding_configs = len(autosharding_configs)
     indices = list(range(2 * num_layers))
-    stages = []
-    compute_cost, max_n_succ_stages, is_profiled = mesh_cached_result
-
-    print("- Generate all stage infos (Jaxpr -> HLO)")
-    # TODO(yonghao): only generate these info once for all mesh shapes
-    computation_source_ratio = meshes[0].num_devices / cluster_size
+    computation_source_ratio = mesh_num_devices / cluster_size
     is_full_mesh = computation_source_ratio == 1
-    tolerance = auto_stage_option.stage_imbalance_tolerance
+    tot_flops = layer_flops_prefix_sum[2 * num_layers]
+    stages = []
     for start in tqdm.tqdm(range(0, num_layers)):
         for end in tqdm.tqdm(range(start, num_layers), leave=False):
             if is_full_mesh and not (start == 0 and end == num_layers - 1):
@@ -588,8 +587,10 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                 layer_flops_prefix_sum[end + 1] - layer_flops_prefix_sum[start]
                 + layer_flops_prefix_sum[2 * num_layers - start] -
                 layer_flops_prefix_sum[2 * num_layers - end - 1]) / tot_flops
-            if (computation_source_ratio > flops_ratio * (1 + tolerance) or
-                    computation_source_ratio < flops_ratio / (1 + tolerance)):
+            if (computation_source_ratio > flops_ratio *
+                (1 + stage_imbalance_tolerance) or
+                    computation_source_ratio < flops_ratio /
+                (1 + stage_imbalance_tolerance)):
                 continue
             layer_indices = (
                 indices[start:end + 1] +
@@ -612,6 +613,39 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                         continue
                     stages.append((stage_indices, stage_config,
                                    autosharding_config, intermediate_vars))
+    return stages
+
+
+def generate_1d_training_stages(layers, donation_mapping, global_outvars,
+                                apply_grad_layers, apply_grad_global_info,
+                                autosharding_configs, is_profiled):
+    print("- Generate all stage infos (Jaxpr -> HLO)")
+    assert len(layers) % 2 == 0
+    num_layers = len(layers) // 2
+    stages = []
+    for l in tqdm.tqdm(range(0, num_layers)):
+        layer_indices = (l, 2 * num_layers - l - 1)
+        selected_apply_grad_layers = filter(lambda x: x is not None,
+                                            [apply_grad_layers[l]])
+        stage_name = f"stage_{l}"
+        (intermediate_vars, stage_config) = generate_stage_info(
+            layers, layer_indices, donation_mapping, global_outvars, stage_name,
+            1, list(selected_apply_grad_layers), apply_grad_global_info)
+        for config_idx, autosharding_config in enumerate(autosharding_configs):
+            if autosharding_config is not None:
+                stage_indices = (l, l, config_idx)
+                if is_profiled[l, l, config_idx]:
+                    continue
+                stages.append((stage_indices, stage_config, autosharding_config,
+                               intermediate_vars))
+    return stages
+
+
+def distributed_profile_on_mesh(stages, meshes: Sequence[VirtualPhysicalMesh],
+                                num_micro_batches, default_as_option,
+                                auto_stage_option, mesh_cached_result):
+    timers("stage-construction-compilation").start()
+    compute_cost, max_n_succ_stages, is_profiled = mesh_cached_result
 
     if len(stages) == 0:
         # Suspend timers
@@ -635,9 +669,9 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
     # (num_layers, num_layers, num_autosharding_configs)
     timers("stage-construction-profiling").start()
     (compute_cost, max_n_succ_stages,
-     is_profiled) = profile_all(stages, compiled_outputs, meshes, num_layers,
-                                num_autosharding_configs, num_micro_batches,
-                                auto_stage_option, mesh_cached_result)
+     is_profiled) = profile_all(stages, compiled_outputs, meshes,
+                                num_micro_batches, auto_stage_option,
+                                mesh_cached_result)
     timers("stage-construction-profiling").suspend()
     return compute_cost, max_n_succ_stages, is_profiled
 
@@ -725,28 +759,30 @@ def get_compute_cost(
     # Reverse submesh_choices to test larger meshes first
     for mesh_id, submesh in reversed(list(enumerate(submesh_choices))):
         print(f"- Profiling for submesh {mesh_id} {submesh}:")
-        num_hosts, num_devices = submesh
+        num_hosts, num_devices_per_host = submesh
         tic = time()
         if global_config.profile_with_whole_ray_cluster:
             whole_cluster_virtual_mesh = get_global_cluster(
             ).get_virtual_physical_mesh()
             sliced_virtual_meshes = (
                 whole_cluster_virtual_mesh.slice_profiling_submeshes(
-                    num_hosts, num_devices))
+                    num_hosts, num_devices_per_host))
         else:
             sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
-                num_hosts, num_devices)
+                num_hosts, num_devices_per_host)
 
         mesh_cached_result = (compute_cost[:, :, mesh_id, :],
                               max_n_succ_stages[:, :, mesh_id, :],
                               is_profiled[:, :, mesh_id, :])
-        (mesh_compute_cost, mesh_max_n_succ_stages,
-         mesh_profiled) = distributed_profile_on_mesh(
-             sliced_virtual_meshes, layers, donation_mapping, global_outvars,
-             apply_grad_layers, apply_grad_global_info,
-             autosharding_configs[mesh_id], cluster_size,
-             layer_flops_prefix_sum, num_micro_batches, default_as_option,
-             auto_stage_option, mesh_cached_result)
+        stages = generate_2d_training_stages(
+            layers, layer_flops_prefix_sum, donation_mapping, global_outvars,
+            apply_grad_layers, apply_grad_global_info, autosharding_configs,
+            is_profiled, sliced_virtual_meshes[0].num_devices, cluster_size,
+            auto_stage_option.stage_imbalance_tolerance)
+        (mesh_compute_cost,
+         mesh_max_n_succ_stages, mesh_profiled) = distributed_profile_on_mesh(
+             stages, sliced_virtual_meshes, num_micro_batches,
+             default_as_option, auto_stage_option, mesh_cached_result)
 
         compute_cost[:, :, mesh_id, :] = mesh_compute_cost
         max_n_succ_stages[:, :, mesh_id, :] = mesh_max_n_succ_stages

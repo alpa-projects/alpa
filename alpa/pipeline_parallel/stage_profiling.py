@@ -771,13 +771,16 @@ def get_compute_cost(
             sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
                 num_hosts, num_devices_per_host)
 
-        mesh_cached_result = (compute_cost[:, :, mesh_id, :],
-                              max_n_succ_stages[:, :, mesh_id, :],
-                              is_profiled[:, :, mesh_id, :])
+        mesh_compute_cost = compute_cost[:, :, mesh_id, :]
+        mesh_max_n_succ_stages = max_n_succ_stages[:, :, mesh_id, :]
+        mesh_is_profiled = is_profiled[:, :, mesh_id, :]
+        mesh_cached_result = (mesh_compute_cost, mesh_max_n_succ_stages,
+                              mesh_is_profiled)
+
         stages = generate_2d_training_stages(
             layers, layer_flops_prefix_sum, donation_mapping, global_outvars,
             apply_grad_layers, apply_grad_global_info, autosharding_configs,
-            is_profiled, sliced_virtual_meshes[0].num_devices, cluster_size,
+            mesh_is_profiled, sliced_virtual_meshes[0].num_devices, cluster_size,
             auto_stage_option.stage_imbalance_tolerance)
         (mesh_compute_cost,
          mesh_max_n_succ_stages, mesh_profiled) = distributed_profile_on_mesh(

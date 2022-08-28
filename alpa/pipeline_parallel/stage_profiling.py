@@ -779,7 +779,7 @@ def get_compute_cost(
 
         stages = generate_2d_training_stages(
             layers, layer_flops_prefix_sum, donation_mapping, global_outvars,
-            apply_grad_layers, apply_grad_global_info, autosharding_configs,
+            apply_grad_layers, apply_grad_global_info, autosharding_configs[mesh_id],
             mesh_is_profiled, sliced_virtual_meshes[0].num_devices, cluster_size,
             auto_stage_option.stage_imbalance_tolerance)
         (mesh_compute_cost,

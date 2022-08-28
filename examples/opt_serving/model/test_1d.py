@@ -1,9 +1,12 @@
 """Test the correctness of 1-D OPT implementation."""
+import copy
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from alpa.testing import assert_allclose
+from alpa.util import print_used_time
 from opt_serving.model import opt_model, opt_model_1d
 
 # If true, then we run the same batches with 2-D OPT and verify
@@ -23,16 +26,13 @@ input_id_list = [
 ]
 
 
-def init_2d_model(name, np_weights_folder, input_id_list):
+def init_2d_inference_step(name, np_weights_folder):
     # Init 2D model
     config = opt_model.get_opt_config(name, dtype=jnp.float32)
     model_2d, params_2d = opt_model.init_model_aval(config)
     params_2d = opt_model.load_params_np(params_2d, np_weights_folder, config)
     params_2d = jax.tree_map(jnp.array, params_2d)
-
-    # Make cache for each input
-    input_pool_2d = [(input_id, opt_model.init_cache_np(config, 1))
-                     for input_id in input_id_list]
+    cache_2d = opt_model.init_cache_np(config, 1)
 
     @jax.jit
     def inference_step_2d(params, batch):
@@ -41,6 +41,15 @@ def init_2d_model(name, np_weights_folder, input_id_list):
                                 batch["position_ids"],
                                 attention_cache=batch["cache"])
         return output.logits, output.attention_cache
+
+    return inference_step_2d, params_2d, cache_2d, config
+
+
+def init_2d_runner(name, np_weights_folder, input_id_list):
+
+    inference_step, params, cache, config = init_2d_inference_step(name, np_weights_folder)
+    # Make cache for each input
+    input_pool_2d = [(input_id, copy.deepcopy(cache)) for input_id in input_id_list]
 
     def runner(input_pool):
         # Run each sequence individually because their lengths are different
@@ -53,9 +62,9 @@ def init_2d_model(name, np_weights_folder, input_id_list):
                 # Auto-regressive
                 input_ids = input_ids[:, -1:]
                 position_ids = position_ids[:, -1:]
-
-            logits, updated_cache = inference_step_2d(
-                params_2d, {
+            print_used_time(None)
+            logits, updated_cache = inference_step(
+                params, {
                     "input_ids": input_ids,
                     "position_ids": position_ids,
                     "cache": cache,
@@ -63,8 +72,8 @@ def init_2d_model(name, np_weights_folder, input_id_list):
             logits = logits.reshape(logits.shape[1:])
             next_token = np.argmax(logits, axis=-1)[-1]
 
+            print_used_time(f"{idx}: is_prompt {is_prompt[idx]}")
             # Append the generated token and updated cache.
-            #pdb.set_trace()
             input_pool[idx] = (_input_ids + [next_token.tolist()],
                                updated_cache)
 
@@ -80,7 +89,7 @@ def init_2d_model(name, np_weights_folder, input_id_list):
     return runner, input_pool_2d
 
 
-def init_1d_model(name, np_weights_folder, input_id_list):
+def init_1d_inference_step(name, np_weights_folder):
     # Init 1D model
     max_batch_size = len(input_id_list)
     config = opt_model.get_opt_config(name, dtype=jnp.float32)
@@ -88,10 +97,7 @@ def init_1d_model(name, np_weights_folder, input_id_list):
     params_1d = opt_model_1d.load_params_np(params_1d, np_weights_folder,
                                             config)
     params_1d = jax.tree_map(jnp.array, params_1d)
-
-    # Make cache for each input
-    input_pool_1d = [(input_id, opt_model_1d.init_cache_np(config))
-                     for input_id in input_id_list]
+    cache_1d = opt_model_1d.init_cache_np(config)
 
     @jax.jit
     def inference_step_1d(params, batch):
@@ -102,6 +108,17 @@ def init_1d_model(name, np_weights_folder, input_id_list):
                                 attention_cache=batch["cache"])
         return output.logits, output.attention_cache
 
+    return inference_step_1d, params_1d, cache_1d, config
+
+
+def init_1d_runner(name, np_weights_folder, input_id_list):
+    inference_step, params, cache, config = init_1d_inference_step(name, np_weights_folder)
+
+    # Make cache for each input
+    input_pool_1d = [(input_id, copy.deepcopy(cache))
+                     for input_id in input_id_list]
+
+
     def runner(input_pool):
         batch_size = len(input_pool)
         is_prompt = [cache[0][2][0] == 0 for _, cache in input_pool]
@@ -111,10 +128,11 @@ def init_1d_model(name, np_weights_folder, input_id_list):
         position_ids_flatten = []
         batch_idxs = []
 
-        # Promopts must go first, so we use this flag to make sure
+        # Prompts must go first, so we use this flag to make sure
         # input pool does not have a pattern like [prompt1, token1, prompt2].
         in_prompt = True
 
+        print_used_time(None)
         for idx, (input_ids, cache) in enumerate(input_pool):
             position_ids = opt_model_1d.build_position_ids(
                 np.array(input_ids, dtype=np.int32), config.pad).tolist()
@@ -138,6 +156,7 @@ def init_1d_model(name, np_weights_folder, input_id_list):
         input_ids_flatten = np.array(input_ids_flatten, dtype=np.int32)
         position_ids_flatten = np.array(position_ids_flatten, dtype=np.int32)
         batch_idxs = np.array(batch_idxs, dtype=np.int32)
+        print_used_time("flattening...")
 
         # Concate per-input cache together and generate cache index.
         # Note that assuming the valid cache length of 3 inputs are L1, L2, L3,
@@ -196,13 +215,15 @@ def init_1d_model(name, np_weights_folder, input_id_list):
             index_flatten = np.concatenate([index_flatten, index_pad], axis=0)
             cache_1d_flatten.append((key_flatten, value_flatten, index_flatten))
 
-        logits, cache_1d_updated = inference_step_1d(
-            params_1d, {
+        print_used_time("Organize cache...")
+        logits, cache_1d_updated = inference_step(
+            params, {
                 "input_ids": input_ids_flatten,
                 "position_ids": position_ids_flatten,
                 "batch_idxs": batch_idxs,
                 "cache": cache_1d_flatten,
             })
+        print_used_time(f"1D batched compute...")
         if DUMP_LOGITS:
             jnp.save("1d", logits)
 
@@ -245,6 +266,7 @@ def init_1d_model(name, np_weights_folder, input_id_list):
             input_pool[bidx] = (_input_ids + [next_token.tolist()], cache)
             update_start = update_end
         assert update_end == logits.shape[0]
+        print_used_time("Re-order cache...")
         return input_pool
 
     return runner, input_pool_1d
@@ -342,11 +364,11 @@ def test_opt_125M():
     name = "125M"
     np_weights_folder = f"/home/ubuntu/opt_weights/{name}_np"
 
-    model_n_pool_1d = init_1d_model(name, np_weights_folder, input_id_list)
+    model_n_pool_1d = init_1d_runner(name, np_weights_folder, input_id_list)
 
     model_n_pool_2d = None
     if VERIFY_RESULT:
-        model_n_pool_2d = init_2d_model(name, np_weights_folder, input_id_list)
+        model_n_pool_2d = init_2d_runner(name, np_weights_folder, input_id_list)
     else:
         print("Skipping result verification")
 

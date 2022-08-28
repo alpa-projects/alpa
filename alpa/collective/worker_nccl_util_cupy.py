@@ -6,7 +6,7 @@ import cupy
 import jax.numpy as jnp
 from jax import device_put
 from jax._src.dlpack import from_dlpack, to_dlpack
-from jax._src.lib import xla_bridge as xb, xla_client as xc
+from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 import numpy as np
 
 import alpa.collective as col
@@ -14,6 +14,8 @@ from alpa.collective.collective_group import nccl_util
 from alpa.util import (jax_tensor_set, jax_tensor_index,
                        xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
                        is_continuous_subset, infer_offset_and_n_elements)
+
+from alpa.pipeline_parallel.xla_custom_call_marker import dummy_compute_on_default_stream
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -39,10 +41,13 @@ def send_tile(worker, uuid: int, device_id: int, offset: Sequence[slice],
     """
     buffer = worker.buffers[uuid][device_id]
     tensor_shape = buffer.shape
+    # print(1)
     if is_continuous_subset(offset, tensor_shape):
         # fast path, two cases: (1) same shape, (2) continuous subset.
         slice_shape = tuple(ind.stop - ind.start for ind in offset)
         to_send = xla_buffer_to_cupy(buffer)
+        # print(2)
+        # worker.sync_all()
         if slice_shape == tensor_shape:
             col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
         else:
@@ -52,7 +57,10 @@ def send_tile(worker, uuid: int, device_id: int, offset: Sequence[slice],
                               dst_gpu_idx,
                               group_name,
                               n_elements=n_elements)
+        # worker.sync_all()
     else:
+        # print(3)
+        # worker.sync_all()
         # slower path, because of indexing.
         logger.debug("Send goes along the slowest path. "
                      "If this is for transformers, please check the resharding "
@@ -62,8 +70,9 @@ def send_tile(worker, uuid: int, device_id: int, offset: Sequence[slice],
         src_buffer = jax_tensor_index(xla_buffer_to_jax_tensor(buffer),
                                       start_indices, slice_sizes)
         to_send = jax_tensor_to_cupy(src_buffer)
+        # worker.sync_all()
         col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
-
+        # worker.sync_all()
 
 def recv_tile(worker, uuid: int, device_id: int,
               indices_in_dst_tile: Sequence[slice], src_rank: int,
@@ -87,8 +96,12 @@ def recv_tile(worker, uuid: int, device_id: int,
     tensor_shape = buffer.shape
     slice_shape = tuple(ind.stop - ind.start for ind in indices_in_dst_tile)
     is_bool = buffer.dtype == np.bool_
+    # print(-1)
     if is_continuous_subset(indices_in_dst_tile, tensor_shape):
+        # print(-2)
+        # worker.sync_all()
         to_recv = xla_buffer_to_cupy(buffer, take_ownership=True)
+        # worker.sync_all()
         if slice_shape == tensor_shape:
             col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
         else:
@@ -98,7 +111,9 @@ def recv_tile(worker, uuid: int, device_id: int,
                               src_gpu_idx,
                               group_name,
                               n_elements=n_elements)
+        # worker.sync_all()
         new_buffer = cupy_to_xla_buffer(to_recv)
+        # worker.sync_all()
     else:
         # The following call will allocate memory and cause a few H2D and
         # D2D kernels.
@@ -106,10 +121,22 @@ def recv_tile(worker, uuid: int, device_id: int,
         logger.debug("Recv goes along the slowest path. "
                      "If this is for transformers, please check the resharding "
                      "specs.")
+        # print(-3)
+        # worker.sync_all()
         tmp_buffer = device_put(jnp.ones(slice_shape, dtype=buffer.dtype),
                                 worker.local_devices[device_id])
         to_recv = jax_tensor_to_cupy(tmp_buffer, take_ownership=True)
+        # worker.sync_all()
         col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
+        # worker.sync_all()
+
+        # streams = xe.fetch_working_streams(worker.)
+
+        # self.worker.sync_all() #1
+        # for stream in streams: #2
+        #     xe.synchronize_stream(stream)
+
+
         recv_tensor = cupy_to_jax_tensor(to_recv)
         start_indices = tuple(
             ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
@@ -123,6 +150,7 @@ def recv_tile(worker, uuid: int, device_id: int,
         new_buffer = jax_tensor_set(xla_buffer_to_jax_tensor(buffer),
                                     recv_tensor, start_indices)
         new_buffer = jax_tensor_to_xla_buffer(new_buffer)
+        # worker.sync_all()
     if is_bool:
         new_buffer = _uint8_to_bool(new_buffer)
     worker.buffers[uuid][device_id] = new_buffer

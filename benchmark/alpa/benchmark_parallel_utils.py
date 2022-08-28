@@ -234,11 +234,16 @@ def benchmark_training_executable(niter,
         for i in range(niter):
             state = train_step(state, *other_train_step_inputs)
         executable.sync()
+        # with open("overlap_no_defaultstream.txt", "w") as f:
+        #     f.write(state)
+        # print(state)
+        
         e2e_latency = (time.time() - tic) / niter
         latencies = [e2e_latency]
         print(f"latency with dirver overhead: {e2e_latency:.3f}")
     else:
         # Benchmark latency without driver overhead
+        # niter = 1
         for i in range(niter):
             print(f"Iteration {i} ...")
             state = train_step(state, *other_train_step_inputs)
@@ -247,7 +252,9 @@ def benchmark_training_executable(niter,
                 # Get the actual state out.
                 state = state[0]
             executable.sync()
-
+            # with open("overlap_no_defaultstream.txt", "w") as f:
+            #     f.write(str(state))
+            # print(str(state))
         latencies = executable.get_execution_time_costs()[warmup:]
 
     print_used_time("Benchmark")

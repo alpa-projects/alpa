@@ -474,11 +474,13 @@ class MeshHostWorker:
                                             participated_streams)
 
         for send_tile_spec in task.tile_specs:
+            self.sync_all()
             send_tile_spec: ReshardingSendSpec
             self.send_tile(ary_uuid, send_tile_spec.device_id,
                            send_tile_spec.tile_spec.offset,
                            send_tile_spec.tile_spec.rank,
                            send_tile_spec.tile_spec.gpu_idx, task.group_name)
+            self.sync_all()
 
         if global_config.enable_overlapping:
             for device_id, stream in zip(participated_devices, participated_streams):
@@ -520,14 +522,16 @@ class MeshHostWorker:
 
             for recv_tile_spec in recv_spec.tile_specs:
                 recv_tile_spec: ReshardingTileSpec
+                self.sync_all()
                 self.recv_tile(ary_uuid, device_id, recv_tile_spec.offset,
                                recv_tile_spec.rank, recv_tile_spec.gpu_idx,
                                task.group_name)
+                self.sync_all()
 
         if global_config.enable_overlapping:
             for device_id, stream in zip(participated_devices, participated_streams):
                 self.buffers_done_events[ary_uuid][device_id] = mark_event(stream, device_id)
-                print(f"mark event {ary_uuid} {device_id} -> {self.buffers_done_events[ary_uuid][device_id]}")
+                # print(f"mark event {ary_uuid} {device_id} -> {self.buffers_done_events[ary_uuid][device_id]}")
 
             # for stream in participated_streams:
             # for stream in col.get_all_streams(task.group_name):
@@ -536,6 +540,7 @@ class MeshHostWorker:
 
     def send_tile(self, uuid: int, device_id: int, offset: Sequence[slice],
                   dst_rank: int, dst_gpu_idx: int, group_name: str):
+        # print("send_tile")
         if global_config.pipeline_use_signal_send_recv:
             signal = self.signal_buffers[device_id]
             col.send_multigpu(signal,
@@ -553,6 +558,7 @@ class MeshHostWorker:
                   src_gpu_idx: int, group_name: str):
         if uuid not in self.buffers:
             raise RuntimeError("Buffer has not been created.")
+        # print("recv_tile")
 
         if global_config.pipeline_use_signal_send_recv:
             signal = self.signal_buffers[device_id]

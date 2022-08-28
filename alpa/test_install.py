@@ -32,9 +32,9 @@ class InstallationTest(unittest.TestCase):
     def test_2_pipeline_parallel(self):
         init(cluster="ray")
 
-        state, batch, train_step = get_mlp_train_state_and_step(batch_size=128,
-                                                                hidden_size=128,
-                                                                num_layers=6)
+        state, batch, train_step = get_mlp_train_state_and_step(batch_size=64,
+                                                                hidden_size=16,
+                                                                num_layers=4)
 
         # Serial execution
         expected_output = train_step(state, batch)
@@ -44,10 +44,10 @@ class InstallationTest(unittest.TestCase):
         p_train_step = parallelize(
             train_step,
             method=PipeshardParallel(
-                num_micro_batches=2,
+                num_micro_batches=4,
                 layer_option=AutoLayerOption(layer_num=layer_num)))
         actual_output = p_train_step(state, batch)
-
+        
         # print(expected_output)
         # with open("expected_output.txt", "w") as f:
         #     f.write(str(expected_output))
@@ -61,6 +61,17 @@ def suite():
     s = unittest.TestSuite()
     # s.addTest(InstallationTest("test_1_shard_parallel"))
     s.addTest(InstallationTest("test_2_pipeline_parallel"))
+    # s.addTest(InstallationTest("test_2_pipeline_parallel"))
+    # s.addTest(InstallationTest("test_2_pipeline_parallel"))
+    # s.addTest(InstallationTest("test_2_pipeline_parallel"))
+    # s.addTest(InstallationTest("test_2_pipeline_parallel"))
+    # s.addTest(InstallationTest("test_2_pipeline_parallel"))
+    # s.addTest(InstallationTest("test_2_pipeline_parallel"))
+    # s.addTest(InstallationTest("test_2_pipeline_parallel"))
+    # s.addTest(InstallationTest("test_2_pipeline_parallel"))
+    # s.addTest(InstallationTest("test_2_pipeline_parallel"))
+    # s.addTest(InstallationTest("test_2_pipeline_parallel"))
+    # s.addTest(InstallationTest("test_2_pipeline_parallel"))
     return s
 
 

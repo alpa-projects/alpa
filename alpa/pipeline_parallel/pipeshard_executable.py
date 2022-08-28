@@ -528,7 +528,8 @@ class PipeshardMeshWorkerExecuable:
         for local_id, global_id in zip(self.input_local_uuids,
                                        input_global_uuids):
             buffers[local_id] = self.global_buffers[global_id]
-            buffers_done_events[local_id] = self.global_buffers_done_events[global_id]
+            if global_config.enable_overlapping:
+                buffers_done_events[local_id] = self.global_buffers_done_events[global_id]
         # add preallocated buffers for gradient accumulation
         # print("input_global_uuids", input_global_uuids, flush=True)
         # print("input_local_uuids", self.input_local_uuids, flush=True)
@@ -544,7 +545,8 @@ class PipeshardMeshWorkerExecuable:
                 
         # load the local env
         self.worker.buffers = buffers
-        self.worker.buffers_done_events = buffers_done_events
+        if global_config.enable_overlapping:
+            self.worker.buffers_done_events = buffers_done_events
         sync_func = self.worker.sync if sync_for_timer else None
 
         # Setup tracer
@@ -573,6 +575,7 @@ class PipeshardMeshWorkerExecuable:
 
             if instruction.opcode == PipelineInstType.RUN:
                 log_run_begin(instruction.info, sync_func=sync_func)
+
                 self.worker.run_executable(instruction.task_uuid,
                                            instruction.input_uuids,
                                            instruction.output_uuids,
@@ -585,7 +588,7 @@ class PipeshardMeshWorkerExecuable:
                 self.worker.run_resharding_recv_task(
                     instruction.task_uuid, instruction.output_uuids[0],
                     instruction.opaques["set_empty_buffer"])
-                # self.worker.sync_all()
+                self.worker.sync_all()
                 # dummy_compute_on_default_stream()
                 # TODO(lmzheng): move this to run_resharding_recv_task
                 if instruction.opaques["allgather_uuid"] is not None:
@@ -611,6 +614,8 @@ class PipeshardMeshWorkerExecuable:
         for local_id, global_id in zip(self.output_local_uuids,
                                        output_global_uuids):
             self.global_buffers[global_id] = buffers[local_id]
+            if global_config.enable_overlapping:
+                self.global_buffers_done_events[global_id] = buffers_done_events[local_id]
         # now acc_grad_buffers are those after grad acc, before apply grad
         # with memzero. These buffers are reused in the next iteration.
         # TODO(yonghao): never donate them
@@ -619,9 +624,12 @@ class PipeshardMeshWorkerExecuable:
                 self.acc_grad_buffers[in_uuid] = buffers[out_uuid]
         # restore global environment
         self.worker.buffers = self.global_buffers
-        self.worker.buffers_done_events = self.global_buffers_done_events
         buffers.clear()
-        buffers_done_events.clear() # TODO(hexu): should I clear it here? 
+        if global_config.enable_overlapping:
+            self.worker.buffers_done_events = self.global_buffers_done_events
+            buffers_done_events.clear() # TODO(hexu): should I clear it here? 
+            # xe.reset_events()
+
 
     def profile_with_dummy_inputs(self):
         """Profile the executable with dummy inputs."""

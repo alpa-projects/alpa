@@ -18,6 +18,9 @@ import math
 from functools import partial
 from typing import Optional, Tuple
 
+import dataclasses
+from dataclasses import dataclass
+
 import flax
 import flax.linen as nn
 import jax
@@ -814,3 +817,58 @@ class FlaxBloomForCausalLM(FlaxBloomPreTrainedModel):
 append_call_sample_docstring(
     FlaxBloomForCausalLM, _TOKENIZER_FOR_DOC, _CHECKPOINT_FOR_DOC, FlaxCausalLMOutput, _CONFIG_FOR_DOC
 )
+
+def get_bloom_config(name, **kwargs):
+    if name == "350M":
+        config = BloomConfig(
+            hidden_size = 1024,
+            n_head = 16,
+            n_layer = 24,
+            pretraining_tp = 1,
+            use_cache = True
+        )
+    elif name == "760M":
+        config = BloomConfig(
+            hidden_size = 1536,
+            n_head = 16,
+            n_layer = 24,
+            pretraining_tp = 1,
+            use_cache = True
+        )
+    elif name == "1.3B":
+        config = BloomConfig(
+            hidden_size = 2048,
+            n_head = 16,
+            n_layer = 24,
+            pretraining_tp = 2,
+            use_cache = True
+        )
+    elif name == "2.5B":
+        config = BloomConfig(
+            hidden_size = 2560,
+            n_head = 32,
+            n_layer = 30,
+            pretraining_tp = 4,
+            use_cache = True
+        )
+    elif name == "6.3B":
+        config = BloomConfig(
+            hidden_size = 4096,
+            n_head = 32,
+            n_layer = 30,
+            pretraining_tp = 4,
+            use_cache = True
+        )
+    elif name == "176B":
+        config = BloomConfig(
+            hidden_size = 14336,
+            n_head = 112,
+            n_layer = 70,
+            pretraining_tp = 4,
+            use_cache = True
+        )
+    else:
+        raise ValueError()
+
+    return dataclasses.replace(config, **kwargs)
+

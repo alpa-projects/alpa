@@ -845,8 +845,8 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def get_outputs_handler(self, avals: Sequence[ShapedArray],
                             sharding_specs: Sequence[ShardingSpec]):
-        outs_handler = pxla.local_avals_to_results_handler(
-            sharding_specs, avals)
+        pmap_specs = pxla._get_pmap_sharding(np.arange(self.num_devices), sharding_specs)
+        outs_handler = pxla.local_avals_to_results_handler(avals, pmap_specs)
         return outs_handler
 
     def set_runtime_random_seed(self, seed: int):

@@ -12,10 +12,10 @@ from jax._src.lib.xla_bridge import get_backend as default_get_backend
 from jax.core import Primitive
 from jax.interpreters import partial_eval as pe, pxla
 from jax.interpreters import xla, mlir
-from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
+from jax.interpreters.xla import (xops, extend_name_stack,
                                   register_translation, wrap_name,
                                   _backend_specific_translations, parameter,
-                                  xla_destructure, pyval_to_ir_constant)
+                                  xla_destructure)
 import flax
 
 from alpa.global_env import global_config, is_worker
@@ -289,6 +289,10 @@ setattr(pxla.ShardingSpec, "__setstate__", sharding_spec_setstate)
 # Monkey patch tree map to disable some warnings
 jax._src.tree_util.tree_multimap = jax._src.tree_util.tree_map
 jax.tree_multimap = jax._src.tree_util.tree_map
+jax.tree_map = jax._src.tree_util.tree_map
+jax.tree_leaves = jax._src.tree_util.tree_leaves
+jax.tree_flatten = jax._src.tree_util.tree_flatten
+jax.tree_unflatten = jax._src.tree_util.tree_unflatten
 
 ########################################
 ##### Monkey patch Flax

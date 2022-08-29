@@ -75,6 +75,56 @@ StageConfig = namedtuple(
     "StageConfig", ["compile_config", "profile_config", "apply_grad_config"])
 
 
+class ProfileResult(
+        namedtuple("ProfileResult", [
+            "compute_cost", "peak_memory", "intermediate_size", "initial_size",
+            "available_memory", "is_profiled"
+        ])):
+    """Profile result of a candidate pipeline stage."""
+
+    @classmethod
+    def init_profile_result_meshes(cls, num_layers: int,
+                                   num_submesh_choices: int,
+                                   num_auto_sharding_configs: int):
+        return cls(
+            compute_cost=np.full((num_layers, num_layers, num_submesh_choices,
+                                  num_auto_sharding_configs), np.inf),
+            peak_memory=np.full((num_layers, num_layers, num_submesh_choices,
+                                 num_auto_sharding_configs), np.inf),
+            intermediate_size=np.full(
+                (num_layers, num_layers, num_submesh_choices,
+                 num_auto_sharding_configs), np.inf),
+            initial_size=np.full((num_layers, num_layers, num_submesh_choices,
+                                  num_auto_sharding_configs), np.inf),
+            available_memory=np.full(
+                (num_layers, num_layers, num_submesh_choices,
+                 num_auto_sharding_configs), 0),
+            is_profiled=np.full((num_layers, num_layers, num_submesh_choices,
+                                 num_auto_sharding_configs), False),
+        )
+
+    def get_submesh_results(self, submesh_idx: int):
+        return ProfileResult(
+            compute_cost=self.compute_cost[:, :, submesh_idx, :],
+            peak_memory=self.peak_memory[:, :, submesh_idx, :],
+            intermediate_size=self.intermediate_size[:, :, submesh_idx, :],
+            initial_size=self.initial_size[:, :, submesh_idx, :],
+            available_memory=self.available_memory[:, :, submesh_idx, :],
+            is_profiled=self.is_profiled[:, :, submesh_idx, :],
+        )
+
+    def set_submesh_results(self, submesh_idx: int,
+                            submesh_results: "ProfileResult"):
+        self.compute_cost[:, :, submesh_idx, :] = submesh_results.compute_cost
+        self.peak_memory[:, :, submesh_idx, :] = submesh_results.peak_memory
+        self.intermediate_size[:, :, submesh_idx, :] = (
+            submesh_results.intermediate_size)
+        self.initial_size[:, :, submesh_idx, :] = submesh_results.initial_size
+        self.available_memory[:, :, submesh_idx, :] = (
+            submesh_results.available_memory)
+        self.is_profiled[:, :, submesh_idx, :] = submesh_results.is_profiled
+
+
 class BaseWorkerPoolWrapper(ABC):
     """Basic wrapper of ray's ActorPool."""
 
@@ -260,8 +310,7 @@ class ProfileWorker:
         self.mesh = virtual_mesh.get_physical_mesh()
         self.virtual_mesh = virtual_mesh
 
-    def _profile_impl(self, stage_id, compiled_output, profile_info,
-                      intermediate_size, initial_size):
+    def _profile_impl(self, stage_id, compiled_output, profile_info):
         """Implementation of profile function.
 
         The profiler first compile the HLO Proto into Mesh Executable, then
@@ -308,18 +357,9 @@ class ProfileWorker:
         cost = executable.profile_with_dummy_inputs(skip_grad_sync=True)
         del executable
 
-        if np.mean(cost) == np.inf:
-            max_stage = -1
-        else:
-            max_stage = int((available_memory - peak_memory - initial_size) //
-                            max(intermediate_size, 1e-8) - 1)
-            max_stage = min(max(-1, max_stage), INFINITY_N_STAGES)
+        return stage_id, cost, peak_memory, available_memory
 
-        return stage_id, cost, max_stage, (peak_memory, available_memory,
-                                           intermediate_size, initial_size)
-
-    def profile(self, stage_id, compiled_output, profile_info,
-                intermediate_size, initial_size):
+    def profile(self, stage_id, compiled_output, profile_info):
         """Run profiling on this profile worker.
 
         If the RayActorError is catched, it retries until profile_maximum_retry
@@ -329,8 +369,7 @@ class ProfileWorker:
         for _ in range(global_config.profile_maximum_retry):
             try:
                 return self._profile_impl(stage_id, compiled_output,
-                                          profile_info, intermediate_size,
-                                          initial_size)
+                                          profile_info)
             except RayActorError as e:
                 logger.warning(f"Meet ray actor error in profiling: {e}")
                 self.restart(forced=True)
@@ -342,7 +381,7 @@ class ProfileWorker:
                 logger.warning(f"Meet assertion error in profiling: {e}")
                 self.restart(forced=True)
                 break
-        return stage_id, np.inf, -1, (np.inf, 0, 0, 0)
+        return stage_id, np.inf, np.inf, 0
 
     def restart(self, forced):
         """Restart the physical mesh."""
@@ -373,8 +412,7 @@ class HloCostModelProfileWorker:
         self.num_devices = num_devices
         self.num_micro_batches = num_micro_batches
 
-    def profile(self, stage_id, compiled_output, profile_info,
-                intermediate_size, initial_size):
+    def profile(self, stage_id, compiled_output, profile_info):
         """Use cost model to estimate cost on this profile worker."""
         _, _, _, acc_grad_indices = profile_info
         try:
@@ -386,7 +424,7 @@ class HloCostModelProfileWorker:
                 bypass_device_assignment_check=True)
         except RuntimeError as e:
             logger.warning(f"Compilation error (backend codegen): {e}")
-            return stage_id, np.inf, -1, (0, 0, 0, 0)
+            return stage_id, np.inf, np.inf, 0
 
         hlo_module = compiled.hlo_modules()[0]
         grad_sync_channel_ids = ""
@@ -403,15 +441,7 @@ class HloCostModelProfileWorker:
         #          f"profile_stage_{stage_id}.hlo", "w") as fout:
         #    fout.write(hlo_module.to_string())
 
-        if np.mean(cost) == np.inf:
-            max_stage = -1
-        else:
-            max_stage = int((available_memory - peak_memory - initial_size) //
-                            max(intermediate_size, 1e-8) - 1)
-            max_stage = min(max(-1, max_stage), INFINITY_N_STAGES)
-
-        return stage_id, cost, max_stage, (peak_memory, available_memory,
-                                           intermediate_size, initial_size)
+        return stage_id, cost, peak_memory, available_memory
 
 
 class HloCostModelProfileWorkerPool(BaseWorkerPoolWrapper):
@@ -443,7 +473,7 @@ class HloCostModelProfileWorkerPool(BaseWorkerPoolWrapper):
         self.pool = ActorPool(self.actors)
 
 
-def compile_all(stages, num_micro_batches, default_as_option):
+def compile_all(stages, num_micro_batches, default_as_option, is_profiled):
     """
     Compile all input stages.
     """
@@ -451,8 +481,10 @@ def compile_all(stages, num_micro_batches, default_as_option):
         min(max(ray.available_resources()["CPU"] // 2, 1), len(stages)))
 
     compile_workers = CompileWorkerPool(num_cpus)
-    for stage_id, (_, stage_config, auto_sharding_config,
+    for stage_id, ((start, end, config_idx), stage_config, auto_sharding_config,
                    _) in enumerate(stages):
+        if is_profiled[start, end, config_idx]:
+            continue
         logical_mesh, autosharding_option_dict = auto_sharding_config
         compile_workers.submit(
             lambda w, v: w.compile_stage_for_profiling.remote(*v),
@@ -466,6 +498,7 @@ def compile_all(stages, num_micro_batches, default_as_option):
             stage_id, compiled_output = compile_workers.get_next_unordered()
         except TimeoutError:
             logger.warning("Compile worker timeout")
+            continue
         except RayActorError as e:
             logger.warning(f"A Compile worker died unexpectedly: {e}")
             continue
@@ -476,13 +509,15 @@ def compile_all(stages, num_micro_batches, default_as_option):
 
 
 def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
-                num_micro_batches, auto_stage_option, mesh_cached_result):
+                num_micro_batches, auto_stage_option,
+                mesh_cached_result: ProfileResult):
     """Profile all compiled outputs on given meshes.
 
     This function launches a profile worker pool and submits given tasks.
     """
-    # pylint: disable=unused-argument
-    compute_cost, max_n_succ_stages, is_profiled = mesh_cached_result
+    mesh_profile_result = mesh_cached_result
+    (compute_cost, peak_memory, intermediate_size, initial_size,
+     available_memory, is_profiled) = mesh_profile_result
 
     placement_group = retrieve_placement_group()
 
@@ -506,68 +541,69 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
                    stage) in enumerate(zip(compiled_outputs, stages)):
         if compiled_output is None:
             continue
+        (start, end, config_idx), stage_config, _, _ = stage
 
-        config = compiled_output.stage_plan
-        hooked_proto = compiled_output.intermediate_proto
-        apply_in_shardings = compiled_output.apply_grad_input_sharding_protos
-        (start, end, config_idx), stage_config, _, intermediate_vars = stage
         if is_profiled[start, end, config_idx]:
             continue
-        intermediate_size = compute_intermediate_size(hooked_proto,
-                                                      intermediate_vars,
-                                                      config.logical_mesh_shape)
-        apply_grad_input_size = compute_apply_grad_invar_size(
-            apply_in_shardings, stage_config.apply_grad_config,
-            config.logical_mesh_shape)
         profile_workers.submit(
             lambda w, v: w.profile.remote(*v),
-            (stage_id, compiled_output, stage_config.profile_config,
-             intermediate_size, apply_grad_input_size))
+            (stage_id, compiled_output, stage_config.profile_config))
         succ_compile_ct += 1
 
     pbar = tqdm.tqdm(range(succ_compile_ct))
     for _ in pbar:
         try:
-            (stage_id, cost, max_stage,
-             debug_info) = profile_workers.get_next_unordered()
+            (stage_id, stage_compute_costs, stage_peak_memory,
+             stage_available_memory) = profile_workers.get_next_unordered()
         except TimeoutError:
             profile_workers.shutdown(force=True)
             logger.warning("After waiting for too long, "
                            "all profile workers are forcely killed")
-            return compute_cost, max_n_succ_stages, is_profiled
+            return mesh_profile_result
         except (RuntimeError, RayActorError):
             profile_workers.shutdown(force=True)
             logger.warning("Meet unexpected error, "
                            "all profile workers are forcely killed")
-            return compute_cost, max_n_succ_stages, is_profiled
-        ((start, end, config_idx), _, auto_sharding_config,
-         _) = stages[stage_id]
+            return mesh_profile_result
+        ((start, end, config_idx), stage_config, auto_sharding_config,
+         intermediate_vars) = stages[stage_id]
+        compiled_output = compiled_outputs[stage_id]
+        config = compiled_output.stage_plan
+        hooked_proto = compiled_output.intermediate_proto
+        apply_in_shardings = compiled_output.apply_grad_input_sharding_protos
+
+        stage_intermediate_size = compute_intermediate_size(
+            hooked_proto, intermediate_vars, config.logical_mesh_shape)
+        stage_initial_size = compute_apply_grad_invar_size(
+            apply_in_shardings, stage_config.apply_grad_config,
+            config.logical_mesh_shape)
+
         logical_mesh, auto_sharding_dict = auto_sharding_config
-        (peak_memory, available_memory, intermediate_size,
-         initial_size) = debug_info
-        compute_cost[start, end, config_idx] = np.mean(cost)
-        max_n_succ_stages[start, end, config_idx] = max_stage
-        is_profiled[start, end, config_idx] = 1
+        compute_cost[start, end, config_idx] = np.mean(stage_compute_costs)
+        peak_memory[start, end, config_idx] = stage_peak_memory
+        intermediate_size[start, end, config_idx] = stage_intermediate_size
+        initial_size[start, end, config_idx] = stage_initial_size
+        available_memory[start, end, config_idx] = stage_available_memory
+        is_profiled[start, end, config_idx] = True
+
         pbar.write(f"cost[{start}, {end}, {config_idx}]"
                    f"={compute_cost[start, end, config_idx]:.3f},"
-                   f" max_n_succ_stage={max_stage},"
                    f" Mem: avail={available_memory / GB:.3f}GB,"
                    f" peak={peak_memory / GB:.3f}GB,"
                    f" intermediate={intermediate_size / GB:.3f}GB,"
                    f" init={initial_size / GB:.3f}GB,"
                    f" as_config={(logical_mesh.shape, auto_sharding_dict)}")
     profile_workers.shutdown()
-    return compute_cost, max_n_succ_stages, is_profiled
+    return mesh_profile_result
 
 
-def generate_2d_training_stages(layers,
+def generate_training_stages_2d(layers,
                                 layer_flops_prefix_sum,
                                 donation_mapping,
                                 global_outvars,
                                 apply_grad_layers,
                                 apply_grad_global_info,
                                 autosharding_configs,
-                                is_profiled,
                                 mesh_num_devices,
                                 cluster_size,
                                 stage_imbalance_tolerance=np.inf):
@@ -609,16 +645,26 @@ def generate_2d_training_stages(layers,
                     autosharding_configs):
                 if autosharding_config is not None:
                     stage_indices = (start, end, config_idx)
-                    if is_profiled[start, end, config_idx]:
-                        continue
                     stages.append((stage_indices, stage_config,
                                    autosharding_config, intermediate_vars))
     return stages
 
 
-def generate_1d_training_stages(layers, donation_mapping, global_outvars,
+def interpret_profile_result_2d(profile_results):
+    (compute_cost, peak_memory, available_memory, intermediate_size,
+     initial_size, _) = profile_results
+    max_n_succ_stages = ((available_memory - peak_memory - initial_size) //
+                         np.maximum(intermediate_size, 1e-8) - 1).astype(np.int)
+    max_n_succ_stages = np.minimum(np.maximum(-1, max_n_succ_stages),
+                                   INFINITY_N_STAGES)
+    is_inf = np.isinf(compute_cost)
+    max_n_succ_stages = np.where(is_inf, -1, max_n_succ_stages)
+    return compute_cost, max_n_succ_stages
+
+
+def generate_training_stages_1d(layers, donation_mapping, global_outvars,
                                 apply_grad_layers, apply_grad_global_info,
-                                autosharding_configs, is_profiled):
+                                autosharding_configs):
     print("- Generate all stage infos (Jaxpr -> HLO)")
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
@@ -634,46 +680,48 @@ def generate_1d_training_stages(layers, donation_mapping, global_outvars,
         for config_idx, autosharding_config in enumerate(autosharding_configs):
             if autosharding_config is not None:
                 stage_indices = (l, l, config_idx)
-                if is_profiled[l, l, config_idx]:
-                    continue
                 stages.append((stage_indices, stage_config, autosharding_config,
                                intermediate_vars))
     return stages
+
+
+def interpret_profile_result_1d(profile_results):
+    # TODO: implement this
+    return compute_cost, max_n_succ_stages
 
 
 def distributed_profile_on_mesh(stages, meshes: Sequence[VirtualPhysicalMesh],
                                 num_micro_batches, default_as_option,
                                 auto_stage_option, mesh_cached_result):
     timers("stage-construction-compilation").start()
-    compute_cost, max_n_succ_stages, is_profiled = mesh_cached_result
 
     if len(stages) == 0:
         # Suspend timers
         timers("stage-construction-compilation").suspend()
         timers("stage-construction-profiling").start()
         timers("stage-construction-profiling").suspend()
-        return compute_cost, max_n_succ_stages, is_profiled
+        return mesh_cached_result
 
     print("- Compile all stages")
     try:
         compiled_outputs = compile_all(stages, num_micro_batches,
-                                       default_as_option)
+                                       default_as_option,
+                                       mesh_cached_result.is_profiled)
     except RayActorError as e:
         logger.warning(f"Compilation fatal error: {e}")
         timers("stage-construction-compilation").suspend()
-        return compute_cost, max_n_succ_stages, is_profiled
+        return mesh_cached_result
     timers("stage-construction-compilation").suspend()
 
     print("- Profile all stages")
     # shape of compute_cost and max_n_succ_stages:
     # (num_layers, num_layers, num_autosharding_configs)
     timers("stage-construction-profiling").start()
-    (compute_cost, max_n_succ_stages,
-     is_profiled) = profile_all(stages, compiled_outputs, meshes,
-                                num_micro_batches, auto_stage_option,
-                                mesh_cached_result)
+    mesh_profile_result = profile_all(stages, compiled_outputs, meshes,
+                                      num_micro_batches, auto_stage_option,
+                                      mesh_cached_result)
     timers("stage-construction-profiling").suspend()
-    return compute_cost, max_n_succ_stages, is_profiled
+    return mesh_profile_result
 
 
 def _get_layer_flops_prefix_sum(layers):
@@ -737,22 +785,13 @@ def get_compute_cost(
     cluster_size = virtual_mesh.num_devices
     layer_flops_prefix_sum = _get_layer_flops_prefix_sum(layers)
 
-    if auto_stage_option.cached_compute_cost is not None:
-        cached_result = np.load(auto_stage_option.cached_compute_cost,
-                                allow_pickle=True)
+    if auto_stage_option.cached_profile_result is not None:
+        profile_results = np.load(auto_stage_option.cached_profile_result,
+                                  allow_pickle=True)
+        assert isinstance(profile_results, ProfileResult)
     else:
-        cached_result = None
-
-    if cached_result is not None:
-        (compute_cost, max_n_succ_stages, is_profiled) = cached_result
-    else:
-        compute_cost = np.full((num_layers, num_layers, num_submesh_choices,
-                                num_autosharding_configs), np.inf)
-        max_n_succ_stages = np.full(
-            (num_layers, num_layers, num_submesh_choices,
-             num_autosharding_configs), -1)
-        is_profiled = np.full((num_layers, num_layers, num_submesh_choices,
-                               num_autosharding_configs), 0)
+        profile_results = ProfileResult.init_profile_result_meshes(
+            num_layers, num_submesh_choices, num_autosharding_configs)
     print("-" * 20 + " Automatic stage clustering " + "-" * 20)
     print(f"submesh_choices: {submesh_choices}")
 
@@ -771,41 +810,53 @@ def get_compute_cost(
             sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
                 num_hosts, num_devices_per_host)
 
-        mesh_compute_cost = compute_cost[:, :, mesh_id, :]
-        mesh_max_n_succ_stages = max_n_succ_stages[:, :, mesh_id, :]
-        mesh_is_profiled = is_profiled[:, :, mesh_id, :]
-        mesh_cached_result = (mesh_compute_cost, mesh_max_n_succ_stages,
-                              mesh_is_profiled)
+        mesh_cached_result = profile_results.get_submesh_results(mesh_id)
 
-        stages = generate_2d_training_stages(
-            layers, layer_flops_prefix_sum, donation_mapping, global_outvars,
-            apply_grad_layers, apply_grad_global_info,
-            autosharding_configs[mesh_id], mesh_is_profiled,
-            sliced_virtual_meshes[0].num_devices, cluster_size,
-            auto_stage_option.stage_imbalance_tolerance)
-        (mesh_compute_cost,
-         mesh_max_n_succ_stages, mesh_profiled) = distributed_profile_on_mesh(
-             stages, sliced_virtual_meshes, num_micro_batches,
-             default_as_option, auto_stage_option, mesh_cached_result)
+        if auto_stage_option.layer_profile_mode == "composition":
+            stages = generate_training_stages_2d(
+                layers, layer_flops_prefix_sum, donation_mapping,
+                global_outvars, apply_grad_layers, apply_grad_global_info,
+                autosharding_configs[mesh_id],
+                sliced_virtual_meshes[0].num_devices, cluster_size,
+                auto_stage_option.stage_imbalance_tolerance)
+        elif auto_stage_option.layer_profile_mode == "individual":
+            stages = generate_training_stages_1d(layers, donation_mapping,
+                                                 global_outvars,
+                                                 apply_grad_layers,
+                                                 apply_grad_global_info,
+                                                 autosharding_configs[mesh_id])
+        else:
+            raise ValueError(f"Unknown layer profile mode: "
+                             f"{auto_stage_option.layer_profile_mode}")
+        mesh_profile_result = distributed_profile_on_mesh(
+            stages, sliced_virtual_meshes, num_micro_batches, default_as_option,
+            auto_stage_option, mesh_cached_result)
 
-        compute_cost[:, :, mesh_id, :] = mesh_compute_cost
-        max_n_succ_stages[:, :, mesh_id, :] = mesh_max_n_succ_stages
-        is_profiled[:, :, mesh_id, :] = mesh_profiled
+        profile_results.set_submesh_results(mesh_id, mesh_profile_result)
+
         toc = time()
         print(f"Profiling for submesh {mesh_id} {submesh} takes {toc - tic:.2f}"
               f" seconds")
-        print(f"Profiled costs are: {mesh_compute_cost}")
-        print(f"Profiled max_n_succ_stages are: {mesh_max_n_succ_stages}")
         print("-" * 50)
 
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    compute_cost_file_name = (f"compute-cost-{timestamp}.npy")
-    np.save(compute_cost_file_name,
-            (compute_cost, max_n_succ_stages, is_profiled))
+    profile_result_file_name = (f"profile-results-{timestamp}.npy")
+    np.save(profile_result_file_name, profile_results)
     global last_compute_cost_file_name
-    last_compute_cost_file_name = compute_cost_file_name
-    print(f"Compute cost saved to: {compute_cost_file_name}")
+    last_compute_cost_file_name = profile_result_file_name
+    print(f"Profile result saved to: {profile_result_file_name}")
     print("-" * 70)
+
+    if auto_stage_option.layer_profile_mode == "composition":
+        compute_cost, max_n_succ_stages = interpret_profile_result_2d(
+            profile_results)
+    elif auto_stage_option.layer_profile_mode == "individual":
+        compute_cost, max_n_succ_stages = interpret_profile_result_1d(
+            profile_results)
+    else:
+        raise ValueError(f"Unknown layer profile mode: "
+                         f"{auto_stage_option.layer_profile_mode}")
+
     return compute_cost, max_n_succ_stages
 
 

@@ -34,6 +34,9 @@ class AutoStageOption:
     # Possible choices: {"same_as_physical", "data_parallel_only",
     #                    "single_node_model_parallel", "all"}.
     submesh_logical_shape_space: str = "single_node_model_parallel"
+    # Profile only individual layers or composition different layers.
+    # Possible choices: {"individual", "composition"}.
+    layer_profile_mode: str = "composition"
     # The tolerance of imbalance in the auto-stage construction.
     stage_imbalance_tolerance: float = np.inf
     # Use HLO cost model for computational cost or profile for the cost.
@@ -41,7 +44,7 @@ class AutoStageOption:
     # The filename of profiling result database.
     profiling_database_filename: Optional[str] = None
     # The file name of the cached compute cost.
-    cached_compute_cost: Optional[str] = None
+    cached_profile_result: Optional[str] = None
 
 
 @dataclass

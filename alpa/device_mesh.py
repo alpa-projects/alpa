@@ -121,7 +121,7 @@ class MeshHostWorker:
         self.launched = False
         self.distributed_client = (
             xla_client._xla.get_distributed_runtime_client(
-                server_address, host_id))
+                server_address, host_id, use_coordination_service=False))
         logger.debug(
             f"{host_id}: Trying to connect to xla runtime at {server_address}")
         self.distributed_client.connect()
@@ -208,10 +208,10 @@ class MeshHostWorker:
     def _get_buffers_with_local_ids(self, uuid: int, device_ids: Sequence[int]):
         bufs = self.buffers[uuid]
         if device_ids is None:
-            return bufs
+            return map(np.asarray, bufs)
         elif not isinstance(device_ids, Iterable):
-            return bufs[device_ids]
-        return [bufs[device_id] for device_id in device_ids]
+            return np.asarray(bufs[device_ids])
+        return [np.asarray(bufs[device_id]) for device_id in device_ids]
 
     def get_buffers(self,
                     uuids: Union[Sequence[int], int],
@@ -955,7 +955,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.server_address = f"{self.head_ip}:{port}"
         logger.debug(f"Trying to start XLA gRPC server on port: {port}...")
         self.service_server = xla_client._xla.get_distributed_runtime_service(
-            self.server_address, self.num_hosts)
+            self.server_address, self.num_hosts, use_coordination_service=False)
         logger.debug(f"Success to start XLA gRPC server on port: {port}...")
         time.sleep(0.4)
 

@@ -2,12 +2,13 @@
 computations."""
 import numpy as np
 
-from jax.core import Primitive, new_jaxpr_eqn
+from jax.core import Primitive
 from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
 from jax.tree_util import tree_flatten, tree_unflatten
 
 from alpa.pipeline_parallel.xla_custom_call_marker import pipeline_marker
+from alpa.util import new_jaxpr_eqn
 
 ########## Public APIs ##########
 
@@ -69,11 +70,11 @@ def flatten_shape_byte_sizes(shape):
     return np.array(res, dtype=np.int64)
 
 
-def xla_custom_call(c, call_name, op_type, op_name, *args):
+def xla_custom_call(c, call_name, op_name, *args):
     input_params = xc.ops.Tuple(c, args)
     input_shape = c.get_shape(input_params)
     flattened_byte_sizes = flatten_shape_byte_sizes(input_shape)
-    op_metadata = xc.OpMetadata(op_type=op_type, op_name=op_name)
+    op_metadata = xc.OpMetadata(op_name=op_name)
     c.set_op_metadata(op_metadata)
 
     if len(args) == 0:
@@ -85,7 +86,7 @@ def xla_custom_call(c, call_name, op_type, op_name, *args):
 
     if call_name == "pipeline_marker":
         output_tuple = xc.ops.CustomCall(c,
-                                         call_name.encode("utf-8"),
+                                         b"pipeline_marker",
                                          operands=(input_params,),
                                          shape=input_shape,
                                          has_side_effect=True,
@@ -113,14 +114,13 @@ def _pipeline_abstract_eval(*args, **kwargs):
 
 
 def _pipeline_xla_translation(c, *args, **kwargs):
-    mark_type = kwargs["mark_type"]
-    name = kwargs["name"]
-    if mark_type == "hook":
+    name = kwargs["name"] + "$" + kwargs["mark_type"]
+    if kwargs["name"] == "hook":
         call_name = "optimization_barrier"
     else:
         call_name = "pipeline_marker"
 
-    return xla_custom_call(c, call_name, mark_type, name, *args)
+    return xla_custom_call(c, call_name, name, *args)
 
 
 def _pipeline_value_and_jvp(arg_values, arg_tangents, name, mark_type):

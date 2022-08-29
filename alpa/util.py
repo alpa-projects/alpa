@@ -23,6 +23,7 @@ from jax._src.api import FLAGS, ShapeDtypeStruct
 from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 import jax._src.util as util
 from jax.api_util import shaped_abstractify
+from jax import core
 from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
                       ShapedArray, Var, AbstractValue)
 from jax.experimental.maps import FrozenDict
@@ -781,6 +782,13 @@ def log_jaxpr(jaxpr: ClosedJaxpr, filename: str):
     path = "/tmp/" + filename
     with open(path, "w", encoding="utf-8") as f:
         f.write(str(jaxpr))
+
+
+def new_jaxpr_eqn(invars, outvars, primitive, params, effects=None, source_info=None):
+    """Create a new jaxpr equation."""
+    effects = effects or core.no_effects
+    return core.new_jaxpr_eqn(invars, outvars, primitive, params,
+                              effects, source_info)
 
 
 ########################################

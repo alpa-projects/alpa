@@ -30,12 +30,12 @@ class AutoShardingCorrectnessTest(unittest.TestCase):
             add_manual_pipeline_marker=False)
 
         # Train one step
-        parallel_train_step = parallelize(train_step)
+        p_train_step = parallelize(train_step)
         expected_state, expected_grads = train_step(state, batch)
-        actual_state, actual_grads = parallel_train_step(state, batch)
+        actual_state, actual_grads = p_train_step(state, batch)
 
-        print(expected_state)
-        print(actual_state)
+        #print(expected_state)
+        #print(actual_state)
 
         # print("group 1:")
         # print("expected param example: ", jax.tree_util.tree_flatten(expected_params.params)[0][0][0:10])

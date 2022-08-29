@@ -21,6 +21,8 @@ from typing import Optional, Tuple
 import dataclasses
 from dataclasses import dataclass
 
+import numpy as np
+
 import flax
 import flax.linen as nn
 import jax
@@ -37,6 +39,8 @@ from transformers.utils import add_start_docstrings, add_start_docstrings_to_mod
 from .configuration_bloom import BloomConfig
 
 from alpa.model.model_util import ModelOutput
+
+from tqdm import tqdm
 
 
 logger = logging.get_logger(__name__)
@@ -872,3 +876,73 @@ def get_bloom_config(name, **kwargs):
 
     return dataclasses.replace(config, **kwargs)
 
+def load_params_np(params, path, config, dummy=False):
+    """Load parameters with numpy arrays."""
+    if dummy:
+        np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
+        return jax.tree_map(lambda x: np.full(x.shape, 1e-9, np_dtype), params)
+
+    def load_array(key):
+        return np.load(os.path.join(path, key))
+
+    def load_param(param_key, loaded_array, is_position_embedding=False):
+        param_dict = params
+        param_keys = param_key.split('.')
+        for i, key in enumerate(param_keys):
+            if i == len(param_keys) - 1:
+                if dummy:
+                    param_dict[key] = jax.core.ShapedArray(
+                        param_dict[key].shape, param_dict[key].dtype)
+                else:
+                    if not is_position_embedding:
+                        assert param_dict[key].shape == loaded_array.shape, (
+                                f"{param_dict[key].shape} vs. {loaded_array.shape}")
+                    else:
+                        shape = param_dict[key].shape
+                        if shape != loaded_array.shape:
+                            assert shape[1] == loaded_array.shape[1]
+                            loaded_array = loaded_array[:shape[0], :]
+                    param_dict[key] = loaded_array
+            else:
+                param_dict = param_dict[key]
+
+    params = params.unfreeze()
+    load_param("params.transformer.ln_f.scale",
+               load_array("decoder.ln_f.scale"))
+    load_param("params.transformer.ln_f.bias",
+               load_array("decoder.ln_f.bias"))
+    load_param("params.transformer.word_embeddings.embedding",
+               load_array("decoder.embed_tokens.weight"))
+    load_param("params.transformer.word_embeddings_layernorm.scale",
+                load_array("decoder.word_embeddings_layernorm.scale"))
+    load_param("params.transformer.word_embeddings_layernorm.bias",
+                load_array("decoder.word_embeddings_layernorm.bias"))
+    for i in tqdm(range(config.decoder_layers)):
+        param_prefix = f"params.transformer.h.{i}."
+        load_prefix = f"decoder.layers.{i}."
+        # Attention weights
+        load_param(param_prefix + "attention.query_key_value.kernel",
+                   load_array(load_prefix + "self_attention.query_key_value.weight"))
+        load_param(param_prefix + "attention.query_key_value.bias",
+                   load_array(load_prefix + "self_attention.query_key_value.bias"))
+        load_param(param_prefix + "attention.input_layernorm.scale",
+                   load_array(load_prefix + "self_attention.input_layernorm.weight"))
+        load_param(param_prefix + "attention.input_layernorm.bias",
+                   load_array(load_prefix + "self_attention.input_layernorm.bias"))
+        load_param(param_prefix + "attention.dense.bias",
+                   load_array(load_prefix + "self_attention.dense.bias"))
+        load_param(param_prefix + "attention.post_attention_layernorm.scale",
+                   load_array(load_prefix + "post_attention_layernorm.weight"))
+        load_param(param_prefix + "attention.post_attention_layernorm.bias",
+                   load_array(load_prefix + "post_attention_layernorm.bias"))
+        # MLP weights
+        load_param(param_prefix + "mlp.dense_h_to_4h.kernel",
+                   load_array(load_prefix + "dense_h_to_4h.weight"))
+        load_param(param_prefix + "mlp.dense_h_to_4h.bias",
+                   np.transpose(load_array(load_prefix + "dense_h_to_4h.bias")))
+        load_param(param_prefix + "mlp.dense_4h_to_h.kernel",
+                   load_array(load_prefix + "dense_4h_to_h.weight"))
+        load_param(param_prefix + "mlp.dense_4h_to_h.bias",
+                   np.transpose(load_array(load_prefix + "dense_4h_to_h.bias")))
+
+    return flax.core.freeze(params)

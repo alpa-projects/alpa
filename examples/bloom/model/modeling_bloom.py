@@ -20,25 +20,35 @@ from typing import Optional, Tuple
 
 import dataclasses
 from dataclasses import dataclass
+import itertools
+import os
 
 import numpy as np
 
+import jax
+from jax import lax
+from jax.interpreters import pxla
+import jax.numpy as jnp
+from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves
+
 import flax
 import flax.linen as nn
-import jax
-import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict, freeze, unfreeze
 from flax.linen import combine_masks, dot_product_attention_weights, make_causal_mask
 from flax.linen.activation import tanh
 from flax.linen.partitioning import scan_with_axes
 from flax.traverse_util import flatten_dict, unflatten_dict
-from jax import lax
 
 from transformers.modeling_flax_utils import FlaxPreTrainedModel, append_call_sample_docstring
 from transformers.utils import add_start_docstrings, add_start_docstrings_to_model_forward, logging
+
 from .configuration_bloom import BloomConfig
 
+import alpa
+from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
+                              MeshHostWorker, create_remote_array_refs)
 from alpa.model.model_util import ModelOutput
+from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 
 from tqdm import tqdm
 
@@ -876,6 +886,75 @@ def get_bloom_config(name, **kwargs):
 
     return dataclasses.replace(config, **kwargs)
 
+# From this point forward, need further check
+def init_model_aval(config):
+    """Initialize model with parameters with abstract values (shape-only arrays)."""
+    model = FlaxBloomForCausalLMModule(config, dtype=config.dtype)
+    rngkey = jax.core.ShapedArray((2,), jnp.uint32)
+    input_ids = jax.core.ShapedArray((1, 128), jnp.int32)
+    position_ids = jax.core.ShapedArray((1, 128), jnp.int32)
+    params = jax.eval_shape(model.init, rngkey, input_ids, position_ids)
+    params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, config.dtype),
+                          params)
+    return model, params
+
+
+def init_cache_aval(config, batch_size):
+    """Initialize cache with abstract values (shape-only arrays)."""
+    dtype = config.dtype
+    head_dim = config.decoder_embed_dim // config.decoder_attention_heads
+
+    all_cache = []
+    for _ in range(config.decoder_layers):
+        layer_cache = (
+            jax.core.ShapedArray((batch_size, config.max_target_positions,
+                                  config.decoder_attention_heads, head_dim),
+                                 dtype),
+            jax.core.ShapedArray((batch_size, config.max_target_positions,
+                                  config.decoder_attention_heads, head_dim),
+                                 dtype),
+            jax.core.ShapedArray((batch_size,), jnp.int32),
+        )
+        all_cache.append(layer_cache)
+    return tuple(all_cache)
+
+
+def init_mask_aval(config, batch_size):
+    """Initialize attention mask with abstract values (shape-only arrays)."""
+    mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_target_positions), dtype=np.int8)
+    return mask
+
+
+def init_cache_np(config, batch_size):
+    """Init cache with numpy arrays."""
+    np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
+    head_dim = config.decoder_embed_dim // config.decoder_attention_heads
+
+    all_cache = []
+    for i in range(config.decoder_layers):
+        layer_cache = (
+            np.zeros((batch_size, config.max_target_positions,
+                      config.decoder_attention_heads, head_dim),
+                     dtype=np_dtype),
+            np.zeros((batch_size, config.max_target_positions,
+                      config.decoder_attention_heads, head_dim),
+                     dtype=np_dtype),
+            np.zeros((batch_size,), np.int32),
+        )
+        all_cache.append(layer_cache)
+    return tuple(all_cache)
+
+
+def build_position_ids(input_ids, padding_idx):
+    mask = (input_ids != padding_idx).astype(np.int32)
+    position_ids = np.cumsum(mask, axis=1).astype(np.int32) * mask + padding_idx
+    return position_ids
+
+
+def inference_step_no_cache(params, batch, apply_func):
+    logits = apply_func(params, batch["input_ids"], batch["position_ids"])[0]
+    return logits
+
 def load_params_np(params, path, config, dummy=False):
     """Load parameters with numpy arrays."""
     if dummy:
@@ -908,13 +987,13 @@ def load_params_np(params, path, config, dummy=False):
 
     params = params.unfreeze()
     load_param("params.transformer.ln_f.scale",
-               load_array("decoder.ln_f.scale"))
+               load_array("decoder.ln_f.weight"))
     load_param("params.transformer.ln_f.bias",
                load_array("decoder.ln_f.bias"))
     load_param("params.transformer.word_embeddings.embedding",
                load_array("decoder.embed_tokens.weight"))
     load_param("params.transformer.word_embeddings_layernorm.scale",
-                load_array("decoder.word_embeddings_layernorm.scale"))
+                load_array("decoder.word_embeddings_layernorm.weight"))
     load_param("params.transformer.word_embeddings_layernorm.bias",
                 load_array("decoder.word_embeddings_layernorm.bias"))
     for i in tqdm(range(config.decoder_layers)):
@@ -946,3 +1025,146 @@ def load_params_np(params, path, config, dummy=False):
                    np.transpose(load_array(load_prefix + "dense_4h_to_h.bias")))
 
     return flax.core.freeze(params)
+
+def load_params_dis_array(path, executable, params_aval, config, dummy=False):
+    """Load parameters with distributed arrays."""
+    if dummy:
+        alpa.global_config.use_dummy_value_for_benchmarking = True
+        params_info, _ = executable.get_input_placement_specs()
+        flat_args, in_tree = tree_flatten(params_aval)
+        flat_info = tree_leaves(params_info)
+        if hasattr(executable, "mesh_group"):
+            ret = executable.mesh_group.shard_args_to_arrays(
+                flat_info, flat_args)
+        else:
+            ret = executable.physical_mesh.shard_args_to_arrays_ps(
+                flat_info, flat_args)
+        alpa.global_config.use_dummy_value_for_benchmarking = False
+        return ret
+
+    params_info, _ = executable.get_input_placement_specs()
+
+    prefix_to_flat_idx = {}
+    ct = itertools.count()
+
+    def dfs(dict_tree, result_dict, cur_prefix):
+        if isinstance(dict_tree, (dict, flax.core.FrozenDict)):
+            for key in dict_tree.keys():
+                dfs(dict_tree[key], result_dict,
+                    cur_prefix + ("." if cur_prefix else "") + key)
+        else:
+            result_dict[cur_prefix] = next(ct)
+
+    dfs(params_aval, prefix_to_flat_idx, "")
+
+    flat_infos, in_tree = tree_flatten(params_info)
+
+    flat_shapes = []
+    flat_uuids = []
+    flat_indices = []
+    flat_mesh_ids = []
+    flat_arrays = []
+
+    mesh_group = executable.mesh_group
+
+    for info in flat_infos:
+        aval = info.aval
+        if len(info.mesh_ids) == 1:
+            mesh, spec = mesh_group[info.mesh_ids[0]], info.sharding_specs[0]
+            indices = pxla.spec_to_indices(aval.shape, spec)
+            ary_refs, ary_uuid = create_remote_array_refs(mesh)
+            flat_shapes.append([aval.shape])
+            flat_uuids.append([ary_uuid[0]])
+            flat_indices.append([indices])
+            flat_mesh_ids.append([mesh.mesh_id])
+            flat_arrays.append(
+                DistributedArray(mesh, aval, spec, ary_refs[0], indices))
+        else:
+            tmp_shapes = []
+            tmp_uuids = []
+            tmp_indices = []
+            tmp_mesh_ids = []
+            tmp_arrays = []
+            tmp_meshes = []
+            for mesh_id, spec in zip(info.mesh_ids, info.sharding_specs):
+                mesh = mesh_group[mesh_id]
+                indices = pxla.spec_to_indices(aval.shape, spec)
+                ary_refs, ary_uuid = create_remote_array_refs(mesh)
+                array = DistributedArray(mesh, aval, spec, ary_refs[0], indices)
+                tmp_shapes.append(aval.shape)
+                tmp_uuids.append(ary_uuid[0])
+                tmp_indices.append(indices)
+                tmp_mesh_ids.append(mesh.mesh_id)
+                tmp_meshes.append(mesh)
+                tmp_arrays.append(array)
+            flat_shapes.append(tuple(tmp_shapes))
+            flat_uuids.append(tuple(tmp_uuids))
+            flat_indices.append(tuple(tmp_indices))
+            flat_mesh_ids.append(tuple(tmp_mesh_ids))
+            flat_arrays.append(
+                ReplicatedDistributedArray(tmp_meshes, tmp_arrays))
+
+    for m in executable.mesh_group.meshes:
+        for w in m.workers:
+            w.load_opt_params_worker_func.remote(path, prefix_to_flat_idx,
+                                                 config, flat_shapes,
+                                                 flat_uuids, flat_indices,
+                                                 flat_mesh_ids)
+
+    return flat_arrays
+
+
+def init_cache_dis_array(executable, config, batch_size, dummy=False):
+    """Initialize cache with distributed arrays."""
+    cache = init_cache_np(config, batch_size)
+    alpa.global_config.use_dummy_value_for_benchmarking = dummy
+    _, batch_info = executable.get_input_placement_specs()
+    flat_args, in_tree = tree_flatten(cache)
+    flat_info = tree_leaves(batch_info["cache"])
+    if hasattr(executable, "mesh_group"):
+        ret = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
+    else:
+        ret = executable.physical_mesh.shard_args_to_arrays_ps(
+            flat_info, flat_args)
+    alpa.global_config.use_dummy_value_for_benchmarking = False
+    return ret
+
+
+def load_multi_executable_params_dis_array(path,
+                                           executables,
+                                           params_aval,
+                                           config,
+                                           dummy=False):
+    """Load parameters to workers that will be used by all executables. Accordingly,
+    we need to make sure the parameter sharding specs are identical for all executables.
+    """
+    shared_input_shard_specs = None
+    for executable in executables.values():
+        stage_input_shard_specs = executable.stage_input_shard_specs
+        if shared_input_shard_specs is not None:
+            assert shared_input_shard_specs == stage_input_shard_specs, \
+                "All executables must have the same input sharding specs."
+        else:
+            shared_input_shard_specs = stage_input_shard_specs
+    return load_params_dis_array(path,
+                                 list(executables.values())[0], params_aval,
+                                 config, dummy)
+
+
+def init_multi_executable_cache_dis_array(executables,
+                                          config,
+                                          batch_size,
+                                          dummy=False):
+    """Initialize cache to workers that will be used by all executables. Accordingly,
+    we need to make sure all executables are using the same cache.
+    """
+    cache_info = None
+    for executable in executables.values():
+        _, batch_info = executable.get_input_placement_specs()
+        if cache_info is not None:
+            assert cache_info == batch_info["cache"], \
+                "All executables must share the same cache"
+        else:
+            cache_info = batch_info["cache"]
+    return init_cache_dis_array(
+        list(executables.values())[0], config, batch_size, dummy)

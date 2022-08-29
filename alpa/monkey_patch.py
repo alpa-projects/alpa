@@ -102,8 +102,8 @@ def _rng_normal_lowering(ctx, mu, sigma, *, shape):
     aval_out, = ctx.avals_out
     shape, = mlir.ir_constants(np.array(aval_out.shape, np.int64),
                                canonicalize_types=False)
-    return mhlo.RngNormalOp(mu, sigma, shape).results
-
+    return mhlo.RngOp(mu, sigma, shape,
+                      mhlo.RngDistributionAttr.get('NORMAL')).results
 
 mlir.register_lowering(rng_normal_p, _rng_normal_lowering)
 

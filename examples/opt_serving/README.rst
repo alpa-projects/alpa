@@ -35,7 +35,7 @@ In this example, we use Alpa to serve the open-source OPT model, supporting all 
 
 Demo
 ====
-Use huggingface/transformers interface and Alpa backend for distributed inference on a Ray cluster.
+The code below shows how to use huggingface/transformers interface and Alpa distributed backend for large model inference.
 
 .. code:: python
 

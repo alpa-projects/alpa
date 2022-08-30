@@ -22,14 +22,14 @@ The key features of Alpa include:
 Alpa provides a free, unlimited [OPT-175B](https://github.com/facebookresearch/metaseq/tree/main/projects/OPT) text generation service.
 Try the service at [https://opt.alpa.ai/](https://opt.alpa.ai/) and share your [prompting results](examples/opt_serving/service/img.png)!
 
-The code below shows how to use huggingface/transformers interface and Alpa backend for distributed inference.
+The code below shows how to use huggingface/transformers interface and Alpa distributed backend for large model inference.
+A detailed documentation is in [Serving OPT-175B using Alpa](https://alpa.ai/tutorials/opt_serving.html).
 
 ```python
 from transformers import AutoTokenizer
 from opt_serving.model.wrapper import get_model
 
-# Load the tokenizer. We have to use the 30B version because
-# other versions have some issues. The 30B version works for all OPT models.
+# Load the tokenizer
 tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", use_fast=False)
 tokenizer.add_bos_token = False
 
@@ -48,6 +48,9 @@ print(generated_string)
 
 ## Training
 Use Alpa's decorator ``@parallelize`` to scale your single-device training code to distributed clusters.
+Check out the [Documentation](https://alpa-projects.github.io) site and
+[Examples](https://github.com/alpa-projects/alpa/tree/main/examples) folder
+for installation instructions, tutorials, examples, and more.
 
 ```python
 import alpa
@@ -68,10 +71,6 @@ model_state = create_train_state()
 for batch in data_loader:
     model_state = train_step(model_state, batch)
 ```
-
-Check out the [Documentation](https://alpa-projects.github.io) site and
-[Examples](https://github.com/alpa-projects/alpa/tree/main/examples) folder
-for installation instructions, tutorials, examples, and more.
 
 ## Learning more
 - [OSDI 2022 paper](https://www.usenix.org/system/files/osdi22-zheng-lianmin.pdf)

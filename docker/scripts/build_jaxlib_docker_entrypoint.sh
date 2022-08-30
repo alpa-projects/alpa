@@ -7,8 +7,8 @@ then
   exit 1
 fi
 
-export CC=/dt7/usr/bin/gcc
-export GCC_HOST_COMPILER_PATH=/dt7/usr/bin/gcc
+export CC=/usr/bin/gcc
+export GCC_HOST_COMPILER_PATH=/usr/bin/gcc
 export CUDA_PATH=/usr/local/cuda
 export LD_LIBRARY_PATH=$CUDA_PATH/lib64:$LD_LIBRARY_PATH
 

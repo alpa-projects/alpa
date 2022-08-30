@@ -3,6 +3,16 @@ FROM gcr.io/tensorflow-testing/nosla-cuda11.1-cudnn8-ubuntu20.04-manylinux2014-m
 WORKDIR /
 SHELL ["/bin/bash", "-c"]
 RUN rm -f /etc/apt/sources.list.d/jonathonf-ubuntu-python-3_6-xenial.list
+
+# Downgrad gcc version
+RUN apt-get install -y software-properties-common
+RUN add-apt-repository ppa:ubuntu-toolchain-r/test
+RUN apt update
+RUN apt install g++-7 -y
+RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-7 60  \
+    --slave /usr/bin/g++ g++ /usr/bin/g++-7 -y
+RUN update-alternatives --config gcc -y
+
 RUN apt-get update
 RUN apt-get install -y python3-virtualenv
 RUN virtualenv --python=python3.7 python3.7-env

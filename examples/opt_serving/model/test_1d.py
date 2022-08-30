@@ -1,9 +1,13 @@
 """Test the correctness of 1-D OPT implementation."""
+import time
+
 import copy
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import os
+from functools import partial
 
 from alpa.testing import assert_allclose
 from alpa.util import print_used_time
@@ -26,6 +30,17 @@ input_id_list = [
 ]
 
 
+tic = 0.0
+def record_time(start=False):
+    global tic
+    if start:
+        tic = time.time()
+        return
+    t = time.time() - tic
+    tic = time.time()
+    return t
+
+
 def init_2d_inference_step(name, np_weights_folder):
     # Init 2D model
     config = opt_model.get_opt_config(name, dtype=jnp.float32)
@@ -45,48 +60,59 @@ def init_2d_inference_step(name, np_weights_folder):
     return inference_step_2d, params_2d, cache_2d, config
 
 
-def init_2d_runner(name, np_weights_folder, input_id_list):
+def runner_2d(input_pool, inference_step, params, config):
+    # Run each sequence individually because their lengths are different
+    is_prompt = [cache[0][2][0] == 0 for _, cache in input_pool]
+    logits_all = []
+    execution_cost = {}
 
-    inference_step, params, cache, config = init_2d_inference_step(name, np_weights_folder)
-    # Make cache for each input
-    input_pool_2d = [(input_id, copy.deepcopy(cache)) for input_id in input_id_list]
+    record_time(start=True)
+    for idx, (_input_ids, cache) in enumerate(input_pool):
+        input_ids = np.array([_input_ids], dtype=np.int32)
+        position_ids = opt_model.build_position_ids(input_ids, config.pad)
+        if not is_prompt[idx]:
+            # Auto-regressive
+            input_ids = input_ids[:, -1:]
+            position_ids = position_ids[:, -1:]
+        logits, updated_cache = inference_step(
+            params, {
+                "input_ids": input_ids,
+                "position_ids": position_ids,
+                "cache": cache,
+            })
+        logits = logits.reshape(logits.shape[1:])
+        next_token = np.argmax(logits, axis=-1)[-1]
+        # Append the generated token and updated cache.
+        input_pool[idx] = (_input_ids + [next_token.tolist()],
+                           updated_cache)
 
-    def runner(input_pool):
-        # Run each sequence individually because their lengths are different
-        is_prompt = [cache[0][2][0] == 0 for _, cache in input_pool]
-        logits_all = []
-        for idx, (_input_ids, cache) in enumerate(input_pool):
-            input_ids = np.array([_input_ids], dtype=np.int32)
-            position_ids = opt_model.build_position_ids(input_ids, config.pad)
-            if not is_prompt[idx]:
-                # Auto-regressive
-                input_ids = input_ids[:, -1:]
-                position_ids = position_ids[:, -1:]
-            print_used_time(None)
-            logits, updated_cache = inference_step(
-                params, {
-                    "input_ids": input_ids,
-                    "position_ids": position_ids,
-                    "cache": cache,
-                })
-            logits = logits.reshape(logits.shape[1:])
-            next_token = np.argmax(logits, axis=-1)[-1]
-
-            print_used_time(f"{idx}: is_prompt {is_prompt[idx]}")
-            # Append the generated token and updated cache.
-            input_pool[idx] = (_input_ids + [next_token.tolist()],
-                               updated_cache)
-
-            # For debugging
-            if DUMP_LOGITS:
-                logits_all.append(logits)
-
+        # For debugging
         if DUMP_LOGITS:
-            logits_all = np.concatenate(logits_all, axis=0)
-            jnp.save("2d", logits_all)
-        return input_pool
+            logits_all.append(logits)
+    execution_cost["compute"] = record_time()
 
-    return runner, input_pool_2d
+    if DUMP_LOGITS:
+        logits_all = np.concatenate(logits_all, axis=0)
+        jnp.save("2d", logits_all)
+    return input_pool, execution_cost
+
+
+def setup(mode,
+          input_id_list,
+          model="jax/opt-125m",
+          np_weights_folder="~/opt_weights/"):
+    name = model.split("-")[1].upper()
+    path = os.path.join(np_weights_folder + f"{name}_np")
+    if mode == "2d":
+        inference_step, params, cache, config = init_2d_inference_step(name, path)
+        # Make cache for each input
+        runner = partial(runner_2d, inference_step=inference_step, params=params, config=config)
+    else:
+        assert mode == "1d", "only support `1d` or `2d`."
+        inference_setep, params, cache, config = init_1d_inference_step(name, path)
+        runner = partial(runner_1d, inference_step=inference_setep, params=params, config=config)
+    input_pool = [(input_id, copy.deepcopy(cache)) for input_id in input_id_list]
+    return runner, input_pool
 
 
 def init_1d_inference_step(name, np_weights_folder):
@@ -111,165 +137,174 @@ def init_1d_inference_step(name, np_weights_folder):
     return inference_step_1d, params_1d, cache_1d, config
 
 
-def init_1d_runner(name, np_weights_folder, input_id_list):
-    inference_step, params, cache, config = init_1d_inference_step(name, np_weights_folder)
+def runner_1d(input_pool, inference_step, params, config):
+    batch_size = len(input_pool)
+    is_prompt = [cache[0][2][0] == 0 for _, cache in input_pool]
+    execution_cost = {}
 
-    # Make cache for each input
-    input_pool_1d = [(input_id, copy.deepcopy(cache))
-                     for input_id in input_id_list]
+    record_time(start=True)
+    # Concat inputs together
+    input_ids_flatten = []
+    position_ids_flatten = []
+    batch_idxs = []
 
+    # Prompts must go first, so we use this flag to make sure
+    # input pool does not have a pattern like [prompt1, token1, prompt2].
+    in_prompt = True
+    for idx, (input_ids, cache) in enumerate(input_pool):
+        position_ids = opt_model_1d.build_position_ids(
+            np.array(input_ids, dtype=np.int32), config.pad).tolist()
 
-    def runner(input_pool):
-        batch_size = len(input_pool)
-        is_prompt = [cache[0][2][0] == 0 for _, cache in input_pool]
+        if not is_prompt[idx]:
+            # Auto-regressive
+            input_ids = input_ids[-1:]
+            position_ids = position_ids[-1:]
+            in_prompt = False
+        else:
+            assert in_prompt, "Prompts must be consecutive and before tokens"
+        input_ids_flatten += input_ids
+        position_ids_flatten += position_ids
 
-        # Concat inputs together
-        input_ids_flatten = []
-        position_ids_flatten = []
-        batch_idxs = []
+        # fused_mmha kernel requires batch_idxs to be in shape sum(input_ids). Each element
+        # in batch_idxs is the ID of the corresponding input sequence (starting from 1).
+        batch_idxs += np.full(shape=(len(input_ids),),
+                              fill_value=idx + 1,
+                              dtype=np.int32).tolist()
 
-        # Prompts must go first, so we use this flag to make sure
-        # input pool does not have a pattern like [prompt1, token1, prompt2].
-        in_prompt = True
+    input_ids_flatten = np.array(input_ids_flatten, dtype=np.int32)
+    position_ids_flatten = np.array(position_ids_flatten, dtype=np.int32)
+    batch_idxs = np.array(batch_idxs, dtype=np.int32)
+    execution_cost["flattening"] = record_time()
 
-        print_used_time(None)
-        for idx, (input_ids, cache) in enumerate(input_pool):
-            position_ids = opt_model_1d.build_position_ids(
-                np.array(input_ids, dtype=np.int32), config.pad).tolist()
+    # Concate per-input cache together and generate cache index.
+    # Note that assuming the valid cache length of 3 inputs are L1, L2, L3,
+    # and the maximum length is L2, then the cache is organized as follows:
+    # [<1xL1>, <0x(L2-L1+1)>, <1xL2>, <0x1>, <1xL3>, <0x(L2-L3+1)>, 0, ...]
+    # And the total length is BxP, where B is the batch size and P is the
+    # maximum cache length. Here we set P to be the max_target_position.
+    target_cache_len = max([cache[0][2][0] for _, cache in input_pool]) + 1
+    cache_1d_flatten = []
+    head_dim = config.decoder_embed_dim // config.decoder_attention_heads
+    for batched_layer_cache in zip(*[cache for _, cache in input_pool]):
+        batched_layer_key = []
+        batched_layer_value = []
+        batched_layer_index = []
+        for bidx, (key, value, index) in enumerate(batched_layer_cache):
+            if is_prompt[bidx]:
+                continue
+            curr_valid_len = index[0]
+            batched_layer_key.append(key[:target_cache_len])
+            batched_layer_value.append(value[:target_cache_len])
 
-            if not is_prompt[idx]:
-                # Auto-regressive
-                input_ids = input_ids[-1:]
-                position_ids = position_ids[-1:]
-                in_prompt = False
-            else:
-                assert in_prompt, "Prompts must be consecutive and before tokens"
-            input_ids_flatten += input_ids
-            position_ids_flatten += position_ids
+            seq_ids = np.full(
+                (curr_valid_len,),  # Valid cache length
+                bidx + 1,  # Sequence ID starting from 1
+                dtype=np.int32)
+            batched_layer_index.append(
+                np.concatenate([
+                    seq_ids,
+                    np.zeros((target_cache_len - curr_valid_len,),
+                             dtype=np.int32)
+                ]))
 
-            # fused_mmha kernel requires batch_idxs to be in shape sum(input_ids). Each element
-            # in batch_idxs is the ID of the corresponding input sequence (starting from 1).
-            batch_idxs += np.full(shape=(len(input_ids),),
-                                  fill_value=idx + 1,
-                                  dtype=np.int32).tolist()
+        if batched_layer_key:
+            key_flatten = np.concatenate(batched_layer_key, axis=0)
+            value_flatten = np.concatenate(batched_layer_value, axis=0)
+            index_flatten = np.concatenate(batched_layer_index, axis=0)
+        else:
+            # In the case of all prompts we just put empty cache and pad all 0s.
+            key_flatten = np.empty(
+                (0, config.decoder_attention_heads, head_dim),
+                dtype=np.float32)
+            value_flatten = np.empty(
+                (0, config.decoder_attention_heads, head_dim),
+                dtype=np.float32)
+            index_flatten = np.empty((0,), dtype=np.int32)
 
-        input_ids_flatten = np.array(input_ids_flatten, dtype=np.int32)
-        position_ids_flatten = np.array(position_ids_flatten, dtype=np.int32)
-        batch_idxs = np.array(batch_idxs, dtype=np.int32)
-        print_used_time("flattening...")
+        # Pad 0s to fixed length: batch_size * max_target_positions
+        pad_len = batch_size * config.max_target_positions - index_flatten.shape[
+            0]
+        key_val_pad = np.zeros((pad_len,) + key_flatten.shape[1:],
+                               dtype=np.float32)
+        key_flatten = np.concatenate([key_flatten, key_val_pad], axis=0)
+        value_flatten = np.concatenate([value_flatten, key_val_pad], axis=0)
 
-        # Concate per-input cache together and generate cache index.
-        # Note that assuming the valid cache length of 3 inputs are L1, L2, L3,
-        # and the maximum length is L2, then the cache is organized as follows:
-        # [<1xL1>, <0x(L2-L1+1)>, <1xL2>, <0x1>, <1xL3>, <0x(L2-L3+1)>, 0, ...]
-        # And the total length is BxP, where B is the batch size and P is the
-        # maximum cache length. Here we set P to be the max_target_position.
-        target_cache_len = max([cache[0][2][0] for _, cache in input_pool]) + 1
-        cache_1d_flatten = []
-        head_dim = config.decoder_embed_dim // config.decoder_attention_heads
-        for batched_layer_cache in zip(*[cache for _, cache in input_pool]):
-            batched_layer_key = []
-            batched_layer_value = []
-            batched_layer_index = []
-            for bidx, (key, value, index) in enumerate(batched_layer_cache):
-                if is_prompt[bidx]:
-                    continue
-                curr_valid_len = index[0]
-                batched_layer_key.append(key[:target_cache_len])
-                batched_layer_value.append(value[:target_cache_len])
+        index_pad = np.zeros((pad_len,), dtype=np.int32)
+        index_flatten = np.concatenate([index_flatten, index_pad], axis=0)
+        cache_1d_flatten.append((key_flatten, value_flatten, index_flatten))
 
-                seq_ids = np.full(
-                    (curr_valid_len,),  # Valid cache length
-                    bidx + 1,  # Sequence ID starting from 1
-                    dtype=np.int32)
-                batched_layer_index.append(
-                    np.concatenate([
-                        seq_ids,
-                        np.zeros((target_cache_len - curr_valid_len,),
-                                 dtype=np.int32)
-                    ]))
+    execution_cost["cache"] = record_time()
+    # FIXME(Hao): Set env var for this workaround:
+    #  https://github.com/WoosukKwon/1d-mmha-op/blob/main/lib/kernels.cc.cu#L53
+    host_device = jax.devices('cpu')[0]
+    host_input_index = jax.device_put(batch_idxs, device=host_device)
+    host_cache_index = jax.device_put(cache_1d_flatten[0][2], device=host_device)
+    os.environ["FT_INPUT_INDEX_ADDR"] = str(host_input_index.unsafe_buffer_pointer())
+    os.environ["FT_CACHE_INDEX_ADDR"] = str(host_cache_index.unsafe_buffer_pointer())
+    execution_cost["set_env"] = record_time()
 
-            if batched_layer_key:
-                key_flatten = np.concatenate(batched_layer_key, axis=0)
-                value_flatten = np.concatenate(batched_layer_value, axis=0)
-                index_flatten = np.concatenate(batched_layer_index, axis=0)
-            else:
-                # In the case of all prompts we just put empty cache and pad all 0s.
-                key_flatten = np.empty(
-                    (0, config.decoder_attention_heads, head_dim),
-                    dtype=np.float32)
-                value_flatten = np.empty(
-                    (0, config.decoder_attention_heads, head_dim),
-                    dtype=np.float32)
-                index_flatten = np.empty((0,), dtype=np.int32)
+    logits, cache_1d_updated = inference_step(
+        params, {
+            "input_ids": input_ids_flatten,
+            "position_ids": position_ids_flatten,
+            "batch_idxs": batch_idxs,
+            "cache": cache_1d_flatten,
+        })
+    execution_cost["compute"] = record_time()
+    if DUMP_LOGITS:
+        jnp.save("1d", logits)
 
-            # Pad 0s to fixed length: batch_size * max_target_positions
-            pad_len = batch_size * config.max_target_positions - index_flatten.shape[
-                0]
-            key_val_pad = np.zeros((pad_len,) + key_flatten.shape[1:],
-                                   dtype=np.float32)
-            key_flatten = np.concatenate([key_flatten, key_val_pad], axis=0)
-            value_flatten = np.concatenate([value_flatten, key_val_pad], axis=0)
+    updated_lengths = [
+        len(ids) if prompt else 1
+        for prompt, (ids, _) in zip(is_prompt, input_pool)
+    ]
 
-            index_pad = np.zeros((pad_len,), dtype=np.int32)
-            index_flatten = np.concatenate([index_flatten, index_pad], axis=0)
-            cache_1d_flatten.append((key_flatten, value_flatten, index_flatten))
-
-        print_used_time("Organize cache...")
-        logits, cache_1d_updated = inference_step(
-            params, {
-                "input_ids": input_ids_flatten,
-                "position_ids": position_ids_flatten,
-                "batch_idxs": batch_idxs,
-                "cache": cache_1d_flatten,
-            })
-        print_used_time(f"1D batched compute...")
-        if DUMP_LOGITS:
-            jnp.save("1d", logits)
-
-        updated_lengths = [
-            len(ids) if prompt else 1
-            for prompt, (ids, _) in zip(is_prompt, input_pool)
-        ]
-
-        # Recover and update the cache.
-        # The output cache only includes the new values of the current generated token,
-        # so we perform dynamic slice update on the original cache.
-        for lidx, (key_flatten, value_flatten) in enumerate(cache_1d_updated):
-            update_start = 0
-            key_flatten = key_flatten.squeeze()
-            value_flatten = value_flatten.squeeze()
-            for bidx in range(batch_size):
-                cache = input_pool[bidx][1]
-                curr_index = cache[lidx][2][0]
-
-                # Determine the length of updated cache.
-                update_end = update_start + updated_lengths[bidx]
-                new_index = curr_index + updated_lengths[bidx]
-
-                # Slice update.
-                cache[lidx][0][curr_index:new_index] = \
-                    key_flatten[update_start:update_end]
-                cache[lidx][1][curr_index:new_index] = \
-                    value_flatten[update_start:update_end]
-                cache[lidx][2][0] = new_index
-                input_pool[bidx] = (input_pool[bidx][0], cache)
-
-                update_start = update_end
-
-        # Append the generated token.
+    # Recover and update the cache.
+    # The output cache only includes the new values of the current generated token,
+    # so we perform dynamic slice update on the original cache.
+    for lidx, (key_flatten, value_flatten) in enumerate(cache_1d_updated):
         update_start = 0
-        update_end = 0
-        for bidx, (_input_ids, cache) in enumerate(input_pool):
-            update_end = update_start + updated_lengths[bidx]
-            next_token = np.argmax(logits[update_start:update_end], axis=-1)[-1]
-            input_pool[bidx] = (_input_ids + [next_token.tolist()], cache)
-            update_start = update_end
-        assert update_end == logits.shape[0]
-        print_used_time("Re-order cache...")
-        return input_pool
+        key_flatten = key_flatten.squeeze()
+        value_flatten = value_flatten.squeeze()
+        for bidx in range(batch_size):
+            cache = input_pool[bidx][1]
+            curr_index = cache[lidx][2][0]
 
-    return runner, input_pool_1d
+            # Determine the length of updated cache.
+            update_end = update_start + updated_lengths[bidx]
+            new_index = curr_index + updated_lengths[bidx]
+
+            # Slice update.
+            cache[lidx][0][curr_index:new_index] = \
+                key_flatten[update_start:update_end]
+            cache[lidx][1][curr_index:new_index] = \
+                value_flatten[update_start:update_end]
+            cache[lidx][2][0] = new_index
+            input_pool[bidx] = (input_pool[bidx][0], cache)
+
+            update_start = update_end
+
+    # Append the generated token.
+    update_start = 0
+    update_end = 0
+    for bidx, (_input_ids, cache) in enumerate(input_pool):
+        update_end = update_start + updated_lengths[bidx]
+        next_token = np.argmax(logits[update_start:update_end], axis=-1)[-1]
+        input_pool[bidx] = (_input_ids + [next_token.tolist()], cache)
+        update_start = update_end
+    assert update_end == logits.shape[0]
+    execution_cost["reorder"] = record_time()
+
+    return input_pool, execution_cost
+
+# def init_1d_runner(name, np_weights_folder, input_id_list):
+#     inference_step, params, cache, config = init_1d_inference_step(name, np_weights_folder)
+#
+#     # Make cache for each input
+#     input_pool_1d = [(input_id, copy.deepcopy(cache))
+#                      for input_id in input_id_list]
+#
+#     return runner, input_pool_1d
 
 
 def verify_status(result_1d, result_2d):
@@ -340,35 +375,35 @@ def simulate_serving(runner_n_pool, ref_runner_n_pool=None):
         verify = True
         ref_runner, ref_input_pool = ref_runner_n_pool
 
-    decode_pool = batch_first_N_prompt(runner, input_pool, "1D")
+    decode_pool, _ = batch_first_N_prompt(runner, input_pool, "1D")
     if verify:
-        ref_decode_pool = batch_first_N_prompt(ref_runner, ref_input_pool, "2D")
+        ref_decode_pool, _ = batch_first_N_prompt(ref_runner, ref_input_pool, "2D")
         verify_status(decode_pool, ref_decode_pool)
 
-    decode_pool = batch_mixed(runner, input_pool, decode_pool, "1D")
+    decode_pool, _ = batch_mixed(runner, input_pool, decode_pool, "1D")
     if verify:
-        ref_decode_pool = batch_mixed(ref_runner, ref_input_pool,
+        ref_decode_pool, _ = batch_mixed(ref_runner, ref_input_pool,
                                       ref_decode_pool, "2D")
         verify_status(decode_pool, ref_decode_pool)
 
     for idx in range(5):
         batch_idx = idx + 3
-        decode_pool = batch_all_decode(runner, decode_pool, "1D", batch_idx)
+        decode_pool, _ = batch_all_decode(runner, decode_pool, "1D", batch_idx)
         if verify:
-            ref_decode_pool = batch_all_decode(ref_runner, ref_decode_pool,
+            ref_decode_pool, _ = batch_all_decode(ref_runner, ref_decode_pool,
                                                "2D", batch_idx)
             verify_status(decode_pool, ref_decode_pool)
 
 
 def test_opt_125M():
-    name = "125M"
-    np_weights_folder = f"/home/ubuntu/opt_weights/{name}_np"
+    name = "jax/opt-125m"
+    np_weights_folder = f"/home/ubuntu/opt_weights/"
 
-    model_n_pool_1d = init_1d_runner(name, np_weights_folder, input_id_list)
+    model_n_pool_1d = setup("1d", input_id_list, name, np_weights_folder)
 
     model_n_pool_2d = None
     if VERIFY_RESULT:
-        model_n_pool_2d = init_2d_runner(name, np_weights_folder, input_id_list)
+        model_n_pool_2d = setup("2d", input_id_list, name, np_weights_folder)
     else:
         print("Skipping result verification")
 

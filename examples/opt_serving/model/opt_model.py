@@ -144,74 +144,81 @@ class OPTSelfAttention(nn.Module):
         query_states, key_states, value_states = jnp.split(qkv_combined_states,
                                                            3,
                                                            axis=3)
+        perform_attention = True
 
-        # shape: [B, S, #head, head_dim]
-        query_states = query_states.reshape(hidden_states.shape[:2] + (
-            self.config.decoder_attention_heads, head_dim))
-        # shape: [B, S, #head, head_dim]
-        value_states = value_states.reshape(hidden_states.shape[:2] + (
-            self.config.decoder_attention_heads, head_dim))
-        # shape: [B, S, #head, head_dim]
-        key_states = key_states.reshape(hidden_states.shape[:2] +
-                                        (self.config.decoder_attention_heads,
-                                         head_dim))
+        if perform_attention:
+            # shape: [B, S, #head, head_dim]
+            query_states = query_states.reshape(hidden_states.shape[:2] + (
+                self.config.decoder_attention_heads, head_dim))
+            # shape: [B, S, #head, head_dim]
+            value_states = value_states.reshape(hidden_states.shape[:2] + (
+                self.config.decoder_attention_heads, head_dim))
+            # shape: [B, S, #head, head_dim]
+            key_states = key_states.reshape(hidden_states.shape[:2] +
+                                            (self.config.decoder_attention_heads,
+                                             head_dim))
 
-        batch_size = hidden_states.shape[0]
-        if attention_cache is None:
-            query_len, key_len = query_states.shape[1], key_states.shape[1]
-            assert query_len == key_len
-            # shape: [B, 1, S_max, S_max]
-            causal_mask = nn.make_causal_mask(
-                jnp.ones((batch_size, key_len)), dtype="bool")
-            # shape: [B, 1, 1, S_max]
-            input_mask = attention_mask
-            # shape: [B, 1, S_max, S_max]
-            mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
-        else:
-            cache_key, cache_value, cache_index = attention_cache
-            cache_index_ = cache_index[0]
-            update_indices = (0, cache_index_, 0, 0)
-            # shape: [B, S_max, #head, head_dim]
-            key_states = lax.dynamic_update_slice(cache_key, key_states, update_indices)
-            # shape: [B, S_max, #head, head_dim]
-            value_states = lax.dynamic_update_slice(cache_value, value_states, update_indices)
-            query_len, key_len = query_states.shape[1], key_states.shape[1]
-
-            # Handle a special kind of internal padding added by alpa.
-            # Note that this kind of internal padding is different from
-            # the padding added by the tokenizer. This internal padding
-            # should not update cache and step_ct
-            # shape: [B, 1, 1, S_max]
-
-            if attention_mask is not None:
-                is_internal_padding = (attention_mask == 2)
-                num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
-                attention_mask = (attention_mask == 1)
+            batch_size = hidden_states.shape[0]
+            if attention_cache is None:
+                query_len, key_len = query_states.shape[1], key_states.shape[1]
+                assert query_len == key_len
+                # shape: [B, 1, S_max, S_max]
+                causal_mask = nn.make_causal_mask(
+                    jnp.ones((batch_size, key_len)), dtype="bool")
+                # shape: [B, 1, 1, S_max]
+                input_mask = attention_mask
+                # shape: [B, 1, S_max, S_max]
+                mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
             else:
-                num_internal_pad = 0
-            attention_cache = key_states, value_states, cache_index + query_len - num_internal_pad
+                cache_key, cache_value, cache_index = attention_cache
+                cache_index_ = cache_index[0]
+                update_indices = (0, cache_index_, 0, 0)
+                # shape: [B, S_max, #head, head_dim]
+                key_states = lax.dynamic_update_slice(cache_key, key_states, update_indices)
+                # shape: [B, S_max, #head, head_dim]
+                value_states = lax.dynamic_update_slice(cache_value, value_states, update_indices)
+                query_len, key_len = query_states.shape[1], key_states.shape[1]
 
-            # shape: [B, 1, S_max, S_max]
-            causal_mask = nn.make_causal_mask(
-                jnp.ones((batch_size, key_len)), dtype="bool")
-            # shape: [B, 1, S, S_max]
-            causal_mask = lax.dynamic_slice(causal_mask,
-                (0, 0, cache_index_, 0), (batch_size, 1, query_len, key_len))
-            # shape: [B, 1, 1, S_max]
-            input_mask = attention_mask
-            # shape: [B, 1, S, S_max]
-            mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
+                # Handle a special kind of internal padding added by alpa.
+                # Note that this kind of internal padding is different from
+                # the padding added by the tokenizer. This internal padding
+                # should not update cache and step_ct
+                # shape: [B, 1, 1, S_max]
 
-        attn_weights = nn.attention.dot_product_attention_weights(
-            query_states,
-            key_states,
-            mask=mask,
-            dtype=self.dtype,
-            precision=None,
-        )
+                if attention_mask is not None:
+                    is_internal_padding = (attention_mask == 2)
+                    num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
+                    attention_mask = (attention_mask == 1)
+                else:
+                    num_internal_pad = 0
+                attention_cache = key_states, value_states, cache_index + query_len - num_internal_pad
 
-        attn_output = jnp.einsum("...hqk,...khd->...qhd", attn_weights,
-                                 value_states)
+                # shape: [B, 1, S_max, S_max]
+                causal_mask = nn.make_causal_mask(
+                    jnp.ones((batch_size, key_len)), dtype="bool")
+                # shape: [B, 1, S, S_max]
+                causal_mask = lax.dynamic_slice(causal_mask,
+                    (0, 0, cache_index_, 0), (batch_size, 1, query_len, key_len))
+                # shape: [B, 1, 1, S_max]
+                input_mask = attention_mask
+                # shape: [B, 1, S, S_max]
+                mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
+
+            attn_weights = nn.attention.dot_product_attention_weights(
+                query_states,
+                key_states,
+                mask=mask,
+                dtype=self.dtype,
+                precision=None,
+            )
+
+            attn_output = jnp.einsum("...hqk,...khd->...qhd", attn_weights,
+                                     value_states)
+        else:
+            attn_output = jnp.ones((value_states.shape[0], query_states.shape[1],
+                                     value_states.shape[2], value_states.shape[3]))
+            attn_weights = jnp.ones((value_states.shape[0], attn_output.shape[2],
+                                    query_states.shape[1], value_states.shape[1]))
         attn_output = attn_output.reshape(attn_output.shape[:2] + (-1,))
 
         outputs = (attn_output, attention_cache,

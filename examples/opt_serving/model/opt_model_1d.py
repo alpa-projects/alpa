@@ -165,9 +165,14 @@ class OPTSelfAttention(nn.Module):
         # Shape of cache_index: [batch * max_length]
         cache_key, cache_value, cache_index = attention_cache
 
-        attn_output = fused_mmha(qkv_combined_states, self.qkv_combined_bias,
-                                 batch_idxs, cache_key, cache_value,
-                                 cache_index)
+        perform_attention = True
+        if perform_attention:
+            attn_output = fused_mmha(qkv_combined_states, self.qkv_combined_bias,
+                                     batch_idxs, cache_key, cache_value,
+                                     cache_index)
+        else:
+            attn_output = jnp.ones((qkv_combined_states.shape[0], qkv_combined_states.shape[2], qkv_combined_states.shape[3]))
+
         attn_output = attn_output.reshape(attn_output.shape[:1] + (-1,))
 
         # Update cache key and value. Note that the cache index should

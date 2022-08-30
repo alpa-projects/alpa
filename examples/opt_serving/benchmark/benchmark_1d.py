@@ -1,7 +1,7 @@
 import argparse
 import copy
 import time
-from examples.opt_serving.model.test_1d import init_1d_runner, init_2d_runner
+from examples.opt_serving.model.test_1d import setup
 from examples.opt_serving.benchmark.benchmark_text_gen import test_prompts
 from alpa.util import print_used_time
 
@@ -12,6 +12,14 @@ input_id_list = [
     [5625, 16, 10, 205, 183, 8, 38, 236, 7],
     [2264, 16, 5, 7440, 9, 16673, 873, 24214, 116],
 ]
+
+
+def print_execution_cost(execution_cost):
+    output = []
+    for key, value in execution_cost.items():
+        output.append(f"{key}: {value:.4f}")
+    print(", ".join(output))
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -31,46 +39,46 @@ if __name__ == "__main__":
     # parser.add_argument("--dtype", type=str, default="fp16")
 
     args = parser.parse_args()
-    name = args.model.split("-")[1].upper()
-
-    runner_1d, input_pool_1d = init_1d_runner(name, args.path, input_id_list)
-    runner_2d, input_pool_2d = init_2d_runner(name, args.path, input_id_list)
+    runner_1d, input_pool_1d = setup("1d", input_id_list, np_weights_folder=args.path)
+    runner_2d, input_pool_2d = setup("2d", input_id_list, np_weights_folder=args.path)
 
     # Warm up
     for i in range(args.n_warmup):
         warmup_pool_2d = copy.deepcopy(input_pool_2d)
-        runner_2d(warmup_pool_2d[2:])
+        _, cost = runner_2d(warmup_pool_2d[2:])
+        print_execution_cost(cost)
     for i in range(args.n_warmup):
         warmup_pool_1d = copy.deepcopy(input_pool_1d)
-        runner_1d(warmup_pool_1d[2:])
+        _, cost = runner_1d(warmup_pool_1d[2:])
+        print_execution_cost(cost)
     print(" === Warm up done! ===")
 
     # benchmark prompt
     print("Run 1D")
     tic = time.time()
-    ret_pool_1d = runner_1d(input_pool_1d[2:])
+    ret_pool_1d, _ = runner_1d(input_pool_1d[2:])
     latency_1d = time.time() - tic
     print("Run 2D")
     tic = time.time()
-    ret_pool_2d = runner_2d(input_pool_2d[2:])
+    ret_pool_2d, _ = runner_2d(input_pool_2d[2:])
     latency_2d = time.time() - tic
     print(f"Results 3 prompts: 1d {latency_1d}, 2d {latency_2d}")
     exit(1)
-
-    # benchmark mixed
-    tic = time.time()
-    ret_pool_1d = runner_1d(input_pool_1d[:2] + ret_pool_1d)
-    latency_1d = time.time() - tic
-    tic = time.time()
-    ret_pool_2d = runner_2d(input_pool_2d[:2] + ret_pool_2d)
-    latency_2d = time.time() - tic
-    print(f"- Benchmark 2 prompts + 3 decode: 1d {latency_1d}, 2d {latency_2d}")
-
-    # benchmark decoding only
-    tic = time.time()
-    runner_1d(ret_pool_1d)
-    latency_1d = time.time() - tic
-    tic = time.time()
-    runner_2d(ret_pool_2d)
-    latency_2d = time.time() - tic
-    print(f"- Benchmark 5 decode: 1d {latency_1d}, 2d {latency_2d}")
+    #
+    # # benchmark mixed
+    # tic = time.time()
+    # ret_pool_1d, _ = runner_1d(input_pool_1d[:2] + ret_pool_1d)
+    # latency_1d = time.time() - tic
+    # tic = time.time()
+    # ret_pool_2d = runner_2d(input_pool_2d[:2] + ret_pool_2d)
+    # latency_2d = time.time() - tic
+    # print(f"- Benchmark 2 prompts + 3 decode: 1d {latency_1d}, 2d {latency_2d}")
+    #
+    # # benchmark decoding only
+    # tic = time.time()
+    # runner_1d(ret_pool_1d)
+    # latency_1d = time.time() - tic
+    # tic = time.time()
+    # runner_2d(ret_pool_2d)
+    # latency_2d = time.time() - tic
+    # print(f"- Benchmark 5 decode: 1d {latency_1d}, 2d {latency_2d}")

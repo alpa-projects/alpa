@@ -7,7 +7,7 @@ from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
 from jax.tree_util import tree_flatten, tree_unflatten
 
-from alpa.pipeline_parallel.xla_custom_call_marker import pipeline_marker
+from alpa.pipeline_parallel.xla_custom_call_marker import pipeline_marker, identity
 from alpa.util import new_jaxpr_eqn
 
 ########## Public APIs ##########
@@ -54,6 +54,7 @@ def mark_hook_jaxpreqn(invars, outvars):
 xc.register_custom_call_target(b"pipeline_marker",
                                pipeline_marker(),
                                platform="gpu")
+xc.register_custom_call_target(b"identity", identity(), platform="gpu")
 
 
 def flatten_shape_byte_sizes(shape):

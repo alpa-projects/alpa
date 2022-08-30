@@ -18,10 +18,9 @@ from flax.training import train_state
 from flax.training.common_utils import stack_forest
 import jax
 import jax.numpy as jnp
-from jax._src import dispatch
+from jax._src import dispatch, util
 from jax._src.api import FLAGS, ShapeDtypeStruct
 from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
-import jax._src.util as util
 from jax.api_util import shaped_abstractify
 from jax import core
 from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
@@ -29,8 +28,7 @@ from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
 from jax.experimental.maps import FrozenDict
 from jax import linear_util as lu
 from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla, pxla
-import jax.interpreters.mlir as mlir
+from jax.interpreters import xla, pxla, mlir
 from jax.interpreters.xla import _DeviceArray
 from jax.tree_util import tree_map, tree_flatten, PyTreeDef
 import numpy as np
@@ -41,7 +39,6 @@ import tqdm
 
 import alpa
 from alpa.global_env import global_config, is_worker
-
 
 PLACEMENT_GROUP_TIMEOUT_S_ENV = "ALPA_PLACEMENT_GROUP_TIMEOUT_S_ENV"
 
@@ -362,17 +359,19 @@ def jaxpr_to_hlo_module(name: str,
     axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())
     name_stack = util.new_name_stack(xla.wrap_name(name, "parallelize"))
     closed_jaxpr = ClosedJaxpr(closed_jaxpr.jaxpr, consts)
-    unordered_effects = [eff for eff in closed_jaxpr.effects
-                         if eff not in core.ordered_effects]
-    ordered_effects = [eff for eff in closed_jaxpr.effects
-                       if eff in core.ordered_effects]
+    unordered_effects = [
+        eff for eff in closed_jaxpr.effects if eff not in core.ordered_effects
+    ]
+    ordered_effects = [
+        eff for eff in closed_jaxpr.effects if eff in core.ordered_effects
+    ]
     lowering_result = mlir.lower_jaxpr_to_module(
-        name, closed_jaxpr, unordered_effects,
-        ordered_effects, backend.platform,
+        name, closed_jaxpr,
+        unordered_effects, ordered_effects, backend.platform,
         mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars)
     xla_computation = xe.mlir.mlir_module_to_xla_computation(
-	mlir.module_to_string(lowering_result.module),
-	use_tuple_args=tuple_args,
+        mlir.module_to_string(lowering_result.module),
+        use_tuple_args=tuple_args,
         return_tuple=True)
     ret = xla_computation.as_hlo_module()
     return ret
@@ -784,11 +783,16 @@ def log_jaxpr(jaxpr: ClosedJaxpr, filename: str):
         f.write(str(jaxpr))
 
 
-def new_jaxpr_eqn(invars, outvars, primitive, params, effects=None, source_info=None):
+def new_jaxpr_eqn(invars,
+                  outvars,
+                  primitive,
+                  params,
+                  effects=None,
+                  source_info=None):
     """Create a new jaxpr equation."""
     effects = effects or core.no_effects
-    return core.new_jaxpr_eqn(invars, outvars, primitive, params,
-                              effects, source_info)
+    return core.new_jaxpr_eqn(invars, outvars, primitive, params, effects,
+                              source_info)
 
 
 ########################################

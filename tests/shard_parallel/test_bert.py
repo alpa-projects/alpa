@@ -223,9 +223,11 @@ class AutoShardingAttentionTest(unittest.TestCase):
         # Test on different logical mesh shapes
         mesh_shape = [2, 2]
         device_mesh = self.get_device_mesh(mesh_shape, [2, 2], [1, 0.1])
-        state, hlo_ir, objective = self.run_bert_layers(
-            batch_size, seq_len, num_layers, hidden_size, num_heads,
-            deterministic, use_remat, device_mesh)
+        state, hlo_ir, objective = self.run_bert_layers(batch_size, seq_len,
+                                                        num_layers, hidden_size,
+                                                        num_heads,
+                                                        deterministic,
+                                                        use_remat, device_mesh)
 
         # Check communication cost
         params = jax.tree_util.tree_leaves(state.params)
@@ -284,17 +286,21 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
         # data parallel
         device_mesh = self.get_device_mesh([4, 1], [1, 1], [1, 1])
-        state, hlo_ir, objective = self.run_bert_layers(
-            batch_size, seq_len, num_layers, hidden_size, num_heads,
-            deterministic, use_remat, device_mesh)
+        state, hlo_ir, objective = self.run_bert_layers(batch_size, seq_len,
+                                                        num_layers, hidden_size,
+                                                        num_heads,
+                                                        deterministic,
+                                                        use_remat, device_mesh)
         assert_data_parallel_cost(state, hlo_ir, objective, device_mesh,
                                   self.as_option, 0)
 
         # model parallel (case 1)
         device_mesh = self.get_device_mesh([1, 4], [1, 1], [1, 1])
-        state, hlo_ir, objective = self.run_bert_layers(
-            batch_size, seq_len, num_layers, hidden_size, num_heads,
-            deterministic, use_remat, device_mesh)
+        state, hlo_ir, objective = self.run_bert_layers(batch_size, seq_len,
+                                                        num_layers, hidden_size,
+                                                        num_heads,
+                                                        deterministic,
+                                                        use_remat, device_mesh)
         expected = (num_layers * 4 - 1) * device_mesh.all_reduce_cost(
             batch_size * seq_len * hidden_size * 4, 1)
         assert_close(objective, expected)
@@ -302,9 +308,11 @@ class AutoShardingAttentionTest(unittest.TestCase):
         # model parallel (case 2)
         batch_size = 1
         device_mesh = self.get_device_mesh([1, 4], [1, 1], [1, 1])
-        state, hlo_ir, objective = self.run_bert_layers(
-            batch_size, seq_len, num_layers, hidden_size, num_heads,
-            deterministic, use_remat, device_mesh)
+        state, hlo_ir, objective = self.run_bert_layers(batch_size, seq_len,
+                                                        num_layers, hidden_size,
+                                                        num_heads,
+                                                        deterministic,
+                                                        use_remat, device_mesh)
         expected = (num_layers * 4 - 1) * device_mesh.all_reduce_cost(
             batch_size * seq_len * hidden_size * 4, 1)
         assert_close(objective, expected)
@@ -446,14 +454,14 @@ class AutoShardingAttentionTest(unittest.TestCase):
             # Check sharding specification
             embed_weight = state.params["params"]["bert"]["embeddings"][
                 "word_embeddings"]["embedding"]
-            lm_head = state.params["params"]["cls"]["predictions"][
-                "transform"]["dense"]["kernel"]
+            lm_head = state.params["params"]["cls"]["predictions"]["transform"][
+                "dense"]["kernel"]
             assert_row_partitioned(embed_weight, mesh_shape[i], i)
             assert_all_replicated(lm_head, np.prod(mesh_shape))
 
             for k in range(num_layers):
-                params = state.params["params"]["bert"]["encoder"]["layer"][
-                    str(k)]
+                params = state.params["params"]["bert"]["encoder"]["layer"][str(
+                    k)]
                 weights = [
                     params["attention"]["self"]["qvk_combined"]["kernel"],
                     params["attention"]["output"]["dense"]["kernel"],
@@ -484,9 +492,10 @@ class AutoShardingAttentionTest(unittest.TestCase):
         mesh_shape = [2, 2]
         device_mesh = self.get_device_mesh(mesh_shape, [2, 2], [1, 0.1])
 
-        state, hlo_ir, objective = self.run_bert_mlm(
-            batch_size, seq_len, num_layers, hidden_size, num_heads, vocab_size,
-            deterministic, device_mesh)
+        state, hlo_ir, objective = self.run_bert_mlm(batch_size, seq_len,
+                                                     num_layers, hidden_size,
+                                                     num_heads, vocab_size,
+                                                     deterministic, device_mesh)
 
         # Check communication cost.
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
@@ -519,15 +528,15 @@ class AutoShardingAttentionTest(unittest.TestCase):
         else:
             embed_weight = (state.params["params"]["bert"]["embeddings"]
                             ["word_embeddings"]["embedding"])
-            lm_head = (state.params["params"]["cls"]["predictions"]
-                       ["transform"]["dense"]["kernel"])
+            lm_head = (state.params["params"]["cls"]["predictions"]["transform"]
+                       ["dense"]["kernel"])
 
             assert_replicated_row_partitioned(embed_weight, mesh_shape)
             assert_all_replicated(lm_head, np.prod(mesh_shape))
 
             for k in range(num_layers):
-                params = state.params["params"]["bert"]["encoder"]["layer"][
-                    str(k)]
+                params = state.params["params"]["bert"]["encoder"]["layer"][str(
+                    k)]
                 weights = [
                     params["attention"]["self"]["qvk_combined"]["kernel"],
                     params["attention"]["output"]["dense"]["kernel"],

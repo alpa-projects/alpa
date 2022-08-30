@@ -95,9 +95,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x, True)
         tx = optax.sgd(learning_rate=1e-2)
-        state = TrainState.create(apply_fn=model.apply,
-                                  params=params,
-                                  tx=tx)
+        state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
         @parallelize(method=self.method)
         def func(state, x, y, rngs):
@@ -138,9 +136,7 @@ class AutoShardingBasicTest(unittest.TestCase):
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x)
         tx = optax.sgd(learning_rate=1e-2)
-        state = TrainState.create(apply_fn=model.apply,
-                                  params=params,
-                                  tx=tx)
+        state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
         @parallelize(method=self.method)
         def func(state, x, y):

@@ -55,6 +55,7 @@ xc.register_custom_call_target(b"pipeline_marker",
                                pipeline_marker(),
                                platform="gpu")
 
+
 def flatten_shape_byte_sizes(shape):
 
     def _flatten_shape_byte_sizes(shape):

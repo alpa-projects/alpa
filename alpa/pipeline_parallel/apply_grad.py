@@ -4,8 +4,8 @@ import logging
 from typing import Sequence, Dict, Tuple
 
 from jax._src.util import safe_map
-from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal,
-                      get_aval, raise_to_shaped, JaxprEqn)
+from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, get_aval,
+                      raise_to_shaped, JaxprEqn)
 from jax.lax import add_p, div_p
 import numpy as np
 

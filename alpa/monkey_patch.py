@@ -12,7 +12,7 @@ from jax._src.lib.xla_bridge import get_backend as default_get_backend
 from jax.core import Primitive
 from jax.interpreters import pxla
 from jax.interpreters import xla, mlir
-from jax.interpreters.xla import xops, register_translation
+from jax.interpreters.xla import xops
 import flax
 
 from alpa.global_env import global_config, is_worker
@@ -44,6 +44,7 @@ if is_worker:
 ########################################
 ##### Monkey patch Jax
 ########################################
+
 
 # Monkey patch random generator to use the stateful random generator.
 # This can simplify the computational graph for dropout.
@@ -98,7 +99,8 @@ def _rng_normal_lowering(ctx, mu, sigma, *, shape):
     shape, = mlir.ir_constants(np.array(aval_out.shape, np.int64),
                                canonicalize_types=False)
     return mhlo.RngOp(mu, sigma, shape,
-                      mhlo.RngDistributionAttr.get('NORMAL')).results
+                      mhlo.RngDistributionAttr.get("NORMAL")).results
+
 
 mlir.register_lowering(rng_normal_p, _rng_normal_lowering)
 
@@ -198,6 +200,7 @@ jax.tree_unflatten = jax._src.tree_util.tree_unflatten
 ########################################
 ##### Monkey patch Flax
 ########################################
+
 
 # Monkey patch the nn.Embed in flax to use onehot + matmul instead of
 # gather/scatter,

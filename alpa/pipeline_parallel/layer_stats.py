@@ -4,7 +4,6 @@ from typing import List, Set
 from jax import lax
 from jax.lib import xla_client as xc, xla_bridge as xb
 from jax.core import JaxprEqn, Var, CallPrimitive, DropVar, Literal, Jaxpr, ClosedJaxpr
-from jax.interpreters import xla
 from alpa.util import OrderedSet, jaxpr_to_hlo_module
 
 
@@ -16,8 +15,9 @@ def eqn_flops(eqn: JaxprEqn) -> float:
     if any(isinstance(x, Literal) for x in eqn.invars):
         # A temporary workaround
         return 0
-    hlo_module = jaxpr_to_hlo_module(
-        "tmp", closed_jaxpr, [False,] * len(eqn.invars), backend)
+    hlo_module = jaxpr_to_hlo_module("tmp", closed_jaxpr, [
+        False,
+    ] * len(eqn.invars), backend)
     properties = xc._xla.hlo_module_cost_analysis(  # pylint: disable=protected-access
         backend, hlo_module)
     return properties["flops"] if "flops" in properties else 0.0

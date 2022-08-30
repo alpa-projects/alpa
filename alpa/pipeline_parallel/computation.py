@@ -10,8 +10,8 @@ from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax._src.util import partial, safe_map
 from jax._src import dispatch
 from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
-                      jaxpr_as_fun, gensym, named_call_p,
-                      ShapedArray, get_aval, raise_to_shaped)
+                      jaxpr_as_fun, gensym, named_call_p, ShapedArray, get_aval,
+                      raise_to_shaped)
 from jax.interpreters import pxla
 from jax.interpreters.partial_eval import remat_call_p
 import numpy as np
@@ -173,8 +173,11 @@ class XlaPipelineComputation(PipelineComputation):
         xla_computation = xc.XlaComputation(
             self.hlo_module.as_serialized_hlo_module_proto())
         compiled = backend.compile(xla_computation, compile_options=options)
-        result_handler = dispatch._result_handler(backend,
-                device, [(aval, True,) for aval in out_avals])
+        # pylint: disable=protected-access
+        result_handler = dispatch._result_handler(backend, device, [(
+            aval,
+            True,
+        ) for aval in out_avals])
         buffer_counts = (None if len(out_avals) == 1 else [
             dispatch.aval_to_num_buffers(aval) for aval in out_avals
         ])
@@ -955,8 +958,8 @@ def _wrap_with_call(closed_jaxpr: ClosedJaxpr, invars, outvars, name):
     new_invars = closed_jaxpr.jaxpr.invars + closed_jaxpr.jaxpr.constvars
     jaxpr = clone_jaxpr(closed_jaxpr, new_invars, constvars=[]).jaxpr
     params = dict(name=name, call_jaxpr=jaxpr)
-    return new_jaxpr_eqn(invars + closed_jaxpr.consts,
-                         outvars, named_call_p, params)
+    return new_jaxpr_eqn(invars + closed_jaxpr.consts, outvars, named_call_p,
+                         params)
 
 
 def _rearrange_in_out_for_donation(invars, outvars, donation_map):

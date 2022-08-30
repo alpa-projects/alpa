@@ -38,10 +38,14 @@ def suite():
     suite = unittest.TestSuite()
     suite.addTest(StageConstructionSlowTest('test_mlp_stage_construction'))
     suite.addTest(StageConstructionSlowTest('test_mlp_layer_and_stage'))
-    suite.addTest(StageConstructionSlowTest('test_2_layer_bert_stage_construction'))
-    suite.addTest(StageConstructionSlowTest('test_2_layer_bert_layer_and_stage'))
-    suite.addTest(StageConstructionSlowTest('test_8_layer_bert_stage_construction'))
-    suite.addTest(StageConstructionSlowTest('test_8_layer_bert_layer_and_stage'))
+    suite.addTest(
+        StageConstructionSlowTest('test_2_layer_bert_stage_construction'))
+    suite.addTest(
+        StageConstructionSlowTest('test_2_layer_bert_layer_and_stage'))
+    suite.addTest(
+        StageConstructionSlowTest('test_8_layer_bert_stage_construction'))
+    suite.addTest(
+        StageConstructionSlowTest('test_8_layer_bert_layer_and_stage'))
     return suite
 
 

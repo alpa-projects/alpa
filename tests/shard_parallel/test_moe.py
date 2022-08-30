@@ -65,7 +65,9 @@ class AutoShardingMoETest(unittest.TestCase):
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, hidden_states, attention_mask)
         tx = optax.adam(1e-2)
-        state = TrainState.create(apply_fn=model.apply, params=params, tx=tx,
+        state = TrainState.create(apply_fn=model.apply,
+                                  params=params,
+                                  tx=tx,
                                   dynamic_scale=None)
 
         # JIT compile
@@ -225,9 +227,10 @@ class AutoShardingMoETest(unittest.TestCase):
 
         # Test on different logical mesh shapes
         device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 1])
-        state, hlo_ir, objective = self.run_moe_layer(
-            batch_size, seq_len, hidden_size, num_heads, S, E, deterministic,
-            device_mesh)
+        state, hlo_ir, objective = self.run_moe_layer(batch_size, seq_len,
+                                                      hidden_size, num_heads, S,
+                                                      E, deterministic,
+                                                      device_mesh)
 
         # Check communication cost
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all = (
@@ -251,9 +254,10 @@ class AutoShardingMoETest(unittest.TestCase):
 
         # Test on different logical mesh shapes
         device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 1])
-        state, hlo_ir, objective = self.run_moe_layer(
-            batch_size, seq_len, hidden_size, num_heads, S, E, deterministic,
-            device_mesh)
+        state, hlo_ir, objective = self.run_moe_layer(batch_size, seq_len,
+                                                      hidden_size, num_heads, S,
+                                                      E, deterministic,
+                                                      device_mesh)
 
         # Check communication cost
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all = (

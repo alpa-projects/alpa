@@ -308,7 +308,7 @@ class PipeshardDriverExecutable:
         Dump intermediate representations and other informations for debugging.
         """
         os.makedirs(folder, exist_ok=True)
-        name = self.stages[0].spmd_partitioned_hlo_module.name()
+        name = self.stages[0].spmd_partitioned_hlo_module.name
         name = name[:name.index("pipeshard_parallel") - 1]
         prefix = os.path.join(folder, name)
 

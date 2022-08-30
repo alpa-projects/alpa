@@ -54,7 +54,7 @@ def assert_data_parallel_cost(state,
     if as_option.prefer_reduce_scatter:
         assert n_all_reduce == num_batch_norm * 2
         assert n_reduce_scatter > 0
-        assert n_all_gather == 1
+        assert n_all_gather <= 2
         assert n_total == n_all_reduce + n_reduce_scatter + n_all_gather
     else:
         assert n_all_reduce == 1 + num_batch_norm * 2

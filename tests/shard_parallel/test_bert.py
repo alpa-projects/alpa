@@ -5,7 +5,9 @@ import unittest
 import jax
 import jax.numpy as jnp
 import numpy as np
-from flax import optim, linen as nn
+from flax import linen as nn
+from flax.training.train_state import TrainState
+import optax
 
 from alpa import parallelize, ShardParallel, LocalPhysicalDeviceMesh, AutoShardingOption
 from alpa.model.bert_model import (BertConfig, FlaxBertLayerCollection,
@@ -34,20 +36,19 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
         @parallelize(method=ShardParallel(devices=device_mesh,
                                           auto_sharding_option=self.as_option))
-        def train_step(optimizer, batch, deterministic, apply_fn):
+        def train_step(state, batch, deterministic):
 
             def loss_func(params):
                 rngs = {"dropout": batch["rng"]}
-                out = apply_fn(params,
-                               batch["hidden_states"],
-                               batch["attention_mask"],
-                               deterministic,
-                               rngs=rngs)[0]
+                out = state.apply_fn(params,
+                                     batch["hidden_states"],
+                                     batch["attention_mask"],
+                                     deterministic,
+                                     rngs=rngs)[0]
                 return jnp.mean((out - batch["label"])**2)
 
-            grad = jax.grad(loss_func)(optimizer.target)
-            new_optimizer = optimizer.apply_gradient(grad)
-            return new_optimizer
+            grads = jax.grad(loss_func)(state.params)
+            return state.apply_gradients(grads=grads)
 
         # Init model and optimizer
         hidden_states = jnp.ones((batch_size, seq_len, hidden_size),
@@ -63,20 +64,21 @@ class AutoShardingAttentionTest(unittest.TestCase):
                        gradient_checkpointing=use_remat))
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, hidden_states, attention_mask)
-        optimizer = optim.Adam(1e-2).create(params)
+        tx = optax.adam(1e-2)
+        state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
         # JIT compile
-        optimizer = train_step(
-            optimizer, {
+        state = train_step(
+            state, {
                 "hidden_states": hidden_states,
                 "attention_mask": attention_mask,
                 "label": label,
                 "rng": rngkey
-            }, deterministic, model.apply)
+            }, deterministic)
 
         # Get optimized HLO IR
         executable = train_step.get_last_executable()
-        return (optimizer, executable.get_hlo_text(),
+        return (state, executable.get_hlo_text(),
                 executable.auto_sharding_objective)
 
     def run_bert_mlm(self, batch_size, seq_len, num_layers, hidden_size,
@@ -84,26 +86,25 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
         @parallelize(method=ShardParallel(devices=device_mesh,
                                           auto_sharding_option=self.as_option))
-        def train_step(optimizer, batch):
+        def train_step(state, batch):
 
             def loss_func(params):
                 rngs = {"dropout": batch["rng"]}
-                logits = model.apply(params,
-                                     batch["input_ids"],
-                                     batch["attention_mask"],
-                                     batch["token_type_ids"],
-                                     batch["position_ids"],
-                                     deterministic=deterministic,
-                                     rngs=rngs)[0]
+                logits = state.apply_fn(params,
+                                        batch["input_ids"],
+                                        batch["attention_mask"],
+                                        batch["token_type_ids"],
+                                        batch["position_ids"],
+                                        deterministic=deterministic,
+                                        rngs=rngs)[0]
                 label_mask = jnp.where(batch["labels"] > 0, 1.0, 0.0)
                 labels = jax.nn.one_hot(batch["labels"], logits.shape[-1])
                 loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1),
                                 axis=-1)
                 return (label_mask * loss).sum() / label_mask.sum() * 0.1234
 
-            grad = jax.grad(loss_func)(optimizer.target)
-            new_optimizer = optimizer.apply_gradient(grad)
-            return new_optimizer
+            grads = jax.grad(loss_func)(state.params)
+            return state.apply_gradients(grads=grads)
 
         # Init model and optimizer
         input_ids = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
@@ -124,11 +125,12 @@ class AutoShardingAttentionTest(unittest.TestCase):
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, input_ids, attention_mask, token_type_ids,
                             position_ids)
-        optimizer = optim.Adam(1e-2).create(params)
+        tx = optax.adam(1e-2)
+        state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
         # JIT compile
-        optimizer = train_step(
-            optimizer, {
+        state = train_step(
+            state, {
                 "input_ids": input_ids,
                 "attention_mask": attention_mask,
                 "token_type_ids": token_type_ids,
@@ -139,7 +141,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
         # Get optimized HLO IR
         executable = train_step.get_last_executable()
-        return (optimizer, executable.get_hlo_text(),
+        return (state, executable.get_hlo_text(),
                 executable.auto_sharding_objective)
 
     def test_bert_layer_data_parallel(self):
@@ -154,11 +156,11 @@ class AutoShardingAttentionTest(unittest.TestCase):
         # Test on different logical mesh shapes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-            optimizer, hlo_ir, objective = self.run_bert_layers(
+            state, hlo_ir, objective = self.run_bert_layers(
                 batch_size, seq_len, num_layers, hidden_size, num_heads,
                 deterministic, use_remat, device_mesh)
 
-            assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh,
+            assert_data_parallel_cost(state, hlo_ir, objective, device_mesh,
                                       self.as_option, i)
 
     def test_bert_layer_model_parallel(self):
@@ -173,7 +175,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         # Test on different logical mesh shapes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-            optimizer, hlo_ir, objective = self.run_bert_layers(
+            state, hlo_ir, objective = self.run_bert_layers(
                 batch_size, seq_len, num_layers, hidden_size, num_heads,
                 deterministic, use_remat, device_mesh)
 
@@ -195,7 +197,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
             # Check sharding specification
             for k in range(num_layers):
-                params = optimizer.target["params"][str(k)]
+                params = state.params["params"][str(k)]
                 weights = [
                     params["attention"]["self"]["qvk_combined"]["kernel"],
                     params["attention"]["output"]["dense"]["kernel"],
@@ -221,12 +223,14 @@ class AutoShardingAttentionTest(unittest.TestCase):
         # Test on different logical mesh shapes
         mesh_shape = [2, 2]
         device_mesh = self.get_device_mesh(mesh_shape, [2, 2], [1, 0.1])
-        optimizer, hlo_ir, objective = self.run_bert_layers(
-            batch_size, seq_len, num_layers, hidden_size, num_heads,
-            deterministic, use_remat, device_mesh)
+        state, hlo_ir, objective = self.run_bert_layers(batch_size, seq_len,
+                                                        num_layers, hidden_size,
+                                                        num_heads,
+                                                        deterministic,
+                                                        use_remat, device_mesh)
 
         # Check communication cost
-        params = jax.tree_util.tree_leaves(optimizer.target)
+        params = jax.tree_util.tree_leaves(state.params)
         expected = (sum(
             device_mesh.all_reduce_cost(
                 np.prod(x.shape) * 4 / mesh_shape[1], 0)
@@ -241,7 +245,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         if self.as_option.prefer_reduce_scatter:
             assert n_all_reduce == num_layers * 4 - 1
             assert n_reduce_scatter == 2
-            assert n_all_gather == 1
+            assert n_all_gather <= 2
             assert n_total == n_all_reduce + n_reduce_scatter + n_all_gather
         else:
             assert n_all_reduce == num_layers * 4
@@ -249,13 +253,12 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
         # Check sharding specification
         if self.as_option.prefer_reduce_scatter:
-            for weight in jax.tree_util.tree_leaves(
-                    optimizer.state.param_states):
+            for weight in jax.tree_util.tree_leaves(state.opt_state):
                 if len(weight.shape) > 1:
                     assert_fully_sharded(weight)
         else:
             for k in range(num_layers):
-                params = optimizer.target["params"][str(k)]
+                params = state.params["params"][str(k)]
                 weights = [
                     params["attention"]["self"]["qvk_combined"]["kernel"],
                     params["attention"]["output"]["dense"]["kernel"],
@@ -283,17 +286,21 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
         # data parallel
         device_mesh = self.get_device_mesh([4, 1], [1, 1], [1, 1])
-        optimizer, hlo_ir, objective = self.run_bert_layers(
-            batch_size, seq_len, num_layers, hidden_size, num_heads,
-            deterministic, use_remat, device_mesh)
-        assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh,
+        state, hlo_ir, objective = self.run_bert_layers(batch_size, seq_len,
+                                                        num_layers, hidden_size,
+                                                        num_heads,
+                                                        deterministic,
+                                                        use_remat, device_mesh)
+        assert_data_parallel_cost(state, hlo_ir, objective, device_mesh,
                                   self.as_option, 0)
 
         # model parallel (case 1)
         device_mesh = self.get_device_mesh([1, 4], [1, 1], [1, 1])
-        optimizer, hlo_ir, objective = self.run_bert_layers(
-            batch_size, seq_len, num_layers, hidden_size, num_heads,
-            deterministic, use_remat, device_mesh)
+        state, hlo_ir, objective = self.run_bert_layers(batch_size, seq_len,
+                                                        num_layers, hidden_size,
+                                                        num_heads,
+                                                        deterministic,
+                                                        use_remat, device_mesh)
         expected = (num_layers * 4 - 1) * device_mesh.all_reduce_cost(
             batch_size * seq_len * hidden_size * 4, 1)
         assert_close(objective, expected)
@@ -301,9 +308,11 @@ class AutoShardingAttentionTest(unittest.TestCase):
         # model parallel (case 2)
         batch_size = 1
         device_mesh = self.get_device_mesh([1, 4], [1, 1], [1, 1])
-        optimizer, hlo_ir, objective = self.run_bert_layers(
-            batch_size, seq_len, num_layers, hidden_size, num_heads,
-            deterministic, use_remat, device_mesh)
+        state, hlo_ir, objective = self.run_bert_layers(batch_size, seq_len,
+                                                        num_layers, hidden_size,
+                                                        num_heads,
+                                                        deterministic,
+                                                        use_remat, device_mesh)
         expected = (num_layers * 4 - 1) * device_mesh.all_reduce_cost(
             batch_size * seq_len * hidden_size * 4, 1)
         assert_close(objective, expected)
@@ -331,17 +340,16 @@ class AutoShardingAttentionTest(unittest.TestCase):
         logical_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
 
         @parallelize(method=ShardParallel(devices=logical_mesh))
-        def func(optimizer, x, y):
+        def func(state, x, y):
 
             def loss_func(params):
-                out = model.apply(params, x)
+                out = state.apply_fn(params, x)
                 y_ = jax.nn.one_hot(y, out.shape[-1])
                 loss = -jnp.sum(y_ * jax.nn.log_softmax(out, axis=-1), axis=-1)
                 return loss.sum()
 
-            grad = jax.grad(loss_func)(optimizer.target)
-            new_optimizer = optimizer.apply_gradient(grad)
-            return new_optimizer
+            grads = jax.grad(loss_func)(state.params)
+            return state.apply_gradients(grads=grads)
 
         # Init model and optimizer
         x = jnp.ones((batch_size, seq_len), np.int32)
@@ -350,10 +358,11 @@ class AutoShardingAttentionTest(unittest.TestCase):
         model = Model()
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x)
-        optimizer = optim.Adam(1e-2).create(params)
+        tx = optax.adam(1e-2)
+        state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
         # JIT Compile
-        optimizer = func(optimizer, x, y)
+        state = func(state, x, y)
 
         # Check communication cost
         executable = func.get_last_executable()
@@ -385,16 +394,16 @@ class AutoShardingAttentionTest(unittest.TestCase):
         # Test on different logical mesh shapes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-            optimizer, hlo_ir, objective = self.run_bert_mlm(
+            state, hlo_ir, objective = self.run_bert_mlm(
                 batch_size, seq_len, num_layers, hidden_size, num_heads,
                 vocab_size, deterministic, device_mesh)
 
             if self.as_option.force_zero_stage_3:
                 # only the weight and opt_state of token_embed is not sharded
-                assert_sharding_zero_stage_3(optimizer, 3)
+                assert_sharding_zero_stage_3(state, 3)
                 continue
 
-            assert_data_parallel_cost(optimizer, hlo_ir, objective, device_mesh,
+            assert_data_parallel_cost(state, hlo_ir, objective, device_mesh,
                                       self.as_option, i, 1)
 
     @unittest.skip("This test is broken after we disallow some replicated iota")
@@ -412,7 +421,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         # Test on different logical mesh shapes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-            optimizer, hlo_ir, objective = self.run_bert_mlm(
+            state, hlo_ir, objective = self.run_bert_mlm(
                 batch_size, seq_len, num_layers, hidden_size, num_heads,
                 vocab_size, deterministic, device_mesh)
 
@@ -443,16 +452,16 @@ class AutoShardingAttentionTest(unittest.TestCase):
             assert n_total == n_all_reduce
 
             # Check sharding specification
-            embed_weight = optimizer.target["params"]["bert"]["embeddings"][
+            embed_weight = state.params["params"]["bert"]["embeddings"][
                 "word_embeddings"]["embedding"]
-            lm_head = optimizer.target["params"]["cls"]["predictions"][
-                "transform"]["dense"]["kernel"]
+            lm_head = state.params["params"]["cls"]["predictions"]["transform"][
+                "dense"]["kernel"]
             assert_row_partitioned(embed_weight, mesh_shape[i], i)
             assert_all_replicated(lm_head, np.prod(mesh_shape))
 
             for k in range(num_layers):
-                params = optimizer.target["params"]["bert"]["encoder"]["layer"][
-                    str(k)]
+                params = state.params["params"]["bert"]["encoder"]["layer"][str(
+                    k)]
                 weights = [
                     params["attention"]["self"]["qvk_combined"]["kernel"],
                     params["attention"]["output"]["dense"]["kernel"],
@@ -483,9 +492,10 @@ class AutoShardingAttentionTest(unittest.TestCase):
         mesh_shape = [2, 2]
         device_mesh = self.get_device_mesh(mesh_shape, [2, 2], [1, 0.1])
 
-        optimizer, hlo_ir, objective = self.run_bert_mlm(
-            batch_size, seq_len, num_layers, hidden_size, num_heads, vocab_size,
-            deterministic, device_mesh)
+        state, hlo_ir, objective = self.run_bert_mlm(batch_size, seq_len,
+                                                     num_layers, hidden_size,
+                                                     num_heads, vocab_size,
+                                                     deterministic, device_mesh)
 
         # Check communication cost.
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, _ = (
@@ -496,7 +506,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
             assert n_reduce_scatter <= 3  # The correct number should be 2,
             # but GpuMultiOutputFusion can make
             # some reduce-scatter unable to be combined
-            assert n_all_gather == 1
+            assert n_all_gather <= 2
             assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter
         else:
             # real number of all-reduce = transformers (4 * num_layers) + log_softmax (2) +
@@ -510,24 +520,23 @@ class AutoShardingAttentionTest(unittest.TestCase):
 
         if self.as_option.prefer_reduce_scatter:
             num_not_sharded = 0  # allow the token_type_embeddings not partitioned.
-            for weight in jax.tree_util.tree_leaves(
-                    optimizer.state.param_states):
+            for weight in jax.tree_util.tree_leaves(state.opt_state):
                 if len(weight.shape) > 1:
                     if not is_fully_sharded(weight):
                         num_not_sharded += 1
             assert num_not_sharded <= 2
         else:
-            embed_weight = (optimizer.target["params"]["bert"]["embeddings"]
+            embed_weight = (state.params["params"]["bert"]["embeddings"]
                             ["word_embeddings"]["embedding"])
-            lm_head = (optimizer.target["params"]["cls"]["predictions"]
-                       ["transform"]["dense"]["kernel"])
+            lm_head = (state.params["params"]["cls"]["predictions"]["transform"]
+                       ["dense"]["kernel"])
 
             assert_replicated_row_partitioned(embed_weight, mesh_shape)
             assert_all_replicated(lm_head, np.prod(mesh_shape))
 
             for k in range(num_layers):
-                params = optimizer.target["params"]["bert"]["encoder"]["layer"][
-                    str(k)]
+                params = state.params["params"]["bert"]["encoder"]["layer"][str(
+                    k)]
                 weights = [
                     params["attention"]["self"]["qvk_combined"]["kernel"],
                     params["attention"]["output"]["dense"]["kernel"],
@@ -586,7 +595,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         # Test on different logical mesh shapes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-            optimizer, hlo_ir, objective = self.run_bert_layers(
+            state, hlo_ir, objective = self.run_bert_layers(
                 batch_size, seq_len, num_layers, hidden_size, num_heads,
                 deterministic, use_remat, device_mesh)
 

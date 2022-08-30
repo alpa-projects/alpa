@@ -85,10 +85,10 @@ python -m cupyx.tools.install_library --library nccl --cuda $JAX_CUDA_VERSION
 cd /build/alpa/build_jaxlib
 case $2 in
   cuda)
-    python build/build.py --enable_cuda --bazel_startup_options="--output_user_root=/build/root" --tf_path=$(pwd)/../third_party/tensorflow-alpa
+    python build/build.py --enable_cuda --bazel_startup_options="--output_user_root=/build/root" --bazel_options=--override_repository=org_tensorflow=$(pwd)/../third_party/tensorflow-alpa 
     ;;
   nocuda)
-    python build/build.py --enable_tpu --bazel_startup_options="--output_user_root=/build/root" --tf_path=$(pwd)/../third_party/tensorflow-alpa
+    python build/build.py --enable_tpu --bazel_startup_options="--output_user_root=/build/root" --bazel_options=--override_repository=org_tensorflow=$(pwd)/../third_party/tensorflow-alpa
     ;;
   *)
     usage

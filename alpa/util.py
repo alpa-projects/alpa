@@ -13,29 +13,30 @@ import threading
 from typing import Iterable, Sequence, Any, Union, List
 from warnings import warn
 
+import flax
+from flax.training import train_state
+from flax.training.common_utils import stack_forest
 import jax
 import jax.numpy as jnp
-from jax._src import dispatch
+from jax._src import dispatch, util
 from jax._src.api import FLAGS, ShapeDtypeStruct
 from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax.api_util import shaped_abstractify
+from jax import core
 from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
                       ShapedArray, Var, AbstractValue)
 from jax.experimental.maps import FrozenDict
 from jax import linear_util as lu
 from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla, pxla
+from jax.interpreters import xla, pxla, mlir
 from jax.interpreters.xla import _DeviceArray
 from jax.tree_util import tree_map, tree_flatten, PyTreeDef
 import numpy as np
-import flax
-from flax.training import train_state
-from flax.training.common_utils import stack_forest
 import ray
 from ray.util.placement_group import get_current_placement_group,\
     PlacementGroup
-
 import tqdm
+
 import alpa
 from alpa.global_env import global_config, is_worker
 
@@ -349,8 +350,6 @@ def jaxpr_to_hlo_module(name: str,
     """
     if backend is None:
         backend = xb.get_backend("gpu")
-    backend_name = backend.platform
-    in_avals = [var.aval for var in closed_jaxpr.jaxpr.invars]
     consts = closed_jaxpr.consts
     map(dispatch.prefetch,
         it.chain(consts, dispatch.jaxpr_literals(closed_jaxpr.jaxpr)))
@@ -358,35 +357,24 @@ def jaxpr_to_hlo_module(name: str,
     # Convert jaxpr to XLA HLO
     tuple_args = False
     axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())
-    name_stack = xla.new_name_stack(xla.wrap_name(name, "parallelize"))
-    c = xc.XlaBuilder(name)
-    xla_consts = xla._xla_consts(c, consts)  # pylint: disable=protected-access
-    xla_args, donated_invars = xla._xla_callable_args(  # pylint: disable=protected-access
-        c,
-        in_avals,
-        tuple_args,
-        donated_invars=donated_invars)
-    ctx = xla.TranslationContext(c, backend_name, axis_env, name_stack)
-    out_nodes = xla.jaxpr_subcomp(ctx, closed_jaxpr.jaxpr, xla_consts,
-                                  *xla_args)
-    out_tuple = xc.ops.Tuple(c, out_nodes)
-
-    # Set up aliases (donating invars)
-    if donated_invars:
-        if backend.platform in ("gpu", "tpu"):
-            donation_results = xla.set_up_aliases(c, xla_args,
-                                                  c.GetShape(out_tuple),
-                                                  donated_invars, tuple_args)
-        if any(donation_results):
-            unused_donations = [
-                str(c.GetShape(a))
-                for a, d in zip(xla_args, donation_results)
-                if d
-            ]
-            warn_msg = ", ".join(unused_donations)
-            warn(f"Some donated buffers were not usable: {warn_msg}")
-
-    return c.build(out_tuple).as_hlo_module()
+    name_stack = util.new_name_stack(xla.wrap_name(name, "parallelize"))
+    closed_jaxpr = ClosedJaxpr(closed_jaxpr.jaxpr, consts)
+    unordered_effects = [
+        eff for eff in closed_jaxpr.effects if eff not in core.ordered_effects
+    ]
+    ordered_effects = [
+        eff for eff in closed_jaxpr.effects if eff in core.ordered_effects
+    ]
+    lowering_result = mlir.lower_jaxpr_to_module(
+        name, closed_jaxpr,
+        unordered_effects, ordered_effects, backend.platform,
+        mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars)
+    xla_computation = xe.mlir.mlir_module_to_xla_computation(
+        mlir.module_to_string(lowering_result.module),
+        use_tuple_args=tuple_args,
+        return_tuple=True)
+    ret = xla_computation.as_hlo_module()
+    return ret
 
 
 def setup_computation_alias(xla_computation: Union[xc.XlaComputation,
@@ -793,6 +781,18 @@ def log_jaxpr(jaxpr: ClosedJaxpr, filename: str):
     path = "/tmp/" + filename
     with open(path, "w", encoding="utf-8") as f:
         f.write(str(jaxpr))
+
+
+def new_jaxpr_eqn(invars,
+                  outvars,
+                  primitive,
+                  params,
+                  effects=None,
+                  source_info=None):
+    """Create a new jaxpr equation."""
+    effects = effects or core.no_effects
+    return core.new_jaxpr_eqn(invars, outvars, primitive, params, effects,
+                              source_info)
 
 
 ########################################

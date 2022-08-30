@@ -10,16 +10,12 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib.xla_bridge import get_backend as default_get_backend
 from jax.core import Primitive
-from jax.interpreters import partial_eval as pe, pxla
+from jax.interpreters import pxla
 from jax.interpreters import xla, mlir
-from jax.interpreters.xla import (xops, jaxpr_subcomp, extend_name_stack,
-                                  register_translation, wrap_name,
-                                  _backend_specific_translations, parameter,
-                                  xla_destructure, pyval_to_ir_constant)
+from jax.interpreters.xla import xops
 import flax
 
 from alpa.global_env import global_config, is_worker
-from alpa.pipeline_parallel.primitive_def import xla_identity
 
 ########################################
 ##### Monkey patch the Jax backend
@@ -102,7 +98,8 @@ def _rng_normal_lowering(ctx, mu, sigma, *, shape):
     aval_out, = ctx.avals_out
     shape, = mlir.ir_constants(np.array(aval_out.shape, np.int64),
                                canonicalize_types=False)
-    return mhlo.RngNormalOp(mu, sigma, shape).results
+    return mhlo.RngOp(mu, sigma, shape,
+                      mhlo.RngDistributionAttr.get("NORMAL")).results
 
 
 mlir.register_lowering(rng_normal_p, _rng_normal_lowering)
@@ -134,100 +131,6 @@ jax._src.random.bernoulli = fast_bernoulli
 jax.random.bernoulli = fast_bernoulli
 jax._src.random.fold_in = remove_fold_in
 jax.random.fold_in = remove_fold_in
-
-
-# Monkey patch remat to use identity instead of while loop
-def _zeros(c, xla_shape):
-    if xla_shape.is_array():
-        shape, dtype = xla_shape.dimensions(), xla_shape.numpy_dtype()
-        zero = pyval_to_ir_constant(c, np.array(0, dtype=dtype))
-        return xops.Broadcast(zero, shape)
-    else:
-        # It is a token
-        return xops.CreateToken(c)
-
-
-def _remat_using_while(ctx, in_nodes, name, call_jaxpr):
-    """Lower remat to a single iteration while loop."""
-    c = ctx.builder
-    # Dummy subc for getting subcomp shapes.
-    dummy_inputs = xops.Tuple(c, in_nodes)
-    dummy_subc = xc.XlaBuilder("remat_dummy_subcomputation")
-    dummy_input_op = parameter(dummy_subc,
-                               0,
-                               c.get_shape(dummy_inputs),
-                               replicated=[])
-    dummy_args = xla_destructure(dummy_subc, dummy_input_op)
-    dummy_ctx = ctx.replace(builder=dummy_subc,
-                            name_stack=extend_name_stack(
-                                ctx.name_stack, wrap_name(name, "remat")))
-    dummy_subcomp_outs = jaxpr_subcomp(dummy_ctx, call_jaxpr, (), *dummy_args)
-    out_node_shapes = [dummy_subc.get_shape(o) for o in dummy_subcomp_outs]
-
-    i_init = xops.Constant(c, np.array(0, dtype=np.int32))
-    zeros_like_outs = [_zeros(c, s) for s in out_node_shapes]
-    inputs = xops.Tuple(c, [i_init] + list(in_nodes) + zeros_like_outs)
-
-    cond_subc = xc.XlaBuilder("remat_cond_subcomputation")
-    input_op = parameter(cond_subc, 0, c.get_shape(inputs), replicated=[])
-    i = xops.GetTupleElement(input_op, 0)
-    rng = xops.RngUniform(xops.Constant(cond_subc, np.array(1, dtype=np.int32)),
-                          xops.Constant(cond_subc, np.array(2, dtype=np.int32)),
-                          xc.Shape.array_shape(xc.PrimitiveType.S32, []))
-    cond_subc = cond_subc.build(xops.Lt(i, rng))
-
-    body_subc = xc.XlaBuilder("remat_body_subcomputation")
-    input_op = parameter(body_subc, 0, c.get_shape(inputs), replicated=[])
-    i, *args = xla_destructure(body_subc, input_op)[:len(in_nodes) + 1]
-    i_next = xops.Add(i, xops.Constant(body_subc, np.array(1, dtype=np.int32)))
-    body_ctx = ctx.replace(builder=body_subc,
-                           name_stack=extend_name_stack(
-                               ctx.name_stack, wrap_name(name, "remat")))
-    subcomp_outs = jaxpr_subcomp(body_ctx, call_jaxpr, (), *args)
-    out_nodes = [i_next] + args + list(subcomp_outs)
-    body_subc = body_subc.build(xops.Tuple(body_subc, out_nodes))
-    outs = xops.While(cond_subc, body_subc, inputs)
-    return xla_destructure(c, outs)[len(in_nodes) + 1:]
-
-
-def _remat_using_identity(ctx, in_nodes, name, call_jaxpr):
-    c = ctx.builder
-    args = xla_identity(c, "remat_begin", *in_nodes)
-    args = [xops.GetTupleElement(args, i) for i in range(len(in_nodes))]
-    body_ctx = ctx.replace(
-        name_stack=extend_name_stack(ctx.name_stack, wrap_name(name, "remat")))
-    outs = jaxpr_subcomp(body_ctx, call_jaxpr, (), *args)
-    # TODO: using an identity at the end can reduce little memory on 1 GPU,
-    # but there are still some bugs
-    # return xla_identity(c, op_type="remat_end", *outs)
-    return outs
-
-
-def _remat_translation_rule(ctx,
-                            avals_in,
-                            avals_out,
-                            *in_nodes,
-                            name,
-                            call_jaxpr,
-                            prevent_cse,
-                            differentiated,
-                            concrete,
-                            policy,
-                            device=None):
-    del device, concrete, policy  # Unused.
-    if differentiated and prevent_cse:
-        if global_config.remat_using_while:
-            return _remat_using_while(ctx, in_nodes, name, call_jaxpr)
-        else:
-            return _remat_using_identity(ctx, in_nodes, name, call_jaxpr)
-    else:
-        return jaxpr_subcomp(ctx, call_jaxpr, (), *in_nodes)
-
-
-for dict_val in _backend_specific_translations.values():
-    if pe.remat_call_p in dict_val:
-        del dict_val[pe.remat_call_p]
-register_translation(pe.remat_call_p, _remat_translation_rule)
 
 
 # Support using pickle on ShardingSpec
@@ -289,6 +192,10 @@ setattr(pxla.ShardingSpec, "__setstate__", sharding_spec_setstate)
 # Monkey patch tree map to disable some warnings
 jax._src.tree_util.tree_multimap = jax._src.tree_util.tree_map
 jax.tree_multimap = jax._src.tree_util.tree_map
+jax.tree_map = jax._src.tree_util.tree_map
+jax.tree_leaves = jax._src.tree_util.tree_leaves
+jax.tree_flatten = jax._src.tree_util.tree_flatten
+jax.tree_unflatten = jax._src.tree_util.tree_unflatten
 
 ########################################
 ##### Monkey patch Flax

@@ -10,8 +10,8 @@ from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax._src.util import partial, safe_map
 from jax._src import dispatch
 from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
-                      jaxpr_as_fun, new_jaxpr_eqn, gensym, named_call_p,
-                      ShapedArray, get_aval, raise_to_shaped)
+                      jaxpr_as_fun, gensym, named_call_p, ShapedArray, get_aval,
+                      raise_to_shaped)
 from jax.interpreters import pxla
 from jax.interpreters.partial_eval import remat_call_p
 import numpy as np
@@ -30,7 +30,7 @@ from alpa.global_env import global_config
 from alpa.util import (OrderedSet, clone_jaxpr, get_compile_options,
                        jaxpr_to_hlo_module, setup_computation_alias,
                        compile_dummy_zero_constant, get_var_mapping,
-                       undefined_sharding_spec_proto)
+                       undefined_sharding_spec_proto, new_jaxpr_eqn)
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
@@ -145,7 +145,8 @@ class XlaPipelineComputation(PipelineComputation):
         """
         closed_jaxpr = jax_pipeline_computation.closed_jaxpr()
         name = f"pipeline_computation_{jax_pipeline_computation.name}"
-        hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, None)
+        donated_invars = (False,) * len(jax_pipeline_computation.invars)
+        hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, donated_invars)
 
         return cls(
             name=jax_pipeline_computation.name,
@@ -157,8 +158,7 @@ class XlaPipelineComputation(PipelineComputation):
     def get_runnable(self, mesh=None):
         """Return a callable of the pipeline computation."""
         out_avals = [var.aval for var in self.outvars]
-        tuple_args = len(
-            self.invars) > 100  # pass long arg lists as tuple for TPU
+        tuple_args = False
         backend = xb.get_backend("gpu")
         device = backend.get_default_device_assignment(1)[0]
         options = get_compile_options(
@@ -173,8 +173,11 @@ class XlaPipelineComputation(PipelineComputation):
         xla_computation = xc.XlaComputation(
             self.hlo_module.as_serialized_hlo_module_proto())
         compiled = backend.compile(xla_computation, compile_options=options)
-        result_handlers = map(partial(dispatch.aval_to_result_handler, device),
-                              out_avals)
+        # pylint: disable=protected-access
+        result_handler = dispatch._result_handler(backend, device, [(
+            aval,
+            True,
+        ) for aval in out_avals])
         buffer_counts = (None if len(out_avals) == 1 else [
             dispatch.aval_to_num_buffers(aval) for aval in out_avals
         ])
@@ -183,8 +186,11 @@ class XlaPipelineComputation(PipelineComputation):
             dispatch._execute_compiled,  # pylint: disable=protected-access
             self.name,
             compiled,
+            None,
             buffer_counts,
-            result_handlers,
+            result_handler,
+            False,
+            (),
             kept_var_idx)
 
     def get_hlo_text(self):
@@ -677,7 +683,7 @@ def _offload_remat_add_eqns(stage: JaxPipelineComputation, offloaded_eqns,
             for var in eqn.outvars
         ]
         mapped_eqn = new_jaxpr_eqn(eqn.invars, mapped_outvars, eqn.primitive,
-                                   eqn.params, eqn.source_info)
+                                   eqn.params, eqn.effects, eqn.source_info)
         new_eqns.insert(1, mapped_eqn)
     new_stage = JaxPipelineComputation(stage.name, new_invars, stage.outvars,
                                        new_eqns)
@@ -943,7 +949,7 @@ def rewrite_hook(eqns, gensym_fn):
                 e = eqns[i]
                 eqns[i] = new_jaxpr_eqn(
                     [get_var_mapping(rewrite_dict, v) for v in e.invars],
-                    e.outvars, e.primitive, e.params)
+                    e.outvars, e.primitive, e.params, e.effects)
             return new_hook
     return None
 
@@ -952,10 +958,8 @@ def _wrap_with_call(closed_jaxpr: ClosedJaxpr, invars, outvars, name):
     new_invars = closed_jaxpr.jaxpr.invars + closed_jaxpr.jaxpr.constvars
     jaxpr = clone_jaxpr(closed_jaxpr, new_invars, constvars=[]).jaxpr
     params = dict(name=name, call_jaxpr=jaxpr)
-    return new_jaxpr_eqn(invars + closed_jaxpr.consts,
-                         outvars,
-                         named_call_p,
-                         params=params)
+    return new_jaxpr_eqn(invars + closed_jaxpr.consts, outvars, named_call_p,
+                         params)
 
 
 def _rearrange_in_out_for_donation(invars, outvars, donation_map):

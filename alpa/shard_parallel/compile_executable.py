@@ -7,8 +7,8 @@ import numpy as np
 from jax import linear_util as lu
 from jax._src import traceback_util
 from jax._src.lib import xla_extension as xe
-from jax.core import (Jaxpr, ClosedJaxpr, Literal, new_jaxpr_eqn, gensym,
-                      get_aval, raise_to_shaped, AbstractValue)
+from jax.core import (Jaxpr, ClosedJaxpr, Literal, gensym, get_aval,
+                      raise_to_shaped, AbstractValue)
 from jax.interpreters import partial_eval as pe
 from jax.lax import add_p, div_p
 from jax.tree_util import PyTreeDef
@@ -21,7 +21,7 @@ from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                run_spmd_partitioner_pass,
                                                AutoShardingOption)
 from alpa.util import (jaxpr_to_hlo_module, trace_jaxpr_with_micro_batch,
-                       setup_computation_alias, OrderedSet)
+                       setup_computation_alias, OrderedSet, new_jaxpr_eqn)
 
 traceback_util.register_exclusion(__file__)
 
@@ -291,7 +291,7 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
         new_jaxpr_eqn(new_invars, old_invars, pipeline_p, {
             "mark_type": "start",
             "name": "accumulate_grad"
-        }, None))
+        }))
     global_invar_substitute.update(zip(old_invars, new_invars))
     accumulate_grad_invars = new_invars
 
@@ -302,7 +302,7 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     for i in range(len(out_grad_vars)):
         combined_eqns.append(
             new_jaxpr_eqn([old_grad_vars[i], out_grad_vars[i]],
-                          [new_grad_vars[i]], add_p, {}, None))
+                          [new_grad_vars[i]], add_p, {}))
 
     # Wrap all outvars of accumulate_grad
     inter_grad_vars = [gensym_func(x.aval) for x in out_grad_vars]
@@ -310,7 +310,7 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
         new_jaxpr_eqn(new_grad_vars, inter_grad_vars, pipeline_p, {
             "mark_type": "end",
             "name": "accumulate_grad"
-        }, None))
+        }))
 
     # Wrap all invars of apply_grad
     in_grad_vars = marker_eqn.outvars
@@ -334,7 +334,7 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
         new_jaxpr_eqn(new_invars, old_invars, pipeline_p, {
             "mark_type": "start",
             "name": APPLY_GRAD_MARKER_SUFFIX
-        }, None))
+        }))
 
     # Append eqns for gradient reduction
     for i in range(num_grads):
@@ -344,7 +344,7 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
             new_jaxpr_eqn([
                 tmp_var,
                 Literal(literal_val, raise_to_shaped(get_aval(literal_val))),
-            ], [tmp_var], div_p, {}, None))
+            ], [tmp_var], div_p, {}))
     # TODO(lmzheng): This breaks the SSA form of the combined_eqns
     # But I find jax can convert this non-SSA jaxpr to HLO correctly,
     # so I leave this issue as todo. To fix this, we should substitute
@@ -366,7 +366,7 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
         new_jaxpr_eqn(old_outvars, new_outvars, pipeline_p, {
             "mark_type": "end",
             "name": APPLY_GRAD_MARKER_SUFFIX
-        }, None))
+        }))
 
     # Make the new jaxpr
     combined_jaxpr = ClosedJaxpr(

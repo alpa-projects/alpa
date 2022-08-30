@@ -3,63 +3,23 @@ from typing import List, Set
 
 from jax import lax
 from jax.lib import xla_client as xc, xla_bridge as xb
-from jax.core import JaxprEqn, Var, CallPrimitive, DropVar, Literal
-from jax.interpreters import xla
-from alpa.util import OrderedSet
-
-
-def call_to_xla_computation(eqn: JaxprEqn):
-    """Convert a jaxpr equation to a XLA computation for FLOP analysis.
-
-    Reference code: jax/jax/interpreters/xla.py::jaxpr_subcomp
-    """
-    prim = eqn.primitive
-    backend = xb.get_backend("gpu")
-
-    c = xc.XlaBuilder(f"primitive_computation_{prim.name}")
-
-    def aval(v):
-        if isinstance(v, Literal):
-            return xla.abstractify(v.val)
-        else:
-            return v.aval
-
-    op_metadata = xla.make_op_metadata(prim,
-                                       eqn.params,
-                                       source_info=eqn.source_info)
-    c.set_op_metadata(op_metadata)
-    in_nodes, _ = xla._xla_callable_args(  # pylint: disable=protected-access
-        c, list(map(lambda x: x.aval, eqn.invars)),
-        len(eqn.invars) > 100)
-    axis_env = xla.AxisEnv(1, (), ())
-    ctx = xla.TranslationContext(c, backend.platform, axis_env, prim.name)
-    rule = xla._translations[eqn.primitive]  # pylint: disable=protected-access
-    ans = rule(ctx, list(map(aval, eqn.invars)), list(map(aval, eqn.outvars)),
-               *in_nodes, **eqn.params)
-    c.clear_op_metadata()
-
-    try:
-        ans = xc.ops.Tuple(c, ans)
-        return c.build(ans)
-    except RuntimeError as e:
-        msg = (
-            " ".join(map(str, e.args)) + "\n"
-            "This is a bug in JAX's shape-checking rules; please report it!\n"
-            "https://github.com/google/jax/issues\n")
-        raise RuntimeError(msg) from e
+from jax.core import JaxprEqn, Var, CallPrimitive, DropVar, Literal, Jaxpr, ClosedJaxpr
+from alpa.util import OrderedSet, jaxpr_to_hlo_module
 
 
 def eqn_flops(eqn: JaxprEqn) -> float:
     """Get the FLOP of a jaxpr equation."""
-    if eqn.primitive in xla._translations:  # pylint: disable=protected-access
-        xla_computation = call_to_xla_computation(eqn)
-    else:
-        xla_computation = xla.primitive_subcomputation(
-            "gpu", xla.AxisEnv(1, (), ()), eqn.primitive,
-            *map(lambda x: x.aval, eqn.invars), **eqn.params)
-    hlo_module = xla_computation.as_hlo_module()
+    jaxpr = Jaxpr([], eqn.invars, eqn.outvars, [eqn])
+    closed_jaxpr = ClosedJaxpr(jaxpr, [])
+    backend = xb.get_backend("gpu")
+    if any(isinstance(x, Literal) for x in eqn.invars):
+        # A temporary workaround
+        return 0
+    hlo_module = jaxpr_to_hlo_module("tmp", closed_jaxpr, [
+        False,
+    ] * len(eqn.invars), backend)
     properties = xc._xla.hlo_module_cost_analysis(  # pylint: disable=protected-access
-        xb.get_backend("gpu"), hlo_module)
+        backend, hlo_module)
     return properties["flops"] if "flops" in properties else 0.0
 
 

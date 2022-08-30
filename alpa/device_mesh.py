@@ -1136,8 +1136,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def delete_remote_buffers(self, ary_refs: List["RemoteArrayRef"]):
         """Delete remote buffers."""
-        if (self.workers is None or not ray or not ray_worker or
-                not ray.is_initialized()):
+        if self.workers is None or ray is None or ray_worker is None:
             return
 
         # Put delete requests into a buffer
@@ -1149,10 +1148,13 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         if (self.to_delete_remote_ref_ct >
                 global_config.delete_remote_arrays_threshold):
             to_delete_remote_refs = np.array(self.to_delete_remote_refs)
-            for host_id in range(self.num_hosts):
-                self.workers[host_id].delete_buffers.remote(
-                    to_delete_remote_refs)
-                self.to_delete_remote_refs = []
+            try:
+                for host_id in range(self.num_hosts):
+                    self.workers[host_id].delete_buffers.remote(
+                        to_delete_remote_refs)
+            except AttributeError:
+                pass
+            self.to_delete_remote_refs = []
             self.to_delete_remote_ref_ct = 0
 
     def block_until_ready_remote_buffers(self,
@@ -1257,11 +1259,14 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def delete_remote_executable(self, exec_uuid: int):
         """Delete remote worker executables of a driver executable."""
-        if ray is None or self.workers is None or not ray.is_initialized():
+        if self.workers is None or ray is None or ray_worker is None:
             return
 
-        for w in self.workers:
-            w.delete_executable.remote(exec_uuid)
+        try:
+            for w in self.workers:
+                w.delete_executable.remote(exec_uuid)
+        except AttributeError:
+            pass
 
     def set_runtime_random_seed(self, seed: int):
         for w in self.workers:

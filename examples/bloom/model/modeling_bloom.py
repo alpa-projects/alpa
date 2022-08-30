@@ -16,7 +16,7 @@
 
 import math
 from functools import partial
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple, Dict, Sequence
 
 import dataclasses
 from dataclasses import dataclass
@@ -42,7 +42,7 @@ from flax.traverse_util import flatten_dict, unflatten_dict
 from transformers.modeling_flax_utils import FlaxPreTrainedModel, append_call_sample_docstring
 from transformers.utils import add_start_docstrings, add_start_docstrings_to_model_forward, logging
 
-from .configuration_bloom import BloomConfig
+# from .configuration_bloom import BloomConfig
 
 import alpa
 from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
@@ -58,6 +58,26 @@ logger = logging.get_logger(__name__)
 _CHECKPOINT_FOR_DOC = "bigscience/bloom"
 _CONFIG_FOR_DOC = "BloomConfig"
 _TOKENIZER_FOR_DOC = "BloomTokenizerFast"
+
+@dataclass(frozen=True)
+class BloomConfig:
+    model_type: str = "bloom"
+    vocab_size: int = 250880
+    hidden_size: int = 64
+    n_head: int = 8
+    num_hidden_layers: int = 2
+    layer_norm_epsilon: float = 1e-5
+    initializer_range: float = 0.02
+    use_cache: bool = False
+    bos_token_id: int = 1
+    eos_token_id: int = 2
+    apply_residual_connection_post_layernorm: bool = False
+    hidden_dropout: float = 0.0
+    attention_dropout: float = 0.0
+    pretraining_tp: int = 1  # TP rank used when training with megatron
+    slow_but_exact: bool = False
+    tie_word_embeddings: bool = True
+    dtype: str = 'bfloat16'
 
 @flax.struct.dataclass
 class FlaxBaseModelOutput(ModelOutput):
@@ -91,7 +111,7 @@ class FlaxBaseModelOutputWithPastAndCrossAttentions(ModelOutput):
             If `past_key_values` is used only the last hidden-state of the sequences of shape `(batch_size, 1,
             hidden_size)` is output.
         past_key_values (`tuple(tuple(jnp.ndarray))`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
-            Tuple of `tuple(jnp.ndarray)` of length `config.n_layers`, with each tuple having 2 tensors of shape
+            Tuple of `tuple(jnp.ndarray)` of length `config.num_hidden_layerss`, with each tuple having 2 tensors of shape
             `(batch_size, num_heads, sequence_length, embed_size_per_head)`) and optionally if
             `config.is_encoder_decoder=True` 2 additional tensors of shape `(batch_size, num_heads,
             encoder_sequence_length, embed_size_per_head)`.
@@ -195,7 +215,6 @@ BLOOM_INPUTS_DOCSTRING = r"""
         return_dict (`bool`, *optional*):
             Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
 """
-
 
 def build_alibi_tensor_flax(attention_mask, n_head, dtype):
     def get_slopes(n):
@@ -832,12 +851,13 @@ append_call_sample_docstring(
     FlaxBloomForCausalLM, _TOKENIZER_FOR_DOC, _CHECKPOINT_FOR_DOC, FlaxCausalLMOutput, _CONFIG_FOR_DOC
 )
 
+
 def get_bloom_config(name, **kwargs):
     if name == "350M":
         config = BloomConfig(
             hidden_size = 1024,
             n_head = 16,
-            n_layer = 24,
+            num_hidden_layers = 24,
             pretraining_tp = 1,
             use_cache = True
         )
@@ -845,7 +865,7 @@ def get_bloom_config(name, **kwargs):
         config = BloomConfig(
             hidden_size = 1536,
             n_head = 16,
-            n_layer = 24,
+            num_hidden_layers = 24,
             pretraining_tp = 1,
             use_cache = True
         )
@@ -853,7 +873,7 @@ def get_bloom_config(name, **kwargs):
         config = BloomConfig(
             hidden_size = 2048,
             n_head = 16,
-            n_layer = 24,
+            num_hidden_layers = 24,
             pretraining_tp = 2,
             use_cache = True
         )
@@ -861,7 +881,7 @@ def get_bloom_config(name, **kwargs):
         config = BloomConfig(
             hidden_size = 2560,
             n_head = 32,
-            n_layer = 30,
+            num_hidden_layers = 30,
             pretraining_tp = 4,
             use_cache = True
         )
@@ -869,7 +889,7 @@ def get_bloom_config(name, **kwargs):
         config = BloomConfig(
             hidden_size = 4096,
             n_head = 32,
-            n_layer = 30,
+            num_hidden_layers = 30,
             pretraining_tp = 4,
             use_cache = True
         )
@@ -877,7 +897,7 @@ def get_bloom_config(name, **kwargs):
         config = BloomConfig(
             hidden_size = 14336,
             n_head = 112,
-            n_layer = 70,
+            num_hidden_layers = 70,
             pretraining_tp = 4,
             use_cache = True
         )
@@ -886,7 +906,6 @@ def get_bloom_config(name, **kwargs):
 
     return dataclasses.replace(config, **kwargs)
 
-# From this point forward, need further check
 def init_model_aval(config):
     """Initialize model with parameters with abstract values (shape-only arrays)."""
     model = FlaxBloomForCausalLMModule(config, dtype=config.dtype)
@@ -902,16 +921,16 @@ def init_model_aval(config):
 def init_cache_aval(config, batch_size):
     """Initialize cache with abstract values (shape-only arrays)."""
     dtype = config.dtype
-    head_dim = config.decoder_embed_dim // config.decoder_attention_heads
+    head_dim = config.hidden_size
 
     all_cache = []
-    for _ in range(config.decoder_layers):
+    for _ in range(config.num_hidden_layers):
         layer_cache = (
-            jax.core.ShapedArray((batch_size, config.max_target_positions,
-                                  config.decoder_attention_heads, head_dim),
+            jax.core.ShapedArray((batch_size, 2048,
+                                  config.n_head, head_dim),
                                  dtype),
-            jax.core.ShapedArray((batch_size, config.max_target_positions,
-                                  config.decoder_attention_heads, head_dim),
+            jax.core.ShapedArray((batch_size, 2048,
+                                  config.n_head, head_dim),
                                  dtype),
             jax.core.ShapedArray((batch_size,), jnp.int32),
         )
@@ -921,23 +940,23 @@ def init_cache_aval(config, batch_size):
 
 def init_mask_aval(config, batch_size):
     """Initialize attention mask with abstract values (shape-only arrays)."""
-    mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_target_positions), dtype=np.int8)
+    mask = jax.core.ShapedArray((batch_size, 1, 1, 2048), dtype=np.int8)
     return mask
 
 
 def init_cache_np(config, batch_size):
     """Init cache with numpy arrays."""
     np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
-    head_dim = config.decoder_embed_dim // config.decoder_attention_heads
+    head_dim = config.hidden_size
 
     all_cache = []
-    for i in range(config.decoder_layers):
+    for i in range(config.n_layer):
         layer_cache = (
-            np.zeros((batch_size, config.max_target_positions,
-                      config.decoder_attention_heads, head_dim),
+            np.zeros((batch_size, 2048,
+                      config.n_head, head_dim),
                      dtype=np_dtype),
-            np.zeros((batch_size, config.max_target_positions,
-                      config.decoder_attention_heads, head_dim),
+            np.zeros((batch_size, 2048,
+                      config.n_head, head_dim),
                      dtype=np_dtype),
             np.zeros((batch_size,), np.int32),
         )
@@ -987,44 +1006,68 @@ def load_params_np(params, path, config, dummy=False):
 
     params = params.unfreeze()
     load_param("params.transformer.ln_f.scale",
-               load_array("decoder.ln_f.weight"))
+               load_array("ln_f.weight"))
     load_param("params.transformer.ln_f.bias",
-               load_array("decoder.ln_f.bias"))
+               load_array("ln_f.bias"))
     load_param("params.transformer.word_embeddings.embedding",
-               load_array("decoder.embed_tokens.weight"))
+               load_array("word_embeddings.weight"))
     load_param("params.transformer.word_embeddings_layernorm.scale",
-                load_array("decoder.word_embeddings_layernorm.weight"))
+                load_array("word_embeddings_layernorm.weight"))
     load_param("params.transformer.word_embeddings_layernorm.bias",
-                load_array("decoder.word_embeddings_layernorm.bias"))
-    for i in tqdm(range(config.decoder_layers)):
+                load_array("word_embeddings_layernorm.bias"))
+    for i in tqdm(range(config.num_hidden_layers)):
         param_prefix = f"params.transformer.h.{i}."
-        load_prefix = f"decoder.layers.{i}."
+        load_prefix = f"h.{i}."
         # Attention weights
-        load_param(param_prefix + "attention.query_key_value.kernel",
-                   load_array(load_prefix + "self_attention.query_key_value.weight"))
-        load_param(param_prefix + "attention.query_key_value.bias",
-                   load_array(load_prefix + "self_attention.query_key_value.bias"))
-        load_param(param_prefix + "attention.input_layernorm.scale",
-                   load_array(load_prefix + "self_attention.input_layernorm.weight"))
-        load_param(param_prefix + "attention.input_layernorm.bias",
-                   load_array(load_prefix + "self_attention.input_layernorm.bias"))
-        load_param(param_prefix + "attention.dense.bias",
+        load_param(param_prefix + "self_attention.query_key_value.kernel",
+                   load_array(load_prefix + "self_attention.query_key_value.weight").transpose())
+        load_param(param_prefix + "self_attention.query_key_value.bias",
+                   load_array(load_prefix + "self_attention.query_key_value.bias").transpose())
+        load_param(param_prefix + "input_layernorm.scale",
+                   load_array(load_prefix + "input_layernorm.weight"))
+        load_param(param_prefix + "input_layernorm.bias",
+                   load_array(load_prefix + "input_layernorm.bias"))
+        load_param(param_prefix + "self_attention.dense.bias",
                    load_array(load_prefix + "self_attention.dense.bias"))
-        load_param(param_prefix + "attention.post_attention_layernorm.scale",
+        load_param(param_prefix + "post_attention_layernorm.scale",
                    load_array(load_prefix + "post_attention_layernorm.weight"))
-        load_param(param_prefix + "attention.post_attention_layernorm.bias",
+        load_param(param_prefix + "post_attention_layernorm.bias",
                    load_array(load_prefix + "post_attention_layernorm.bias"))
         # MLP weights
         load_param(param_prefix + "mlp.dense_h_to_4h.kernel",
-                   load_array(load_prefix + "dense_h_to_4h.weight"))
+                   np.transpose(load_array(load_prefix + "mlp.dense_h_to_4h.weight")))
         load_param(param_prefix + "mlp.dense_h_to_4h.bias",
-                   np.transpose(load_array(load_prefix + "dense_h_to_4h.bias")))
+                   np.transpose(load_array(load_prefix + "mlp.dense_h_to_4h.bias")))
         load_param(param_prefix + "mlp.dense_4h_to_h.kernel",
-                   load_array(load_prefix + "dense_4h_to_h.weight"))
+                   np.transpose(load_array(load_prefix + "mlp.dense_4h_to_h.weight")))
         load_param(param_prefix + "mlp.dense_4h_to_h.bias",
-                   np.transpose(load_array(load_prefix + "dense_4h_to_h.bias")))
+                   np.transpose(load_array(load_prefix + "mlp.dense_4h_to_h.bias")))
 
     return flax.core.freeze(params)
+
+def get_jax_executable(config: BloomConfig,
+                    #    encoder_seq_lengths: Sequence[int],
+                       output_attentions: bool = False,
+                       output_hidden_states:bool = False):
+    """Get a single-gpu executable."""
+    model, params = init_model_aval(config)
+
+    @jax.jit
+    def inference_step(params, batch):
+        output = model.apply(params,
+                             batch["input_ids"],
+                             batch["position_ids"],
+                             attention_cache=batch["cache"],
+                             attention_mask=batch["mask"],
+                             output_attentions=output_attentions,
+                             output_hidden_states=output_hidden_states)
+        return output
+
+    # executables = {}
+    # for length in encoder_seq_lengths:
+    #     executables[length] = inference_step
+    # return executables, params
+    return inference_step, params
 
 def load_params_dis_array(path, executable, params_aval, config, dummy=False):
     """Load parameters with distributed arrays."""

@@ -1,0 +1,565 @@
+from collections import defaultdict
+import os
+from typing import Sequence, Any, Optional
+from functools import partial
+
+import alpa
+from alpa.device_mesh import DistributedArray
+from alpa.mesh_executable import get_index_select_mesh_executable
+import jax
+from jax import xla, jit
+from jax.core import Primitive
+from jax import ShapeDtypeStruct, ShapedArray
+from jax.interpreters import pxla
+from jax.interpreters.pxla import NoSharding, Replicated, ShardingSpec
+import jax.numpy as jnp
+import numpy as np
+import torch
+from transformers import AutoTokenizer
+from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
+
+from modeling_bloom import get_bloom_config, get_pipeshard_executable,load_params_dis_array,init_cache_dis_array, load_params_np,init_cache_np, get_jax_executable
+
+@dataclass
+class TransformerModelConfig:
+    # hidden size
+    H: int = 768
+    # number of layers
+    L: int = 12
+    # number of attention heads
+    n_head: int = 12
+    seq_len: int = 64
+    vocab_size: int = 50272
+
+@dataclass
+class InferenceFuncOutput(ModelOutput):
+    logits: Any = None
+    past_key_values: Any = None
+    hidden_states: Any = None
+    attentions: Any = None
+
+
+@dataclass
+class InferenceFuncConfig:
+    """Implements a minimal config class for using huggingface's generator.
+    Note: these parameters might be overwritten by model.generate(**kwargs).
+    """
+    bos_token_id: int = 0
+    num_beams: int = 1
+    num_beam_groups: int = 1
+    length_penalty: float = 1.0
+    repetition_penalty: float = 1.0
+    early_stopping: bool = False
+    num_return_sequences: int = 1
+    pad_token_id: int = 1
+    eos_token_id: int = 2
+    output_scores: bool = False
+    output_attentions: bool = False
+    output_hidden_states: bool = False
+    return_dict_in_generate: bool = False
+    is_encoder_decoder: bool = False
+    min_length: bool = 0
+    no_repeat_ngram_size: int = 0
+    encoder_no_repeat_ngram_size: int = 0
+    bad_words_ids: Sequence = None
+    diversity_penalty: float = 0.0
+    forced_bos_token_id: int = None
+    forced_eos_token_id: int = None
+    remove_invalid_values: bool = False
+    exponential_decay_length_penalty: float = None
+    do_sample: bool = False
+    top_k: int = 50
+    top_p: int = 1.0
+    typical_p: int = 1.0
+    temperature: float = 1.0
+
+
+class WrappedInferenceFunc(GenerationMixin):
+    """
+    Wrap an inference func as a GenerationMixin.
+    This class implements the minimal interface for using huggingface's generator.
+    """
+
+    def __init__(self, inference_func, config, executable, transformer_config):
+        self.inference_func = inference_func
+        self.config = config
+        self.main_input_name = "input_ids"
+        self.executable = executable  # An alpa executable
+        self.transformer_config = transformer_config
+        self.index_select_executables = {}
+        self.cache_location = None
+
+    def forward(self, attention_mask):
+        # This function is never used
+        raise NotImplementedError()
+
+    def prepare_inputs_for_generation(self, input_ids, attention_mask,
+                                      past=None, **kwargs):
+        # If past is defined, it means we are in the decoding stage,
+        # so we only process the last token
+        if past:
+            input_ids = input_ids[:, -1].unsqueeze(-1)
+
+        ret = {"input_ids": input_ids, "past_key_values": past,
+               "attention_mask": attention_mask}
+        return ret
+
+    def __call__(self,
+                 input_ids,
+                 past_key_values=None,
+                 output_attentions=None,
+                 output_hidden_states=None,
+                 attention_mask=None,
+                 return_dict=None):
+        ret = self.inference_func(input_ids,
+                                  past_key_values,
+                                  attention_mask=attention_mask,
+                                  output_hidden_states=output_hidden_states,
+                                  output_attentions=output_attentions)
+        return ret
+
+    def _reorder_cache(self, past, beam_idx):
+        # Reorder cache for beam search
+
+        # PyTorch
+        if hasattr(past[0][0], "index_select"):
+            return tuple(
+                tuple(
+                    past_state.index_select(0, beam_idx)
+                    for past_state in layer_past)
+                for layer_past in past)
+
+        # Jax (single-device)
+        if not isinstance(past[0][0], DistributedArray):
+            beam_idx = jnp.array(beam_idx.to("cpu").numpy())
+            return tuple(
+                tuple(
+                    jax_index_select(past_state, beam_idx, 0)
+                    for past_state in layer_past)
+                for layer_past in past)
+
+        # Alpa
+        mesh_groups = defaultdict(list)
+        if self.cache_location is None:
+            self.cache_location = []
+            for layer_past in past:
+                tmp_loc = []
+                for past_state in layer_past:
+                    assert isinstance(past_state, DistributedArray)
+                    mesh = past_state.device_mesh
+                    mesh_groups[mesh].append(past_state)
+                    tmp_loc.append((mesh, len(mesh_groups[mesh]) - 1))
+                self.cache_location.append(tmp_loc)
+        else:
+            for layer_past in past:
+                for past_state in layer_past:
+                    assert isinstance(past_state, DistributedArray)
+                    mesh = past_state.device_mesh
+                    mesh_groups[mesh].append(past_state)
+
+        beam_idx = beam_idx.to("cpu").numpy()
+
+        def grouped_reorder_cache(arys, device_mesh):
+            if len(arys) == 0:
+                return []
+            if device_mesh in self.index_select_executables:
+                executable = self.index_select_executables[device_mesh]
+            else:
+                dim = 0
+                avals = [ary.aval for ary in arys]
+                specs = [ary.sharding_spec for ary in arys]
+                executable = get_index_select_mesh_executable(
+                    avals, specs, beam_idx, dim, device_mesh,
+                    [False] * len(avals))
+                self.index_select_executables[device_mesh] = executable
+            ret = executable(*arys, beam_idx)
+            for v in ret:
+                v.skip_shard_args_check = True
+            return ret
+
+        results = {
+            mesh: grouped_reorder_cache(mesh_groups[mesh], mesh)
+            for mesh in mesh_groups
+        }
+
+        return tuple(
+            tuple(results[mesh][loc]
+                  for mesh, loc in layer_loc)
+            for layer_loc in self.cache_location)
+
+# class AlpaInferenceFunc(WrappedInferenceFunc):
+
+#     def __init__(self, *args, max_target_positions):
+#         super().__init__(*args)
+#         self._max_target_positions = max_target_positions
+
+#     def _process_attention_mask(self, attention_mask):
+#         if isinstance(attention_mask, torch.Tensor):
+#             attention_mask = attention_mask.cpu().numpy()
+#         batch_size = attention_mask.shape[0]
+#         ret_mask = np.zeros((batch_size, self._max_target_positions),
+#                                   dtype=np.bool)
+#         ret_mask[:, :attention_mask.shape[-1]] = attention_mask
+#         ret_mask = ret_mask[:, np.newaxis, np.newaxis, :]
+#         return ret_mask
+
+def get_model(model_name: str,
+              # Weights
+              path: str,
+              dummy: bool = False,
+              # Batch size and seq length
+              batch_size: int = 1,
+              num_micro_batches: int = 1,
+              max_target_positions: int = 64,
+              encoder_chunk_sizes: Sequence[int] = (1, 64),
+              num_pp_stages: Optional[int] = None,
+              # Model parameters
+              autoregressive: bool = True,
+              dtype=jnp.float16,
+              torch_device: str = "cpu",
+              # Shared arguments with model.generate
+              do_sample: bool = False,
+              num_beams: int = 1,
+              num_return_sequences: int = 1,
+              return_dict_in_generate: bool = True,
+              output_attentions: bool = False,
+              output_hidden_states: bool = False):
+    """Get a model that is compatible with HuggingFace's generation API.
+    Args:
+        model_name: "facebook/opt-", or "alpa/opt-".
+        path: The path to opt weights.
+        dummy: Use dummy weights for faster debugging.
+        batch_size: The batch size.
+        num_micro_batches: The number of micro batch sizs in pipeline
+          parallelism.
+        max_target_positions: The max sequence length.
+        encoder_chunk_sizes: Compile mutliple executables with different
+          chunk sizes. These executables are used to encoding prompts
+          chunk by chunk.
+        num_pp_stages: The number of pipeline parallelism stages.
+        autoregressive: Whether to run the model for autoregressive generation.
+        dtype: The type of parameters.
+        torch_device: "cpu" or "gpu". This only controls the device used
+          by pytorch. Alpa always runs on GPU.
+        other parameters: shared with huggingface's model.generate API.
+    """
+    # if not model_name.startswith("alpa") and not autoregressive:
+    #     raise NotImplementedError(
+    #         f"Cannot support {model_name} in forward-only mode.")
+    # if autoregressive and num_micro_batches > 1:
+    #     raise NotImplementedError(
+    #         f"Cannot support num_micro_batches > 1 in autoregressive mode.")
+
+    # if "facebook/opt" in model_name:
+    #     return get_hf_opt_model(model_name, torch_device, num_beams)
+
+    # assert ("jax/opt" in model_name or "alpa/opt" in model_name)
+    # assert return_dict_in_generate
+
+    # if autoregressive and 1 not in encoder_chunk_sizes:
+    #     encoder_chunk_sizes += [1]
+    # encoder_chunk_sizes = list(set(encoder_chunk_sizes))
+    # encoder_chunk_sizes.sort()
+
+    # # weight path
+    # name = model_name.split("-")[1].upper()
+    # path = os.path.abspath(os.path.expanduser(os.path.join(path, f"{name}_np")))
+    # if not dummy:
+    #     # Check the existence of weights.
+    #     if not os.path.exists(path):
+    #         if name in ["175B"]:
+    #             raise ValueError(f"Cannot find cached weights under '{path}'. "
+    #                               "Please follow the instructions to download "
+    #                               "and convert weights manually. ")
+    #         print(f"Cannot find cached weights under '{path}'.")
+    #         download_weights(model_name.split("/")[1], path)
+
+    #     assert os.path.exists(path), f"No such file or directory: '{path}'"
+    #     embed_weight = os.path.join(path, "decoder.embed_tokens.weight")
+    #     assert os.path.exists(embed_weight), f"No such file or directory: '{embed_weight}'"
+
+    # figure out the actual input size
+    if do_sample:
+        expand_size = batch_size * num_beams * num_return_sequences
+    else:
+        if num_return_sequences > num_beams:
+            raise ValueError(
+                "`num_return_sequences` has to be smaller or equal to `num_beams`."
+            )
+        expand_size = batch_size * num_beams
+
+    # if "jax/opt" in model_name:
+    # config = get_bloom_config(name,
+    #                         num_pp_stages=None,
+    #                         mark_boundary=False,
+    #                         dtype=dtype,
+    #                         max_target_positions=max_target_positions)
+    config = get_bloom_config('350M')
+    transformer_config = TransformerModelConfig(
+        H=config.hidden_size,
+        L=config.num_hidden_layers,
+        n_head=config.n_head,
+        seq_len=64,
+        vocab_size=config.vocab_size)
+
+    executables, params_aval = get_jax_executable(
+        config, encoder_chunk_sizes,
+        output_attentions=output_attentions,
+        output_hidden_states=output_hidden_states)
+
+    # load params
+    # params = load_params_np(params_aval, path, config, dummy)
+    init_cache = init_cache_np(config, batch_size=expand_size)
+    params = load_params_np(params_aval, "/home/x/Desktop/dedong_2022_summer/softwares/350M_Bloom_np", config, dummy)
+    params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
+    # else:
+    #     assert "alpa/opt" in model_name
+    #     assert is_power_of_two(num_beams), "num_beams must be a power of two"
+    #     alpa.init()
+    #     alpa.global_config.xla_client_mem_fraction = 0.88
+
+    #     print(
+    #         f"Load model {model_name} ... (This can take several minutes for very large models)"
+    #     )
+
+    #     if num_pp_stages is None:
+    #         num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
+    #         num_pp_stages = min(num_pp_stages,
+    #                             alpa.get_global_cluster().num_devices)
+    #     config = get_opt_config(name,
+    #                             num_pp_stages=num_pp_stages,
+    #                             dtype=dtype,
+    #                             max_target_positions=max_target_positions)
+    #     transformer_config = TransformerModelConfig(
+    #         H=config.decoder_embed_dim,
+    #         L=config.decoder_layers,
+    #         n_head=config.decoder_attention_heads,
+    #         seq_len=config.max_target_positions,
+    #         vocab_size=config.vocab_size)
+
+    #     print(f" - Compile executables for encoder_chunk_sizes={encoder_chunk_sizes}. ", end="", flush=True)
+    #     tic = time.time()
+    #     executables, params_aval = get_pipeshard_executable(
+    #         config,
+    #         batch_size=expand_size,
+    #         num_micro_batches=num_micro_batches,
+    #         encoder_chunk_sizes=encoder_chunk_sizes,
+    #         output_attentions=output_attentions,
+    #         output_hidden_states=output_hidden_states,
+    #         autoregressive=autoregressive)
+    #     print(f"elapsed: {time.time() - tic:.2f} second.")
+
+    #     # Load params
+    #     print(" - Load parameters. ", end="", flush=True)
+    #     tic = time.time()
+    #     params = load_multi_executable_params_dis_array(
+    #         path, executables, params_aval, config, dummy)
+
+    #     if autoregressive:
+    #         init_cache = init_multi_executable_cache_dis_array(executables,
+    #                                                            config,
+    #                                                            expand_size,
+    #                                                            dummy=dummy)
+    #         set_skip_shard_args_check(init_cache)
+
+    #     for executable in executables.values():
+    #         executable.sync()
+    #     print(f"elapsed: {time.time() - tic:.2f} second.")
+
+    #     # return executable directly if not autoregressive
+    #     if not autoregressive:
+    #         assert len(executables) == 1
+    #         return list(
+    #             executables.values())[0], params, transformer_config
+
+    num_valid_tokens = None
+    last_token = None
+    step_ct = 0
+
+    def inference_func(input_ids,
+                       past_key_values,
+                       attention_mask,
+                       output_attentions,
+                       output_hidden_states):
+        assert input_ids.shape[0] == expand_size, (
+            f"Expect batch size = {expand_size}, but got {input_ids.shape[0]}")
+        input_ids = input_ids.cpu().numpy()
+        attention_mask = attention_mask.cpu().numpy()
+
+        def run_one(_executable, _input_ids, _past_key_values, _attention_mask, num_internal_pad):
+            nonlocal num_valid_tokens
+            nonlocal last_token
+            nonlocal step_ct
+
+            if _past_key_values is None:
+                # Init all states
+                _past_key_values = init_cache
+                num_valid_tokens = np.zeros((expand_size, 1), dtype=np.int32)
+                last_token = np.zeros((expand_size, 1), dtype=np.int32)
+                step_ct = 0
+
+            if _input_ids.shape[1] == 1:
+                # A fast path for step_len = 1
+                cum_sum = _attention_mask[:, -1:]
+                num_valid_tokens = num_valid_tokens + cum_sum
+                position_ids_step = num_valid_tokens + config.pad
+                last_token = np.where(cum_sum, _input_ids, last_token)
+                _input_ids = last_token
+            else:
+                # A general path that works for any step_len
+                cumsum = np.cumsum(_attention_mask[:,step_ct:], axis=1, dtype=np.int32)
+                position_ids_step = num_valid_tokens + cumsum + config.pad
+                num_valid_tokens_step = cumsum[:,-1:]
+                num_valid_tokens = num_valid_tokens + num_valid_tokens_step
+
+                last_token = np.where(num_valid_tokens_step > 0,
+                     np.take_along_axis(_input_ids, num_valid_tokens_step - 1, axis=1),
+                     last_token)
+                _input_ids = np.where(_attention_mask[:, step_ct:], _input_ids, last_token)
+
+            print(_attention_mask.shape)
+            # Use value "2" as a special mask to represent internal padding
+            if num_internal_pad:
+                _attention_mask[:,-num_internal_pad:] = 2
+            _attention_mask = pad_attention_mask(_attention_mask, max_target_positions)
+
+            print(len(_past_key_values))
+            output = _executable(
+                params, {
+                    "input_ids": _input_ids,
+                    "position_ids": position_ids_step,
+                    "cache": _past_key_values,
+                    "mask": _attention_mask,
+                })
+
+            step_ct += _input_ids.shape[1] - num_internal_pad
+            set_skip_shard_args_check(output.attention_cache)
+
+            return output
+
+        seq_len = input_ids.shape[1]
+        if seq_len == 1:
+            # A fast path for seq_len = 1
+            output = run_one(executables[1], input_ids, past_key_values, attention_mask, 0)
+        else:
+            # A general path that works for all seq_len
+            i = 0
+            while i < seq_len:
+                remaining = seq_len - i
+                step_len = get_padded_step_len(remaining, encoder_chunk_sizes)
+
+                step_input_ids = input_ids[:, i:i + step_len]
+                step_attention_mask = (
+                    attention_mask[:, :attention_mask.shape[1] - remaining + step_len])
+
+                if step_input_ids.shape[1] != step_len:
+                    # Pad the inputs and masks to step_len
+                    # Note that this kind of internal padding is different from
+                    # the padding added by the tokenizer. This internal padding
+                    # should not update cache and step_ct
+                    num_internal_pad = step_len - step_input_ids.shape[1]
+                    pad_shape = (expand_size, num_internal_pad)
+                    step_input_ids = np.concatenate(
+                        (step_input_ids, np.zeros(pad_shape, dtype=np.int32)), axis=1)
+                    step_attention_mask = np.concatenate(
+                        (step_attention_mask, np.zeros(pad_shape, dtype=np.int8)), axis=1)
+                else:
+                    num_internal_pad = 0
+
+                output = run_one(executables[step_len], step_input_ids,
+                                 past_key_values, step_attention_mask,
+                                 num_internal_pad)
+                past_key_values = output.attention_cache
+                i += step_input_ids.shape[1]
+
+        logits_step = torch.from_numpy(np.array(output.logits)).to(torch_device).float()
+        return InferenceFuncOutput(logits_step, output.attention_cache,
+                                   output.hidden_states, output.attentions)
+
+    inference_func_config = InferenceFuncConfig(num_beams=num_beams)
+    return WrappedInferenceFunc(inference_func,
+                                inference_func_config,
+                                executables[1],
+                                transformer_config)
+
+
+def get_padded_step_len(length, encoder_chunk_sizes):
+    """For a given length, find the smallest value in encoder_chunk_sizes that
+    is greater than the given length."""
+    for i in range(len(encoder_chunk_sizes)):
+        if encoder_chunk_sizes[i] >= length:
+            break
+    return encoder_chunk_sizes[i]
+
+def set_skip_shard_args_check(attention_cache):
+    """
+    Skip the check in DistributedPhysicalDeviceMesh::shard_args for
+    attention cache. We need this hack because attention_cache is
+    a batch var but alpa doesn't implement a fast path for batch vars.
+    """
+    if isinstance(attention_cache[0], alpa.device_mesh.DistributedArray):
+        for x in attention_cache:
+            x.skip_shard_args_check = True
+    else:
+        for y in attention_cache:
+            for x in y:
+                if isinstance(x, alpa.device_mesh.DistributedArray):
+                    x.skip_shard_args_check = True
+
+
+def pad_attention_mask(mask, max_target_positions):
+    """Pad attention mask to the shape [B, 1, 1, max_target_positions]. """
+    batch_size = mask.shape[0]
+    ret_mask = np.zeros((batch_size, max_target_positions), dtype=np.int8)
+    ret_mask[:, :mask.shape[-1]] = mask
+    ret_mask = ret_mask[:, np.newaxis, np.newaxis, :]
+    return ret_mask
+
+global torch_linear_init_backup
+global torch_layer_norm_init_backup
+
+
+def disable_torch_init():
+    """
+    Disable the redundant torch default initialization to accelerate model creation.
+    """
+    global torch_linear_init_backup
+    global torch_layer_norm_init_backup
+
+    torch_linear_init_backup = torch.nn.Linear.reset_parameters
+    setattr(torch.nn.Linear, "reset_parameters", lambda self: None)
+
+    torch_layer_norm_init_backup = torch.nn.LayerNorm.reset_parameters
+    setattr(torch.nn.LayerNorm, "reset_parameters", lambda self: None)
+
+
+def restore_torch_init():
+    """Rollback the change made by disable_torch_init."""
+    setattr(torch.nn.Linear, "reset_parameters", torch_linear_init_backup)
+    setattr(torch.nn.LayerNorm, "reset_parameters", torch_layer_norm_init_backup)
+
+# transformer_config = TransformerModelConfig(
+#             H=config.hidden_size,
+#             L=config.num_hidden_layers,
+#             n_head=config.n_head,
+#             seq_len=2048,
+#             vocab_size=config.vocab_size)
+# executables, params_aval = get_jax_executable(config, (1,64), output_attentions = True, output_hidden_states = True)
+# params = load_params_np(params_aval, "/home/x/Desktop/dedong_2022_summer/softwares/350M_Bloom_np", config, False)
+# init_cache = init_cache_np(config, batch_size=1)
+# print(params)
+# # print(init_cache)
+# params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
+
+if __name__ == "__main__":
+    tokenizer = AutoTokenizer.from_pretrained("/home/x/Desktop/dedong_2022_summer/softwares/bloom-350m", use_fast=False)
+    tokenizer.add_bos_token = False
+    generate_params = {"do_sample": True, "num_beams": 1, "num_return_sequences": 1}
+    prompt = "good day"
+    input_ids = tokenizer(prompt, return_tensors="pt", padding="longest").input_ids.to("cuda")
+    model = get_model("jax/bloom-350m", "/home/x/Desktop/dedong_2022_summer/softwares/350M_Bloom_np", torch_device="cuda", **generate_params)
+    output_ids = model.generate(input_ids=input_ids,
+                            max_length=64,
+                            **generate_params)
+    outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+    print(outputs)

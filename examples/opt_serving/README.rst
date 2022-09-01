@@ -151,15 +151,14 @@ You do not need to download the weights manually for OPT 125M--66B. However, if 
 
 Copy Weights to Multiple Nodes
 ------------------------------
-If you want to run on multiple nodes, you can use one of the following methods.
+If you want to run the model on multiple nodes, you can use one of the following methods to copy the weights to all nodes.
 
 1. Put the weights under a shared network file system, so all nodes can access it.
 2. Run the script first on a driver node. The driver node will download the weights to its local disk, but the script will fail later because worker nodes cannot access the weights.
    You can then manually copy all downloaded weights under ``path`` from the driver node to all worker nodes.
 
-
-Run and Benchmark Generation in the Command Line
-================================================
+Run Generation in the Command Line
+==================================
 
 The code of this tutorial is under `examples/opt_serving <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving>`_.
 
@@ -167,15 +166,14 @@ The code of this tutorial is under `examples/opt_serving <https://github.com/alp
 
   .. code:: shell
 
-    cd opt_serving/benchmark
-    python3 benchmark_text_gen.py --model facebook/opt-125m --debug
+    python3 textgen.py --model facebook/opt-125m
 
 
 - Run generation using the 125M model with JAX backend on a single GPU:
 
   .. code:: shell
 
-    python3 benchmark_text_gen.py --model jax/opt-125m --debug
+    python3 textgen.py --model jax/opt-125m
 
 
 - Run model-parallel generation using the 2.7B model with Alpa on multiple GPUs:
@@ -185,7 +183,7 @@ The code of this tutorial is under `examples/opt_serving <https://github.com/alp
     # Start ray on the node
     ray start --head
 
-    python3 benchmark_text_gen.py --model alpa/opt-2.7b --debug
+    python3 textgen.py --model alpa/opt-2.7b
 
 
 - Run distributed generation using the 175B model with Alpa on a cluster of GPU nodes.
@@ -195,7 +193,7 @@ The code of this tutorial is under `examples/opt_serving <https://github.com/alp
 
   .. code:: shell
 
-    python3 benchmark_text_gen.py --model alpa/opt-175b --debug
+    python3 textgen.py --model alpa/opt-175b
 
 Launch a Web Server to Serve the OPT Models
 ===========================================
@@ -214,20 +212,12 @@ Improving Generation Speed
 Here are some tips for improving the generation speed.
 
 1. Batching. Single sequence generation cannot fully utilize the GPU power.
-   Applying batching can greatly boost the performace. See ``textgen_demo.py`` for the usage.
+   Applying batching can greatly boost the performace. See ``textgen.py`` for the usage.
 2. Tune the ``encoder_chunk_sizes`` argument of ``get_model``.
    Alpa compiles multiple executables and uses these executables to encode a prompt chunk by chunk. This argument controls the possible chunk sizes. Depending on the length of your prompt, you can try different combinations. For example, if your prompt lengths are around 1000-1500, a good combination is ``[1, 256, 1024]``.
 3. Tune parallelization strategy. If you are familiar with alpa, you can tune the ``method`` argument of ``alpa.parallelize`` and try different parallelization methods.
 
 If you find the generation speed too slow and want to accelerate it, please join `Alpa slack <https://forms.gle/YEZTCrtZD6EAVNBQ7>`_ and tell us your use cases. We are acitvely working on improving the performance.
-
-Code Structure
-==============
-
-* `examples/opt_serving/benchmark <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/benchmark>`_: Benchmark scripts for generation in the command line.
-* `examples/opt_serving/service <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/service>`_: Model serving web server.
-* `examples/opt_serving/generator.py <https://github.com/alpa-projects/alpa/blob/main/examples/opt_serving/generator.py>`_: Backend for web server.
-* `examples/opt_serving/interactive_hosted.py <https://github.com/alpa-projects/alpa/blob/main/examples/opt_serving/interactive_hosted.py>`_: Web server entry point.
 
 License
 =======

@@ -13,7 +13,7 @@ from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 
 from alpa.api import init, shutdown, parallelize, value_and_grad
 from alpa.model.bert_model import BertConfig, FlaxBertLayer
-from alpa.model.model_util import FlaxBaseModelOutput, TrainState
+from alpa.model.model_util import FlaxBaseModelOutput, DynamicScale, TrainState
 from alpa.parallel_method import PipeshardParallel
 from alpa.pipeline_parallel.layer_construction import (AutoLayerOption,
                                                        ManualLayerOption)
@@ -129,6 +129,8 @@ class BertLayerModel(nn.Module):
 
 def get_bert_layer_train_state_and_step(batch_size, seq_len, num_layers,
                                         hidden_size, num_heads,
+                                        clip_by_global_norm,
+                                        use_dynamic_scale,
                                         add_manual_pipeline_marker):
     rngkey = jax.random.PRNGKey(0)
     x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size))
@@ -143,11 +145,27 @@ def get_bert_layer_train_state_and_step(batch_size, seq_len, num_layers,
                           num_hidden_layers=num_layers),
         add_manual_pipeline_marker=add_manual_pipeline_marker)
     params = model.init(rngkey, batch["x"], batch["attention_mask"])
-    tx = optax.adam(learning_rate=1e-2)
+
+    if clip_by_global_norm:
+        tx = optax.chain(
+            optax.clip_by_global_norm(1.0),
+            optax.adam(learning_rate=1e-2)
+        )
+    else:
+        tx = optax.adam(learning_rate=1e-2)
+
+    if use_dynamic_scale:
+        use_master_copy = True
+        dynamic_scale = DynamicScale()
+    else:
+        dynamic_scale = None
+        use_master_copy = False
+
     state = TrainState.create(apply_fn=model.apply,
                               params=params,
                               tx=tx,
-                              dynamic_scale=None)
+                              dynamic_scale=dynamic_scale,
+                              use_master_copy=use_master_copy)
 
     def train_step(state, batch):
 
@@ -257,6 +275,8 @@ class PipelineBasicTest(unittest.TestCase):
                          hidden_size=512,
                          num_heads=512 // 64,
                          use_remat=False,
+                         clip_by_global_norm=False,
+                         use_dynamic_scale=False,
                          manual_pipeline_layer=True,
                          stage_option: Optional[StageOption] = None,
                          as_option: Optional[AutoShardingOption] = None,
@@ -276,6 +296,8 @@ class PipelineBasicTest(unittest.TestCase):
             num_layers=num_layers,
             hidden_size=hidden_size,
             num_heads=num_heads,
+            clip_by_global_norm=clip_by_global_norm,
+            use_dynamic_scale=use_dynamic_scale,
             add_manual_pipeline_marker=manual_pipeline_layer)
 
         # Compile

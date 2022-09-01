@@ -78,7 +78,7 @@ class BloomConfig:
     pretraining_tp: int = 1  # TP rank used when training with megatron
     slow_but_exact: bool = False
     tie_word_embeddings: bool = True
-    dtype: str = 'bfloat16'
+    dtype: any = jnp.float32
     pad: int = 1
 
 @flax.struct.dataclass
@@ -276,10 +276,10 @@ def build_alibi_tensor_flax(attention_mask, n_head, dtype):
     query_length = 1
 
     slopes = jnp.array(get_slopes(n_head))[None, :, None, None].astype(dtype)
-    arange_tensor = attention_mask
+    arange_tensor = attention_mask - 1
     # if len(attention_mask.shape) != 4:
     # arange_tensor = attention_mask.cumsum(-1, dtype=dtype)[:, None, None, :] - 1
-    print(f"arange_tensor: {arange_tensor}")
+    # print(f"arange_tensor: {arange_tensor}")
 
     slopes_broadcast = jnp.broadcast_to(slopes, (batch_size, num_heads, query_length, key_length))
     arange_broadcast = jnp.broadcast_to(arange_tensor, (batch_size, num_heads, query_length, key_length))
@@ -379,6 +379,7 @@ class FlaxBloomAttention(nn.Module):
         fused_qkv = self.query_key_value(hidden_states)
         # fused_qkv = self._split_heads(fused_qkv)
         # query, key, value = jnp.split(fused_qkv, 3, axis=-1)
+        print(f"fused_qkv: {fused_qkv.shape}")
         fused_qkv = fused_qkv.reshape(fused_qkv.shape[:2] + (-1, 3))
         query, key, value = jnp.split(fused_qkv,3,axis=3)
 
@@ -395,8 +396,11 @@ class FlaxBloomAttention(nn.Module):
 
         # causal_attention_mask = make_causal_mask(attention_mask, dtype="bool")
 
-        query_len, key_len = query.shape[1], key.shape[1]
+        # query_len, key_len = query.shape[-1], key.shape[-1]
+        # print(f"query_len: {query_len}, key_len: {key_len}")
+        # assert query_len == key_len
         if attention_cache:
+            # print("cache!")
             cache_key, cache_value, cache_index = attention_cache
             cache_index_ = cache_index[0]
             update_indices = (0, cache_index_, 0, 0)
@@ -404,18 +408,20 @@ class FlaxBloomAttention(nn.Module):
             key = lax.dynamic_update_slice(cache_key, key, update_indices)
             # shape: [B, S_max, #head, head_dim]
             value = lax.dynamic_update_slice(cache_value, value, update_indices)
-            query_len, key_len = query.shape[1], key.shape[1]
-
+            query_len, key_len = query.shape[-1], key.shape[-1]
+            assert query_len == key_len
+            # print(f"query_len: {query_len}, key_len: {key_len}")
             # Handle a special kind of internal padding added by alpa.
             # Note that this kind of internal padding is different from
             # the padding added by the tokenizer. This internal padding
             # should not update cache and step_ct
             # shape: [B, 1, 1, S_max]
-            is_internal_padding = (attention_mask == 2)
-            num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
+            # is_internal_padding = (attention_mask == 2)
+            # num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
             attention_mask = (attention_mask == 1)
 
-            attention_cache = key, value, cache_index + query_len - num_internal_pad
+            # attention_cache = key, value, cache_index + query_len - num_internal_pad
+            attention_cache = key, value, cache_index + query_len
 
             # shape: [B, 1, S_max, S_max]
             causal_mask = nn.make_causal_mask(
@@ -428,7 +434,9 @@ class FlaxBloomAttention(nn.Module):
             # shape: [B, 1, S, S_max]
             attention_mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
         else:
+            # print("no cache")
             query_len, key_len = query.shape[-1], key.shape[-1]
+            # print(f"query_len: {query_len}, key_len: {key_len}")
             assert query_len == key_len
             # shape: [B, 1, S_max, S_max]
             causal_mask = nn.make_causal_mask(
@@ -501,6 +509,8 @@ class FlaxBloomAttention(nn.Module):
 
         # TODO(sanchit-gandhi): override softmax precision to fp32 if self.attention_softmax_in_fp32=True and self.dtype != fp32
         # usual dot product attention
+        # print(f"query.shape: {query.shape}")
+        # print(f"key.shape: {key.shape}")
         attn_weights = nn.attention.dot_product_attention_weights(
             query,
             key,
@@ -513,7 +523,8 @@ class FlaxBloomAttention(nn.Module):
         )
 
         attn_output = jnp.einsum("...hqk,...khd->...qhd", attn_weights, value)
-        attn_output = self._merge_heads(attn_output)
+        # attn_output = self._merge_heads(attn_output)
+        attn_output = attn_output.reshape(attn_output.shape[:2] + (-1,))
         attn_output = self.dense(attn_output)
         attn_output = self.resid_dropout(attn_output, deterministic=deterministic)
 
@@ -613,8 +624,9 @@ class FlaxBloomBlock(nn.Module):
         )
 
         attention_output = attn_outputs[0]
+        attention_cache = attn_outputs[1]
 
-        outputs = attn_outputs[1:]
+        # outputs = attn_outputs[2:]
 
         post_layernorm = self.post_attention_layernorm(attention_output)
 
@@ -626,9 +638,9 @@ class FlaxBloomBlock(nn.Module):
 
         output = self.mlp(post_layernorm, residual, deterministic=deterministic)
 
-        outputs = (output,) + outputs
-
-        return outputs
+        if output_attentions:
+            output += (attn_outputs[2:],)
+        return output
 
 
 # class FlaxBloomPreTrainedModel(FlaxPreTrainedModel):
@@ -1050,11 +1062,11 @@ def get_bloom_config(name, **kwargs):
 
 def init_model_aval(config):
     """Initialize model with parameters with abstract values (shape-only arrays)."""
-    print("init_model_aval")
+    # print("init_model_aval")
     model = FlaxBloomForCausalLMModule(config, dtype=config.dtype)
     rngkey = jax.core.ShapedArray((2,), jnp.uint32)
     input_ids = jax.core.ShapedArray((1, 64), jnp.int32)
-    # position_ids = jax.core.ShapedArray((1, 128), jnp.int32)
+    # position_ids = jax.core.ShapedArray((1, 64), jnp.int32)
     attention_mask = jax.core.ShapedArray((1, 1, 1, 64), jnp.int32)
     params = jax.eval_shape(model.init, rngkey, input_ids, attention_mask=attention_mask)
     params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, config.dtype),
@@ -1070,10 +1082,10 @@ def init_cache_aval(config, batch_size):
     all_cache = []
     for _ in range(config.num_hidden_layers):
         layer_cache = (
-            jax.core.ShapedArray((batch_size, 128,
+            jax.core.ShapedArray((batch_size, 64,
                                   config.n_head, head_dim),
                                  dtype),
-            jax.core.ShapedArray((batch_size, 128,
+            jax.core.ShapedArray((batch_size, 64,
                                   config.n_head, head_dim),
                                  dtype),
             jax.core.ShapedArray((batch_size,), jnp.int32),
@@ -1084,22 +1096,22 @@ def init_cache_aval(config, batch_size):
 
 def init_mask_aval(config, batch_size):
     """Initialize attention mask with abstract values (shape-only arrays)."""
-    mask = jax.core.ShapedArray((batch_size, 1, 1, 128), dtype=np.int8)
+    mask = jax.core.ShapedArray((batch_size, 1, 1, 64), dtype=np.int8)
     return mask
 
 
 def init_cache_np(config, batch_size):
     """Init cache with numpy arrays."""
     np_dtype = config.dtype
-    head_dim = config.hidden_size
+    head_dim = config.hidden_size // config.n_head
 
     all_cache = []
     for i in range(config.num_hidden_layers):
         layer_cache = (
-            np.zeros((batch_size, 128,
+            np.zeros((batch_size, 64,
                       config.n_head, head_dim),
                      dtype=np_dtype),
-            np.zeros((batch_size, 128,
+            np.zeros((batch_size, 64,
                       config.n_head, head_dim),
                      dtype=np_dtype),
             np.zeros((batch_size,), np.int32),
@@ -1196,7 +1208,7 @@ def get_jax_executable(config: BloomConfig,
                        output_attentions: bool = False,
                        output_hidden_states:bool = False):
     """Get a single-gpu executable."""
-    print("get_jax_executable")
+    # print("get_jax_executable")
     model, params = init_model_aval(config)
 
     @jax.jit

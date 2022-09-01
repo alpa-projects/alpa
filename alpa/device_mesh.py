@@ -1137,7 +1137,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def delete_remote_buffers(self, ary_refs: List["RemoteArrayRef"]):
         """Delete remote buffers."""
-        if self.workers is None or ray is None or ray_worker is None:
+        if not self.workers or not ray or not ray_worker or not np.array:
             return
 
         # Put delete requests into a buffer
@@ -1260,7 +1260,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def delete_remote_executable(self, exec_uuid: int):
         """Delete remote worker executables of a driver executable."""
-        if self.workers is None or ray is None or ray_worker is None:
+        if not self.workers or not ray or not ray_worker or not np.array:
             return
 
         try:

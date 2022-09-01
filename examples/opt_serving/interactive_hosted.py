@@ -31,6 +31,9 @@ generator: Generator= None
 # The request queues
 generate_batch_queue = PriorityQueueRingShard()
 logprobs_batch_queue = PriorityQueueRingShard()
+# The current working batch
+generate_batch = []
+logprobs_batch = []
 # Past key caches
 logprobs_past_cache = defaultdict(lambda: (0, None))
 # Logging
@@ -63,8 +66,7 @@ def batching_loop():
     # TODO(roller):
     # - group by generation type, topp etc, as we cannot share these
     # - modify timeout logic to be cumulative
-    generate_batch = []
-    logprobs_batch = []
+    global generate_batch, logprobs_batch
 
     generate_batch_timeout = 0
     while True:
@@ -180,9 +182,7 @@ def logprobs_loop(logprobs_batch, timeout, max_bs):
 
 
 def worker_main(model_name, path, torch_device):
-    global generator
-    global num_beams
-    global sampling_css
+    global generator, num_beams, sampling_css
 
     # Disable multithreading in tokenizers and torch, as different Flask threads
     # may then fight for resources.
@@ -207,7 +207,22 @@ def worker_main(model_name, path, torch_device):
                           num_beams=num_beams,
                           num_return_sequences=num_return_sequences,
                           do_sample=do_sample)
-    batching_loop()
+
+    while True:
+        try:
+            batching_loop()
+        except Exception as e:
+            info = str(traceback.format_exc())
+            logger.error(info)
+
+            return_errors(generate_batch, e)
+            return_errors(logprobs_batch, e)
+
+
+def return_errors(batch, e):
+    for work_item in batch:
+        work_item.return_queue.put((work_item.uid, e))
+    batch.clear()
 
 
 @app.errorhandler(Exception)
@@ -315,6 +330,8 @@ def completions():
     reordered = sorted(unordered_results, key=lambda x: x[0])
     results = []
     for prompt, (_, generations) in zip(prompts, reordered):
+        if isinstance(generations, Exception):
+            raise generations
         results += generations
     # transform the result into the openai format
     return OAIResponse(results).__dict__()
@@ -331,7 +348,7 @@ def logprobs():
     prompts = normalize_prompts(prompts)
 
     # we're going to cache the keys for all the prompts in the request all together, so limit batch size
-    assert len(prompts) <= MAX_BS
+    assert len(prompts) <= MAX_BS, "Please submit a smaller batch"
     prompt_length = len(prompts[0])
     for prompt in prompts:
         assert len(prompt) == prompt_length, "All prompts must be the same length to work with current caching implementation"
@@ -364,6 +381,8 @@ def logprobs():
     item = WorkItem(cur_len, 0, ret_queue, request_object)
     logprobs_batch_queue.put(item)
     results = ret_queue.get()
+    if isinstance(results, Exception):
+        raise results
     return jsonify({"cache_id": cache_id, "logprobs": results[1]['logprobs'], "indices": results[1]['indices']})
 
 

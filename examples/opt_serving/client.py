@@ -46,15 +46,14 @@ class Client(object):
             "echo": echo,
         }
         result = requests.post(self.completions_url, json=pload)
-        return result.json()
+        return self.result_or_error(result)
 
     def logprobs(
         self,
         prompt: Union[str, Sequence[str], Sequence[int], Sequence[Sequence[int]]],
-        top_p: float = 1.0,
-        top_k: int = 100000,
+        top_k: int = 50,
         cache_id: Optional = None) -> Dict:
-        """TODO(yangkevin2)"""
+        """Return the log probability of the next top-k tokens"""
         pload = {
             "prompt": prompt,
             "top_k": top_k,
@@ -63,4 +62,13 @@ class Client(object):
         if cache_id:
             pload["cache_id"] = cache_id
         result = requests.post(self.logprobs_url, json=pload)
-        return result.json()
+        return self.result_or_error(result)
+
+    def result_or_error(self, result):
+        result = result.json()
+        if "error" in result:
+            raise RuntimeError(
+                result["error"]["message"] + "\n" +
+                "".join(result["error"]["stacktrace"]))
+        else:
+            return result

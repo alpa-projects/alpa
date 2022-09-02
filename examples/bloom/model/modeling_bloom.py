@@ -276,15 +276,18 @@ def build_alibi_tensor_flax(attention_mask, n_head, dtype):
     query_length = 1
 
     slopes = jnp.array(get_slopes(n_head))[None, :, None, None].astype(dtype)
-    arange_tensor = attention_mask - 1
+    # arange_tensor = attention_mask - 1
     # if len(attention_mask.shape) != 4:
-    # arange_tensor = attention_mask.cumsum(-1, dtype=dtype)[:, None, None, :] - 1
-    # print(f"arange_tensor: {arange_tensor}")
+    print(f"attention_mask: {attention_mask.shape}")
+    arange_tensor = attention_mask.cumsum(-1, dtype=dtype) - 1
+    # [:, None, None, :] - 1
+    print(f"arange_tensor: {arange_tensor}")
 
     slopes_broadcast = jnp.broadcast_to(slopes, (batch_size, num_heads, query_length, key_length))
     arange_broadcast = jnp.broadcast_to(arange_tensor, (batch_size, num_heads, query_length, key_length))
 
     alibi = slopes_broadcast * arange_broadcast
+    print(f"alibi: {alibi.shape}")
     return alibi
 
 class FlaxBloomAttention(nn.Module):
@@ -371,82 +374,209 @@ class FlaxBloomAttention(nn.Module):
         output_attentions: bool = False,
         layer_number: int = None,
     ):
-        head_dim = self.head_dim
-        batch_size = hidden_states.shape[0]
-        seq_length = hidden_states.shape[-1]
 
-        # proj q, k, v
+        # qvk_combined_states = self.query_key_value(hidden_states)
+        # qvk_combined_states = qvk_combined_states.reshape(
+        #     qvk_combined_states.shape[:-1] + (-1, 3))
+        # query_states, value_states, key_states = jnp.split(qvk_combined_states,
+        #                                                    3,
+        #                                                    axis=3)
+
+        # # shape: [B, S, #head, head_dim]
+        # query_states = query_states.reshape(hidden_states.shape[:-1] + (
+        #     self.num_heads, self.head_dim))
+        # # shape: [B, S, #head, head_dim]
+        # value_states = value_states.reshape(hidden_states.shape[:-1] + (
+        #     self.num_heads, self.head_dim))
+        # # shape: [B, S, #head, head_dim]
+        # key_states = key_states.reshape(hidden_states.shape[:-1] +
+        #                                 (self.num_heads,
+        #                                  self.head_dim))
+
+        # batch_size = hidden_states.shape[0]
+        # if attention_cache is None:
+        #     query_len, key_len = query_states.shape[1], key_states.shape[1]
+        #     assert query_len == key_len
+        #     # shape: [B, 1, S_max, S_max]
+        #     causal_mask = nn.make_causal_mask(
+        #         jnp.ones((batch_size, key_len)), dtype="bool")
+        #     # shape: [B, 1, 1, S_max]
+        #     input_mask = attention_mask
+        #     # shape: [B, 1, S_max, S_max]
+        #     attention_mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
+        # else:
+        #     cache_key, cache_value, cache_index = attention_cache
+        #     cache_index_ = cache_index[0]
+        #     update_indices = (0, cache_index_, 0, 0)
+        #     # shape: [B, S_max, #head, head_dim]
+        #     key_states = lax.dynamic_update_slice(cache_key, key_states, update_indices)
+        #     # shape: [B, S_max, #head, head_dim]
+        #     value_states = lax.dynamic_update_slice(cache_value, value_states, update_indices)
+        #     query_len, key_len = query_states.shape[1], key_states.shape[1]
+
+        #     # Handle a special kind of internal padding added by alpa.
+        #     # Note that this kind of internal padding is different from
+        #     # the padding added by the tokenizer. This internal padding
+        #     # should not update cache and step_ct
+        #     # shape: [B, 1, 1, S_max]
+        #     is_internal_padding = (attention_mask == 2)
+        #     num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
+        #     attention_mask = (attention_mask == 1)
+
+        #     attention_cache = key_states, value_states, cache_index + query_len - num_internal_pad
+
+        #     # shape: [B, 1, S_max, S_max]
+        #     causal_mask = nn.make_causal_mask(
+        #         jnp.ones((batch_size, key_len)), dtype="bool")
+        #     # shape: [B, 1, S, S_max]
+        #     causal_mask = lax.dynamic_slice(causal_mask,
+        #         (0, 0, cache_index_, 0), (batch_size, 1, query_len, key_len))
+        #     # shape: [B, 1, 1, S_max]
+        #     input_mask = attention_mask
+        #     # shape: [B, 1, S, S_max]
+        #     attention_mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
+
+        print(f"attention_mask shape: {attention_mask.shape}")
+        batch_size, seq_length = hidden_states.shape[:2]
         fused_qkv = self.query_key_value(hidden_states)
-        # fused_qkv = self._split_heads(fused_qkv)
-        # query, key, value = jnp.split(fused_qkv, 3, axis=-1)
-        print(f"fused_qkv: {fused_qkv.shape}")
-        fused_qkv = fused_qkv.reshape(fused_qkv.shape[:2] + (-1, 3))
-        query, key, value = jnp.split(fused_qkv,3,axis=3)
-
+        fused_qkv = fused_qkv.reshape(fused_qkv.shape[:-1] + (self.num_heads, self.head_dim * 3))
+        query, key, value = jnp.split(fused_qkv, 3, axis=-1)
+        query = query.reshape(hidden_states.shape[:-1] + (
+            self.num_heads, self.head_dim))
         # shape: [B, S, #head, head_dim]
-        query = query.reshape(hidden_states.shape[:2] + (
-            self.config.n_head, head_dim))
+        value = value.reshape(hidden_states.shape[:-1] + (
+            self.num_heads, self.head_dim))
         # shape: [B, S, #head, head_dim]
-        value = value.reshape(hidden_states.shape[:2] + (
-            self.config.n_head, head_dim))
-        # shape: [B, S, #head, head_dim]
-        key = key.reshape(hidden_states.shape[:2] +
-                                        (self.config.n_head,
-                                         head_dim))
+        key = key.reshape(hidden_states.shape[:-1] +
+                                        (self.num_heads,
+                                         self.head_dim))
+        print(f"key shape {key.shape}")
 
-        # causal_attention_mask = make_causal_mask(attention_mask, dtype="bool")
+        key_len = key.shape[1]
 
-        # query_len, key_len = query.shape[-1], key.shape[-1]
-        # print(f"query_len: {query_len}, key_len: {key_len}")
-        # assert query_len == key_len
+        causal_attention_mask = make_causal_mask(jnp.ones((batch_size, key_len)), dtype="bool")
+
+        # # for fast decoding causal attention mask should be shifted
+        # causal_attention_mask_shift = (
+        #     self.variables["cache"]["cache_index"] if self.has_variable("cache", "cached_key") else 0
+        # )
+
+        # fast decoding for generate requires special attention_mask
+        # if self.has_variable("cache", "cached_key"):
+        #     max_decoder_length = self.variables["cache"]["cached_key"].shape[1]
+        #     causal_attention_mask = jax.lax.dynamic_slice(
+        #         causal_attention_mask,
+        #         (0, 0, causal_attention_mask_shift, 0),
+        #         (1, 1, seq_length, max_decoder_length),
+        #     )
+
+        # broadcast causal attention mask & attention mask to fit for merge
+        # print(f"causal mask: {causal_attention_mask.shape}")
+        causal_attention_mask = jnp.broadcast_to(
+            causal_attention_mask, (batch_size,) + causal_attention_mask.shape[1:]
+        )
+        # print(f"causal mask: {causal_attention_mask.shape}")
+        # attention_mask = jnp.broadcast_to(jnp.expand_dims(attention_mask, axis=(-3, -2)), causal_attention_mask.shape)
+        attention_mask = combine_masks(attention_mask, causal_attention_mask)
+
+        # During fast autoregressive decoding, we feed one position at a time,
+        # and cache the keys and values step by step.
         if attention_cache:
-            # print("cache!")
             cache_key, cache_value, cache_index = attention_cache
-            cache_index_ = cache_index[0]
-            update_indices = (0, cache_index_, 0, 0)
-            # shape: [B, S_max, #head, head_dim]
-            key = lax.dynamic_update_slice(cache_key, key, update_indices)
-            # shape: [B, S_max, #head, head_dim]
-            value = lax.dynamic_update_slice(cache_value, value, update_indices)
-            query_len, key_len = query.shape[-1], key.shape[-1]
-            assert query_len == key_len
-            # print(f"query_len: {query_len}, key_len: {key_len}")
-            # Handle a special kind of internal padding added by alpa.
-            # Note that this kind of internal padding is different from
-            # the padding added by the tokenizer. This internal padding
-            # should not update cache and step_ct
-            # shape: [B, 1, 1, S_max]
-            # is_internal_padding = (attention_mask == 2)
-            # num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
-            attention_mask = (attention_mask == 1)
+            *batch_dims, max_length, num_heads, depth_per_head = cache_key.shape
+            # update key, value caches with our new 1d spatial slices
+            cur_index = cache_index
+            indices = (0,) * len(batch_dims) + (cur_index, 0, 0)
+            key = lax.dynamic_update_slice(cache_key, key, indices)
+            value = lax.dynamic_update_slice(cache_value, value, indices)
+            num_updated_cache_vectors = query.shape[1]
+            cache_index = cache_index + num_updated_cache_vectors
+            # causal mask for cached decoder self-attention: our single query position should only attend to those key positions that have already been generated and cached, not the remaining zero elements.
+            pad_mask = jnp.broadcast_to(
+                jnp.arange(max_length) < cur_index + num_updated_cache_vectors,
+                tuple(batch_dims) + (1, num_updated_cache_vectors, max_length),
+            )
+            attention_cache = key, value, cache_index
+            print(f"attention_mask.shape: {attention_mask.shape}")
+            print(f"pad_mask.shape: {pad_mask.shape}")
+            attention_mask = combine_masks(pad_mask, attention_mask)
+            # key, value, attention_mask = self._concatenate_to_cache(key, value, query, attention_mask)
+        # head_dim = self.head_dim
+        # batch_size = hidden_states.shape[0]
+        # seq_length = hidden_states.shape[-1]
 
-            # attention_cache = key, value, cache_index + query_len - num_internal_pad
-            attention_cache = key, value, cache_index + query_len
+        # # proj q, k, v
+        # fused_qkv = self.query_key_value(hidden_states)
+        # # fused_qkv = self._split_heads(fused_qkv)
+        # # query, key, value = jnp.split(fused_qkv, 3, axis=-1)
+        # print(f"fused_qkv: {fused_qkv.shape}")
+        # fused_qkv = fused_qkv.reshape(fused_qkv.shape[:2] + (-1, 3))
+        # query, key, value = jnp.split(fused_qkv,3,axis=3)
 
-            # shape: [B, 1, S_max, S_max]
-            causal_mask = nn.make_causal_mask(
-                jnp.ones((batch_size, key_len)), dtype="bool")
-            # shape: [B, 1, S, S_max]
-            causal_mask = lax.dynamic_slice(causal_mask,
-                (0, 0, cache_index_, 0), (batch_size, 1, query_len, key_len))
-            # shape: [B, 1, 1, S_max]
-            input_mask = attention_mask
-            # shape: [B, 1, S, S_max]
-            attention_mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
-        else:
-            # print("no cache")
-            query_len, key_len = query.shape[-1], key.shape[-1]
-            # print(f"query_len: {query_len}, key_len: {key_len}")
-            assert query_len == key_len
-            # shape: [B, 1, S_max, S_max]
-            causal_mask = nn.make_causal_mask(
-                jnp.ones((batch_size, key_len)), dtype="bool")
-            # shape: [B, 1, 1, S_max]
-            input_mask = attention_mask
-            print(f"input_mask: {input_mask}")
-            print(f"causal_mask: {causal_mask}")
-            # shape: [B, 1, S_max, S_max]
-            attention_mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
+        # # shape: [B, S, #head, head_dim]
+        # query = query.reshape(hidden_states.shape[:2] + (
+        #     self.config.n_head, head_dim))
+        # # shape: [B, S, #head, head_dim]
+        # value = value.reshape(hidden_states.shape[:2] + (
+        #     self.config.n_head, head_dim))
+        # # shape: [B, S, #head, head_dim]
+        # key = key.reshape(hidden_states.shape[:2] +
+        #                                 (self.config.n_head,
+        #                                  head_dim))
+
+        # # causal_attention_mask = make_causal_mask(attention_mask, dtype="bool")
+
+        # # query_len, key_len = query.shape[-1], key.shape[-1]
+        # # print(f"query_len: {query_len}, key_len: {key_len}")
+        # # assert query_len == key_len
+        # if attention_cache:
+        #     # print("cache!")
+        #     cache_key, cache_value, cache_index = attention_cache
+        #     cache_index_ = cache_index[0]
+        #     update_indices = (0, cache_index_, 0, 0)
+        #     # shape: [B, S_max, #head, head_dim]
+        #     key = lax.dynamic_update_slice(cache_key, key, update_indices)
+        #     # shape: [B, S_max, #head, head_dim]
+        #     value = lax.dynamic_update_slice(cache_value, value, update_indices)
+        #     query_len, key_len = query.shape[-1], key.shape[-1]
+        #     assert query_len == key_len
+        #     # print(f"query_len: {query_len}, key_len: {key_len}")
+        #     # Handle a special kind of internal padding added by alpa.
+        #     # Note that this kind of internal padding is different from
+        #     # the padding added by the tokenizer. This internal padding
+        #     # should not update cache and step_ct
+        #     # shape: [B, 1, 1, S_max]
+        #     # is_internal_padding = (attention_mask == 2)
+        #     # num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
+        #     attention_mask = (attention_mask == 1)
+
+        #     # attention_cache = key, value, cache_index + query_len - num_internal_pad
+        #     attention_cache = key, value, cache_index + query_len
+
+        #     # shape: [B, 1, S_max, S_max]
+        #     causal_mask = nn.make_causal_mask(
+        #         jnp.ones((batch_size, key_len)), dtype="bool")
+        #     # shape: [B, 1, S, S_max]
+        #     causal_mask = lax.dynamic_slice(causal_mask,
+        #         (0, 0, cache_index_, 0), (batch_size, 1, query_len, key_len))
+        #     # shape: [B, 1, 1, S_max]
+        #     input_mask = attention_mask
+        #     # shape: [B, 1, S, S_max]
+        #     attention_mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
+        # else:
+        #     # print("no cache")
+        #     query_len, key_len = query.shape[-1], key.shape[-1]
+        #     # print(f"query_len: {query_len}, key_len: {key_len}")
+        #     assert query_len == key_len
+        #     # shape: [B, 1, S_max, S_max]
+        #     causal_mask = nn.make_causal_mask(
+        #         jnp.ones((batch_size, key_len)), dtype="bool")
+        #     # shape: [B, 1, 1, S_max]
+        #     input_mask = attention_mask
+        #     print(f"input_mask: {input_mask}")
+        #     print(f"causal_mask: {causal_mask}")
+        #     # shape: [B, 1, S_max, S_max]
+        #     attention_mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
             # causal_attention_mask = jnp.broadcast_to(
             #     causal_attention_mask, (batch_size,) + causal_attention_mask.shape[1:]
             # )
@@ -602,7 +732,9 @@ class FlaxBloomBlock(nn.Module):
         init_cache: bool = False,
         output_attentions: bool = False,
     ):
+        print(f"hidden_states in: {hidden_states.shape}")
         layernorm_output = self.input_layernorm(hidden_states)
+        print(f"layernorm_out: {layernorm_output.shape}")
         # layer norm before saving residual if config calls for it
         if self.apply_residual_connection_post_layernorm:
             residual = layernorm_output
@@ -622,12 +754,12 @@ class FlaxBloomBlock(nn.Module):
             output_attentions=output_attentions,
             layer_number=layer_number,
         )
-
+        print(f"attention_out: {attn_outputs[0].shape}")
         attention_output = attn_outputs[0]
         attention_cache = attn_outputs[1]
 
         # outputs = attn_outputs[2:]
-
+        print(f"post_layernorm in: {attention_output.shape}")
         post_layernorm = self.post_attention_layernorm(attention_output)
 
         # set residual based on config
@@ -635,12 +767,13 @@ class FlaxBloomBlock(nn.Module):
             residual = post_layernorm
         else:
             residual = attention_output
-
+        print(f"mlp in: {post_layernorm.shape}")
         output = self.mlp(post_layernorm, residual, deterministic=deterministic)
-
+        print(f"mlp out: {output.shape}")
+        outputs = (output, attention_cache)
         if output_attentions:
-            output += (attn_outputs[2:],)
-        return output
+            outputs += (attn_outputs[2],)
+        return outputs
 
 
 # class FlaxBloomPreTrainedModel(FlaxPreTrainedModel):

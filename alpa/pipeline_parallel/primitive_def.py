@@ -91,7 +91,7 @@ def xla_custom_call(c, call_name, op_name, *args):
                                          b"pipeline_marker",
                                          operands=(input_params,),
                                          shape=input_shape,
-                                         has_side_effect=True,
+                                         has_side_effect=False,
                                          opaque=flattened_byte_sizes.tobytes())
     elif call_name == "optimization_barrier":
         output_tuple = xc.ops.OptimizationBarrier(input_params)

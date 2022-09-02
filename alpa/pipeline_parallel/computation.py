@@ -173,6 +173,7 @@ class XlaPipelineComputation(PipelineComputation):
         xla_computation = xc.XlaComputation(
             self.hlo_module.as_serialized_hlo_module_proto())
         compiled = backend.compile(xla_computation, compile_options=options)
+        self.hlo_module = compiled.hlo_modules()[0]
         # pylint: disable=protected-access
         result_handler = dispatch._result_handler(backend, device, [(
             aval,

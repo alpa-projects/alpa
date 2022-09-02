@@ -7,8 +7,8 @@ then
   exit 1
 fi
 
-export CC=/dt7/usr/bin/gcc
-export GCC_HOST_COMPILER_PATH=/dt7/usr/bin/gcc
+export CC=/dt8/usr/bin/gcc
+export GCC_HOST_COMPILER_PATH=/dt8/usr/bin/gcc
 export CUDA_PATH=/usr/local/cuda
 export LD_LIBRARY_PATH=$CUDA_PATH/lib64:$LD_LIBRARY_PATH
 
@@ -94,10 +94,10 @@ case $2 in
     usage
 esac
 
-if ! python -m auditwheel show dist/jaxlib-*.whl | egrep 'platform tag: "(manylinux2010_x86_64|manylinux_2_12_x86_64)"' > /dev/null; then
+if ! python -m auditwheel show dist/jaxlib-*.whl | egrep 'platform tag: "(manylinux2014_x86_64|manylinux_2_17_x86_64)"' > /dev/null; then
   # Print output for debugging
   python -m auditwheel show dist/jaxlib-*.whl
-  echo "jaxlib wheel is not manylinux2010 compliant"
+  echo "jaxlib wheel is not manylinux2014 compliant"
   exit 1
 fi
 cp -r dist/* /dist

@@ -1,4 +1,4 @@
-FROM gcr.io/tensorflow-testing/nosla-cuda11.1-cudnn8-ubuntu20.04-manylinux2014-multipython
+FROM gcr.io/tensorflow-testing/nosla-cuda11.1-cudnn8-ubuntu18.04-manylinux2010-multipython
 
 WORKDIR /
 SHELL ["/bin/bash", "-c"]

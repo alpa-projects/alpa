@@ -42,7 +42,6 @@ import alpa
 from alpa.global_env import global_config, is_worker
 from alpa.monkey_patch import (restore_random, monkey_patch_random,
                                rng_primitives)
-from alpa.pipeline_parallel.primitive_def import pipeline_p
 
 PLACEMENT_GROUP_TIMEOUT_S_ENV = "ALPA_PLACEMENT_GROUP_TIMEOUT_S_ENV"
 
@@ -743,7 +742,8 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
     Returns:
         new_jaxpr: the processed jaxpr
     """
-
+    # pylint: disable=import-outside-toplevel
+    from alpa.pipeline_parallel.primitive_def import pipeline_p
     def only_create_consts(jaxpr: Jaxpr):
         const_vars = OrderedSet()
         for eqn in jaxpr.eqns:

@@ -2190,7 +2190,8 @@ def init_global_cluster(cluster: str,
         global_physical_mesh = LocalPhysicalDeviceMesh()
     elif cluster == "ray":
         if not ray.is_initialized():
-            ray.init(address="auto", ignore_reinit_error=True,
+            ray.init(address="auto",
+                     ignore_reinit_error=True,
                      namespace="alpa_ray_space")
         update_jax_platform("cpu")
         global_cluster = DeviceCluster(devices_per_node, num_nodes)

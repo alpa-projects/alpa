@@ -130,8 +130,7 @@ class BertLayerModel(nn.Module):
 
 def get_bert_layer_train_state_and_step(batch_size, seq_len, num_layers,
                                         hidden_size, num_heads,
-                                        clip_by_global_norm,
-                                        use_dynamic_scale,
+                                        clip_by_global_norm, use_dynamic_scale,
                                         add_manual_pipeline_marker):
     rngkey = jax.random.PRNGKey(0)
     x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size))
@@ -148,10 +147,8 @@ def get_bert_layer_train_state_and_step(batch_size, seq_len, num_layers,
     params = model.init(rngkey, batch["x"], batch["attention_mask"])
 
     if clip_by_global_norm:
-        tx = optax.chain(
-            optax.clip_by_global_norm(0.05),
-            optax.adam(learning_rate=1e-2)
-        )
+        tx = optax.chain(optax.clip_by_global_norm(0.05),
+                         optax.adam(learning_rate=1e-2))
     else:
         tx = optax.adam(learning_rate=1e-2)
 

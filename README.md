@@ -1,4 +1,6 @@
+<div align="center">
 <img src="https://github.com/alpa-projects/alpa/blob/pr-website/docs/logo/alpa-logo-cropped.png" alt="logo" width="250"></img>
+</div>
 
 [![CI](https://github.com/alpa-projects/alpa/actions/workflows/ci.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/ci.yml)
 [![Build Jaxlib](https://github.com/alpa-projects/alpa/actions/workflows/build_jaxlib.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/build_jaxlib.yml)

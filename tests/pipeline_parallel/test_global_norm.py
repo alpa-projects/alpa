@@ -3,14 +3,10 @@ import unittest
 import jax
 from jax import numpy as jnp, lax
 from jax._src.tree_util import tree_map
-from jax.core import gensym
 from optax import global_norm
 
 from alpa import grad
-from alpa.pipeline_parallel.apply_grad import (ApplyGradRewriter,
-                                               slice_apply_gradient)
 from alpa.testing import PipelineBasicTest
-from alpa.util import OrderedSet
 
 
 class GlobalNormTest(PipelineBasicTest):
@@ -43,13 +39,13 @@ class GlobalNormTest(PipelineBasicTest):
 
             grads = grad(loss_func)(state.params)
             glob_norm = global_norm(grads)
-            grads = tree_map(lambda g: g / glob_norm, grads)
-            new_state = state.apply_gradients(grads=grads)
+            new_grads = tree_map(lambda g: g / glob_norm, grads)
+            new_state = state.apply_gradients(grads=new_grads)
 
             ls_1 = jnp.array(True)
             for g in jax.tree_util.tree_leaves(grads):
                 ls_1 &= jnp.all(lax.le(g, 1.))
-            return new_state, (grads, ls_1)
+            return new_state, (new_grads, ls_1)
 
         hlos = self.run_n_layer_bert(num_layers=2, inject_train_step=train_step)
         for x in hlos[-2:]:

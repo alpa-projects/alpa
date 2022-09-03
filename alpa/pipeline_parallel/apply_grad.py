@@ -541,9 +541,11 @@ def _propagate_var_at_mesh(eqns, var_mesh):
     allreduce_outvars = set()
     for eqn_idx, eqn in enumerate(eqns):
         at_mesh = OrderedSet()
+        at_each_mesh = True
         for invar in eqn.invars:
             if isinstance(invar, Var) and not invar in allreduce_outvars:
                 at_mesh.update(var_mesh.setdefault(invar, OrderedSet()))
+                at_each_mesh = False
         if at_mesh:
             eqn_mesh[eqn_idx] = OrderedSet(at_mesh)
             for outvar in eqn.outvars:
@@ -556,6 +558,10 @@ def _propagate_var_at_mesh(eqns, var_mesh):
                 if isinstance(invar, Var):
                     cur_mesh = var_mesh.setdefault(invar, OrderedSet())
                     cur_mesh.update(at_mesh)
+        elif at_each_mesh:
+            # This var is the result of jaxprs created from all vars
+            allreduce_outvars.update(
+                [v for v in eqn.outvars if not isinstance(v, DropVar)])
     return eqn_mesh, var_mesh
 
 
@@ -872,6 +878,7 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     var_mesh = {var: OrderedSet([mesh]) for var, mesh in grad_mesh.items()}
     for var in outvar_mesh:
         var_mesh.setdefault(var, OrderedSet()).update(outvar_mesh[var])
+    # TODO(yonghao): running the split multiple times until no new splits
     closed_jaxpr, groups = ApplyGradRewriter(closed_jaxpr,
                                              var_mesh).split_replicated_eqns(
                                                  gensym_fn, num_mesh)

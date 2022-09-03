@@ -28,8 +28,8 @@ git fetch origin +${ALPA_BRANCH}
 git checkout -qf FETCH_HEAD
 
 # install jaxlib and jax
-pip install /alpa-dist/jaxlib-alpa-ci/jaxlib-0.3.5+cuda111.cudnn805-cp38-none-manylinux2010_x86_64.whl
-pip install jax==0.3.5
+pip install /alpa-dist/jaxlib-alpa-ci/jaxlib-0.3.15+cuda111.cudnn805-cp38-none-manylinux2014_x86_64.whl
+pip install jax==0.3.15
 
 # install cupy
 pip install cupy-cuda111

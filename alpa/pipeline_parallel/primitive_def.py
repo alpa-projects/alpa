@@ -7,7 +7,6 @@ from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
 from jax.tree_util import tree_flatten, tree_unflatten
 
-from alpa.pipeline_parallel.xla_custom_call_marker import pipeline_marker, identity
 from alpa.util import new_jaxpr_eqn
 
 ########## Public APIs ##########
@@ -51,12 +50,6 @@ def mark_hook_jaxpreqn(invars, outvars):
 
 
 ########## Internal Registration ##########
-xc.register_custom_call_target(b"pipeline_marker",
-                               pipeline_marker(),
-                               platform="gpu")
-xc.register_custom_call_target(b"identity", identity(), platform="gpu")
-
-
 def flatten_shape_byte_sizes(shape):
 
     def _flatten_shape_byte_sizes(shape):
@@ -87,12 +80,14 @@ def xla_custom_call(c, call_name, op_name, *args):
         c.set_sharding(sharding)
 
     if call_name == "pipeline_marker":
-        output_tuple = xc.ops.CustomCall(c,
-                                         b"pipeline_marker",
-                                         operands=(input_params,),
-                                         shape=input_shape,
-                                         has_side_effect=True,
-                                         opaque=flattened_byte_sizes.tobytes())
+        output_tuple = xc.ops.CustomCall(
+            c,
+            b"pipeline_marker",
+            operands=(input_params,),
+            shape=input_shape,
+            # Prevent the deletion of an empty marker
+            has_side_effect=True,
+            opaque=flattened_byte_sizes.tobytes())
     elif call_name == "optimization_barrier":
         output_tuple = xc.ops.OptimizationBarrier(input_params)
     else:

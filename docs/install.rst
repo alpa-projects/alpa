@@ -61,19 +61,19 @@ If you need to use other CUDA, cuDNN, or Python versions, please follow the next
 
   .. code:: bash
 
-    pip3 install jaxlib==0.3.5+cuda{cuda_version}.cudnn{cudnn_version} -f https://alpa-projects.github.io/wheels.html
+    pip3 install jaxlib==0.3.15+cuda{cuda_version}.cudnn{cudnn_version} -f https://alpa-projects.github.io/wheels.html
 
   For example, to install the wheel compatible with CUDA >= 11.1 and cuDNN >= 8.0.5, use the following command:
 
   .. code:: bash
 
-    pip3 install jaxlib==0.3.5+cuda111.cudnn805 -f https://alpa-projects.github.io/wheels.html
+    pip3 install jaxlib==0.3.15+cuda111.cudnn805 -f https://alpa-projects.github.io/wheels.html
 
   You can see all available wheel versions we provided at our `PyPI index <https://alpa-projects.github.io/wheels.html>`_.
 
 .. note::
 
-  As of now, Alpa modified the original jaxlib at the version ``jaxlib==0.3.5``. Alpa regularly rebases the official jaxlib repository to catch up with the upstream.
+  As of now, Alpa modified the original jaxlib at the version ``jaxlib==0.3.15``. Alpa regularly rebases the official jaxlib repository to catch up with the upstream.
   If you need features from newer versions of jaxlib, please open an issue at the `Alpa GitHub Issue Page <https://github.com/alpa-projects/alpa/issues>`_.
 
 

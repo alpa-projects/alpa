@@ -1,5 +1,5 @@
 <div align="center">
-<img src="https://github.com/alpa-projects/alpa/blob/pr-website/docs/logo/alpa-logo-cropped.png" alt="logo" width="250"></img>
+<img src="https://github.com/alpa-projects/alpa/blob/main/docs/logo/alpa-logo-cropped.png" alt="logo" width="250"></img>
 <br></br>
 </div>
 

@@ -217,11 +217,13 @@ def _op_parameter(builder, num, shape, dtype):
                          shape.with_major_to_minor_layout_if_absent(), name,
                          replicated)
 
+
 def _create_channel_id(backend):
     channel_id = backend.create_channel_handle()
     channel_id.type = xe.ChannelHandle_ChannelType.DEVICE_TO_DEVICE
     channel_id.handle = 1
     return channel_id
+
 
 def _op_all_gather(operand, replica_groups, channel_id):
     replica_groups_protos = xc.make_replica_groups(replica_groups)

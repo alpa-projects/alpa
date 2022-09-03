@@ -860,7 +860,9 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
             for inv in eqn.invars:
                 if is_meaningful(inv) and inv in offloaded_vars_from:
                     fwd_eqn_idx = offloaded_vars_from[inv]
-                    assert eqn_idx not in offload_to, "A backward matches multiple forward."
+                    assert (eqn_idx not in offload_to or
+                            offload_to[eqn_idx] == fwd_eqn_idx
+                           ), "A backward matches multiple forward."
                     offload_to[eqn_idx] = fwd_eqn_idx
         elif eqn.primitive == pipeline_p:
             for inv, outv in zip(eqn.invars, eqn.outvars):

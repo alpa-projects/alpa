@@ -1,4 +1,6 @@
-![PyTorch Logo](https://github.com/alpa-projects/alpa/blob/pr-website/docs/logo/alpa-logo-thin.png?raw=true)
+<div align="center">
+<img src="https://github.com/alpa-projects/alpa/blob/pr-website/docs/logo/alpa-logo-cropped.png" alt="logo" width="25%"></img>
+</div>
 
 [**Documentation**](https://alpa-projects.github.io) |
 [**Slack**](https://forms.gle/YEZTCrtZD6EAVNBQ7)

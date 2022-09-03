@@ -217,6 +217,11 @@ def _op_parameter(builder, num, shape, dtype):
                          shape.with_major_to_minor_layout_if_absent(), name,
                          replicated)
 
+def _create_channel_id(backend):
+    channel_id = backend.create_channel_handle()
+    channel_id.type = xe.ChannelHandle_ChannelType.DEVICE_TO_DEVICE
+    channel_id.handle = 1
+    return channel_id
 
 def _op_all_gather(operand, replica_groups, channel_id):
     replica_groups_protos = xc.make_replica_groups(replica_groups)
@@ -418,7 +423,7 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices, op_info):
         def op_func(operands):
             if shapes[0][0][0] == 0:
                 return
-            channel_id = backend.create_channel_handle()
+            channel_id = _create_channel_id(backend)
             out = _op_all_gather(operands[0], replica_groups, channel_id)
             operands[-1] = out
 
@@ -430,7 +435,7 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices, op_info):
         shapes = [((size,), dtype), ((size,), dtype)]
 
         def op_func(operands):
-            channel_id = backend.create_channel_handle()
+            channel_id = _create_channel_id(backend)
             out = _op_all_reduce(operands[0], dtype, "add", replica_groups,
                                  channel_id)
             operands[-1] = out
@@ -447,7 +452,7 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices, op_info):
         def op_func(operands):
             if shapes[0][0][0] // len(replica_groups[0]) == 0:
                 return
-            channel_id = backend.create_channel_handle()
+            channel_id = _create_channel_id(backend)
             out = _op_all_to_all(operands[0], replica_groups, channel_id)
             operands[-1] = out
 
@@ -462,7 +467,7 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices, op_info):
         def op_func(operands):
             if shapes[1][0][0] == 0:
                 return
-            channel_id = backend.create_channel_handle()
+            channel_id = _create_channel_id(backend)
             out = _op_reduce_scatter(operands[0], dtype, "add", replica_groups,
                                      channel_id)
             operands[-1] = out
@@ -475,7 +480,7 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices, op_info):
         shapes = [((1024,), dtype), ((1024,), dtype)]
 
         def op_func(operands):
-            channel_id = backend.create_channel_handle()
+            channel_id = _create_channel_id(backend)
             out = _op_all_reduce(operands[0], dtype, "add", replica_groups,
                                  channel_id)
             operands[-1] = out
@@ -485,7 +490,7 @@ def profile_one_hlo_op(backend, local_devices, host_id, num_devices, op_info):
         shapes = [((1,), dtype), ((1,), dtype)]
 
         def op_func(operands):
-            channel_id = backend.create_channel_handle()
+            channel_id = _create_channel_id(backend)
             out = _op_all_reduce(operands[0], dtype, "add", replica_groups,
                                  channel_id)
             operands[-1] = out

@@ -2,11 +2,13 @@
 <img src="https://github.com/alpa-projects/alpa/blob/pr-website/docs/logo/alpa-logo-cropped.png" alt="logo" width="25%"></img>
 </div>
 
+[![CI](https://github.com/alpa-projects/alpa/actions/workflows/ci.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/ci.yml)
+[![Build Jaxlib](https://github.com/alpa-projects/alpa/actions/workflows/build_jaxlib.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/build_jaxlib.yml)
+
 [**Documentation**](https://alpa-projects.github.io) |
 [**Slack**](https://forms.gle/YEZTCrtZD6EAVNBQ7)
 
-[![CI](https://github.com/alpa-projects/alpa/actions/workflows/ci.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/ci.yml)
-[![Build Jaxlib](https://github.com/alpa-projects/alpa/actions/workflows/build_jaxlib.yml/badge.svg)](https://github.com/alpa-projects/alpa/actions/workflows/build_jaxlib.yml)
+--------------------------------------------------------------------------------
 
 Alpa is a system for training and serving large-scale neural networks.
 

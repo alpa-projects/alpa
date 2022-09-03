@@ -50,6 +50,8 @@ class StageConstructUtilTest(unittest.TestCase):
             num_layers=num_layers,
             hidden_size=512,
             num_heads=512 // 64,
+            clip_by_global_norm=False,
+            use_dynamic_scale=False,
             add_manual_pipeline_marker=True,
         )
 

@@ -121,6 +121,7 @@ def fast_bernoulli(key, p=np.float32(0.5), shape=None):
 def remove_fold_in(key, data):
     return key
 
+
 rng_primitives = [lax.rng_uniform_p, rng_normal_p]
 
 # Monkey patch random generator to use the stateful random generator.

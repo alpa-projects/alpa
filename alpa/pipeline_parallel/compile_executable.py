@@ -20,9 +20,9 @@ from alpa.pipeline_parallel.computation import (
     create_donation_mapping, generate_computations_from_modules,
     generate_sharded_xla_computations,
     generate_sharded_xla_computations_arguments, get_donatable_intermediate,
-    mark_missing_vars_in_backward_computation_pipeline_marks,
-    pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
-    split_donate_invars, XlaShardedPipelineComputation)
+    mark_missing_vars_in_backward_computation_pipeline_marks, pipeline_dce,
+    slice_closed_jaxpr_by_full_pipeline_marks, split_donate_invars,
+    XlaShardedPipelineComputation)
 from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
                                                process_apply_gradient,
                                                split_compute_grad_and_apply_grad

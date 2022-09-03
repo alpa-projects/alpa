@@ -21,8 +21,9 @@ from alpa.pipeline_parallel.layer_stats import (global_invar_size,
                                                 log_layer_slicing_stats)
 from alpa.pipeline_parallel.primitive_def import (pipeline_p,
                                                   mark_pipeline_jaxpreqn)
-from alpa.util import (clone_jaxpr, clone_jaxpr_eqn, slices_to_jaxpr, OrderedSet,
-                       get_var_mapping, maybe_numba_jit, new_jaxpr_eqn)
+from alpa.util import (clone_jaxpr, clone_jaxpr_eqn, slices_to_jaxpr,
+                       OrderedSet, get_var_mapping, maybe_numba_jit,
+                       new_jaxpr_eqn)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)

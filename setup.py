@@ -148,9 +148,7 @@ if __name__ == "__main__":
                   "gpt-3 deep-learning language-model python"),
         packages=find_packages(exclude=["playground"]),
         python_requires='>=3.7',
-        cmdclass={
-            "install": InstallPlatlib
-        },
+        cmdclass={"install": InstallPlatlib},
         distclass=BinaryDistribution,
         install_requires=install_require_list,
         extras_require={

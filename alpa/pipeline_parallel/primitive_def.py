@@ -80,12 +80,14 @@ def xla_custom_call(c, call_name, op_name, *args):
         c.set_sharding(sharding)
 
     if call_name == "pipeline_marker":
-        output_tuple = xc.ops.CustomCall(c,
-                                         b"pipeline_marker",
-                                         operands=(input_params,),
-                                         shape=input_shape,
-                                         has_side_effect=False,
-                                         opaque=flattened_byte_sizes.tobytes())
+        output_tuple = xc.ops.CustomCall(
+            c,
+            b"pipeline_marker",
+            operands=(input_params,),
+            shape=input_shape,
+            # Prevent the deletion of an empty marker
+            has_side_effect=True,
+            opaque=flattened_byte_sizes.tobytes())
     elif call_name == "optimization_barrier":
         output_tuple = xc.ops.OptimizationBarrier(input_params)
     else:

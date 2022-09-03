@@ -9,7 +9,6 @@ workers. The driver part sends control commands to launch the worker parts on
 workers.
 """
 from abc import ABC, abstractmethod
-import logging
 from typing import Sequence, Optional
 import os
 

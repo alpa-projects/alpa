@@ -4,13 +4,8 @@ import logging
 from typing import Sequence, Dict, Tuple
 
 from jax._src.util import safe_map
-from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, get_aval,
-                      raise_to_shaped, JaxprEqn)
-from jax.lax import add_p, div_p
 from jax.core import (Primitive, Var, Jaxpr, ClosedJaxpr, DropVar, Literal,
                       new_jaxpr_eqn, get_aval, raise_to_shaped, JaxprEqn)
-from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, Primitive,
-                      get_aval, raise_to_shaped, JaxprEqn)
 from jax.interpreters import xla
 from jax.lax import add_p, div_p, and_p, or_p
 from jaxlib import xla_client as xc

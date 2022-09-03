@@ -340,9 +340,6 @@ class PipelineBasicTest(unittest.TestCase):
 
                 actual_new_state, actual_val = parallel_train_step(state, batch)
 
-                #print(expected_new_state.params["params"]["layers_0"]["output"]["dense"]["bias"][0])
-                #print(np.array(actual_new_state.params["params"]["layers_0"]["output"]["dense"]["bias"])[0])
-
                 assert_allclose(expected_new_state.params,
                                 actual_new_state.params, 1e-3, 1.5e-3)
                 assert_allclose(expected_val, actual_val, 1e-3, 1e-3)

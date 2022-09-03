@@ -12,19 +12,22 @@ from alpa.testing import PipelineBasicTest
 class GlobalNormTest(PipelineBasicTest):
 
     def test_global_norm(self):
-        hlos = self.run_n_layer_bert(num_layers=2, manual_pipeline_layer=False,
+        hlos = self.run_n_layer_bert(num_layers=2,
+                                     manual_pipeline_layer=False,
                                      clip_by_global_norm=True)
         for x in hlos[-2:]:
             assert "CrossMeshAllReduce" in x
 
     @unittest.skip("No data to test efficiently.")
     def test_dynamic_scale(self):
-        hlos = self.run_n_layer_bert(num_layers=2, manual_pipeline_layer=False,
+        hlos = self.run_n_layer_bert(num_layers=2,
+                                     manual_pipeline_layer=False,
                                      use_dynamic_scale=True)
 
     @unittest.skip("No data to test efficiently.")
     def test_global_norm_dynamic_scale(self):
-        hlos = self.run_n_layer_bert(num_layers=2, manual_pipeline_layer=False,
+        hlos = self.run_n_layer_bert(num_layers=2,
+                                     manual_pipeline_layer=False,
                                      clip_by_global_norm=True,
                                      use_dynamic_scale=True)
 
@@ -33,7 +36,8 @@ class GlobalNormTest(PipelineBasicTest):
         def train_step(state, batch):
 
             def loss_func(params):
-                out = state.apply_fn(params, batch["x"], batch["attention_mask"])
+                out = state.apply_fn(params, batch["x"],
+                                     batch["attention_mask"])
                 loss = jnp.mean((out - batch["y"])**2)
                 return loss
 
@@ -54,9 +58,9 @@ class GlobalNormTest(PipelineBasicTest):
 
 def suite():
     suite = unittest.TestSuite()
-    #suite.addTest(GlobalNormTest("test_global_norm"))
-    #suite.addTest(GlobalNormTest("test_dynamic_scale"))
-    #suite.addTest(GlobalNormTest("test_global_norm_dynamic_scale"))
+    suite.addTest(GlobalNormTest("test_global_norm"))
+    suite.addTest(GlobalNormTest("test_dynamic_scale"))
+    suite.addTest(GlobalNormTest("test_global_norm_dynamic_scale"))
     suite.addTest(GlobalNormTest("test_glob_norm_and_all_le"))
     return suite
 

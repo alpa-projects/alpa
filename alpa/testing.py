@@ -149,14 +149,14 @@ def get_bert_layer_train_state_and_step(batch_size, seq_len, num_layers,
 
     if clip_by_global_norm:
         tx = optax.chain(
-            optax.clip_by_global_norm(1.0),
+            optax.clip_by_global_norm(0.05),
             optax.adam(learning_rate=1e-2)
         )
     else:
         tx = optax.adam(learning_rate=1e-2)
 
     if use_dynamic_scale:
-        use_master_copy = True
+        use_master_copy = False
         dynamic_scale = DynamicScale()
     else:
         dynamic_scale = None
@@ -342,6 +342,9 @@ class PipelineBasicTest(unittest.TestCase):
                     state = actual_new_state
 
                 actual_new_state, actual_val = parallel_train_step(state, batch)
+
+                #print(expected_new_state.params["params"]["layers_0"]["output"]["dense"]["bias"][0])
+                #print(np.array(actual_new_state.params["params"]["layers_0"]["output"]["dense"]["bias"])[0])
 
                 assert_allclose(expected_new_state.params,
                                 actual_new_state.params, 1e-3, 1.5e-3)

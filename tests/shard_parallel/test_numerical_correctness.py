@@ -27,6 +27,8 @@ class AutoShardingCorrectnessTest(unittest.TestCase):
             num_layers=2,
             hidden_size=256,
             num_heads=8,
+            clip_by_global_norm=False,
+            use_dynamic_scale=False,
             add_manual_pipeline_marker=False)
 
         # Train one step

@@ -9,7 +9,7 @@ from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves, PyTreeDef
 import numpy as np
 import ray.exceptions
 
-from alpa.device_mesh import MeshHostWorker, RemoteArrayRef, next_array_uuids
+from alpa.device_mesh import MeshHostWorker, RemoteArrayRef, create_and_record_cross_mesh_collective_communicators, next_array_uuids
 from alpa.global_env import global_config
 from alpa.device_mesh import PhysicalDeviceMeshGroup
 from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
@@ -98,6 +98,9 @@ class PipeshardDriverExecutable:
         ##### For cross-mesh resharding #####
         self._instantiate_nccl_groups(pipeshard_config.device_str_groups)
         self.resharding_tasks = pipeshard_config.resharding_tasks
+        for mesh_ids in pipeshard_config.allreduce_groups:
+            meshes = [self.mesh_group.meshes[idx] for idx in mesh_ids]
+            create_and_record_cross_mesh_collective_communicators(meshes)
         if global_config.eagerly_create_communicators:
             for task in self.resharding_tasks:
                 task.create_resharding_communicators()

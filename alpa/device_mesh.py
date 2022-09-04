@@ -398,6 +398,16 @@ class MeshHostWorker:
     def destroy_collective_group(group_name: str = "default"):
         col.destroy_collective_group(group_name)
 
+    def create_and_set_cross_mesh_communicators(self, world_size, rank, backend,
+                                                group_name):
+        """Create collective communicators for the cross mesh group."""
+        if not col.is_group_initialized(group_name):
+            self.init_collective_group(world_size, rank, backend, group_name)
+        g = col.check_and_get_group(group_name)
+        devices = list(range(self.num_devices))
+        comms = g.get_nccl_collective_communicator(devices, "xla")
+        xe.set_cross_mesh_communicator(comms, "")
+
     def put_resharding_send_task(self, uuid, tasks, group_name):
         self.send_tasks[uuid] = ReshardingSendTask(tile_specs=tasks,
                                                    group_name=group_name)
@@ -2180,7 +2190,9 @@ def init_global_cluster(cluster: str,
         global_physical_mesh = LocalPhysicalDeviceMesh()
     elif cluster == "ray":
         if not ray.is_initialized():
-            ray.init(address="auto", ignore_reinit_error=True)
+            ray.init(address="auto",
+                     ignore_reinit_error=True,
+                     namespace="alpa_ray_space")
         update_jax_platform("cpu")
         global_cluster = DeviceCluster(devices_per_node, num_nodes)
         global_virtual_physical_mesh = (
@@ -2259,6 +2271,24 @@ def get_global_num_devices():
         return global_physical_mesh.num_devices
 
     raise RuntimeError("Please call alpa.init first")
+
+
+def create_and_record_cross_mesh_collective_communicators(
+        meshes: Sequence[DistributedPhysicalDeviceMesh]):
+    workers = []
+    device_strs = []
+    for mesh in meshes:
+        workers.extend(mesh.workers)
+        device_strs.extend(mesh.device_strs)
+    world_size = len(workers)
+    backend = "nccl"
+    group_name = ",".join(device_strs)
+    refs = []
+    for rank, worker in enumerate(workers):
+        ref = worker.create_and_set_cross_mesh_communicators.remote(
+            world_size, rank, backend, group_name)
+        refs.append(ref)
+    return refs
 
 
 ########################################

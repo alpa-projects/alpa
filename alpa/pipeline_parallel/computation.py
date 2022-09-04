@@ -808,10 +808,10 @@ def rearrange_vars(vars,
     return new_vars, new_marker
 
 
-def generate_computations_from_modules(jax_computations, computation_names,
-                                       computation_modules, donate_invars,
-                                       donatable_lists, acc_grad_outvars,
-                                       stage_plan):
+def generate_computations_from_modules(
+        jax_computations, computation_names, computation_modules, donate_invars,
+        donatable_lists, acc_grad_outvars,
+        stage_plan) -> Sequence[XlaShardedPipelineComputation]:
     """Generate pipeline computation from HLO modules."""
     module_dict = dict(zip(computation_names, computation_modules))
     computations = [

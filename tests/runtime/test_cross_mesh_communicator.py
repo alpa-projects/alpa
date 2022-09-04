@@ -1,5 +1,6 @@
 import unittest
 
+import ray
 from alpa import init
 from alpa.device_mesh import create_and_record_cross_mesh_collective_communicators, get_global_cluster
 from alpa.pipeline_parallel.stage_construction import get_sliced_virtual_submeshes
@@ -19,7 +20,7 @@ class CrossMeshCollectiveCommunicatorTest(unittest.TestCase):
         virtual_mesh.get_physical_mesh_group(sliced_virtual_meshes)
         mesh_group = virtual_mesh.launched_physical_mesh_group
         meshes = mesh_group.meshes
-        create_and_record_cross_mesh_collective_communicators(meshes)
+        ray.get(create_and_record_cross_mesh_collective_communicators(meshes))
 
 
 def suite():

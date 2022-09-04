@@ -2273,9 +2273,6 @@ def get_global_num_devices():
     raise RuntimeError("Please call alpa.init first")
 
 
-########################################
-# Register ShardArg Handler
-########################################
 def create_and_record_cross_mesh_collective_communicators(
         meshes: Sequence[DistributedPhysicalDeviceMesh]):
     workers = []
@@ -2291,7 +2288,7 @@ def create_and_record_cross_mesh_collective_communicators(
         ref = worker.create_and_set_cross_mesh_communicators.remote(
             world_size, rank, backend, group_name)
         refs.append(ref)
-    ray.get(refs)
+    return refs
 
 
 ########################################

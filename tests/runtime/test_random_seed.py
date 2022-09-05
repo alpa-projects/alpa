@@ -60,6 +60,7 @@ class RandomSeedTest(unittest.TestCase):
         def get_parallelized_step(parallel_method):
 
             def train_step(*args):
+
                 def loss_func(params, x, key):
                     rns = jax.random.normal(key, shape)
                     y = x @ params["x1"]
@@ -72,18 +73,24 @@ class RandomSeedTest(unittest.TestCase):
                 grad_val, tree = tree_flatten(grads)
                 return tree_unflatten(tree, [val + 1 for val in grad_val]), rns
 
-            return parallelize(train_step, method=parallel_method, donate_argnums=())
+            return parallelize(train_step,
+                               method=parallel_method,
+                               donate_argnums=())
 
         def normal_step(params, x, rns):
+
             def forward(params, x, rns):
                 y = x @ params["x1"]
                 y = y @ rns
                 y = y @ params["x2"]
                 return jnp.mean(y)
+
             grad_val, tree = tree_flatten(jax.grad(forward)(params, x, rns))
             return tree_unflatten(tree, [val + 1 for val in grad_val])
 
-        remat_pipeline_fn = get_parallelized_step(PipeshardParallel(num_micro_batches=1, layer_option=ManualLayerOption(True)))
+        remat_pipeline_fn = get_parallelized_step(
+            PipeshardParallel(num_micro_batches=1,
+                              layer_option=ManualLayerOption(True)))
 
         key = jax.random.PRNGKey(0)
         x = jax.random.normal(key, shape)
@@ -96,6 +103,7 @@ class RandomSeedTest(unittest.TestCase):
         assert_allclose(pipeline_out, expected_out)
 
         shutdown()
+
 
 def suite():
     suite = unittest.TestSuite()

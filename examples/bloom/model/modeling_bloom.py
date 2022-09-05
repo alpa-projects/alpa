@@ -64,6 +64,7 @@ _TOKENIZER_FOR_DOC = "BloomTokenizerFast"
 class BloomConfig:
     model_type: str = "bloom"
     vocab_size: int = 250880
+    max_target_positions: int = 64
     hidden_size: int = 64
     n_head: int = 8
     num_hidden_layers: int = 2
@@ -78,7 +79,7 @@ class BloomConfig:
     pretraining_tp: int = 1  # TP rank used when training with megatron
     slow_but_exact: bool = False
     tie_word_embeddings: bool = True
-    dtype: any = jnp.float32
+    dtype: any = jnp.float16
     pad: int = 1
 
 @flax.struct.dataclass
@@ -210,8 +211,8 @@ BLOOM_START_DOCSTRING = r"""
         config ([`BloomConfig`]): Model configuration class with all the parameters of the model.
             Initializing with a config file does not load the weights associated with the model, only the
             configuration. Check out the [`~FlaxPreTrainedModel.from_pretrained`] method to load the model weights.
-        dtype (`jax.numpy.dtype`, *optional*, defaults to `jax.numpy.float32`):
-            The data type of the computation. Can be one of `jax.numpy.float32`, `jax.numpy.float16` (on GPUs) and
+        dtype (`jax.numpy.dtype`, *optional*, defaults to `jax.numpy.float16`):
+            The data type of the computation. Can be one of `jax.numpy.float16`, `jax.numpy.float16` (on GPUs) and
             `jax.numpy.bfloat16` (on TPUs).
             This can be used to enable mixed-precision training or half-precision inference on GPUs or TPUs. If
             specified all the computation will be performed with the given `dtype`.
@@ -278,21 +279,22 @@ def build_alibi_tensor_flax(attention_mask, n_head, dtype):
     slopes = jnp.array(get_slopes(n_head))[None, :, None, None].astype(dtype)
     # arange_tensor = attention_mask - 1
     # if len(attention_mask.shape) != 4:
-    print(f"attention_mask: {attention_mask.shape}")
-    arange_tensor = attention_mask.cumsum(-1, dtype=dtype) - 1
-    # [:, None, None, :] - 1
-    print(f"arange_tensor: {arange_tensor}")
+    attention_mask = attention_mask.reshape((batch_size, key_length))
+    # print(f"attention_mask: {attention_mask.shape}")
+    arange_tensor = attention_mask.cumsum(-1, dtype=dtype)[:, None, None, :] - 1
+    # arange_tensor = attention_mask.cumsum(-1, dtype=dtype) - 1
+    # print(f"arange_tensor: {arange_tensor}")
 
     slopes_broadcast = jnp.broadcast_to(slopes, (batch_size, num_heads, query_length, key_length))
     arange_broadcast = jnp.broadcast_to(arange_tensor, (batch_size, num_heads, query_length, key_length))
 
     alibi = slopes_broadcast * arange_broadcast
-    print(f"alibi: {alibi.shape}")
+    # print(f"alibi: {alibi.shape}")
     return alibi
 
 class FlaxBloomAttention(nn.Module):
     config: BloomConfig
-    dtype: jnp.dtype = jnp.float32
+    dtype: jnp.dtype = jnp.float16
 
     def setup(self):
         self.hidden_size = self.config.hidden_size
@@ -312,7 +314,9 @@ class FlaxBloomAttention(nn.Module):
         )
 
         self.query_key_value = dense(self.hidden_size * 3)
-        self.dense = dense(self.hidden_size)
+        # self.query_key_value = nn.Dense(self.hidden_size * 3, dtype=self.dtype)
+        self.dense = dense(self.hidden_size, dtype=self.dtype)
+        # self.dense = nn.Dense(self.hidden_size, dtype=self.dtype)
         self.resid_dropout = nn.Dropout(rate=self.config.hidden_dropout)
         # modified:
         # if self.has_variable("cache", "cached_key") or self.init_cache:
@@ -436,25 +440,82 @@ class FlaxBloomAttention(nn.Module):
         #     # shape: [B, 1, S, S_max]
         #     attention_mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
 
-        print(f"attention_mask shape: {attention_mask.shape}")
+        # print(f"attention_mask shape: {attention_mask.shape}")
         batch_size, seq_length = hidden_states.shape[:2]
         fused_qkv = self.query_key_value(hidden_states)
         fused_qkv = fused_qkv.reshape(fused_qkv.shape[:-1] + (self.num_heads, self.head_dim * 3))
         query, key, value = jnp.split(fused_qkv, 3, axis=-1)
-        query = query.reshape(hidden_states.shape[:-1] + (
-            self.num_heads, self.head_dim))
-        # shape: [B, S, #head, head_dim]
-        value = value.reshape(hidden_states.shape[:-1] + (
-            self.num_heads, self.head_dim))
-        # shape: [B, S, #head, head_dim]
-        key = key.reshape(hidden_states.shape[:-1] +
-                                        (self.num_heads,
-                                         self.head_dim))
-        print(f"key shape {key.shape}")
-
-        key_len = key.shape[1]
-
+        print(f"key shape: {key.shape}")
+        # also from flax bloom:
+        # causal_attention_mask = make_causal_mask(attention_mask, dtype="bool")
+        query_len, key_len = query.shape[1], key.shape[1]
+        print(f"query_len: {query_len}, key_len: {key_len}")
         causal_attention_mask = make_causal_mask(jnp.ones((batch_size, key_len)), dtype="bool")
+
+        # for fast decoding causal attention mask should be shifted
+        if attention_cache:
+            causal_attention_mask_shift = attention_cache[2][0]
+        else:
+            causal_attention_mask_shift = 0
+        
+        # fast decoding for generate requires special attention_mask
+        if attention_cache:
+            causal_attention_mask = jax.lax.dynamic_slice(
+                causal_attention_mask,
+                (0, 0, causal_attention_mask_shift, 0),
+                (batch_size, 1, query_len, key_len),
+            )
+        
+        # # broadcast causal attention mask & attention mask to fit for merge
+        # causal_attention_mask = jnp.broadcast_to(
+        #     causal_attention_mask, (batch_size,) + attention_mask.shape[1:]
+        # )
+        print(f"attention_mask: {attention_mask.shape}")
+        print(f"causal_attention_mask: {causal_attention_mask.shape}")
+        # attention_mask = jnp.broadcast_to(jnp.expand_dims(attention_mask, axis=(-3, -2)), causal_attention_mask.shape)
+        # attention_mask = jnp.broadcast_to(attention_mask, causal_attention_mask.shape)
+        attention_mask = combine_masks(attention_mask, causal_attention_mask)
+
+        # During fast autoregressive decoding, we feed one position at a time,
+        # and cache the keys and values step by step.
+        if attention_cache:
+            cache_key, cache_value, cache_index = attention_cache
+            *batch_dims, max_length, num_heads, depth_per_head = cache_key.shape
+            # update key, value caches with our new 1d spatial slices
+            cur_index = cache_index[0]
+            # indices = (0,) * len(batch_dims) + (cur_index, 0, 0)
+            indices = (0, cur_index, 0, 0)
+            print(f"cache_key: {cache_key.shape}")
+            key = lax.dynamic_update_slice(cache_key, key, indices)
+            value = lax.dynamic_update_slice(cache_value, value, indices)
+            cache_key = key
+            cache_value = value
+            num_updated_cache_vectors = query.shape[1]
+            # cache_index = cache_index + num_updated_cache_vectors
+            # A line added from opt_model
+            attention_cache = key, value, cache_index + num_updated_cache_vectors
+            # causal mask for cached decoder self-attention: our single query position should only attend to those key positions that have already been generated and cached, not the remaining zero elements.
+            pad_mask = jnp.broadcast_to(
+                jnp.arange(max_length) < cur_index + num_updated_cache_vectors,
+                tuple(batch_dims) + (1, num_updated_cache_vectors, max_length),
+            )
+            attention_mask = combine_masks(pad_mask, attention_mask)
+        # query = query.transpose(1,2).reshape(hidden_states.shape[:-1] + (
+        #     self.num_heads, self.head_dim))
+        # # shape: [B, S, #head, head_dim]
+        # value = value.permute(0, 2, 3, 1).reshape(hidden_states.shape[:-1] + (
+        #     self.num_heads, self.head_dim))
+        # # shape: [B, S, #head, head_dim]
+        # key = key.transpose(1,2).reshape(hidden_states.shape[:-1] +
+        #                                 (self.num_heads,
+        #                                  self.head_dim))
+        # print(f"key shape {key.shape}")
+
+        # key_len = key.shape[1]
+
+        # causal_attention_mask = make_causal_mask(jnp.ones((batch_size, key_len)), dtype="bool")
+
+        # causal_attention_mask_shift = (0)
 
         # # for fast decoding causal attention mask should be shifted
         # causal_attention_mask_shift = (
@@ -472,34 +533,51 @@ class FlaxBloomAttention(nn.Module):
 
         # broadcast causal attention mask & attention mask to fit for merge
         # print(f"causal mask: {causal_attention_mask.shape}")
-        causal_attention_mask = jnp.broadcast_to(
-            causal_attention_mask, (batch_size,) + causal_attention_mask.shape[1:]
-        )
+        # causal_attention_mask = jnp.broadcast_to(
+        #     causal_attention_mask, (batch_size,) + causal_attention_mask.shape[1:]
+        # )
         # print(f"causal mask: {causal_attention_mask.shape}")
         # attention_mask = jnp.broadcast_to(jnp.expand_dims(attention_mask, axis=(-3, -2)), causal_attention_mask.shape)
-        attention_mask = combine_masks(attention_mask, causal_attention_mask)
+        # attention_mask = combine_masks(attention_mask, causal_attention_mask)
 
         # During fast autoregressive decoding, we feed one position at a time,
         # and cache the keys and values step by step.
-        if attention_cache:
-            cache_key, cache_value, cache_index = attention_cache
-            *batch_dims, max_length, num_heads, depth_per_head = cache_key.shape
-            # update key, value caches with our new 1d spatial slices
-            cur_index = cache_index
-            indices = (0,) * len(batch_dims) + (cur_index, 0, 0)
-            key = lax.dynamic_update_slice(cache_key, key, indices)
-            value = lax.dynamic_update_slice(cache_value, value, indices)
-            num_updated_cache_vectors = query.shape[1]
-            cache_index = cache_index + num_updated_cache_vectors
-            # causal mask for cached decoder self-attention: our single query position should only attend to those key positions that have already been generated and cached, not the remaining zero elements.
-            pad_mask = jnp.broadcast_to(
-                jnp.arange(max_length) < cur_index + num_updated_cache_vectors,
-                tuple(batch_dims) + (1, num_updated_cache_vectors, max_length),
-            )
-            attention_cache = key, value, cache_index
-            print(f"attention_mask.shape: {attention_mask.shape}")
-            print(f"pad_mask.shape: {pad_mask.shape}")
-            attention_mask = combine_masks(pad_mask, attention_mask)
+        # if attention_cache:
+        #     cache_key, cache_value, cache_index = attention_cache
+        #     *batch_dims, max_length, num_heads, depth_per_head = cache_key.shape
+        #     # update key, value caches with our new 1d spatial slices
+        #     causal_attention_mask_shift = (cache_index)
+        #     max_decoder_length = cache_key.shape[1]
+        #     causal_attention_mask = jax.lax.dynamic_slice(
+        #         causal_attention_mask,
+        #         (0, 0, causal_attention_mask_shift, 0),
+        #         (1, 1, seq_length, max_decoder_length),
+        #     )
+        #     causal_attention_mask = jnp.broadcast_to(causal_attention_mask, (batch_size,) + causal_attention_mask.shape[1:])
+        #     attention_mask = jnp.broadcast_to(jnp.expand_dims(attention_mask, axis=(-3, -2)), causal_attention_mask.shape)
+        #     attention_mask = combine_masks(attention_mask, causal_attention_mask)
+        #     cur_index = cache_index[0]
+        #     # indices = (0,) * len(batch_dims) + (cur_index, 0, 0)
+        #     indices = (0, cur_index, 0, 0)
+        #     key = lax.dynamic_update_slice(cache_key, key, indices)
+        #     value = lax.dynamic_update_slice(cache_value, value, indices)
+        #     num_updated_cache_vectors = query.shape[1]
+        #     cache_index += num_updated_cache_vectors
+        #     # causal mask for cached decoder self-attention: our single query position should only attend to those key positions that have already been generated and cached, not the remaining zero elements.
+        #     pad_mask = jnp.broadcast_to(
+        #         jnp.arange(max_length) < cur_index + num_updated_cache_vectors,
+        #         tuple(batch_dims) + (1, num_updated_cache_vectors, max_length),
+        #     )
+        #     attention_cache = key, value, cache_index
+        #     # print(f"attention_mask.shape: {attention_mask.shape}")
+        #     # print(f"pad_mask.shape: {pad_mask.shape}")
+        #     attention_mask = combine_masks(pad_mask, attention_mask)
+        # else:
+        #     causal_attention_mask = jnp.broadcast_to(causal_attention_mask, (batch_size,) + causal_attention_mask.shape[1:])
+        #     attention_mask = jnp.broadcast_to(jnp.expand_dims(attention_mask, axis=(-3, -2)), causal_attention_mask.shape)
+        #     attention_mask = combine_masks(attention_mask, causal_attention_mask)
+        # Copying from flax bloom:
+
             # key, value, attention_mask = self._concatenate_to_cache(key, value, query, attention_mask)
         # head_dim = self.head_dim
         # batch_size = hidden_states.shape[0]
@@ -654,7 +732,7 @@ class FlaxBloomAttention(nn.Module):
 
         attn_output = jnp.einsum("...hqk,...khd->...qhd", attn_weights, value)
         # attn_output = self._merge_heads(attn_output)
-        attn_output = attn_output.reshape(attn_output.shape[:2] + (-1,))
+        attn_output = attn_output.reshape(hidden_states.shape[:2] + (self.hidden_size,))
         attn_output = self.dense(attn_output)
         attn_output = self.resid_dropout(attn_output, deterministic=deterministic)
 
@@ -707,7 +785,7 @@ class FlaxBloomMLP(nn.Module):
 
 class FlaxBloomBlock(nn.Module):
     config: BloomConfig
-    dtype: jnp.dtype = jnp.float32
+    dtype: jnp.dtype = jnp.float16
 
     def setup(self):
         self.input_layernorm = nn.LayerNorm(epsilon=self.config.layer_norm_epsilon, dtype=self.dtype)
@@ -732,9 +810,9 @@ class FlaxBloomBlock(nn.Module):
         init_cache: bool = False,
         output_attentions: bool = False,
     ):
-        print(f"hidden_states in: {hidden_states.shape}")
+        # print(f"hidden_states in: {hidden_states.shape}")
         layernorm_output = self.input_layernorm(hidden_states)
-        print(f"layernorm_out: {layernorm_output.shape}")
+        # print(f"layernorm_out: {layernorm_output.shape}")
         # layer norm before saving residual if config calls for it
         if self.apply_residual_connection_post_layernorm:
             residual = layernorm_output
@@ -754,12 +832,12 @@ class FlaxBloomBlock(nn.Module):
             output_attentions=output_attentions,
             layer_number=layer_number,
         )
-        print(f"attention_out: {attn_outputs[0].shape}")
+        # print(f"attention_out: {attn_outputs[0].shape}")
         attention_output = attn_outputs[0]
         attention_cache = attn_outputs[1]
 
         # outputs = attn_outputs[2:]
-        print(f"post_layernorm in: {attention_output.shape}")
+        # print(f"post_layernorm in: {attention_output.shape}")
         post_layernorm = self.post_attention_layernorm(attention_output)
 
         # set residual based on config
@@ -767,9 +845,9 @@ class FlaxBloomBlock(nn.Module):
             residual = post_layernorm
         else:
             residual = attention_output
-        print(f"mlp in: {post_layernorm.shape}")
+        # print(f"mlp in: {post_layernorm.shape}")
         output = self.mlp(post_layernorm, residual, deterministic=deterministic)
-        print(f"mlp out: {output.shape}")
+        # print(f"mlp out: {output.shape}")
         outputs = (output, attention_cache)
         if output_attentions:
             outputs += (attn_outputs[2],)
@@ -791,7 +869,7 @@ class FlaxBloomBlock(nn.Module):
 #         config: BloomConfig,
 #         input_shape: Tuple = (1, 1),
 #         seed: int = 0,
-#         dtype: jnp.dtype = jnp.float32,
+#         dtype: jnp.dtype = jnp.float16,
 #         _do_init: bool = True,
 #         **kwargs,
 #     ):
@@ -903,7 +981,7 @@ class FlaxBloomBlock(nn.Module):
 
 class FlaxBloomBlockCollection(nn.Module):
     config: BloomConfig
-    dtype: jnp.dtype = jnp.float32
+    dtype: jnp.dtype = jnp.float16
 
     # TODO(sanchit-gandhi): re-write as a `setup` to conform to Transformers JAX/Flax conventions
     @nn.compact
@@ -924,6 +1002,7 @@ class FlaxBloomBlockCollection(nn.Module):
         new_attention_cache = () if attention_cache is not None else None
 
         for layer_number in range(self.config.num_hidden_layers):
+            print(f"{layer_number}:")
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
             layer_attention_cache = None
@@ -961,7 +1040,7 @@ class FlaxBloomBlockCollection(nn.Module):
 
 class FlaxBloomModule(nn.Module):
     config: BloomConfig
-    dtype: jnp.dtype = jnp.float32
+    dtype: jnp.dtype = jnp.float16
 
     def setup(self):
         self.embed_dim = self.config.hidden_size
@@ -999,6 +1078,7 @@ class FlaxBloomModule(nn.Module):
         inputs_embeds = self.word_embeddings(input_ids.astype("i4"))
         # do post-embedding layernorm
         hidden_states = self.word_embeddings_layernorm(inputs_embeds)
+        print(f"hidden_states: {hidden_states.shape}")
 
         batch_size, curr_seq_len, _ = hidden_states.shape
 
@@ -1055,7 +1135,7 @@ class FlaxBloomModule(nn.Module):
 
 class FlaxBloomForCausalLMModule(nn.Module):
     config: BloomConfig
-    dtype: jnp.dtype = jnp.float32
+    dtype: jnp.dtype = jnp.float16
 
     def setup(self):
         self.transformer = FlaxBloomModule(self.config, dtype=self.dtype)
@@ -1087,6 +1167,7 @@ class FlaxBloomForCausalLMModule(nn.Module):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
+        print("FlaxBloomForCausalLMModule")
 
         hidden_states = outputs[0]
 
@@ -1215,10 +1296,10 @@ def init_cache_aval(config, batch_size):
     all_cache = []
     for _ in range(config.num_hidden_layers):
         layer_cache = (
-            jax.core.ShapedArray((batch_size, 64,
+            jax.core.ShapedArray((batch_size, config.max_target_positions,
                                   config.n_head, head_dim),
                                  dtype),
-            jax.core.ShapedArray((batch_size, 64,
+            jax.core.ShapedArray((batch_size, config.max_target_positions,
                                   config.n_head, head_dim),
                                  dtype),
             jax.core.ShapedArray((batch_size,), jnp.int32),
@@ -1229,7 +1310,7 @@ def init_cache_aval(config, batch_size):
 
 def init_mask_aval(config, batch_size):
     """Initialize attention mask with abstract values (shape-only arrays)."""
-    mask = jax.core.ShapedArray((batch_size, 1, 1, 64), dtype=np.int8)
+    mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_target_positions), dtype=np.int8)
     return mask
 
 
@@ -1241,10 +1322,10 @@ def init_cache_np(config, batch_size):
     all_cache = []
     for i in range(config.num_hidden_layers):
         layer_cache = (
-            np.zeros((batch_size, 64,
+            np.zeros((batch_size, config.max_target_positions,
                       config.n_head, head_dim),
                      dtype=np_dtype),
-            np.zeros((batch_size, 64,
+            np.zeros((batch_size, config.max_target_positions,
                       config.n_head, head_dim),
                      dtype=np_dtype),
             np.zeros((batch_size,), np.int32),
@@ -1357,6 +1438,7 @@ def get_jax_executable(config: BloomConfig,
     executables = {}
     for length in encoder_seq_lengths:
         executables[length] = inference_step
+    # print("got jax executable")
     return executables, params
 
 def get_pipeshard_executable(config: BloomConfig,

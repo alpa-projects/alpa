@@ -11,8 +11,8 @@ from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
                                               )
 from alpa.pipeline_parallel.computation import (
     create_donation_mapping,
-    mark_missing_vars_in_backward_computation_pipeline_marks,
-    pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks)
+    mark_missing_vars_in_backward_computation_pipeline_marks, pipeline_dce,
+    slice_closed_jaxpr_by_full_pipeline_marks)
 from alpa.pipeline_parallel.layer_construction import ManualLayerOption
 from alpa.pipeline_parallel.stage_profiling import (ApplyGradConfig,
                                                     CompileConfig,

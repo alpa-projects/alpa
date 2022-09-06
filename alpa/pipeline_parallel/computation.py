@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 import logging
 from typing import Sequence, Any, Dict, Optional
 
-import jax
 from jax import jit
 from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
 from jax._src.util import partial, safe_map

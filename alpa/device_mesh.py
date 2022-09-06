@@ -29,7 +29,6 @@ import threading
 import time
 from typing import Any, List, Union, Sequence, Tuple, Optional
 
-import jax
 from jax import core, xla, device_put
 from jax._src.api import ShapeDtypeStruct
 from jax._src.lib import xla_bridge as xb, xla_extension as xe
@@ -845,9 +844,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
             shards = [
                 args[i][shard_indices[i][k]] for k in range(len(self.devices))
             ]
-            buffers = [
-                jax.device_put(x, d) for x, d in zip(shards, self.devices)
-            ]
+            buffers = [device_put(x, d) for x, d in zip(shards, self.devices)]
             arrays.append(
                 pxla._ShardedDeviceArray(avals[i], sharding_specs[i], buffers,
                                          shard_indices[i]))

@@ -101,7 +101,7 @@ class RandomSeedTest(unittest.TestCase):
             return tree_unflatten(tree, [val + 1 for val in grad_val])
 
         # the num micrbatch can only be 1 because current runtime does not
-        # support 
+        # support
         remat_pipeline_with_rng = get_train_step(
             PipeshardParallel(num_micro_batches=1,
                               layer_option=ManualLayerOption(True)), True)

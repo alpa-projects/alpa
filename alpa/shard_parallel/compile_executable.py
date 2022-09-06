@@ -9,7 +9,6 @@ from jax._src import traceback_util
 from jax._src.lib import xla_extension as xe
 from jax.core import (Jaxpr, ClosedJaxpr, Literal, gensym, get_aval,
                       raise_to_shaped, AbstractValue)
-from jax.interpreters import partial_eval as pe
 from jax.lax import add_p, div_p
 from jax.tree_util import PyTreeDef
 

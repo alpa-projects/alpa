@@ -4,7 +4,7 @@ from typing import Sequence, Optional
 
 from jax._src.lib import xla_extension as xe
 from jax.core import Var
-from jax.interpreters import partial_eval as pxla
+from jax.interpreters import pxla
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 import numpy as np
 

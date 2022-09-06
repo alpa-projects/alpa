@@ -59,7 +59,7 @@ class RandomSeedTest(unittest.TestCase):
 
         # TODO: Stateful rng is correct only if it is not replicated, so we
         # should forcely set the parallel strategy to data parallel.
-        def get_train_step(parallel_method, return_rns):
+        def get_train_step(parallel_method):
 
             def train_step(*args):
 
@@ -69,20 +69,11 @@ class RandomSeedTest(unittest.TestCase):
                     y = jax.lax.select(rns > 0, y, jnp.zeros_like(y))
                     mark_pipeline_boundary()
                     y = y @ params["x2"]
-                    if return_rns:
-                        return jnp.mean(y), rns
-                    else:
-                        return jnp.mean(y)
+                    return jnp.mean(y), rns
 
-                if return_rns:
-                    grads, rns = grad(loss_func, has_aux=True)(*args)
-                else:
-                    grads = grad(loss_func)(*args)
+                grads, rns = grad(loss_func, has_aux=True)(*args)
                 grad_val, tree = tree_flatten(grads)
-                ret = tree_unflatten(tree, [val + 1 for val in grad_val])
-                if return_rns:
-                    ret = ret, rns
-                return ret
+                return tree_unflatten(tree, [val + 1 for val in grad_val]), rns
 
             return parallelize(train_step,
                                method=parallel_method,
@@ -104,7 +95,7 @@ class RandomSeedTest(unittest.TestCase):
         # support
         remat_pipeline_with_rng = get_train_step(
             PipeshardParallel(num_micro_batches=1,
-                              layer_option=ManualLayerOption(True)), True)
+                              layer_option=ManualLayerOption(True)))
 
         key = jax.random.PRNGKey(0)
         x = jax.random.normal(key, shape)

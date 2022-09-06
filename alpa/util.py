@@ -782,7 +782,7 @@ def process_remat(closed_jaxpr: ClosedJaxpr):
 
     def difference_cross_marker(eqns, base, dif):
         base = set(base)
-        dif = set(dif)
+        dif = set([v for v in dif if is_meaningful(v)])
         pipeline_mapping = {}
         for eqn in eqns:
             if eqn.primitive is pipeline_p:

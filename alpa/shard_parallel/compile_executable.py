@@ -105,12 +105,13 @@ def shard_parallel_internal(
     """
     # pylint: disable=unused-argument
     # Trace to get jaxpr
-    jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
+    closed_jaxpr, _ = trace_jaxpr_with_micro_batch(fun, [False] * len(avals), 1,
+                                                   avals)
+    out_avals = [v.aval for v in closed_jaxpr.jaxpr.outvars]
 
     # Convert jaxpr to XLA HLO
     name = f"{fun.__name__}_shard_parallel"
-    hlo_module = jaxpr_to_hlo_module(name, ClosedJaxpr(jaxpr, consts),
-                                     donated_invars)
+    hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, donated_invars)
     flop_count = xe.hlo_module_count_flop_dot_conv_only(hlo_module)
 
     # Compile a XLA executable

@@ -456,33 +456,13 @@ class OPTForLMModule(nn.Module):
         )
 
 
-def init_model_aval(config, batch_size=1, max_length=128):
+def init_model_aval(config, total_input_len, total_cache_len):
     """Initialize model with parameters with abstract values (shape-only arrays)."""
-    model = OPTForLMModule(config, dtype=config.dtype)
-    rngkey = jax.core.ShapedArray((2,), jnp.uint32)
-    input_ids = jax.core.ShapedArray((batch_size * max_length,), jnp.int32)
-    position_ids = jax.core.ShapedArray((batch_size * max_length,), jnp.int32)
-    batch_ids = jax.core.ShapedArray((batch_size * max_length,), jnp.int32)
-    cache = init_cache_aval(config, batch_size)
-    params = jax.eval_shape(model.init,
-                            rngkey,
-                            input_ids,
-                            position_ids,
-                            batch_ids,
-                            attention_cache=cache)
-    params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, config.dtype),
-                          params)
-    return model, params
-
-
-def init_model_aval_v2(config, total_input_len, total_cache_len):
-    """Woosuk's version: we declare total_input_len and total_cache_len in advance."""
     model = OPTForLMModule(config, dtype=config.dtype)
     rngkey = jax.core.ShapedArray((2,), jnp.uint32)
     input_ids = jax.core.ShapedArray((total_input_len,), jnp.int32)
     position_ids = jax.core.ShapedArray((total_input_len,), jnp.int32)
-    cache = init_cache_aval_v2(config, total_cache_len)
-
+    cache = init_cache_aval(config, total_cache_len)
     params = jax.eval_shape(model.init,
                             rngkey,
                             input_ids,
@@ -493,25 +473,7 @@ def init_model_aval_v2(config, total_input_len, total_cache_len):
     return model, params
 
 
-def init_cache_aval_v2(config, total_cache_len):
-    dtype = config.dtype
-    head_dim = config.decoder_embed_dim // config.decoder_attention_heads
-
-    all_cache = []
-    for i in range(config.decoder_layers):
-        layer_cache = (
-            jax.core.ShapedArray((total_cache_len,
-                                  config.decoder_attention_heads, head_dim),
-                                 dtype),
-            jax.core.ShapedArray((total_cache_len,
-                                  config.decoder_attention_heads, head_dim),
-                                 dtype),
-        )
-        all_cache.append(layer_cache)
-    return tuple(all_cache)
-
-
-def init_cache_aval(config, batch_size):
+def init_cache_aval(config, total_cache_len):
     """Initialize cache with abstract values (shape-only arrays)."""
     dtype = config.dtype
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
@@ -519,20 +481,18 @@ def init_cache_aval(config, batch_size):
     all_cache = []
     for i in range(config.decoder_layers):
         layer_cache = (
-            jax.core.ShapedArray((batch_size * config.max_target_positions,
+            jax.core.ShapedArray((total_cache_len,
                                   config.decoder_attention_heads, head_dim),
                                  dtype),
-            jax.core.ShapedArray((batch_size * config.max_target_positions,
+            jax.core.ShapedArray((total_cache_len,
                                   config.decoder_attention_heads, head_dim),
                                  dtype),
-            jax.core.ShapedArray((batch_size * config.max_target_positions,),
-                                 jnp.int32),
         )
         all_cache.append(layer_cache)
     return tuple(all_cache)
 
 
-def init_cache_np_v2(config, total_cache_len):
+def init_cache_np(config, total_cache_len):
     """Init cache per sequence with numpy arrays."""
     np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
@@ -546,26 +506,6 @@ def init_cache_np_v2(config, total_cache_len):
             np.zeros((total_cache_len,
                       config.decoder_attention_heads, head_dim),
                      dtype=np_dtype),
-        )
-        all_cache.append(layer_cache)
-    return tuple(all_cache)
-
-
-def init_cache_np(config):
-    """Init cache per sequence with numpy arrays."""
-    np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
-    head_dim = config.decoder_embed_dim // config.decoder_attention_heads
-
-    all_cache = []
-    for i in range(config.decoder_layers):
-        layer_cache = (
-            np.zeros((config.max_target_positions,
-                      config.decoder_attention_heads, head_dim),
-                     dtype=np_dtype),
-            np.zeros((config.max_target_positions,
-                      config.decoder_attention_heads, head_dim),
-                     dtype=np_dtype),
-            np.zeros((1,), np.int32),
         )
         all_cache.append(layer_cache)
     return tuple(all_cache)

@@ -55,23 +55,34 @@ class RandomSeedTest(unittest.TestCase):
 
     def test_remat_rng(self):
         init(cluster="ray")
-        shape = (4, 4)
+        shape = (40, 40)
 
-        def get_parallelized_step(parallel_method):
+        # TODO: Stateful rng is correct only if it is not replicated, so we
+        # should forcely set the parallel strategy to data parallel.
+        def get_train_step(parallel_method, return_rns):
 
             def train_step(*args):
 
                 def loss_func(params, x, key):
-                    rns = jax.random.normal(key, shape)
+                    rns = jax.random.normal(key, x.shape)
                     y = x @ params["x1"]
-                    y = y @ rns
+                    y = jax.lax.select(rns > 0, y, jnp.zeros_like(y))
                     mark_pipeline_boundary()
                     y = y @ params["x2"]
-                    return jnp.mean(y), rns
+                    if return_rns:
+                        return jnp.mean(y), rns
+                    else:
+                        return jnp.mean(y)
 
-                grads, rns = grad(loss_func, has_aux=True)(*args)
+                if return_rns:
+                    grads, rns = grad(loss_func, has_aux=True)(*args)
+                else:
+                    grads = grad(loss_func)(*args)
                 grad_val, tree = tree_flatten(grads)
-                return tree_unflatten(tree, [val + 1 for val in grad_val]), rns
+                ret = tree_unflatten(tree, [val + 1 for val in grad_val])
+                if return_rns:
+                    ret = ret, rns
+                return ret
 
             return parallelize(train_step,
                                method=parallel_method,
@@ -81,16 +92,19 @@ class RandomSeedTest(unittest.TestCase):
 
             def forward(params, x, rns):
                 y = x @ params["x1"]
-                y = y @ rns
+                y = jax.lax.select(rns > 0, y, jnp.zeros_like(y))
                 y = y @ params["x2"]
                 return jnp.mean(y)
 
-            grad_val, tree = tree_flatten(jax.grad(forward)(params, x, rns))
+            grads = jax.grad(forward)(params, x, rns)
+            grad_val, tree = tree_flatten(grads)
             return tree_unflatten(tree, [val + 1 for val in grad_val])
 
-        remat_pipeline_fn = get_parallelized_step(
+        # the num micrbatch can only be 1 because current runtime does not
+        # support 
+        remat_pipeline_with_rng = get_train_step(
             PipeshardParallel(num_micro_batches=1,
-                              layer_option=ManualLayerOption(True)))
+                              layer_option=ManualLayerOption(True)), True)
 
         key = jax.random.PRNGKey(0)
         x = jax.random.normal(key, shape)
@@ -98,9 +112,14 @@ class RandomSeedTest(unittest.TestCase):
             "x1": jax.random.normal(key, shape),
             "x2": jax.random.normal(key, shape)
         }
-        pipeline_out, rns = remat_pipeline_fn(params, x, key)
+        pipeline_out, rns = remat_pipeline_with_rng(params, x, key)
         expected_out = normal_step(params, x, rns._value)
         assert_allclose(pipeline_out, expected_out)
+        executable = remat_pipeline_with_rng.get_executable(params, x, key)
+        rng_str = "rng-get-and-update-state"
+        for hlo in executable.get_hlo_text()[1:]:
+            assert rng_str not in hlo
+        assert rng_str in executable.get_hlo_text()[0]
 
         shutdown()
 

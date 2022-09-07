@@ -13,11 +13,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from opt_serving.model.opt_model import (
-    get_opt_config, get_pipeshard_executable, load_params_dis_array,
+from bloom.model.modeling_bloom import (
+    get_bloom_config, get_pipeshard_executable, load_params_dis_array,
     init_cache_dis_array, load_params_np, init_cache_np, get_jax_executable,
-    build_position_ids, init_model_aval, init_cache_aval)
-from opt_serving.model.wrapper import set_skip_shard_args_check
+    init_model_aval, init_cache_aval)
+from bloom.model.wrapper import set_skip_shard_args_check
 
 
 def run_benchmark(args):
@@ -35,12 +35,11 @@ def run_benchmark(args):
     def inference_step_with_cache(params, batch):
         output = model.apply(params,
                              batch["input_ids"],
-                             batch["position_ids"],
                              attention_cache=batch["cache"])
         return output.logits, output.attention_cache
 
     if args.parallel_method == "jit":
-        config = get_opt_config(name)
+        config = get_bloom_config(name)
         model, params_aval = init_model_aval(config)
         params = load_params_np(params_aval, path, config, dummy)
         cache = init_cache_np(config, batch_size)
@@ -54,7 +53,7 @@ def run_benchmark(args):
         if args.parallel_method in ["shard_local", "shard_ray"]:
             assert dummy == True, 'Only support dummy weights. Plasese add "--dummy".'
 
-            config = get_opt_config(name)
+            config = get_bloom_config(name)
             model, params_aval = init_model_aval(config)
             if args.parallel_method == "local_shard":
                 alpa.init(cluster="local")
@@ -72,7 +71,7 @@ def run_benchmark(args):
             alpa.init(cluster="ray")
             num_gpus = alpa.get_global_cluster().num_devices
             num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
-            config = get_opt_config(name, num_pp_stages=num_pp_stages)
+            config = get_bloom_config(name, num_pp_stages=num_pp_stages)
             model, params_aval = init_model_aval(config)
 
             method = alpa.PipeshardParallel(num_micro_batches=1,
@@ -85,8 +84,6 @@ def run_benchmark(args):
         executable = infer_step.get_executable(
             params_aval, {
                 "input_ids":
-                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
-                "position_ids":
                     jax.core.ShapedArray((batch_size, 1), jnp.int32),
                 "cache":
                     init_cache_aval(config, batch_size),
@@ -108,21 +105,18 @@ def run_benchmark(args):
                                   10000,
                                   size=(batch_size, seq_len),
                                   dtype=np.int32)
-    position_ids = build_position_ids(input_ids, config.pad)
 
     step_latencies = []
     compute_latencies = []
     shard_args_latencies = []
     for i in range(input_ids.shape[1]):
         input_ids_step = input_ids[:, i:i + 1]
-        position_ids_step = np.full_like(input_ids_step, i + config.pad + 1)
 
         sync_func()
         start_time = time.time()
         infer_step(
             params, {
                 "input_ids": input_ids_step,
-                "position_ids": position_ids_step,
                 "cache": cache,
             })
         sync_func()
@@ -155,8 +149,8 @@ def run_benchmark(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="alpa/opt-2.7b")
-    parser.add_argument("--path", type=str, default="/home/ubuntu/opt_weights/")
+    parser.add_argument("--model", type=str, default="alpa/bloom-350m")
+    parser.add_argument("--path", type=str, default="/home/ubuntu/bloom_weights/")
     parser.add_argument("--dummy", action="store_true")
     parser.add_argument(
         "--parallel-method",

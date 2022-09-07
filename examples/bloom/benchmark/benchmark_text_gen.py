@@ -1,17 +1,17 @@
 """Benchmark generation performance.
 
 Usages:
-1. benchmark huggingface torch-based OPT or GPT-2 generation:
-python benchmark_text_gen.py --model facebook/opt-125m --debug
+1. benchmark huggingface torch-based Bloom or GPT-2 generation:
+python benchmark_text_gen.py --model huggingface/bloom-350m --debug
 
-2. benchmark jax.jit based OPT generation without alpa, on a single GPU:
-python benchmark_text_gen.py --model jax/opt-125m
+2. benchmark jax.jit based Bloom generation without alpa, on a single GPU:
+python benchmark_text_gen.py --model jax/bloom-350m
 
-3. benchmark alpa parallelized OPT generation:
-python benchmark_text_gen.py --model alpa/opt-2.7b --debug
+3. benchmark alpa parallelized Bloom generation:
+python benchmark_text_gen.py --model alpa/bloom-350m --debug
 
-4. benchmark alpa parallelized OPT forward computation, batch_size, decoder length, and #micro_batches can be configured.
-python benchmark_text_gen.py --model alpa/opt-2.7b --forward
+4. benchmark alpa parallelized Bloom forward computation, batch_size, decoder length, and #micro_batches can be configured.
+python benchmark_text_gen.py --model alpa/bloom-350m --forward
     --decoder_length 1024 --nb 1 --batch-size 256 --debug
 
 Notes:
@@ -28,8 +28,7 @@ import time
 import torch
 from transformers import AutoTokenizer
 
-from opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
-from opt_serving.model.wrapper import get_model
+from bloom.model.wrapper import get_model
 
 test_prompts = [
     "Computer science is the study of computation and",
@@ -45,9 +44,9 @@ test_prompts = [
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="alpa/opt-125m")
+    parser.add_argument("--model", type=str, default="alpa/bloom-350m")
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--path", type=str, default="/home/ubuntu/opt_weights/")
+    parser.add_argument("--path", type=str, default="/home/ubuntu/bloom_weights/")
     parser.add_argument("--dummy", action="store_true")
     parser.add_argument("--forward", action="store_true")
     parser.add_argument("--decoder-length", type=int, default=1)
@@ -64,8 +63,7 @@ if __name__ == "__main__":
     global_config.pipeline_sync_for_timer = True
     global_config.shard_parallel_sync_for_timer = True
 
-    # Note(Hao): we need to use "opt-30b" and disable "add_bos_token".
-    tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b",
+    tokenizer = AutoTokenizer.from_pretrained("huggingface/bloom",
                                               use_fast=False)
     tokenizer.add_bos_token = False
 
@@ -107,8 +105,6 @@ if __name__ == "__main__":
         # create batch
         input_ids = jnp.ones((batch_size, decoder_length_per_step),
                              dtype=jnp.int32)
-        position_ids = jnp.ones((batch_size, decoder_length_per_step),
-                                dtype=jnp.int32)
 
         # get model config
         H = transformer_config.H
@@ -123,7 +119,6 @@ if __name__ == "__main__":
         for _ in range(warmup_iters):
             forward_results = model(params, {
                 "input_ids": input_ids,
-                "position_ids": position_ids
             })
             model.sync()
 
@@ -134,7 +129,6 @@ if __name__ == "__main__":
             tic = time.time()
             forward_results = model(params, {
                 "input_ids": input_ids,
-                "position_ids": position_ids
             })
             model.sync()
             # a = np.array(forward_results)

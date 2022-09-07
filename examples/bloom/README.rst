@@ -1,39 +1,15 @@
 ===========================
-Serving OPT-175B using Alpa
+Serving Bloom-176B using Alpa
 ===========================
 
-This tutorial shows how to setup a serving system to serve the largest available pretrained language model `OPT-175B <https://github.com/facebookresearch/metaseq/tree/main/projects/OPT>`_.
+This tutorial shows how to setup a serving system to serve the largest available pretrained language model `Bloom <https://huggingface.co/bigscience/bloom>`_.
 
 This tutorial is best to be read in its rendered version on the `Alpa documentation page <https://alpa-projects.github.io/tutorials/opt_serving.html>`_.
 
 
 Overview
 ========
-As a serving system, Alpa offers the following unique advantages:
 
-* **Designed for large models**: Cannot fit the model into a single GPU? Not a problem, Alpa is designed for training and serving big models like GPT-3.
-
-* **Support commodity hardware**: With Alpa, you can serve OPT-175B using your in-house GPU cluster, without needing the latest generations of A100 80GB GPUs nor fancy InfiniBand connections -- no hardware constraints!
-
-* **Flexible parallelism strategies**: Alpa will automatically figure out the appropriate model-parallel strategies based on your cluster setup and your model architecture.
-
-In this example, we use Alpa to serve the open-source OPT model, supporting all sizes ranging from 125M to 175B. Specifically, Alpa provides:
-
-* A distributed backend to perform efficient model-parallel inference for the large OPT models.
-
-* A web frontend to collect and batch inference requests from users.
-
-.. note::
-
-  The pre-trained OPT model weights can be obtained from `Metaseq <https://github.com/facebookresearch/metaseq>`_, subject to their license.
-
-.. note::
-
-  You will need at least 350GB GPU memory on your entire cluster to serve the OPT-175B model.
-  For example, you can use 4 x AWS p3.16xlarge instances, which provide 4 (instance) x 8 (GPU/instance) x 16 (GB/GPU) = 512 GB memory.
-
-  You can also follow this guide to setup a serving system to serve smaller versions of OPT, such as OPT-66B, OPT-30B, etc.
-  Pick an appropriate size from `OPT weight downloading page <https://github.com/facebookresearch/metaseq/tree/main/projects/OPT>`_ based on your available resources.
 
 Demo
 ====
@@ -50,9 +26,9 @@ Use huggingface/transformers interface and Alpa backend for distributed inferenc
   tokenizer.add_bos_token = False
 
   # Load the model
-  model = get_model(model_name="alpa/opt-2.7b",
+  model = get_model(model_name="bigscience/bloom",
                     device="cuda",
-                    path="/home/ubuntu/opt_weights/")
+                    path="/home/ubuntu/bloom_weights/")
 
   # Generate
   prompt = "Paris is the capital city of"
@@ -91,7 +67,7 @@ Requirements
     pip3 install -e .
 
 
-Get Alpa-compatible OPT Weights
+Get Alpa-compatible Bloom Weights
 ===============================
 There are two ways to obtain Alpa-compatible OPT weights: converting the weights by yourself or downloading a copy of processed weights provided by the Alpa team.
 
@@ -211,27 +187,14 @@ The code of this tutorial is under `examples/opt_serving <https://github.com/alp
 
     python3 benchmark_text_gen.py --model alpa/opt-175b --path [PATH_TO_WEIGHT] --debug
 
-Launch a Web Server to Serve the OPT Models
+Launch a Web Server to Serve the Models
 ===========================================
 
-Launch the web server:
-
-.. code:: shell
-
-  # Serve the OPT-175B model at port 10001
-  python3 interactive_hosted.py --model alpa/opt-175b --port 10001 --path [PATH_TO_WEIGHT]
-
-Then open ``https://[IP-ADDRESS]:10001`` in your browser to try out the model!
 
 Code structure
 ==============
 
-* `examples/opt_serving/benchmark <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/benchmark>`_: Benchmark scripts for generation in the command line.
-* `examples/opt_serving/dataset <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/dataset>`_: Data loaders for serving.
-* `examples/opt_serving/service <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/service>`_: Model serving web server.
-* `examples/opt_serving/generator.py <https://github.com/alpa-projects/alpa/blob/main/examples/opt_serving/generator.py>`_: Backend for web server.
-* `examples/opt_serving/interactive_hosted.py <https://github.com/alpa-projects/alpa/blob/main/examples/opt_serving/interactive_hosted.py>`_: Web server entry point.
 
 License
 =======
-The use of the OPT pretrained weights is subject to the `Model License <https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/MODEL_LICENSE.md>`_ by Metaseq.
+The use of the OPT pretrained weights is subject to the `license: bigscience-bloom-rail-1.0 <https://huggingface.co/spaces/bigscience/license>`_ by BigScience.

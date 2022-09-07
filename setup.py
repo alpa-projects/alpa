@@ -117,7 +117,7 @@ if __name__ == "__main__":
     class BinaryDistribution(setuptools.Distribution):
 
         def has_ext_modules(self):
-            return True
+            return False
 
     class InstallPlatlib(install):
 
@@ -149,7 +149,7 @@ if __name__ == "__main__":
         packages=find_packages(exclude=["playground"]),
         python_requires='>=3.7',
         cmdclass={"install": InstallPlatlib},
-        distclass=BinaryDistribution,
+        # distclass=BinaryDistribution,
         install_requires=install_require_list,
         extras_require={
             'dev': dev_require_list,

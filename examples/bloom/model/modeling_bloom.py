@@ -262,7 +262,6 @@ class FlaxBloomAttention(nn.Module):
             cache_key = key
             cache_value = value
             num_updated_cache_vectors = query.shape[1]
-            # cache_index = cache_index + num_updated_cache_vectors
             # A line added from opt_model
             attention_cache = key, value, cache_index + num_updated_cache_vectors
             # causal mask for cached decoder self-attention: our single query position should only attend to those key positions that have already been generated and cached, not the remaining zero elements.
@@ -532,10 +531,8 @@ class FlaxBloomModule(nn.Module):
 
         if output_hidden_states:
             all_hidden_states = outputs.hidden_states + (hidden_states,)
-            # outputs = (hidden_states, all_hidden_states) + outputs[2:]
             outputs = BloomModelOutput(last_hidden_state=hidden_states, hidden_states=all_hidden_states, attentions=outputs.attentions, attention_cache=outputs.attention_cache)
         else:
-            # outputs = (hidden_states,) + outputs[1:]
             outputs = BloomModelOutput(last_hidden_state=hidden_states, hidden_states=outputs.hidden_states, attentions=outputs.attentions, attention_cache=outputs.attention_cache)
 
         if not return_dict:

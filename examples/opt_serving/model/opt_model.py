@@ -126,7 +126,7 @@ class OPTSelfAttention(nn.Module):
                 f"multiple of `decoder_attention_heads`: {self.config.decoder_attention_heads}"
             )
 
-        self.qvk_combined = nn.Dense(
+        self.qkv_combined = nn.Dense(
             self.config.decoder_embed_dim * 3,
             dtype=self.dtype,
         )
@@ -138,10 +138,10 @@ class OPTSelfAttention(nn.Module):
                  attention_mask=None):
         head_dim = self.config.decoder_embed_dim // self.config.decoder_attention_heads
 
-        qvk_combined_states = self.qvk_combined(hidden_states)
-        qvk_combined_states = qvk_combined_states.reshape(
-            qvk_combined_states.shape[:2] + (-1, 3))
-        query_states, value_states, key_states = jnp.split(qvk_combined_states,
+        qkv_combined_states = self.qkv_combined(hidden_states)
+        qkv_combined_states = qkv_combined_states.reshape(
+            qkv_combined_states.shape[:2] + (-1, 3))
+        query_states, key_states, value_states = jnp.split(qkv_combined_states,
                                                            3,
                                                            axis=3)
 
@@ -500,56 +500,55 @@ class OPTForLMModule(nn.Module):
 def get_opt_config(name, **kwargs):
     if name == "125M":
         config = OPTConfig(
-            max_target_positions=2048,
-            decoder_layers=12,
-            decoder_attention_heads=12,
-            decoder_embed_dim=768,
-            decoder_input_dim=768,
-            decoder_ffn_embed_dim=768 * 4,
+            max_target_positions=2048, decoder_layers=12, decoder_attention_heads=12,
+            decoder_embed_dim=768, decoder_input_dim=768, decoder_ffn_embed_dim=768 * 4,
+            version=3,
+        )
+    elif name == "350M":
+        config = OPTConfig(
+            max_target_positions=2048, decoder_layers=24, decoder_attention_heads=16,
+            decoder_embed_dim=1024, decoder_input_dim=1024, decoder_ffn_embed_dim=1024 * 4,
+            version=2,
+        )
+        raise NotImplementedError()
+    elif name == "1.3B":
+        config = OPTConfig(
+            max_target_positions=2048, decoder_layers=24, decoder_attention_heads=32,
+            decoder_embed_dim=2048, decoder_input_dim=2048, decoder_ffn_embed_dim=2048 * 4,
             version=3,
         )
     elif name == "2.7B":
         config = OPTConfig(
-            max_target_positions=2048,
-            decoder_layers=32,
-            decoder_attention_heads=32,
-            decoder_embed_dim=2560,
-            decoder_input_dim=2560,
-            decoder_ffn_embed_dim=2560 * 4,
+            max_target_positions=2048, decoder_layers=32, decoder_attention_heads=32,
+            decoder_embed_dim=2560, decoder_input_dim=2560, decoder_ffn_embed_dim=2560 * 4,
             version=3,
         )
     elif name == "6.7B":
         config = OPTConfig(
-            max_target_positions=2048,
-            decoder_layers=32,
-            decoder_attention_heads=32,
-            decoder_embed_dim=4096,
-            decoder_input_dim=4096,
-            decoder_ffn_embed_dim=4096 * 4,
+            max_target_positions=2048, decoder_layers=32, decoder_attention_heads=32,
+            decoder_embed_dim=4096, decoder_input_dim=4096, decoder_ffn_embed_dim=4096 * 4,
             version=3,
         )
     elif name == "30B":
         config = OPTConfig(
-            max_target_positions=2048,
-            decoder_layers=48,
-            decoder_attention_heads=56,
-            decoder_embed_dim=7168,
-            decoder_input_dim=7168,
-            decoder_ffn_embed_dim=7168 * 4,
+            max_target_positions=2048, decoder_layers=48, decoder_attention_heads=56,
+            decoder_embed_dim=7168, decoder_input_dim=7168, decoder_ffn_embed_dim=7168 * 4,
+            version=3,
+        )
+    elif name == "66B":
+        config = OPTConfig(
+            max_target_positions=2048, decoder_layers=64, decoder_attention_heads=72,
+            decoder_embed_dim=9216, decoder_input_dim=9216, decoder_ffn_embed_dim=9216 * 4,
             version=3,
         )
     elif name == "175B":
         config = OPTConfig(
-            max_target_positions=2048,
-            decoder_layers=96,
-            decoder_attention_heads=96,
-            decoder_embed_dim=12288,
-            decoder_input_dim=12288,
-            decoder_ffn_embed_dim=12288 * 4,
+            max_target_positions=2048, decoder_layers=96, decoder_attention_heads=96,
+            decoder_embed_dim=12288, decoder_input_dim=12288, decoder_ffn_embed_dim=12288 * 4,
             version=3,
         )
     else:
-        raise ValueError()
+        raise ValueError(f"Invalid model name: {name}")
 
     return dataclasses.replace(config, **kwargs)
 
@@ -672,15 +671,15 @@ def load_params_np(params, path, config, dummy=False):
         wk = load_array(load_prefix + "self_attn.k_proj.weight")
         wv = load_array(load_prefix + "self_attn.v_proj.weight")
         dim = wq.shape[-1]
-        w_qvk = np.concatenate([wq, wv, wk], axis=0).reshape(
+        w_qkv = np.concatenate([wq, wk, wv], axis=0).reshape(
             (3, -1, dim)).transpose([2, 1, 0]).reshape((dim, -1))
-        load_param(param_prefix + "attention.self.qvk_combined.kernel", w_qvk)
+        load_param(param_prefix + "attention.self.qkv_combined.kernel", w_qkv)
         bq = load_array(load_prefix + "self_attn.q_proj.bias")
         bk = load_array(load_prefix + "self_attn.k_proj.bias")
         bv = load_array(load_prefix + "self_attn.v_proj.bias")
-        b_qvk = np.concatenate([bq, bv, bk], axis=0).reshape(
+        b_qkv = np.concatenate([bq, bk, bv], axis=0).reshape(
             (3, dim)).transpose([1, 0]).reshape((-1,))
-        load_param(param_prefix + "attention.self.qvk_combined.bias", b_qvk)
+        load_param(param_prefix + "attention.self.qkv_combined.bias", b_qkv)
         load_param(
             param_prefix + "attention.dense.kernel",
             np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))
@@ -708,7 +707,7 @@ def load_params_np(params, path, config, dummy=False):
 
 
 def get_jax_executable(config: OPTConfig,
-                       encoder_seq_lengths: Sequence[int],
+                       encoder_chunk_sizes: Sequence[int],
                        output_attentions: bool = False,
                        output_hidden_states:bool = False):
     """Get a single-gpu executable."""
@@ -726,14 +725,14 @@ def get_jax_executable(config: OPTConfig,
         return output
 
     executables = {}
-    for length in encoder_seq_lengths:
+    for length in encoder_chunk_sizes:
         executables[length] = inference_step
     return executables, params
 
 
 def get_pipeshard_executable(config: OPTConfig,
                              batch_size: int,
-                             encoder_seq_lengths: Sequence[int],
+                             encoder_chunk_sizes: Sequence[int],
                              num_micro_batches: int = 1,
                              output_attentions: bool = False,
                              output_hidden_states: bool = False,
@@ -804,7 +803,7 @@ def get_pipeshard_executable(config: OPTConfig,
             stage_input_shardings=executable.stage_input_shard_specs)
 
         # Compile other executables
-        for seq_len in encoder_seq_lengths:
+        for seq_len in encoder_chunk_sizes:
             executable = alpa.parallelize(
                 inference_step_with_cache,
                 batch_argnums=(1,),
@@ -825,8 +824,8 @@ def get_pipeshard_executable(config: OPTConfig,
             executables[seq_len] = executable
         return executables, params
     else:
-        assert len(encoder_seq_lengths) == 1
-        seq_len = encoder_seq_lengths[0]
+        assert len(encoder_chunk_sizes) == 1
+        seq_len = encoder_chunk_sizes[0]
 
         @alpa.parallelize(batch_argnums=(1,), method=method)
         def inference_step(params, batch):
@@ -870,7 +869,8 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
                 continue
 
             if not is_position_embedding:
-                assert shapes[i][j] == loaded_array.shape
+                assert shapes[i][j] == loaded_array.shape, (
+                    f"{shapes[i][j]} vs. {loaded_array.shape}")
             else:
                 if shapes[i][j] != loaded_array.shape:
                     assert shapes[i][j][1] == loaded_array.shape[1]
@@ -908,15 +908,15 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
         wk = load_array(load_prefix + "self_attn.k_proj.weight")
         wv = load_array(load_prefix + "self_attn.v_proj.weight")
         dim = wq.shape[-1]
-        w_qvk = np.concatenate([wq, wv, wk], axis=0).reshape(
+        w_qkv = np.concatenate([wq, wk, wv], axis=0).reshape(
             (3, -1, dim)).transpose([2, 1, 0]).reshape((dim, -1))
-        load_param(param_prefix + "attention.self.qvk_combined.kernel", w_qvk)
+        load_param(param_prefix + "attention.self.qkv_combined.kernel", w_qkv)
         bq = load_array(load_prefix + "self_attn.q_proj.bias")
         bk = load_array(load_prefix + "self_attn.k_proj.bias")
         bv = load_array(load_prefix + "self_attn.v_proj.bias")
-        b_qvk = np.concatenate([bq, bv, bk], axis=0).reshape(
+        b_qkv = np.concatenate([bq, bk, bv], axis=0).reshape(
             (3, dim)).transpose([1, 0]).reshape((-1,))
-        load_param(param_prefix + "attention.self.qvk_combined.bias", b_qvk)
+        load_param(param_prefix + "attention.self.qkv_combined.bias", b_qkv)
         load_param(
             param_prefix + "attention.dense.kernel",
             np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))

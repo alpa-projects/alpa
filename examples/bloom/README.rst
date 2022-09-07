@@ -197,4 +197,4 @@ Code structure
 
 License
 =======
-The use of the OPT pretrained weights is subject to the `license: bigscience-bloom-rail-1.0 <https://huggingface.co/spaces/bigscience/license>`_ by BigScience.
+The use of the Bloom pretrained weights is subject to the `license: bigscience-bloom-rail-1.0 <https://huggingface.co/spaces/bigscience/license>`_ by BigScience.

@@ -1,5 +1,5 @@
 ===========================
-Serving Bloom-176B using Alpa
+Serving Bloom using Alpa
 ===========================
 
 This tutorial shows how to setup a serving system to serve the largest available pretrained language model `Bloom <https://huggingface.co/bigscience/bloom>`_.

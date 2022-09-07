@@ -37,6 +37,8 @@ examples/opt_serving/benchmark/tmp/
 examples/opt_serving/tmp/
 examples/opt_finetune/output/
 examples/language_model/norwegian-gpt2/
+examples/bloom/weights/
+examples/bloom-jax-inference/
 alpa_debug_info
 
 # Analysis temp files

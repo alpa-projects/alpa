@@ -187,22 +187,6 @@ class WrappedInferenceFunc(GenerationMixin):
                   for mesh, loc in layer_loc)
             for layer_loc in self.cache_location)
 
-# class AlpaInferenceFunc(WrappedInferenceFunc):
-
-#     def __init__(self, *args, max_target_positions):
-#         super().__init__(*args)
-#         self._max_target_positions = max_target_positions
-
-#     def _process_attention_mask(self, attention_mask):
-#         if isinstance(attention_mask, torch.Tensor):
-#             attention_mask = attention_mask.cpu().numpy()
-#         batch_size = attention_mask.shape[0]
-#         ret_mask = np.zeros((batch_size, self._max_target_positions),
-#                                   dtype=np.bool)
-#         ret_mask[:, :attention_mask.shape[-1]] = attention_mask
-#         ret_mask = ret_mask[:, np.newaxis, np.newaxis, :]
-#         return ret_mask
-
 def get_model(model_name: str,
               # Weights
               path: str,
@@ -251,7 +235,7 @@ def get_model(model_name: str,
     #         f"Cannot support num_micro_batches > 1 in autoregressive mode.")
 
     # if "facebook/opt" in model_name:
-    #     return get_hf_opt_model(model_name, torch_device, num_beams)
+    #     return get_hf_bloom_model(model_name, torch_device, num_beams)
 
     # assert ("jax/opt" in model_name or "alpa/opt" in model_name)
     # assert return_dict_in_generate
@@ -288,18 +272,13 @@ def get_model(model_name: str,
             )
         expand_size = batch_size * num_beams
 
-    # if "jax/opt" in model_name:
-    # config = get_bloom_config(name,
-    #                         num_pp_stages=None,
-    #                         mark_boundary=False,
-    #                         dtype=dtype,
-    #                         max_target_positions=max_target_positions)
-    config = get_bloom_config('350M')
+    # if "jax/bloom" in model_name:
+    config = get_bloom_config('350M', max_target_positions=max_target_positions)
     transformer_config = TransformerModelConfig(
         H=config.hidden_size,
         L=config.num_hidden_layers,
         n_head=config.n_head,
-        seq_len=64,
+        seq_len=max_target_positions,
         vocab_size=config.vocab_size)
 
     executables, params_aval = get_jax_executable(
@@ -308,12 +287,11 @@ def get_model(model_name: str,
         output_hidden_states=output_hidden_states)
 
     # load params
-    # params = load_params_np(params_aval, path, config, dummy)
     init_cache = init_cache_np(config, batch_size=expand_size)
-    params = load_params_np(params_aval, "/home/x/Desktop/dedong_2022_summer/softwares/350M_Bloom_np", config, dummy)
+    params = load_params_np(params_aval, "../350M_Bloom_np", config, dummy)
     params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
     # else:
-    #     assert "alpa/opt" in model_name
+    #     assert "alpa/bloom" in model_name
     #     assert is_power_of_two(num_beams), "num_beams must be a power of two"
     #     alpa.init()
     #     alpa.global_config.xla_client_mem_fraction = 0.88
@@ -326,7 +304,7 @@ def get_model(model_name: str,
     #         num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
     #         num_pp_stages = min(num_pp_stages,
     #                             alpa.get_global_cluster().num_devices)
-    #     config = get_opt_config(name,
+    #     config = get_bloom_config(name,
     #                             num_pp_stages=num_pp_stages,
     #                             dtype=dtype,
     #                             max_target_positions=max_target_positions)
@@ -402,13 +380,13 @@ def get_model(model_name: str,
                 # A fast path for step_len = 1
                 cum_sum = _attention_mask[:, -1:]
                 num_valid_tokens = num_valid_tokens + cum_sum
-                position_ids_step = num_valid_tokens + config.pad
+                # position_ids_step = num_valid_tokens + config.pad
                 last_token = np.where(cum_sum, _input_ids, last_token)
                 _input_ids = last_token
             else:
                 # A general path that works for any step_len
                 cumsum = np.cumsum(_attention_mask[:,step_ct:], axis=1, dtype=np.int32)
-                position_ids_step = num_valid_tokens + cumsum + config.pad
+                # position_ids_step = num_valid_tokens + cumsum + config.pad
                 num_valid_tokens_step = cumsum[:,-1:]
                 num_valid_tokens = num_valid_tokens + num_valid_tokens_step
 
@@ -417,17 +395,14 @@ def get_model(model_name: str,
                      last_token)
                 _input_ids = np.where(_attention_mask[:, step_ct:], _input_ids, last_token)
 
-            print(_attention_mask.shape)
             # Use value "2" as a special mask to represent internal padding
             if num_internal_pad:
                 _attention_mask[:,-num_internal_pad:] = 2
             _attention_mask = pad_attention_mask(_attention_mask, max_target_positions)
 
-            print(len(_past_key_values))
             output = _executable(
                 params, {
                     "input_ids": _input_ids,
-                    "position_ids": position_ids_step,
                     "cache": _past_key_values,
                     "mask": _attention_mask,
                 })
@@ -473,6 +448,7 @@ def get_model(model_name: str,
                 i += step_input_ids.shape[1]
 
         logits_step = torch.from_numpy(np.array(output.logits)).to(torch_device).float()
+        # torch.save(logits_step, "../../logits_FlaxBloom.txt")
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)
 

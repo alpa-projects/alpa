@@ -38,6 +38,8 @@ jobs:
           docker run --gpus all --tmpfs /build:exec \
           --rm -v $(pwd)/dist:/dist --entrypoint /build_alpa.sh \
           build-alpa-image 3.8 ${ALPA_BRANCH}
+        env:
+          ALPA_BRANCH: ${{ github.ref }}
 
       - name: Set up Python 3.8
         uses: actions/setup-python@v3

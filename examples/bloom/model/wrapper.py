@@ -288,7 +288,7 @@ def get_model(model_name: str,
 
     # load params
     init_cache = init_cache_np(config, batch_size=expand_size)
-    params = load_params_np(params_aval, "../350M_Bloom_np", config, dummy)
+    params = load_params_np(params_aval, "../weights/350M_Bloom_np", config, dummy)
     params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
     # else:
     #     assert "alpa/bloom" in model_name

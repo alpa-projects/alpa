@@ -78,13 +78,57 @@ class Jax1DInput:
             self.num_prev_tokens)
 
 
-def init_2d_inference_step(name, np_weights_folder):
+def pad_batch(input_batch: List[List[int]], pad=1):
+    max_len = max(len(sen) for sen in input_batch)
+    input_batch_padded = copy.deepcopy(input_batch)
+    for sen in input_batch_padded:
+        if len(sen) < max_len:
+            for _ in range(max_len - len(sen)):
+                sen.append(pad)
+    return input_batch_padded
+
+
+def setup(mode: str,
+          input_id_list: List[List[int]],
+          model="jax/opt-125m",
+          np_weights_folder="~/opt_weights/",
+          batch_size=1):
+    name = model.split("-")[1].upper()
+    path = os.path.join(np_weights_folder + f"{name}_np")
+    if mode == "2d":
+        inference_step, params, cache, config = init_2d_inference_step(name, path,
+                                                                       batch_size=batch_size)
+        model_tuple = tuple([inference_step, params, config])
+        assert len(input_id_list) % batch_size == 0, "Do not support padding batch now..."
+        num_batch = len(input_id_list) // batch_size
+        input_pool = []
+        for batch_idx in range(num_batch):
+            start = batch_idx * batch_size
+            end = (batch_idx + 1) * batch_size
+            batch = input_id_list[start:end]
+            # pad the batch
+            input_pool.append((batch, copy.deepcopy(cache)))
+        # input_pool = [(input_id, copy.deepcopy(cache)) for input_id in input_id_list]
+    else:
+        assert mode == "1d", "only support `1d` or `2d`."
+        inference_step, params, kv_caches, kv_caches_cupy, config = init_1d_inference_step(name, path)
+        model_tuple = tuple([inference_step, params, config])
+        input_pool = Jax1DInput(input_id_list,
+                                [i for i in range(1, len(input_id_list) + 1)],
+                                kv_caches,
+                                np.zeros((M, ), dtype=np.int32),
+                                {})
+
+    return model_tuple, input_pool
+
+
+def init_2d_inference_step(name, np_weights_folder, batch_size=1):
     # Init 2D model
     config = opt_model.get_opt_config(name, dtype=jnp.float32)
     model_2d, params_2d = opt_model.init_model_aval(config)
     params_2d = opt_model.load_params_np(params_2d, np_weights_folder, config)
     params_2d = jax.tree_map(jnp.array, params_2d)
-    cache_2d = opt_model.init_cache_np(config, 1)
+    cache_2d = opt_model.init_cache_np(config, batch_size)
 
     @jax.jit
     def inference_step_2d(params, batch):
@@ -135,27 +179,46 @@ def runner_2d(model, input_pool):
     return input_pool, execution_cost
 
 
-def setup(mode: str,
-          input_id_list: List[List[int]],
-          model="jax/opt-125m",
-          np_weights_folder="~/opt_weights/"):
-    name = model.split("-")[1].upper()
-    path = os.path.join(np_weights_folder + f"{name}_np")
-    if mode == "2d":
-        inference_step, params, cache, config = init_2d_inference_step(name, path)
-        model_tuple = tuple([inference_step, params, config])
-        input_pool = [(input_id, copy.deepcopy(cache)) for input_id in input_id_list]
-    else:
-        assert mode == "1d", "only support `1d` or `2d`."
-        inference_step, params, kv_caches, kv_caches_cupy, config = init_1d_inference_step(name, path)
-        model_tuple = tuple([inference_step, params, config])
-        input_pool = Jax1DInput(input_id_list,
-                                [i for i in range(1, len(input_id_list) + 1)],
-                                kv_caches,
-                                np.zeros((M, ), dtype=np.int32),
-                                {})
+def runner_2d_batch(model, input_pool):
+    inference_step, params, config = model
+    is_prompt = [cache[0][2][0] == 0 for _, cache in input_pool]
+    logits_all = []
+    execution_cost = {}
 
-    return model_tuple, input_pool
+    record_time(start=True)
+    for idx, (_input_ids, cache) in enumerate(input_pool):
+
+        original_len = [len(sen) for sen in _input_ids]
+        _input_ids_padded = pad_batch(_input_ids)
+        input_ids = np.array(_input_ids_padded, dtype=np.int32)
+        position_ids = opt_model.build_position_ids(input_ids, config.pad)
+        if not is_prompt[idx]:
+            # Auto-regressive
+            input_ids = input_ids[:, -1:]
+            position_ids = position_ids[:, -1:]
+        logits, updated_cache = inference_step(
+            params, {
+                "input_ids": input_ids,
+                "position_ids": position_ids,
+                "cache": cache,
+            })
+
+        next_token = np.argmax(logits, axis=-1)
+        # Append the generated token and updated cache.
+
+        for i, sen in enumerate(_input_ids):
+            sen.append(int(next_token[i][original_len[i]]))
+        input_pool[idx] = (_input_ids, updated_cache)
+
+        # For debugging
+        if DUMP_LOGITS:
+            logits_all.append(logits)
+    execution_cost["compute"] = record_time()
+
+    if DUMP_LOGITS:
+        logits_all = np.concatenate(logits_all, axis=0)
+        jnp.save("2d", logits_all)
+    return input_pool, execution_cost
 
 
 def init_1d_inference_step(name, np_weights_folder, total_input_len=N, total_cache_len=M):
@@ -358,7 +421,6 @@ def verify_caches(output_pool_1d, output_pool_2d):
 def test_opt_125M():
     name = "jax/opt-125m"
     np_weights_folder = f"/home/ubuntu/opt_weights/"
-
     batch_size = 5
 
     # init
@@ -388,5 +450,14 @@ def test_opt_125M():
     verify_caches(output_pool_1d, output_pool_2d)
 
 
+def test_2d_batched(batch_size=1):
+    name = "jax/opt-125m"
+    np_weights_folder = f"/home/ubuntu/opt_weights/"
+    model_2d, input_pool_2d = setup("2d", input_id_list, name, np_weights_folder, batch_size=batch_size)
+    # output_pool_2d, _ = runner_2d(model_2d, input_pool_2d[:batch_size])
+    output_pool_2d, _ = runner_2d_batch(model_2d, input_pool_2d[:batch_size])
+
+
 if __name__ == "__main__":
-    test_opt_125M()
+    # test_opt_125M()
+    test_2d_batched(batch_size=2)

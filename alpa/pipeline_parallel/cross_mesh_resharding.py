@@ -1124,6 +1124,7 @@ class CrossMeshCommunicator:
         """Generate the resharding strategy by balancing loads."""
         is_local_allgather = spec.final_dst_spec != spec.dst_sharding_spec
         per_spec_plans = []
+        print(spec)
         for dst_tile, src_tileslices, _ in spec.dst_tile_to_src_tiles_map:
             # plan is a 2D array
             per_spec_plan = np.empty(
@@ -1142,7 +1143,12 @@ class CrossMeshCommunicator:
                     # upload load on-the-fly
                     src_loads[sender] += src_tileslice.slice_size
                     dst_loads[receiver] += src_tileslice.slice_size
+            print(dst_tile)
+            print(src_tileslices)
+            print(per_spec_plan)
+            print("-------------------------")
             per_spec_plans.append(per_spec_plan)
+        print("\n")
         strategy = ReshardingStrategy(per_spec_plans, is_local_allgather)
         return strategy
 

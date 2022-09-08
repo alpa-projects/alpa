@@ -12,7 +12,7 @@ from alpa.collective.const import ENV
 from alpa.util import (jax_tensor_set, jax_tensor_index,
                        xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
                        is_continuous_subset, infer_offset_and_n_elements,
-                       infer_start_pos_and_n_elements)
+                       infer_start_pos_and_n_elements, mark_event, synchronize_one_event)
 from alpa.pipeline_parallel.xla_custom_call_marker import dummy_compute_on_default_stream
 
 logger = logging.getLogger(__name__)
@@ -24,8 +24,11 @@ def send_tile(worker, uuid: int, device_id: int, offset: Sequence[slice],
     buffer = worker.buffers[uuid][device_id]
     tensor_shape = buffer.shape
     # print("1", flush=True)
+    # worker.sync_all()     
     if is_continuous_subset(offset, tensor_shape):
         # print("2")
+        # worker.sync_all()     
+        # dummy_compute_on_default_stream()   
         start_pos, n_elements = (infer_start_pos_and_n_elements(
             tensor_shape, offset))
         col.send_multigpu(buffer,
@@ -34,8 +37,13 @@ def send_tile(worker, uuid: int, device_id: int, offset: Sequence[slice],
                           group_name,
                           start_pos=start_pos,
                           n_elements=n_elements)
-        worker.sync_all()
-        dummy_compute_on_default_stream()
+        # worker.sync_all()
+        # send_stream = col.get_stream(group_name, device_id,  False)
+        # xe.synchronize_stream(send_stream)
+        # working_stream = xe.fetch_working_streams_from_pyclient(worker.backend)[device_id]
+        # xe.synchronize_stream(working_stream)
+
+        # dummy_compute_on_default_stream()
     else:
         # print("3")
         # slower path, because of indexing.
@@ -44,22 +52,32 @@ def send_tile(worker, uuid: int, device_id: int, offset: Sequence[slice],
                      "specs.")
         start_indices = tuple(o.start for o in offset)
         slice_sizes = tuple(o.stop - o.start for o in offset)
-        worker.sync_all()
-        dummy_compute_on_default_stream()
+        # worker.sync_all()
+        # dummy_compute_on_default_stream()
+        # send_stream = col.get_stream(group_name, device_id, False)
+        # working_stream = xe.fetch_working_streams_from_pyclient(worker.backend)[device_id]
+        # event = mark_event(working_stream, device_id)
+        # synchronize_one_event(event, send_stream)
         src_buffer = jax_tensor_index(xla_buffer_to_jax_tensor(buffer),
                                       start_indices, slice_sizes)
         to_send = jax_tensor_to_xla_buffer(src_buffer)
         n_elements = np.prod(slice_sizes)
-        worker.sync_all()
-        dummy_compute_on_default_stream()
+        # worker.sync_all()
+        # dummy_compute_on_default_stream()
+
+        send_stream = col.get_stream(group_name, device_id, False)
+        working_stream = xe.fetch_working_streams_from_pyclient(worker.backend)[device_id]
+        event = mark_event(working_stream, device_id)
+        synchronize_one_event(event, send_stream)
+
         col.send_multigpu(to_send,
                           dst_rank,
                           dst_gpu_idx,
                           group_name,
                           start_pos=0,
                           n_elements=n_elements)
-        worker.sync_all()
-        dummy_compute_on_default_stream()
+        # worker.sync_all()
+        # dummy_compute_on_default_stream()
         
 def recv_tile(worker, uuid: int, device_id: int,
               indices_in_dst_tile: Sequence[slice], src_rank: int,
@@ -67,46 +85,62 @@ def recv_tile(worker, uuid: int, device_id: int,
     buffer = worker.buffers[uuid][device_id]
     tensor_shape = buffer.shape
     slice_shape = tuple(ind.stop - ind.start for ind in indices_in_dst_tile)
-    print("-1", flush=True)
+    # print("-1", flush=True)
     if is_continuous_subset(indices_in_dst_tile, tensor_shape):
-        print("-2")
+        # print("-2")
         start_pos, n_elements = infer_start_pos_and_n_elements(
             tensor_shape, indices_in_dst_tile)
-        worker.sync_all()
-        dummy_compute_on_default_stream()
+        # worker.sync_all()
+        # dummy_compute_on_default_stream()
         col.recv_multigpu(buffer,
                           src_rank,
                           src_gpu_idx,
                           group_name,
                           start_pos=start_pos,
                           n_elements=n_elements)
-        worker.sync_all()
-        dummy_compute_on_default_stream() 
+        # worker.sync_all()
+        # recv_stream = col.get_stream(group_name, device_id, True)
+        # xe.synchronize_stream(recv_stream)
+        # working_stream = xe.fetch_working_streams_from_pyclient(worker.backend)[device_id]
+        # xe.synchronize_stream(working_stream)
+                
+        # dummy_compute_on_default_stream()
     else:
-        worker.sync_all()
-        dummy_compute_on_default_stream()
+        # worker.sync_all()
+        # dummy_compute_on_default_stream()
         tmp_buffer = device_put(jnp.ones(slice_shape, dtype=buffer.dtype),
                                 worker.local_devices[device_id])
         to_recv = jax_tensor_to_xla_buffer(tmp_buffer)
         n_elements = np.prod(slice_shape)
-        worker.sync_all()
-        dummy_compute_on_default_stream()
+        # worker.sync_all()
+        # dummy_compute_on_default_stream()
+        recv_stream = col.get_stream(group_name, device_id, True)
+        working_stream = xe.fetch_working_streams_from_pyclient(worker.backend)[device_id]
+
+        event = mark_event(working_stream, device_id)
+        synchronize_one_event(event, recv_stream)
+
         col.recv_multigpu(to_recv,
                           src_rank,
                           src_gpu_idx,
                           group_name,
                           start_pos=0,
                           n_elements=n_elements)
-        worker.sync_all()
-        dummy_compute_on_default_stream()
+        # worker.sync_all()
+        # dummy_compute_on_default_stream()
+        event = mark_event(recv_stream, device_id)
+        synchronize_one_event(event, working_stream)
+
         start_indices = tuple(
             ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
         new_buffer = jax_tensor_set(xla_buffer_to_jax_tensor(buffer),
                                     xla_buffer_to_jax_tensor(to_recv),
                                     start_indices)
         worker.buffers[uuid][device_id] = jax_tensor_to_xla_buffer(new_buffer)
-        worker.sync_all()
-        dummy_compute_on_default_stream()
+        # event = mark_event(working_stream, device_id)
+        # synchronize_one_event(event, recv_stream)
+        # worker.sync_all()
+        # dummy_compute_on_default_stream()
 
 
 def allgather(worker, uuid: int, device_ids: Sequence[int],

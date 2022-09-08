@@ -12,6 +12,9 @@ from alpa.collective.types import (Backend, BroadcastOptions, AllReduceOptions,
                                    AllGatherOptions, ReduceScatterOptions,
                                    SendOptions, RecvOptions)
 
+from alpa.global_env import global_config
+from alpa.monkey_patch import override_get_backend
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,11 +34,23 @@ class XLANCCLGroup(BaseGroup):
         # record the used GPU IDs.
         self._used_gpu_indices = set()
 
+        self.input_xla_cuda_streams = {}
+        self.output_xla_cuda_streams = {}
+
+        backend = override_get_backend()
+        # print(backend)
+        self.initialize_streams(backend)
+
         # TODO(Fu): might need an event map
         self._dev_event_map = {}
 
         if xla_nccl_util.get_nccl_runtime_version() < 2704:
             logger.warning("NCCL send/recv calls requires NCCL>=2.7.4")
+
+    def initialize_streams(self, backend):
+        for gpu_idx in range(backend.local_device_count()):
+            self.input_xla_cuda_streams[gpu_idx] = xe.create_xla_cuda_stream(backend, gpu_idx)
+            self.output_xla_cuda_streams[gpu_idx] = xe.create_xla_cuda_stream(backend, gpu_idx)
 
     def destroy_group(self):
         """Destroy the group and release NCCL communicators."""
@@ -257,7 +272,9 @@ class XLANCCLGroup(BaseGroup):
 
         comms = xe.nccl_create_communicators(2, [my_p2p_rank], [my_gpu_idx],
                                              nccl_uid,
-                                             ENV.NCCL_USE_MULTISTREAM.val)
+                                             global_config.enable_overlapping,
+                                             [[self.output_xla_cuda_streams[my_gpu_idx],
+                                               self.input_xla_cuda_streams[my_gpu_idx]]])
         self._dev_comm_map[comm_key] = comms
         return comms
 

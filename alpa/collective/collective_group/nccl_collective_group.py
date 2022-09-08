@@ -437,7 +437,7 @@ class NCCLGroup(BaseGroup):
         def p2p_fn(tensor, comm, stream, peer):
             if global_config.enable_overlapping:
                 stream_ptr = stream[1].ptr
-                stream_ptr = 1
+                # stream_ptr = 1
             else:
                 stream_ptr = stream.ptr
 

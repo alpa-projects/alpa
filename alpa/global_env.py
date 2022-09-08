@@ -64,7 +64,7 @@ class GlobalConfig:
         self.resharding_mode = "send_recv"
         # Which nccl to use. Possible choices: {"cupy",
         # "xla_extension"}
-        self.nccl_mode = "cupy"
+        self.nccl_mode = "xla_extension"
         self.enable_overlapping = True
 
         ########## Options of benchmark ##########

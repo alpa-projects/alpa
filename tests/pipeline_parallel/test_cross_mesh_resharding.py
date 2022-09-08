@@ -208,147 +208,192 @@ class ReshardingTest(unittest.TestCase):
         src_mesh.shutdown()
         dst_mesh.shutdown()
 
-    def test_4gpu_send_recv(self):
+    # def test_4gpu_send_recv(self):
+    #     src_shape = (1, 2)
+    #     dst_shape = (1, 2)
+    #     tensor_shape = (4, 8, 16)
+    #     src_spec = ShardingSpec(
+    #         [NoSharding(), NoSharding(),
+    #          NoSharding()], [Replicated(2)])
+    #     dst_spec = ShardingSpec([Chunked(
+    #         [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
+    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+    #                              tensor_shape)
+    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+    #                              tensor_shape, False)
+    #     src_spec = ShardingSpec([Chunked(
+    #         [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
+    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+    #                              tensor_shape)
+    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+    #                              tensor_shape, False)
+    #     src_spec = ShardingSpec(
+    #         [NoSharding(), Chunked([2]),
+    #          NoSharding()], [ShardedAxis(0)])
+    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+    #                              tensor_shape)
+    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+    #                              tensor_shape, False)
+
+    def test_zhx1(self):
         src_shape = (1, 2)
         dst_shape = (1, 2)
-        tensor_shape = (4, 8, 16)
-        src_spec = ShardingSpec(
-            [NoSharding(), NoSharding(),
-             NoSharding()], [Replicated(2)])
-        dst_spec = ShardingSpec([Chunked(
-            [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
-        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape)
+        tensor_shape = (32, 16)
+        src_spec = ShardingSpec([NoSharding(), Chunked([2])], [ShardedAxis(0)])
+        dst_spec = ShardingSpec([NoSharding(), NoSharding()], [Replicated(2)])
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
                                  tensor_shape, False)
-        src_spec = ShardingSpec([Chunked(
-            [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
-        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape)
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
                                  tensor_shape, False)
-        src_spec = ShardingSpec(
-            [NoSharding(), Chunked([2]),
-             NoSharding()], [ShardedAxis(0)])
-        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape)
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
                                  tensor_shape, False)
 
-    def test_4gpu_allgather(self):
+
+    def test_zhx2(self):
         src_shape = (1, 2)
         dst_shape = (1, 2)
-        tensor_shape = (4, 8, 16)
-        src_spec = ShardingSpec(
-            [NoSharding(), NoSharding(),
-             NoSharding()], [Replicated(2)])
-        dst_spec = ShardingSpec(
-            [NoSharding(), NoSharding(),
-             NoSharding()], [Replicated(2)])
+        tensor_shape = (32, 16)
+        src_spec = ShardingSpec([NoSharding(), Chunked([2])], [ShardedAxis(0)])
+        dst_spec = ShardingSpec([NoSharding(), Chunked([2])], [ShardedAxis(0)])
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape)
-        src_spec = ShardingSpec([Chunked(
-            [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
+                                 tensor_shape, False)
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape)
-        src_spec = ShardingSpec(
-            [NoSharding(), Chunked([2]),
-             NoSharding()], [ShardedAxis(0)])
+                                 tensor_shape, False)
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape)
-        # test allgather at the second dim
-        tensor_shape = (3, 8, 2)
-        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape)
+                                 tensor_shape, False)
 
-    @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
-    def test_8gpu_2_dim_allgather(self):
-        src_shape = (1, 4)
-        dst_shape = (1, 4)
-        tensor_shape = (6, 8, 16)
-        src_spec = ShardingSpec(
-            [NoSharding(), NoSharding(),
-             NoSharding()], [Replicated(4)])
-        dst_spec = ShardingSpec(
-            [NoSharding(), NoSharding(),
-             NoSharding()], [Replicated(4)])
-        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
-                                 tensor_shape)
 
-    def test_4gpu_broadcast(self):
+
+    def test_zhx3(self):
         src_shape = (1, 2)
         dst_shape = (1, 2)
-        tensor_shape = (4, 8, 16)
-        src_spec = ShardingSpec(
-            [NoSharding(), NoSharding(),
-             NoSharding()], [Replicated(2)])
-        dst_spec = ShardingSpec([Chunked(
-            [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
-        self.run_resharding_task(src_shape,
-                                 dst_shape,
-                                 src_spec,
-                                 dst_spec,
-                                 tensor_shape,
-                                 resharding_mode="broadcast")
-        src_spec = ShardingSpec([Chunked(
-            [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
-        self.run_resharding_task(src_shape,
-                                 dst_shape,
-                                 src_spec,
-                                 dst_spec,
-                                 tensor_shape,
-                                 resharding_mode="broadcast")
-        src_spec = ShardingSpec(
-            [NoSharding(), Chunked([2]),
-             NoSharding()], [ShardedAxis(0)])
-        self.run_resharding_task(src_shape,
-                                 dst_shape,
-                                 src_spec,
-                                 dst_spec,
-                                 tensor_shape,
-                                 resharding_mode="broadcast")
+        tensor_shape = (32, 16)
+        src_spec = ShardingSpec([Chunked([2]), NoSharding()], [ShardedAxis(0)])
+        dst_spec = ShardingSpec([NoSharding(), NoSharding()], [Replicated(2)])
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape, False)
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape, False)
+        self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+                                 tensor_shape, False)
 
-    @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
-    def test_8gpu_broadcast(self):
-        src_shape = (1, 4)
-        dst_shape = (1, 4)
-        tensor_shape = (2, 64, 64)
+    # def test_4gpu_allgather(self):
+    #     src_shape = (1, 2)
+    #     dst_shape = (1, 2)
+    #     tensor_shape = (4, 8, 16)
+    #     src_spec = ShardingSpec(
+    #         [NoSharding(), NoSharding(),
+    #          NoSharding()], [Replicated(2)])
+    #     dst_spec = ShardingSpec(
+    #         [NoSharding(), NoSharding(),
+    #          NoSharding()], [Replicated(2)])
+    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+    #                              tensor_shape)
+    #     src_spec = ShardingSpec([Chunked(
+    #         [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
+    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+    #                              tensor_shape)
+    #     src_spec = ShardingSpec(
+    #         [NoSharding(), Chunked([2]),
+    #          NoSharding()], [ShardedAxis(0)])
+    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+    #                              tensor_shape)
+    #     # test allgather at the second dim
+    #     tensor_shape = (3, 8, 2)
+    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+    #                              tensor_shape)
 
-        src_spec = ShardingSpec([Chunked(
-            [2]), Chunked([2]), NoSharding()],
-                                [ShardedAxis(0), ShardedAxis(1)])
-        dst_spec = ShardingSpec(
-            [NoSharding(), NoSharding(),
-             NoSharding()], [Replicated(4)])
-        self.run_resharding_task(src_shape,
-                                 dst_shape,
-                                 src_spec,
-                                 dst_spec,
-                                 tensor_shape,
-                                 resharding_mode="broadcast")
+    # @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
+    # def test_8gpu_2_dim_allgather(self):
+    #     src_shape = (1, 4)
+    #     dst_shape = (1, 4)
+    #     tensor_shape = (6, 8, 16)
+    #     src_spec = ShardingSpec(
+    #         [NoSharding(), NoSharding(),
+    #          NoSharding()], [Replicated(4)])
+    #     dst_spec = ShardingSpec(
+    #         [NoSharding(), NoSharding(),
+    #          NoSharding()], [Replicated(4)])
+    #     self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
+    #                              tensor_shape)
 
-        tensor_shape = (64, 64, 64)
-        src_spec = ShardingSpec([Chunked(
-            [2]), Chunked([2]), NoSharding()],
-                                [ShardedAxis(0), ShardedAxis(1)])
-        dst_spec = ShardingSpec([Chunked(
-            [2]), NoSharding(), Chunked([2])],
-                                [ShardedAxis(0), ShardedAxis(1)])
-        self.run_resharding_task(src_shape,
-                                 dst_shape,
-                                 src_spec,
-                                 dst_spec,
-                                 tensor_shape,
-                                 resharding_mode="broadcast")
+    # def test_4gpu_broadcast(self):
+    #     src_shape = (1, 2)
+    #     dst_shape = (1, 2)
+    #     tensor_shape = (4, 8, 16)
+    #     src_spec = ShardingSpec(
+    #         [NoSharding(), NoSharding(),
+    #          NoSharding()], [Replicated(2)])
+    #     dst_spec = ShardingSpec([Chunked(
+    #         [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
+    #     self.run_resharding_task(src_shape,
+    #                              dst_shape,
+    #                              src_spec,
+    #                              dst_spec,
+    #                              tensor_shape,
+    #                              resharding_mode="broadcast")
+    #     src_spec = ShardingSpec([Chunked(
+    #         [2]), NoSharding(), NoSharding()], [ShardedAxis(0)])
+    #     self.run_resharding_task(src_shape,
+    #                              dst_shape,
+    #                              src_spec,
+    #                              dst_spec,
+    #                              tensor_shape,
+    #                              resharding_mode="broadcast")
+    #     src_spec = ShardingSpec(
+    #         [NoSharding(), Chunked([2]),
+    #          NoSharding()], [ShardedAxis(0)])
+    #     self.run_resharding_task(src_shape,
+    #                              dst_shape,
+    #                              src_spec,
+    #                              dst_spec,
+    #                              tensor_shape,
+    #                              resharding_mode="broadcast")
+
+    # @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
+    # def test_8gpu_broadcast(self):
+    #     src_shape = (1, 4)
+    #     dst_shape = (1, 4)
+    #     tensor_shape = (2, 64, 64)
+
+    #     src_spec = ShardingSpec([Chunked(
+    #         [2]), Chunked([2]), NoSharding()],
+    #                             [ShardedAxis(0), ShardedAxis(1)])
+    #     dst_spec = ShardingSpec(
+    #         [NoSharding(), NoSharding(),
+    #          NoSharding()], [Replicated(4)])
+    #     self.run_resharding_task(src_shape,
+    #                              dst_shape,
+    #                              src_spec,
+    #                              dst_spec,
+    #                              tensor_shape,
+    #                              resharding_mode="broadcast")
+
+    #     tensor_shape = (64, 64, 64)
+    #     src_spec = ShardingSpec([Chunked(
+    #         [2]), Chunked([2]), NoSharding()],
+    #                             [ShardedAxis(0), ShardedAxis(1)])
+    #     dst_spec = ShardingSpec([Chunked(
+    #         [2]), NoSharding(), Chunked([2])],
+    #                             [ShardedAxis(0), ShardedAxis(1)])
+    #     self.run_resharding_task(src_shape,
+    #                              dst_shape,
+    #                              src_spec,
+    #                              dst_spec,
+    #                              tensor_shape,
+    #                              resharding_mode="broadcast")
 
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(ReshardingTest("test_4gpu_send_recv"))
-    suite.addTest(ReshardingTest("test_4gpu_allgather"))
-    suite.addTest(ReshardingTest("test_8gpu_2_dim_allgather"))
-    suite.addTest(ReshardingTest("test_4gpu_broadcast"))
-    suite.addTest(ReshardingTest("test_8gpu_broadcast"))
+    # suite.addTest(ReshardingTest("test_4gpu_send_recv"))
+    suite.addTest(ReshardingTest("test_zhx1"))
+    suite.addTest(ReshardingTest("test_zhx2"))
+    suite.addTest(ReshardingTest("test_zhx3"))
+    # suite.addTest(ReshardingTest("test_4gpu_allgather"))
+    # suite.addTest(ReshardingTest("test_8gpu_2_dim_allgather"))
+    # suite.addTest(ReshardingTest("test_4gpu_broadcast"))
+    # suite.addTest(ReshardingTest("test_8gpu_broadcast"))
     return suite
 
 

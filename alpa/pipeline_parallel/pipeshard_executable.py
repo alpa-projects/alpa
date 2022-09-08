@@ -111,6 +111,10 @@ class PipeshardDriverExecutable:
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
             mesh_grad_uuids = pipeshard_config.grad_uuids[mesh_idx]
             for worker in physical_mesh.workers:
+                # print(mesh_idx, " : ")
+                # for instruction in pipeshard_config.instruction_lists[worker]:
+                #     print(f"next instruction: {instruction}, inputs {instruction.input_uuids}, outputs {instruction.output_uuids}")
+                # print("_"*10)
                 acc_grad_local_uuids = []
                 if len(mesh_grad_uuids) > 0:
                     acc_grad_local_uuids = mesh_grad_uuids
@@ -124,6 +128,7 @@ class PipeshardDriverExecutable:
                 worker.put_executable.remote(self.exec_uuid,
                                              PipeshardMeshWorkerExecuable,
                                              *args)
+        # exit(-1)
 
     def profile_instructions(self):
         """
@@ -588,7 +593,7 @@ class PipeshardMeshWorkerExecuable:
                 self.worker.run_resharding_recv_task(
                     instruction.task_uuid, instruction.output_uuids[0],
                     instruction.opaques["set_empty_buffer"])
-                self.worker.sync_all()
+                # self.worker.sync_all()
                 # dummy_compute_on_default_stream()
                 # TODO(lmzheng): move this to run_resharding_recv_task
                 if instruction.opaques["allgather_uuid"] is not None:

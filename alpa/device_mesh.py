@@ -473,14 +473,15 @@ class MeshHostWorker:
             synchronize_inputs_done_events([inputs_done_events],
                                             participated_streams)
 
+        # self.sync_all()
         for send_tile_spec in task.tile_specs:
-            self.sync_all()
+            # self.sync_all()
             send_tile_spec: ReshardingSendSpec
             self.send_tile(ary_uuid, send_tile_spec.device_id,
                            send_tile_spec.tile_spec.offset,
                            send_tile_spec.tile_spec.rank,
                            send_tile_spec.tile_spec.gpu_idx, task.group_name)
-            self.sync_all()
+            # self.sync_all()
 
         if global_config.enable_overlapping:
             for device_id, stream in zip(participated_devices, participated_streams):
@@ -489,6 +490,7 @@ class MeshHostWorker:
                 #TODO(hexu): will we continue to use it after sending it to other devices?
 
     def run_resharding_recv_task(self, uuid, ary_uuid, set_empty_buffer=True):
+        # print(-1)
         task: ReshardingRecvTask = self.recv_tasks[uuid]
         if set_empty_buffer and ary_uuid not in self.buffers:
             self.buffers[ary_uuid] = [None] * self.num_devices
@@ -522,11 +524,11 @@ class MeshHostWorker:
 
             for recv_tile_spec in recv_spec.tile_specs:
                 recv_tile_spec: ReshardingTileSpec
-                self.sync_all()
+                # self.sync_all()
                 self.recv_tile(ary_uuid, device_id, recv_tile_spec.offset,
                                recv_tile_spec.rank, recv_tile_spec.gpu_idx,
                                task.group_name)
-                self.sync_all()
+                # self.sync_all()
 
         if global_config.enable_overlapping:
             for device_id, stream in zip(participated_devices, participated_streams):

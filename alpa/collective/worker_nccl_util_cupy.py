@@ -13,7 +13,8 @@ import alpa.collective as col
 from alpa.collective.collective_group import nccl_util
 from alpa.util import (jax_tensor_set, jax_tensor_index,
                        xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
-                       is_continuous_subset, infer_offset_and_n_elements)
+                       is_continuous_subset, infer_offset_and_n_elements,
+                       mark_event, synchronize_one_event)
 
 from alpa.pipeline_parallel.xla_custom_call_marker import dummy_compute_on_default_stream
 
@@ -100,6 +101,7 @@ def recv_tile(worker, uuid: int, device_id: int,
     if is_continuous_subset(indices_in_dst_tile, tensor_shape):
         # print(-2)
         # worker.sync_all()
+        print(device_id, indices_in_dst_tile)
         to_recv = xla_buffer_to_cupy(buffer, take_ownership=True)
         # worker.sync_all()
         if slice_shape == tensor_shape:
@@ -112,7 +114,14 @@ def recv_tile(worker, uuid: int, device_id: int,
                               group_name,
                               n_elements=n_elements)
         # worker.sync_all()
+        # dummy_compute_on_default_stream()
+        # recv_stream = col.get_stream(group_name, device_id, True)
+        # event = mark_event(recv_stream, device_id)
+        # working_stream = xe.fetch_working_streams_from_pyclient(worker.backend)[device_id]å
+        # synchronize_one_event(event, working_stream)
         new_buffer = cupy_to_xla_buffer(to_recv)
+        # dummy_compute_on_default_stream()
+        # worker.local_devices[device_id].synchronize_all_activity()å
         # worker.sync_all()
     else:
         # The following call will allocate memory and cause a few H2D and
@@ -128,14 +137,13 @@ def recv_tile(worker, uuid: int, device_id: int,
         to_recv = jax_tensor_to_cupy(tmp_buffer, take_ownership=True)
         # worker.sync_all()
         col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
+        
+        recv_stream = col.get_stream(group_name, device_id, True)
+        event = mark_event(recv_stream, device_id)
+        working_stream = xe.fetch_working_streams_from_pyclient(worker.backend)[device_id]
+        synchronize_one_event(event, working_stream)
+        
         # worker.sync_all()
-
-        # streams = xe.fetch_working_streams(worker.)
-
-        # self.worker.sync_all() #1
-        # for stream in streams: #2
-        #     xe.synchronize_stream(stream)
-
 
         recv_tensor = cupy_to_jax_tensor(to_recv)
         start_indices = tuple(
@@ -150,7 +158,11 @@ def recv_tile(worker, uuid: int, device_id: int,
         new_buffer = jax_tensor_set(xla_buffer_to_jax_tensor(buffer),
                                     recv_tensor, start_indices)
         new_buffer = jax_tensor_to_xla_buffer(new_buffer)
+        # TODO(hexu): actually, we need to make sure that jax_tensor_set finishes before its following computation. 
         # worker.sync_all()
+        # event = mark_event(working_stream, device_id)
+        # synchronize_one_event(event, recv_stream)
+
     if is_bool:
         new_buffer = _uint8_to_bool(new_buffer)
     worker.buffers[uuid][device_id] = new_buffer

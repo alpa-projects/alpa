@@ -443,8 +443,9 @@ def _get_full_batch_apply_grad(closed_jaxpr,
             assert tuple(expected_microbatched_shape) == microbatch_shape
             if len(apply_grad_jaxpr.eqns) > 0:
                 raise NotImplementedError(
-                    "apply gradient with non-reduced input is not supported "
-                    "yet.")
+                    "Some vars marked by gradient markers are not reduced "
+                    "but concatenated. This case in the training mode "
+                    "is not supported yet.")
         reduced_vector.append(microbatch_shape == batch_shape)
 
     return reduced_vector, post_microbatch_bound, apply_grad_jaxpr

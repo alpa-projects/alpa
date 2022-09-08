@@ -947,8 +947,9 @@ def trace_jaxpr_with_micro_batch(fun: lu.WrappedFun,
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    # Restore jax.random to original stateless version
     closed_jaxpr = process_remat(closed_jaxpr)
+
+    # Restore jax.random to original stateless version
     restore_random()
     return closed_jaxpr, batch_size
 

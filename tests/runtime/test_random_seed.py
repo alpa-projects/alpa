@@ -1,5 +1,6 @@
 """Test random seed."""
 import unittest
+import os
 
 import jax
 from jax._src.tree_util import tree_flatten, tree_unflatten
@@ -15,6 +16,9 @@ from alpa.testing import assert_allclose
 
 class RandomSeedTest(unittest.TestCase):
 
+    def setUp(self):
+        os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+
     def test_random_generation(self):
 
         @parallelize(method=ShardParallel())
@@ -29,6 +33,7 @@ class RandomSeedTest(unittest.TestCase):
         a = func()
         s = set(np.array(a))
 
+        # Check all random numbers are unique
         assert len(a) == len(s)
 
     def test_set_seed(self):
@@ -38,13 +43,21 @@ class RandomSeedTest(unittest.TestCase):
             rngkey = jax.random.PRNGKey(0)
             return jax.random.normal(rngkey, (16, 4))
 
+        @parallelize(method=ShardParallel())
+        def func2():
+            rngkey = jax.random.PRNGKey(0)
+            return jax.random.normal(rngkey, (16, 4))
+
         set_seed(10)
         a = func()
         b = func()
         set_seed(10)
         c = func()
+        set_seed(10)
+        d = func2()
 
         assert_allclose(a, c)
+        assert_allclose(c, d)
 
         allclose = True
         try:

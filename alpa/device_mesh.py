@@ -29,7 +29,6 @@ import threading
 import time
 from typing import Any, List, Union, Sequence, Tuple, Optional
 
-import jax
 from jax import core, xla, device_put
 from jax._src.api import ShapeDtypeStruct
 from jax._src.lib import xla_bridge as xb, xla_extension as xe
@@ -284,6 +283,7 @@ class MeshHostWorker:
         return self.executables[uuid].grad_sync_channel_ids
 
     def set_runtime_random_seed(self, seed: int):
+        seed = seed + (self.mesh_id << 20 if self.mesh_id else 0)
         for d in self.local_devices:
             d.set_seed(seed)
 
@@ -845,9 +845,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
             shards = [
                 args[i][shard_indices[i][k]] for k in range(len(self.devices))
             ]
-            buffers = [
-                jax.device_put(x, d) for x, d in zip(shards, self.devices)
-            ]
+            buffers = [device_put(x, d) for x, d in zip(shards, self.devices)]
             arrays.append(
                 pxla._ShardedDeviceArray(avals[i], sharding_specs[i], buffers,
                                          shard_indices[i]))
@@ -1944,7 +1942,7 @@ class PhysicalDeviceMeshGroup:
 
     def set_runtime_random_seed(self, seed: int):
         for m in self.meshes:
-            m.set_runtime_random_seed(seed + m.mesh_id << 20)
+            m.set_runtime_random_seed(seed)
 
     def sync_workers(self):
         """Sync device activities on all workers."""

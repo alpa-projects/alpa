@@ -1,5 +1,26 @@
 """Alpa is a system for training large-scale neural networks."""
 
+# Check version first
+from alpa.version import __version__
+
+# Import all public packages
+from . import api
+from . import collective
+from . import create_state_parallel
+from . import device_mesh
+from . import data_loader
+from . import global_env
+from . import follow_parallel
+from . import mesh_profiling
+from . import monkey_patch
+from . import parallel_method
+from . import parallel_plan
+from . import pipeline_parallel
+from . import shard_parallel
+from . import timer
+from . import util
+
+# Short cuts
 from alpa.api import (init, shutdown, parallelize, grad, value_and_grad,
                       clear_executable_cache)
 from alpa.data_loader import DataLoader, MeshDriverDataLoader
@@ -25,20 +46,3 @@ from alpa.pipeline_parallel.stage_construction import (ManualStageOption,
 from alpa.shard_parallel.auto_sharding import AutoShardingOption
 from alpa.serialization import save_checkpoint, restore_checkpoint
 from alpa.timer import timers
-from alpa.version import __version__
-
-from . import api
-from . import collective
-from . import create_state_parallel
-from . import device_mesh
-from . import data_loader
-from . import global_env
-from . import follow_parallel
-from . import mesh_profiling
-from . import monkey_patch
-from . import parallel_method
-from . import parallel_plan
-from . import pipeline_parallel
-from . import shard_parallel
-from . import timer
-from . import util

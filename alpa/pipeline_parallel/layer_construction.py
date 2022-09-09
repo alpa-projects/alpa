@@ -21,8 +21,9 @@ from alpa.pipeline_parallel.layer_stats import (global_invar_size,
                                                 log_layer_slicing_stats)
 from alpa.pipeline_parallel.primitive_def import (pipeline_p,
                                                   mark_pipeline_jaxpreqn)
-from alpa.util import (clone_jaxpr, slices_to_jaxpr, OrderedSet,
-                       get_var_mapping, maybe_numba_jit, new_jaxpr_eqn)
+from alpa.util import (clone_jaxpr, clone_jaxpr_eqn, slices_to_jaxpr,
+                       OrderedSet, get_var_mapping, maybe_numba_jit,
+                       new_jaxpr_eqn)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -210,9 +211,7 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
                 get_var_mapping(computation_var_mapping, var)
                 for var in eqn.invars
             ]
-            new_eqns.append(
-                new_jaxpr_eqn(new_invars, eqn.outvars, eqn.primitive,
-                              eqn.params, eqn.effects, eqn.source_info))
+            new_eqns.append(clone_jaxpr_eqn(eqn, new_invars))
 
         # pipeline end eqn
         pipeline_end_invars = list(

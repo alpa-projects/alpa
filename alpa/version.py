@@ -21,9 +21,10 @@ if alpa_jaxlib_version < minimal_alpa_jaxlib_version:
     raise RuntimeError(
         f"The alpa-jaxlib's internal version is v{alpa_jaxlib_version_str}, "
         f"but the minimal requirement is v{minimal_alpa_jaxlib_version_str}. "
-        f"Please update your tensorflow-alpa submodule and re-compile jaxlib. "
-        f"Help : https://alpa-projects.github.io/developer/developer_guide.html"
-        f"#updating-submodule-tensorflow-alpa.")
+        f"Please install the latest alpa-jaxlib. If you build alpa from source,"
+        f" please update your tensorflow-alpa submodule and re-compile jaxlib ("
+        f"help : https://alpa-projects.github.io/developer/developer_guide.html"
+        f"#updating-submodule-tensorflow-alpa)")
 
 ##### Attach all licenses of used open-source code below #####
 

@@ -1,11 +1,8 @@
 import unittest
-import os
 
-import jax
 from jax._src.api import make_jaxpr
 from jax.core import ClosedJaxpr, Var, gensym
 import jax.numpy as jnp
-import ray
 
 from alpa import init, grad
 from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
@@ -14,8 +11,8 @@ from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
                                               )
 from alpa.pipeline_parallel.computation import (
     create_donation_mapping,
-    mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
-    pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks)
+    mark_missing_vars_in_backward_computation_pipeline_marks, pipeline_dce,
+    slice_closed_jaxpr_by_full_pipeline_marks)
 from alpa.pipeline_parallel.layer_construction import ManualLayerOption
 from alpa.pipeline_parallel.stage_profiling import (ApplyGradConfig,
                                                     CompileConfig,
@@ -102,7 +99,6 @@ class StageConstructUtilTest(unittest.TestCase):
             jax_pipeline_layers, acc_grad_invars, acc_grad_outvars, gensym_func)
         jax_pipeline_layers = pipeline_dce(jax_pipeline_layers,
                                            acc_grad_outvars)
-        jax_pipeline_layers = offload_remat(jax_pipeline_layers, gensym_func)
 
         global_invars = closed_jaxpr.jaxpr.invars
         global_outvars = closed_jaxpr.jaxpr.outvars

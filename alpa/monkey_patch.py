@@ -122,15 +122,39 @@ def remove_fold_in(key, data):
     return key
 
 
+rng_primitives = [lax.rng_uniform_p, rng_normal_p]
+
 # Monkey patch random generator to use the stateful random generator.
-jax._src.random.uniform = fast_uniform
-jax.random.uniform = fast_uniform
-jax._src.random.normal = fast_normal
-jax.random.normal = fast_normal
-jax._src.random.bernoulli = fast_bernoulli
-jax.random.bernoulli = fast_bernoulli
-jax._src.random.fold_in = remove_fold_in
-jax.random.fold_in = remove_fold_in
+backup_src_uniform = jax._src.random.uniform
+backup_random_uniform = jax.random.uniform
+backup_src_normal = jax._src.random.normal
+backup_random_normal = jax.random.normal
+backup_src_bernoulli = jax._src.random.bernoulli
+backup_random_bernoulli = jax.random.bernoulli
+backup_src_foldin = jax._src.random.fold_in
+backup_random_foldin = jax.random.fold_in
+
+
+def monkey_patch_random():
+    jax._src.random.uniform = fast_uniform
+    jax.random.uniform = fast_uniform
+    jax._src.random.normal = fast_normal
+    jax.random.normal = fast_normal
+    jax._src.random.bernoulli = fast_bernoulli
+    jax.random.bernoulli = fast_bernoulli
+    jax._src.random.fold_in = remove_fold_in
+    jax.random.fold_in = remove_fold_in
+
+
+def restore_random():
+    jax._src.random.uniform = backup_src_uniform
+    jax.random.uniform = backup_random_uniform
+    jax._src.random.normal = backup_src_normal
+    jax.random.normal = backup_random_normal
+    jax._src.random.bernoulli = backup_src_bernoulli
+    jax.random.bernoulli = backup_src_bernoulli
+    jax._src.random.fold_in = backup_src_foldin
+    jax.random.fold_in = backup_random_foldin
 
 
 # Support using pickle on ShardingSpec

@@ -20,9 +20,9 @@ from alpa.pipeline_parallel.computation import (
     create_donation_mapping, generate_computations_from_modules,
     generate_sharded_xla_computations,
     generate_sharded_xla_computations_arguments, get_donatable_intermediate,
-    mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
-    pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
-    split_donate_invars, XlaShardedPipelineComputation)
+    mark_missing_vars_in_backward_computation_pipeline_marks, pipeline_dce,
+    slice_closed_jaxpr_by_full_pipeline_marks, split_donate_invars,
+    XlaShardedPipelineComputation)
 from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
                                                process_apply_gradient,
                                                split_compute_grad_and_apply_grad
@@ -164,8 +164,6 @@ def compile_pipeshard_executable_internal(
     # TODO(yonghao): remove this pass. we can clear these vars when rewriting
     # compute grad to accumulate grad
     jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
-    if not inference_mode:
-        jax_pipeline_layers = offload_remat(jax_pipeline_layers, gensym_func)
 
     (jax_apply_layers,
      apply_grad_global_info) = _slice_apply_grad_for_stage_construction(
@@ -445,8 +443,9 @@ def _get_full_batch_apply_grad(closed_jaxpr,
             assert tuple(expected_microbatched_shape) == microbatch_shape
             if len(apply_grad_jaxpr.eqns) > 0:
                 raise NotImplementedError(
-                    "apply gradient with non-reduced input is not supported "
-                    "yet.")
+                    "Some vars marked by gradient markers are not reduced "
+                    "but concatenated. This case in the training mode "
+                    "is not supported yet.")
         reduced_vector.append(microbatch_shape == batch_shape)
 
     return reduced_vector, post_microbatch_bound, apply_grad_jaxpr

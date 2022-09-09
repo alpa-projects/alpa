@@ -7,8 +7,8 @@ from jax._src.tree_util import tree_flatten, tree_unflatten
 import jax.numpy as jnp
 import numpy as np
 
-from alpa import (init, grad, parallelize, ShardParallel, set_seed,
-                  shutdown, AutoShardingOption)
+from alpa import (init, grad, parallelize, ShardParallel, set_seed, shutdown,
+                  AutoShardingOption)
 from alpa.parallel_method import PipeshardParallel
 from alpa.pipeline_parallel.layer_construction import ManualLayerOption
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
@@ -93,11 +93,12 @@ class RandomSeedTest(unittest.TestCase):
             return rns
 
         set_seed(10)
-        method = PipeshardParallel(num_micro_batches=num_micro_batches,
-                                   pipeline_schedule="inference",
-                                   layer_option="manual",
-                                   default_auto_sharding_option=AutoShardingOption(
-                                       force_data_parallel=True))
+        method = PipeshardParallel(
+            num_micro_batches=num_micro_batches,
+            pipeline_schedule="inference",
+            layer_option="manual",
+            default_auto_sharding_option=AutoShardingOption(
+                force_data_parallel=True))
         p_gen_rns = parallelize(gen_rns, method=method)
         external_rns = np.array(p_gen_rns(params, x, rngkey))
 
@@ -121,14 +122,19 @@ class RandomSeedTest(unittest.TestCase):
             return grads, rns
 
         set_seed(10)
-        method = PipeshardParallel(num_micro_batches=num_micro_batches,
-                                   layer_option=ManualLayerOption(remat_layer=False),
-                                   default_auto_sharding_option=AutoShardingOption(
-                                       force_data_parallel=True))
-        p_train_step = parallelize(train_step, method=method, static_argnums=(3,))
+        method = PipeshardParallel(
+            num_micro_batches=num_micro_batches,
+            layer_option=ManualLayerOption(remat_layer=True),
+            default_auto_sharding_option=AutoShardingOption(
+                force_data_parallel=True))
+        p_train_step = parallelize(train_step,
+                                   method=method,
+                                   static_argnums=(3,))
 
-        grads_actual, rns_actual = p_train_step(params, x, rngkey, False, external_rns)
-        grads_expected, rns_expected = train_step(params, x, rngkey, True, external_rns)
+        grads_actual, rns_actual = p_train_step(params, x, rngkey, False,
+                                                external_rns)
+        grads_expected, rns_expected = train_step(params, x, rngkey, True,
+                                                  external_rns)
 
         assert_allclose(external_rns, rns_actual)
         assert_allclose(external_rns, rns_expected)

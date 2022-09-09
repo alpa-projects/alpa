@@ -117,7 +117,8 @@ class RandomSeedTest(unittest.TestCase):
                 return jnp.mean(y), rns
 
             grads, rns = grad(loss_func, has_aux=True)(params)
-            # A workaroud to make apply_grad non-empty, otherwise it hits a bug.
+            # A workaroud to make apply_grad non-empty, otherwise it hits a bug
+            # (https://github.com/alpa-projects/alpa/issues/560).
             grads = jax.tree_map(lambda x: x + 1, grads)
             return grads, rns
 

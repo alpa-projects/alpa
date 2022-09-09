@@ -7,7 +7,8 @@ from jax._src.tree_util import tree_flatten, tree_unflatten
 import jax.numpy as jnp
 import numpy as np
 
-from alpa import init, grad, parallelize, ShardParallel, set_seed, shutdown
+from alpa import (init, grad, parallelize, ShardParallel, set_seed,
+                  shutdown, AutoShardingOption)
 from alpa.parallel_method import PipeshardParallel
 from alpa.pipeline_parallel.layer_construction import ManualLayerOption
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
@@ -68,63 +69,70 @@ class RandomSeedTest(unittest.TestCase):
 
     def test_remat_rng(self):
         init(cluster="ray")
-        shape = (40, 40)
 
-        # TODO: Stateful rng is correct only if it is not replicated, so we
-        # should forcely set the parallel strategy to data parallel.
-        def get_train_step(parallel_method):
-
-            def train_step(*args):
-
-                def loss_func(params, x, key):
-                    rns = jax.random.normal(key, x.shape)
-                    y = x @ params["x1"]
-                    y = jax.lax.select(rns > 0, y, jnp.zeros_like(y))
-                    mark_pipeline_boundary()
-                    y = y @ params["x2"]
-                    return jnp.mean(y), rns
-
-                grads, rns = grad(loss_func, has_aux=True)(*args)
-                grad_val, tree = tree_flatten(grads)
-                return tree_unflatten(tree, [val + 1 for val in grad_val]), rns
-
-            return parallelize(train_step,
-                               method=parallel_method,
-                               donate_argnums=())
-
-        def normal_step(params, x, rns):
-
-            def forward(params, x, rns):
-                y = x @ params["x1"]
-                y = jax.lax.select(rns > 0, y, jnp.zeros_like(y))
-                y = y @ params["x2"]
-                return jnp.mean(y)
-
-            grads = jax.grad(forward)(params, x, rns)
-            grad_val, tree = tree_flatten(grads)
-            return tree_unflatten(tree, [val + 1 for val in grad_val])
-
-        # the num micrbatch can only be 1 because current runtime does not
-        # support
-        remat_pipeline_with_rng = get_train_step(
-            PipeshardParallel(num_micro_batches=1,
-                              layer_option=ManualLayerOption(True)))
-
-        key = jax.random.PRNGKey(0)
-        x = jax.random.normal(key, shape)
+        batch_size = 64
+        hidden_size = 8
+        num_micro_batches = 1
+        rngkey = jax.random.PRNGKey(0)
+        x = jax.random.normal(rngkey, (batch_size, hidden_size))
         params = {
-            "x1": jax.random.normal(key, shape),
-            "x2": jax.random.normal(key, shape)
+            "x1": jax.random.normal(rngkey, (hidden_size, hidden_size)),
+            "x2": jax.random.normal(rngkey, (hidden_size, hidden_size)),
         }
-        pipeline_out, rns = remat_pipeline_with_rng(params, x, key)
-        expected_out = normal_step(params, x, rns._value)
-        assert_allclose(pipeline_out, expected_out)
-        executable = remat_pipeline_with_rng.get_executable(params, x, key)
-        rng_str = "rng-get-and-update-state"
-        for hlo in executable.get_hlo_text()[1:]:
-            assert rng_str not in hlo
-        assert rng_str in executable.get_hlo_text()[0]
 
+        # Run an inference-only forward pass to get rngs
+        def gen_rns(params, x, key):
+            # NOTE: We minic the real forward pass to make sure
+            # the sharding specs are the same. Otherwise, the results of rng
+            # do not match.
+            y = x @ params["x1"]
+            rns = jax.random.normal(key, y.shape)
+            y = jax.lax.select(rns > 0, y, jnp.zeros_like(y))
+            mark_pipeline_boundary()
+            y = y @ params["x2"]
+            return rns
+
+        set_seed(10)
+        method = PipeshardParallel(num_micro_batches=num_micro_batches,
+                                   pipeline_schedule="inference",
+                                   layer_option="manual",
+                                   default_auto_sharding_option=AutoShardingOption(
+                                       force_data_parallel=True))
+        p_gen_rns = parallelize(gen_rns, method=method)
+        external_rns = np.array(p_gen_rns(params, x, rngkey))
+
+        # Run train step with remat and rng
+        def train_step(params, x, key, use_external_rns, external_rns):
+
+            def loss_func(params):
+                y = x @ params["x1"]
+                if use_external_rns:
+                    rns = external_rns
+                else:
+                    rns = jax.random.normal(key, y.shape)
+                y = jax.lax.select(rns > 0, y, jnp.zeros_like(y))
+                mark_pipeline_boundary()
+                y = y @ params["x2"]
+                return jnp.mean(y), rns
+
+            grads, rns = grad(loss_func, has_aux=True)(params)
+            # A workaroud to make apply_grad non-empty, otherwise it hits a bug.
+            grads = jax.tree_map(lambda x: x + 1, grads)
+            return grads, rns
+
+        set_seed(10)
+        method = PipeshardParallel(num_micro_batches=num_micro_batches,
+                                   layer_option=ManualLayerOption(remat_layer=False),
+                                   default_auto_sharding_option=AutoShardingOption(
+                                       force_data_parallel=True))
+        p_train_step = parallelize(train_step, method=method, static_argnums=(3,))
+
+        grads_actual, rns_actual = p_train_step(params, x, rngkey, False, external_rns)
+        grads_expected, rns_expected = train_step(params, x, rngkey, True, external_rns)
+
+        assert_allclose(external_rns, rns_actual)
+        assert_allclose(external_rns, rns_expected)
+        assert_allclose(grads_actual, grads_expected)
         shutdown()
 
 

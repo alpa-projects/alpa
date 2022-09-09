@@ -283,6 +283,7 @@ class MeshHostWorker:
         return self.executables[uuid].grad_sync_channel_ids
 
     def set_runtime_random_seed(self, seed: int):
+        seed = seed + (self.mesh_id << 20 if self.mesh_id else 0)
         for d in self.local_devices:
             d.set_seed(seed)
 
@@ -1941,7 +1942,7 @@ class PhysicalDeviceMeshGroup:
 
     def set_runtime_random_seed(self, seed: int):
         for m in self.meshes:
-            m.set_runtime_random_seed(seed + m.mesh_id << 20)
+            m.set_runtime_random_seed(seed)
 
     def sync_workers(self):
         """Sync device activities on all workers."""

@@ -1,3 +1,4 @@
+# pylint: disable=pointless-string-statement
 """Version information."""
 from jax._src.lib import xla_extension as xe
 
@@ -23,7 +24,6 @@ if alpa_jaxlib_version < minimal_alpa_jaxlib_version:
         f"Please update your tensorflow-alpa submodule and re-compile jaxlib. "
         f"Help : https://alpa-projects.github.io/developer/developer_guide.html"
         f"#updating-submodule-tensorflow-alpa.")
-
 
 ##### Attach all licenses of used open-source code below #####
 

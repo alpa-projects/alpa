@@ -395,7 +395,7 @@ def index():
 
 def check_max_length_limit(cur_len, max_len):
     if cur_len > max_len:
-        logger.info(f"Rejected a prompt with length = {cur_len}.")
+        logger.info(f"Rejected a request with max prompt length = {cur_len}.")
         raise Exception(f"Your prompt length  = {cur_len} is too long. "
                         f"Please make sure len(prompt) + response length <= {max_len}. "
                         f"Since this is a public service, we have limited the max length supported. "
@@ -405,6 +405,7 @@ def check_max_length_limit(cur_len, max_len):
 
 def check_model_loading():
     if generator is None:
+        logger.error(f"Rejected a request during model loading.")
         raise RuntimeError(
             "The server just restarted after regular maintenance. "
             "It is loading the model now, which can take several minutes. "

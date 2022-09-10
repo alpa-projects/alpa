@@ -7,6 +7,7 @@ import copy
 import jax
 import jax.numpy as jnp
 import numpy as np
+import cupy
 import os
 from functools import partial
 
@@ -26,7 +27,7 @@ DUMP_LOGITS = False
 # total input len -- #tokens in the batch
 N = 64
 # total cache length
-M = 512
+M = 512 * 2
 MAX_CACHE_LEN_PER_SEQ = 32
 
 
@@ -179,15 +180,21 @@ def runner_2d(model, input_pool):
     return input_pool, execution_cost
 
 
+def sync():
+    jax.devices()[0].synchronize_all_activity()
+
+
 def runner_2d_batch(model, input_pool):
+    print(f"#batches: {len(input_pool)}, batch size: {len(input_pool[0][0])}")
     inference_step, params, config = model
     is_prompt = [cache[0][2][0] == 0 for _, cache in input_pool]
     logits_all = []
     execution_cost = {}
 
-    record_time(start=True)
+    sync()
+    start_time = time.time()
     for idx, (_input_ids, cache) in enumerate(input_pool):
-
+        record_time(start=True)
         original_len = [len(sen) for sen in _input_ids]
         _input_ids_padded = pad_batch(_input_ids)
         input_ids = np.array(_input_ids_padded, dtype=np.int32)
@@ -196,24 +203,32 @@ def runner_2d_batch(model, input_pool):
             # Auto-regressive
             input_ids = input_ids[:, -1:]
             position_ids = position_ids[:, -1:]
+        sync()
+        execution_cost["prep"] = record_time()
         logits, updated_cache = inference_step(
             params, {
                 "input_ids": input_ids,
                 "position_ids": position_ids,
                 "cache": cache,
             })
-
-        next_token = np.argmax(logits, axis=-1)
+        sync()
+        execution_cost["compute"] = record_time()
+        next_token = jnp.argmax(logits, axis=-1)
         # Append the generated token and updated cache.
-
+        # next_token_cupy = jax_tensor_to_cupy(next_token)
+        # next_token_cpu = cupy.asnumpy(next_token_cupy)
         for i, sen in enumerate(_input_ids):
-            sen.append(int(next_token[i][original_len[i]]))
+            sen.append(int(next_token[i][original_len[i]-1]))
         input_pool[idx] = (_input_ids, updated_cache)
+        sync()
+        execution_cost["update tokens"] = record_time()
 
         # For debugging
         if DUMP_LOGITS:
             logits_all.append(logits)
-    execution_cost["compute"] = record_time()
+    sync()
+    end_time = time.time()
+    execution_cost["overall"] = end_time - start_time
 
     if DUMP_LOGITS:
         logits_all = np.concatenate(logits_all, axis=0)
@@ -258,6 +273,7 @@ def runner_1d(model, input_pool):
     for input_sentence in input_tokens:
         assert config.pad not in input_sentence
 
+    sync()
     # TODO(Woosuk): Reorder the input sentences.
     record_time(start=True)
     # Pre-update num_prev_tokens.
@@ -290,6 +306,7 @@ def runner_1d(model, input_pool):
     position_id_1d = position_id_1d + [config.pad] * (N - len(position_id_1d))
     position_id_1d = jnp.asarray(position_id_1d, dtype=jnp.int32)
 
+    sync()
     execution_cost["prep"] = record_time()
 
     assert MAX_CACHE_LEN_PER_SEQ >= max(num_prev_tokens.values())
@@ -298,6 +315,7 @@ def runner_1d(model, input_pool):
     os.environ['FT_CACHE_INDEX_ADDR'] = str(kv_cache_ids.ctypes.data)
     os.environ['FT_MAX_CACHE_LEN_PER_SEQ'] = str(MAX_CACHE_LEN_PER_SEQ)
 
+    sync()
     execution_cost["set env"] = record_time()
 
     batch = {
@@ -307,10 +325,13 @@ def runner_1d(model, input_pool):
     }
     logits, kv = inference_step(params, batch)
 
+    sync()
     execution_cost["compute"] = record_time()
 
     # Get the output tokens.
     logits = np.array(logits)
+    sync()
+    execution_cost["mv to np"] = record_time()
     outputs = []
     output_idx = -1
     for i, sentence_id in enumerate(input_sentence_ids):
@@ -337,7 +358,7 @@ def runner_1d(model, input_pool):
     for i, sentence_id in enumerate(input_sentence_ids):
         # TODO: Handle EOS here.
         num_prev_tokens[sentence_id] += len(input_tokens[i])
-
+    sync()
     execution_cost["cache reorder"] = record_time()
 
     # kv_caches = [(cupy_to_jax_tensor(k), cupy_to_jax_tensor(v)) for k, v in kv_caches_cupy]

@@ -1,7 +1,7 @@
 import argparse
 import copy
 import time
-from examples.opt_serving.model.test_1d import setup, runner_1d, runner_2d
+from examples.opt_serving.model.test_1d import setup, runner_1d, runner_2d, runner_2d_batch
 import jax.numpy as jnp
 from examples.opt_serving.benchmark.benchmark_text_gen import test_prompts
 from alpa.util import print_used_time
@@ -12,13 +12,14 @@ input_id_list = [
     [133, 589, 9, 886, 6, 10817, 16, 10, 285],
     [5625, 16, 10, 205, 183, 8, 38, 236, 7],
     [2264, 16, 5, 7440, 9, 16673, 873, 24214, 116],
-    # [32826, 16, 5, 812, 343, 9],
-    # [2264, 109, 47, 206, 59, 5, 499, 9, 28850, 1975, 37079, 116],
-    # [2264, 109, 47, 206, 59, 5, 3099, 9, 301, 116],
-    # [19195, 140, 16, 5, 394, 9],
-    # [534, 10311, 12, 246, 16, 10, 739, 2777, 1421, 14, 16, 4453, 9],
+    [32826, 16, 5, 812, 343, 9],
+    [2264, 109, 47, 206, 59, 5, 499, 9, 28850, 1975, 37079, 116],
+    [2264, 109, 47, 206, 59, 5, 3099, 9, 301, 116],
+    [19195, 140, 16, 5, 394, 9],
+    [534, 10311, 12, 246, 16, 10, 739, 2777, 1421, 14, 16, 4453, 9],
 ]
 
+input_id_list = input_id_list
 
 def print_execution_cost(execution_cost):
     output = []
@@ -33,15 +34,18 @@ if __name__ == "__main__":
     parser.add_argument("--path", type=str, default="~/opt_weights/")
     parser.add_argument("--n-warmup", type=int, default=1)
 
+    batch_size = 5
+
     args = parser.parse_args()
     model_1d, input_pool_1d = setup("1d", input_id_list, np_weights_folder=args.path)
-    model_2d, input_pool_2d = setup("2d", input_id_list, np_weights_folder=args.path)
+    model_2d, input_pool_2d = setup("2d", input_id_list, np_weights_folder=args.path, batch_size=batch_size)
 
     # Warm up
     for i in range(args.n_warmup):
         warmup_pool_2d = copy.deepcopy(input_pool_2d)
-        _, cost = runner_2d(model_2d, warmup_pool_2d)
+        _, cost = runner_2d_batch(model_2d, warmup_pool_2d)
         print_execution_cost(cost)
+    exit(1)
     for i in range(args.n_warmup):
         warmup_pool_1d = copy.deepcopy(input_pool_1d)
         warmup_pool_1d.kv_caches = [(jnp.asarray(k), jnp.asarray(v)) for k, v in warmup_pool_1d.kv_caches]
@@ -56,7 +60,7 @@ if __name__ == "__main__":
     latency_1d = time.time() - tic
     print("Run 2D")
     tic = time.time()
-    ret_pool_2d, _ = runner_2d(model_2d, input_pool_2d)
+    ret_pool_2d, _ = runner_2d_batch(model_2d, input_pool_2d)
     latency_2d = time.time() - tic
     print(f"Results 3 prompts: 1d {latency_1d}, 2d {latency_2d}")
     exit(1)

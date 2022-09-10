@@ -316,6 +316,7 @@ def completions():
                 f"max_len: {generation_args.get('max_tokens', 0)}, "
                 f"temperature: {generation_args['temperature']}, "
                 f"top_p: {generation_args['top_p']}, "
+                f"api_key: {generation_args.get('api_key', None)}, "
                 f"ip: {request.remote_addr}")
 
     cur_len = max(len(p) for p in prompts)
@@ -375,7 +376,9 @@ def logprobs():
 
     logger.info(f"Received new logprobs request: "
                 f"prompt length {[len(p) for p in prompts]}, "
-                f"top_k: {generation_args['top_k']}.")
+                f"top_k: {generation_args['top_k']}, "
+                f"api_key: {generation_args.get('api_key', None)}, "
+                f"ip: {request.remote_addr}")
 
     cur_len = max(len(p) for p in prompts)
     check_max_length_limit(cur_len, MAX_SEQ_LEN)

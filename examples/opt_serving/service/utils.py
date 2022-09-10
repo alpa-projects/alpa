@@ -20,6 +20,8 @@ def build_logger():
     )
 
     # Set the format of root handlers
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO)
     logging.getLogger().handlers[0].setFormatter(formatter)
     logging.getLogger("werkzeug").setLevel("WARNING")
 
@@ -45,8 +47,9 @@ def build_logger():
             LOGDIR,
             f"alpa.opt_serving.log.{datetime.datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}"
         )
-
-        handler = logging.FileHandler(logfile_path)
+        handler = logging.handlers.RotatingFileHandler(logfile_path,
+                                                       maxBytes=1024 * 1024,
+                                                       backupCount=100000)
         handler.setFormatter(formatter)
 
         for name, item in logging.root.manager.loggerDict.items():

@@ -2,6 +2,7 @@ import argparse
 from collections import defaultdict
 import logging.handlers
 import logging
+import json
 import os
 import queue
 import random
@@ -25,6 +26,10 @@ from opt_serving.service.constants import (
     LOGPROBS_PAST_CACHE_SIZE_LIMIT, LOGPROBS_PAST_CACHE_TIMEOUT)
 
 app = Flask(__name__, template_folder='service')
+
+# authentication
+recaptcha = None
+allowed_api_keys = []
 
 # The global text generator
 generator: Generator= None
@@ -235,7 +240,7 @@ def handle_exception(e):
         "error": {
             "message": str(e),
             "type": "error",
-            "stacktrace": traceback.format_tb(e.__traceback__),
+            "stacktrace": [""] #traceback.format_tb(e.__traceback__),
         }
     })
     if isinstance(e, ValueError):
@@ -268,11 +273,12 @@ def normalize_prompts(prompts):
 
 @app.route("/completions", methods=["POST"])
 def completions():
-    check_model_loading()
-
     if "redirect_logprobs" in request.json:
         # A redirection to workaround some security settings.
         return logprobs()
+
+    check_model_loading()
+    check_authorization()
 
     # Normalize prompts
     prompts = request.json["prompt"]
@@ -310,6 +316,7 @@ def completions():
                 f"max_len: {generation_args.get('max_tokens', 0)}, "
                 f"temperature: {generation_args['temperature']}, "
                 f"top_p: {generation_args['top_p']}, "
+                f"api_key: {generation_args.get('api_key', None)}, "
                 f"ip: {request.remote_addr}")
 
     cur_len = max(len(p) for p in prompts)
@@ -341,6 +348,7 @@ def completions():
 def logprobs():
     # Note: the past_key_values cache assumes the prompts are in the same order each time
     check_model_loading()
+    check_authorization()
 
     # Normalize prompts
     prompts = request.json["prompt"]
@@ -368,7 +376,9 @@ def logprobs():
 
     logger.info(f"Received new logprobs request: "
                 f"prompt length {[len(p) for p in prompts]}, "
-                f"top_k: {generation_args['top_k']}.")
+                f"top_k: {generation_args['top_k']}, "
+                f"api_key: {generation_args.get('api_key', None)}, "
+                f"ip: {request.remote_addr}")
 
     cur_len = max(len(p) for p in prompts)
     check_max_length_limit(cur_len, MAX_SEQ_LEN)
@@ -395,20 +405,32 @@ def index():
 
 def check_max_length_limit(cur_len, max_len):
     if cur_len > max_len:
-        logger.info(f"Rejected a prompt with length = {cur_len}.")
-        raise Exception(f"Your prompt length  = {cur_len} is too long. "
-                        f"Please make sure len(prompt) + response length <= {max_len}. "
-                        f"Since this is a public service, we have limited the max length supported. "
-                        f"If you want to try longer sequence length, "
-                        f"please consider hosting your own service using Alpa.")
+        logger.info(f"Rejected a request with max prompt length = {cur_len}.")
+        raise ValueError(f"Your prompt length  = {cur_len} is too long. "
+                         f"Please make sure len(prompt) + response length <= {max_len}. "
+                         f"Since this is a public service, we have limited the max length supported. "
+                         f"If you want to try longer sequence length, "
+                         f"please consider hosting your own service using Alpa.")
 
 
 def check_model_loading():
     if generator is None:
+        logger.error(f"Rejected a request during model loading.")
         raise RuntimeError(
             "The server just restarted after regular maintenance. "
             "It is loading the model now, which can take several minutes. "
             "Please come back later. ")
+
+
+def check_authorization():
+    if request.json.get("api_key", None) in allowed_api_keys:
+        return
+
+    if recaptcha and not recaptcha.verify():
+        logger.error(f"Rejected a request with invalid captcha.")
+        raise ValueError("Invalid captcha. If you are using the website, please click the "
+                         "\"I'm not a robot\" button. If you are using client APIs, please "
+                         "contact alpa developers to get an API key.")
 
 
 if __name__ == "__main__":
@@ -417,10 +439,21 @@ if __name__ == "__main__":
     parser.add_argument("--path", type=str, default="~/opt_weights/")
     parser.add_argument("--port", type=int, default=20001)
     parser.add_argument("--torch-device", type=str, default="cpu")
+    parser.add_argument("--use-recaptcha", action="store_true")
+    parser.add_argument("--keys-file", type=str, default="keys.json")
     args = parser.parse_args()
 
     thread = threading.Thread(target=worker_main,
                               args=(args.model, args.path, args.torch_device), daemon=True)
     thread.start()
+
+    if args.use_recaptcha:
+        from opt_serving.service.recaptcha import ReCaptcha
+
+        keys = json.load(open(args.keys_file, "r"))
+        app.config['RECAPTCHA_SITE_KEY'] = keys["RECAPTCHA_SITE_KEY"]
+        app.config['RECAPTCHA_SECRET_KEY'] = keys["RECAPTCHA_SECRET_KEY"]
+        allowed_api_keys = keys["allowed_api_keys"]
+        recaptcha = ReCaptcha(app)
 
     app.run(host="0.0.0.0", port=args.port, threaded=True)

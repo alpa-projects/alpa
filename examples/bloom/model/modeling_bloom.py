@@ -62,7 +62,7 @@ _TOKENIZER_FOR_DOC = "BloomTokenizerFast"
 class BloomConfig:
     model_type: str = "bloom"
     vocab_size: int = 250880
-    max_target_positions: int = 64
+    max_target_positions: int = 2048
     hidden_size: int = 64
     n_head: int = 8
     num_hidden_layers: int = 2
@@ -77,8 +77,11 @@ class BloomConfig:
     pretraining_tp: int = 1  # TP rank used when training with megatron
     slow_but_exact: bool = False
     tie_word_embeddings: bool = True
-    dtype: any = jnp.float16
+    dtype: any = jnp.float32
     pad: int = 1
+    # For parallel
+    mark_boundary: bool = True
+    num_pp_stages: int = None
 
 @flax.struct.dataclass
 class BloomModelOutput(ModelOutput):
@@ -203,12 +206,15 @@ class FlaxBloomAttention(nn.Module):
         dense = partial(
             nn.Dense,
             dtype=self.dtype,
-            kernel_init=jax.nn.initializers.normal(self.config.initializer_range),
+            kernel_init=jax.nn.initializers.normal(
+                self.config.initializer_range),
         )
 
         self.query_key_value = dense(self.hidden_size * 3)
         self.dense = dense(self.hidden_size)
-        self.resid_dropout = nn.Dropout(rate=self.config.hidden_dropout)
+        # Mismatch happens here, the self.dense is different from that of HF's
+        self.resid_dropout = nn.Dropout(
+            rate=self.config.hidden_dropout)
 
     def __call__(
         self,
@@ -262,7 +268,7 @@ class FlaxBloomAttention(nn.Module):
             cache_key = key
             cache_value = value
             num_updated_cache_vectors = query.shape[1]
-            # A line added from opt_model
+            # A line added from bloom_model
             attention_cache = key, value, cache_index + num_updated_cache_vectors
             # causal mask for cached decoder self-attention: our single query position should only attend to those key positions that have already been generated and cached, not the remaining zero elements.
             pad_mask = jnp.broadcast_to(
@@ -295,12 +301,11 @@ class FlaxBloomAttention(nn.Module):
             dtype=self.dtype,
             precision=None,
         )
-
+        
         attn_output = jnp.einsum("...hqk,...khd->...qhd", attn_weights, value)
         attn_output = attn_output.reshape(hidden_states.shape[:2] + (self.hidden_size,))
         attn_output = self.dense(attn_output)
         attn_output = self.resid_dropout(attn_output, deterministic=deterministic)
-
         attn_output = attn_output + residual
 
         outputs = (attn_output, attention_cache,
@@ -415,7 +420,13 @@ class FlaxBloomBlockCollection(nn.Module):
     config: BloomConfig
     dtype: jnp.dtype = jnp.float16
 
-    @nn.compact
+    # @nn.compact
+    def setup(self):
+        self.layers = [
+            FlaxBloomBlock(self.config, name=str(i), dtype=self.dtype)
+            for i in range(self.config.num_hidden_layers)
+        ]
+
     def __call__(
         self,
         hidden_states,
@@ -432,13 +443,23 @@ class FlaxBloomBlockCollection(nn.Module):
         all_hidden_states = () if output_hidden_states else None
         new_attention_cache = () if attention_cache is not None else None
 
-        for layer_number in range(self.config.num_hidden_layers):
+        if self.config.num_pp_stages is not None:
+            assert self.config.num_hidden_layers % self.config.num_pp_stages == 0
+            layers_per_stage = self.config.num_hidden_layers // self.config.num_pp_stages
+
+        # for layer_number in range(self.config.num_hidden_layers):
+        for layer_number, layer in enumerate(self.layers):
+            if self.config.num_pp_stages is not None:
+                if layer_number % layers_per_stage == 0 and layer_number != 0:
+                    stage_id = layer_number // layers_per_stage
+                    if self.config.mark_boundary:
+                        mark_pipeline_boundary()
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
             layer_attention_cache = None
             if attention_cache is not None:
                 layer_attention_cache = attention_cache[layer_number]
-            layer_outputs = FlaxBloomBlock(self.config, name=str(layer_number), dtype=self.dtype)(
+            layer_outputs = layer(
                 hidden_states,
                 alibi=alibi,
                 attention_mask=attention_mask,
@@ -592,7 +613,6 @@ class FlaxBloomForCausalLMModule(nn.Module):
 
         if not return_dict:
             return (lm_logits,) + outputs[1:]
-
         return BloomLMOutput(logits=lm_logits, hidden_states=outputs.hidden_states, attentions=outputs.attentions, attention_cache=outputs.attention_cache)
 
 
@@ -613,7 +633,23 @@ def get_bloom_config(name, **kwargs):
             pretraining_tp = 1,
             use_cache = True
         )
+    elif name == "560M":
+        config = BloomConfig(
+            hidden_size = 1024,
+            n_head = 16,
+            num_hidden_layers = 24,
+            pretraining_tp = 1,
+            use_cache = True
+        )
     elif name == "760M":
+        config = BloomConfig(
+            hidden_size = 1536,
+            n_head = 16,
+            num_hidden_layers = 24,
+            pretraining_tp = 1,
+            use_cache = True
+        )
+    elif name == "1.1B":
         config = BloomConfig(
             hidden_size = 1536,
             n_head = 16,
@@ -662,8 +698,8 @@ def init_model_aval(config):
     """Initialize model with parameters with abstract values (shape-only arrays)."""
     model = FlaxBloomForCausalLMModule(config, dtype=config.dtype)
     rngkey = jax.core.ShapedArray((2,), jnp.uint32)
-    input_ids = jax.core.ShapedArray((1, 64), jnp.int32)
-    attention_mask = jax.core.ShapedArray((1, 1, 1, 64), jnp.int32)
+    input_ids = jax.core.ShapedArray((1,2), jnp.int32)
+    attention_mask = jax.core.ShapedArray((1, 1, 1, 2), jnp.int32)
     params = jax.eval_shape(model.init, rngkey, input_ids, attention_mask=attention_mask)
     params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, config.dtype),
                           params)
@@ -717,7 +753,6 @@ def init_cache_np(config, batch_size):
 
 
 def inference_step_no_cache(params, batch, apply_func):
-    # logits = apply_func(params, batch["input_ids"], batch["position_ids"])[0]
     logits = apply_func(params, batch["input_ids"])[0]
     return logits
 
@@ -775,7 +810,7 @@ def load_params_np(params, path, config, dummy=False):
         load_param(param_prefix + "input_layernorm.bias",
                    load_array(load_prefix + "input_layernorm.bias"))
         load_param(param_prefix + "self_attention.dense.kernel",
-                   load_array(load_prefix + "self_attention.dense.weight"))
+                   load_array(load_prefix + "self_attention.dense.weight").transpose())
         load_param(param_prefix + "self_attention.dense.bias",
                    load_array(load_prefix + "self_attention.dense.bias"))
         load_param(param_prefix + "post_attention_layernorm.scale",
@@ -801,7 +836,7 @@ def get_jax_executable(config: BloomConfig,
     """Get a single-gpu executable."""
     model, params = init_model_aval(config)
 
-    @jax.jit
+    # @jax.jit
     def inference_step(params, batch):
         output = model.apply(params,
                              batch["input_ids"],
@@ -822,7 +857,7 @@ def get_pipeshard_executable(config: BloomConfig,
                              num_micro_batches: int = 1,
                              output_attentions: bool = False,
                              output_hidden_states: bool = False,
-                             autoregressive: bool = True):
+                             autoregressive: bool = False):
     """Get a parallel executable."""
     # Init model
     model, params = init_model_aval(config)
@@ -866,8 +901,6 @@ def get_pipeshard_executable(config: BloomConfig,
                 params, {
                     "input_ids":
                         jax.core.ShapedArray((batch_size, 1), jnp.int32),
-                    # "position_ids":
-                    #     jax.core.ShapedArray((batch_size, 1), jnp.int32),
                     "cache":
                         cache,
                     "mask":
@@ -896,9 +929,6 @@ def get_pipeshard_executable(config: BloomConfig,
                         "input_ids":
                             jax.core.ShapedArray(
                                 (batch_size, seq_len), jnp.int32),
-                        # "position_ids":
-                        #     jax.core.ShapedArray(
-                        #         (batch_size, seq_len), jnp.int32),
                         "cache":
                             cache,
                         "mask":
@@ -963,7 +993,7 @@ def load_bloom_params_worker_func(self, path, prefix_to_idx, config, shapes,
                 idx = self.host_id * len(self.local_devices) + k
                 datas.append(loaded_array[indices[i][j][idx]])
             self.put_buffers(uuid, datas)
-    layers_per_stage = config.decoder_layers // config.num_pp_stages
+    layers_per_stage = config.num_hidden_layers // config.num_pp_stages
 
     load_param("params.transformer.ln_f.scale",
                load_array("ln_f.weight"))
@@ -993,7 +1023,7 @@ def load_bloom_params_worker_func(self, path, prefix_to_idx, config, shapes,
         load_param(param_prefix + "input_layernorm.bias",
                    load_array(load_prefix + "input_layernorm.bias"))
         load_param(param_prefix + "self_attention.dense.kernel",
-                   load_array(load_prefix + "self_attention.dense.weight"))
+                   load_array(load_prefix + "self_attention.dense.weight").transpose())
         load_param(param_prefix + "self_attention.dense.bias",
                    load_array(load_prefix + "self_attention.dense.bias"))
         load_param(param_prefix + "post_attention_layernorm.scale",
@@ -1094,7 +1124,7 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
 
     for m in executable.mesh_group.meshes:
         for w in m.workers:
-            w.load_opt_params_worker_func.remote(path, prefix_to_flat_idx,
+            w.load_bloom_params_worker_func.remote(path, prefix_to_flat_idx,
                                                  config, flat_shapes,
                                                  flat_uuids, flat_indices,
                                                  flat_mesh_ids)

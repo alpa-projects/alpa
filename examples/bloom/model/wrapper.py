@@ -1,11 +1,13 @@
 from collections import defaultdict
 import os
+import time
 from typing import Sequence, Any, Optional
 from functools import partial
 
 import alpa
 from alpa.device_mesh import DistributedArray
 from alpa.mesh_executable import get_index_select_mesh_executable
+# from examples.bloom.model.modeling_bloom import BloomConfig
 import jax
 from jax import xla, jit
 from jax.core import Primitive
@@ -15,10 +17,19 @@ from jax.interpreters.pxla import NoSharding, Replicated, ShardingSpec
 import jax.numpy as jnp
 import numpy as np
 import torch
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, BloomForCausalLM
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
+from utils import is_power_of_two, jax_index_select
+from tqdm import tqdm
 
-from modeling_bloom import get_bloom_config, get_pipeshard_executable,load_params_dis_array,init_cache_dis_array, load_params_np,init_cache_np, get_jax_executable
+# import modeling_flax_bloom as flaxBloom
+
+from modeling_bloom import (get_bloom_config,
+                                         get_pipeshard_executable,
+                                         load_multi_executable_params_dis_array,
+                                         init_multi_executable_cache_dis_array,
+                                         load_params_np, init_cache_np,
+                                         get_jax_executable)
 
 @dataclass
 class TransformerModelConfig:
@@ -28,7 +39,7 @@ class TransformerModelConfig:
     L: int = 12
     # number of attention heads
     n_head: int = 12
-    seq_len: int = 64
+    seq_len: int = 2048
     vocab_size: int = 50272
 
 @dataclass
@@ -187,6 +198,39 @@ class WrappedInferenceFunc(GenerationMixin):
                   for mesh, loc in layer_loc)
             for layer_loc in self.cache_location)
 
+def get_hf_bloom_model(model_name, device, num_beams):
+    disable_torch_init()
+    raw_model = BloomForCausalLM.from_pretrained(
+        model_name,
+        torch_dtype=torch.float16 if "cuda" in device else torch.float32)
+    raw_model = raw_model.to(device)
+    restore_torch_init()
+
+    def inference_func(input_ids,
+                       past_key_values,
+                       attention_mask,
+                       output_attentions,
+                       output_hidden_states):
+        out = raw_model(input_ids=input_ids,
+                        past_key_values=past_key_values,
+                        attention_mask=attention_mask,
+                        output_attentions=output_attentions,
+                        output_hidden_states=output_hidden_states)
+        return InferenceFuncOutput(out.logits, out.past_key_values)
+
+    inference_func_config = InferenceFuncConfig(num_beams=num_beams)
+    for key in inference_func_config.__dataclass_fields__.keys():
+        setattr(inference_func_config, key, getattr(raw_model.config, key))
+    transformer_config = TransformerModelConfig(
+        H=raw_model.config.hidden_size,
+        L=raw_model.config.num_hidden_layers,
+        n_head=raw_model.config.num_attention_heads,
+        seq_len=raw_model.config.max_position_embeddings,
+        vocab_size=raw_model.config.vocab_size)
+    executable = None
+    return WrappedInferenceFunc(inference_func, inference_func_config,
+                                executable, transformer_config)
+
 def get_model(model_name: str,
               # Weights
               path: str,
@@ -194,7 +238,7 @@ def get_model(model_name: str,
               # Batch size and seq length
               batch_size: int = 1,
               num_micro_batches: int = 1,
-              max_target_positions: int = 64,
+              max_target_positions: int = 2048,
               encoder_chunk_sizes: Sequence[int] = (1, 64),
               num_pp_stages: Optional[int] = None,
               # Model parameters
@@ -227,40 +271,40 @@ def get_model(model_name: str,
           by pytorch. Alpa always runs on GPU.
         other parameters: shared with huggingface's model.generate API.
     """
-    # if not model_name.startswith("alpa") and not autoregressive:
-    #     raise NotImplementedError(
-    #         f"Cannot support {model_name} in forward-only mode.")
-    # if autoregressive and num_micro_batches > 1:
-    #     raise NotImplementedError(
-    #         f"Cannot support num_micro_batches > 1 in autoregressive mode.")
+    if not model_name.startswith("alpa") and not autoregressive:
+        raise NotImplementedError(
+            f"Cannot support {model_name} in forward-only mode.")
+    if autoregressive and num_micro_batches > 1:
+        raise NotImplementedError(
+            f"Cannot support num_micro_batches > 1 in autoregressive mode.")
 
-    # if "facebook/opt" in model_name:
-    #     return get_hf_bloom_model(model_name, torch_device, num_beams)
+    if "huggingface/bloom" in model_name:
+        return get_hf_bloom_model(model_name, torch_device, num_beams)
 
-    # assert ("jax/opt" in model_name or "alpa/opt" in model_name)
-    # assert return_dict_in_generate
+    assert ("jax/bloom" in model_name or "alpa/bloom" in model_name)
+    assert return_dict_in_generate
 
-    # if autoregressive and 1 not in encoder_chunk_sizes:
-    #     encoder_chunk_sizes += [1]
-    # encoder_chunk_sizes = list(set(encoder_chunk_sizes))
-    # encoder_chunk_sizes.sort()
+    if autoregressive and 1 not in encoder_chunk_sizes:
+        encoder_chunk_sizes += [1]
+    encoder_chunk_sizes = list(set(encoder_chunk_sizes))
+    encoder_chunk_sizes.sort()
 
-    # # weight path
-    # name = model_name.split("-")[1].upper()
+    # weight path
+    name = model_name.split("-")[1].upper()
     # path = os.path.abspath(os.path.expanduser(os.path.join(path, f"{name}_np")))
-    # if not dummy:
-    #     # Check the existence of weights.
-    #     if not os.path.exists(path):
-    #         if name in ["175B"]:
-    #             raise ValueError(f"Cannot find cached weights under '{path}'. "
-    #                               "Please follow the instructions to download "
-    #                               "and convert weights manually. ")
-    #         print(f"Cannot find cached weights under '{path}'.")
-    #         download_weights(model_name.split("/")[1], path)
+    if not dummy:
+        # Check the existence of weights.
+        if not os.path.exists(path):
+            if name in ["176B"]:
+                raise ValueError(f"Cannot find cached weights under '{path}'. "
+                                  "Please follow the instructions to download "
+                                  "and convert weights manually. ")
+            print(f"Cannot find cached weights under '{path}'.")
+            download_weights(model_name.split("/")[1], path)
 
-    #     assert os.path.exists(path), f"No such file or directory: '{path}'"
-    #     embed_weight = os.path.join(path, "decoder.embed_tokens.weight")
-    #     assert os.path.exists(embed_weight), f"No such file or directory: '{embed_weight}'"
+        assert os.path.exists(path), f"No such file or directory: '{path}'"
+        embed_weight = os.path.join(path, "word_embeddings.weight")
+        assert os.path.exists(embed_weight), f"No such file or directory: '{embed_weight}'"
 
     # figure out the actual input size
     if do_sample:
@@ -272,83 +316,88 @@ def get_model(model_name: str,
             )
         expand_size = batch_size * num_beams
 
-    # if "jax/bloom" in model_name:
-    config = get_bloom_config('350M', max_target_positions=max_target_positions)
-    transformer_config = TransformerModelConfig(
-        H=config.hidden_size,
-        L=config.num_hidden_layers,
-        n_head=config.n_head,
-        seq_len=max_target_positions,
-        vocab_size=config.vocab_size)
+    if "jax/bloom" in model_name:
+        config = get_bloom_config(name,
+                                num_pp_stages=None,
+                                mark_boundary=False,
+                                dtype=dtype,
+                                max_target_positions=max_target_positions)
+        # config = get_bloom_config('350M', max_target_positions=max_target_positions)
+        transformer_config = TransformerModelConfig(
+            H=config.hidden_size,
+            L=config.num_hidden_layers,
+            n_head=config.n_head,
+            seq_len=max_target_positions,
+            vocab_size=config.vocab_size)
 
-    executables, params_aval = get_jax_executable(
-        config, encoder_chunk_sizes,
-        output_attentions=output_attentions,
-        output_hidden_states=output_hidden_states)
+        executables, params_aval = get_jax_executable(
+            config, encoder_chunk_sizes,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states)
 
-    # load params
-    init_cache = init_cache_np(config, batch_size=expand_size)
-    params = load_params_np(params_aval, "../weights/350M_Bloom_np", config, dummy)
-    params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
-    # else:
-    #     assert "alpa/bloom" in model_name
-    #     assert is_power_of_two(num_beams), "num_beams must be a power of two"
-    #     alpa.init()
-    #     alpa.global_config.xla_client_mem_fraction = 0.88
+        # load params
+        params = load_params_np(params_aval, path, config, dummy)
+        init_cache = init_cache_np(config, batch_size=expand_size)
+        # params = load_params_np(params_aval, "/home/x/Desktop/dedong_2022_summer/softwares/1.1B_Bloom_np", config, dummy)
+        params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
+    else:
+        assert "alpa/bloom" in model_name
+        assert is_power_of_two(num_beams), "num_beams must be a power of two"
+        alpa.init()
+        alpa.global_config.xla_client_mem_fraction = 0.88
 
-    #     print(
-    #         f"Load model {model_name} ... (This can take several minutes for very large models)"
-    #     )
+        print(
+            f"Load model {model_name} ... (This can take several minutes for very large models)"
+        )
 
-    #     if num_pp_stages is None:
-    #         num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
-    #         num_pp_stages = min(num_pp_stages,
-    #                             alpa.get_global_cluster().num_devices)
-    #     config = get_bloom_config(name,
-    #                             num_pp_stages=num_pp_stages,
-    #                             dtype=dtype,
-    #                             max_target_positions=max_target_positions)
-    #     transformer_config = TransformerModelConfig(
-    #         H=config.decoder_embed_dim,
-    #         L=config.decoder_layers,
-    #         n_head=config.decoder_attention_heads,
-    #         seq_len=config.max_target_positions,
-    #         vocab_size=config.vocab_size)
+        if num_pp_stages is None:
+            num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
+            num_pp_stages = min(num_pp_stages,
+                                alpa.get_global_cluster().num_devices)
+        config = get_bloom_config(name,
+                                dtype=dtype,
+                                max_target_positions=max_target_positions)
+        transformer_config = TransformerModelConfig(
+            H=config.hidden_size,
+            L=config.num_hidden_layers,
+            n_head=config.n_head,
+            seq_len=config.max_target_positions,
+            vocab_size=config.vocab_size)
 
-    #     print(f" - Compile executables for encoder_chunk_sizes={encoder_chunk_sizes}. ", end="", flush=True)
-    #     tic = time.time()
-    #     executables, params_aval = get_pipeshard_executable(
-    #         config,
-    #         batch_size=expand_size,
-    #         num_micro_batches=num_micro_batches,
-    #         encoder_chunk_sizes=encoder_chunk_sizes,
-    #         output_attentions=output_attentions,
-    #         output_hidden_states=output_hidden_states,
-    #         autoregressive=autoregressive)
-    #     print(f"elapsed: {time.time() - tic:.2f} second.")
+        print(f" - Compile executables for encoder_chunk_sizes={encoder_chunk_sizes}. ", end="", flush=True)
+        tic = time.time()
+        executables, params_aval = get_pipeshard_executable(
+            config,
+            batch_size=expand_size,
+            num_micro_batches=num_micro_batches,
+            encoder_seq_lengths=encoder_chunk_sizes,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            autoregressive=autoregressive)
+        print(f"elapsed: {time.time() - tic:.2f} second.")
 
-    #     # Load params
-    #     print(" - Load parameters. ", end="", flush=True)
-    #     tic = time.time()
-    #     params = load_multi_executable_params_dis_array(
-    #         path, executables, params_aval, config, dummy)
+        # Load params
+        print(" - Load parameters. ", end="", flush=True)
+        tic = time.time()
+        params = load_multi_executable_params_dis_array(
+            path, executables, params_aval, config, dummy)
 
-    #     if autoregressive:
-    #         init_cache = init_multi_executable_cache_dis_array(executables,
-    #                                                            config,
-    #                                                            expand_size,
-    #                                                            dummy=dummy)
-    #         set_skip_shard_args_check(init_cache)
+        if autoregressive:
+            init_cache = init_multi_executable_cache_dis_array(executables,
+                                                               config,
+                                                               expand_size,
+                                                               dummy=dummy)
+            set_skip_shard_args_check(init_cache)
 
-    #     for executable in executables.values():
-    #         executable.sync()
-    #     print(f"elapsed: {time.time() - tic:.2f} second.")
+        for executable in executables.values():
+            executable.sync()
+        print(f"elapsed: {time.time() - tic:.2f} second.")
 
-    #     # return executable directly if not autoregressive
-    #     if not autoregressive:
-    #         assert len(executables) == 1
-    #         return list(
-    #             executables.values())[0], params, transformer_config
+        # return executable directly if not autoregressive
+        if not autoregressive:
+            assert len(executables) == 1
+            return list(
+                executables.values())[0], params, transformer_config
 
     num_valid_tokens = None
     last_token = None
@@ -368,7 +417,183 @@ def get_model(model_name: str,
             nonlocal num_valid_tokens
             nonlocal last_token
             nonlocal step_ct
+            if _past_key_values is None:
+                # Init all states
+                _past_key_values = init_cache
+                num_valid_tokens = np.zeros((expand_size, 1), dtype=np.int32)
+                last_token = np.zeros((expand_size, 1), dtype=np.int32)
+                step_ct = 0
 
+            if _input_ids.shape[1] == 1:
+                # A fast path for step_len = 1
+                cum_sum = _attention_mask[:, -1:]
+                num_valid_tokens = num_valid_tokens + cum_sum
+                # position_ids_step = num_valid_tokens + config.pad
+                last_token = np.where(cum_sum, _input_ids, last_token)
+                _input_ids = last_token
+            else:
+                # A general path that works for any step_len
+                cumsum = np.cumsum(_attention_mask[:,step_ct:], axis=1, dtype=np.int32)
+                # position_ids_step = num_valid_tokens + cumsum + config.pad
+                num_valid_tokens_step = cumsum[:,-1:]
+                num_valid_tokens = num_valid_tokens + num_valid_tokens_step
+
+                last_token = np.where(num_valid_tokens_step > 0,
+                     np.take_along_axis(_input_ids, num_valid_tokens_step - 1, axis=1),
+                     last_token)
+                _input_ids = np.where(_attention_mask[:, step_ct:], _input_ids, last_token)
+            # Use value "2" as a special mask to represent internal padding
+            if num_internal_pad:
+                _attention_mask[:,-num_internal_pad:] = 2
+            _attention_mask = pad_attention_mask(_attention_mask, max_target_positions)
+
+            # print(len(_past_key_values))
+            output = _executable(
+                params, {
+                    "input_ids": _input_ids,
+                    # "position_ids": position_ids_step,
+                    "cache": _past_key_values,
+                    "mask": _attention_mask,
+                })
+
+            step_ct += _input_ids.shape[1] - num_internal_pad
+            set_skip_shard_args_check(output.attention_cache)
+
+            return output
+
+        seq_len = input_ids.shape[1]
+        if seq_len == 1:
+            # A fast path for seq_len = 1
+            output = run_one(executables[1], input_ids, past_key_values, attention_mask, 0)
+        else:
+            # A general path that works for all seq_len
+            i = 0
+            while i < seq_len:
+                remaining = seq_len - i
+                step_len = get_padded_step_len(remaining, encoder_chunk_sizes)
+
+                step_input_ids = input_ids[:, i:i + step_len]
+                step_attention_mask = (
+                    attention_mask[:, :attention_mask.shape[1] - remaining + step_len])
+
+                if step_input_ids.shape[1] != step_len:
+                    # Pad the inputs and masks to step_len
+                    # Note that this kind of internal padding is different from
+                    # the padding added by the tokenizer. This internal padding
+                    # should not update cache and step_ct
+                    num_internal_pad = step_len - step_input_ids.shape[1]
+                    pad_shape = (expand_size, num_internal_pad)
+                    step_input_ids = np.concatenate(
+                        (step_input_ids, np.zeros(pad_shape, dtype=np.int32)), axis=1)
+                    step_attention_mask = np.concatenate(
+                        (step_attention_mask, np.zeros(pad_shape, dtype=np.int8)), axis=1)
+                else:
+                    num_internal_pad = 0
+
+                output = run_one(executables[step_len], step_input_ids,
+                                 past_key_values, step_attention_mask,
+                                 num_internal_pad)
+                past_key_values = output.attention_cache
+                i += step_input_ids.shape[1]
+
+        logits_step = torch.from_numpy(np.array(output.logits)).to(torch_device).float()
+        return InferenceFuncOutput(logits_step, output.attention_cache,
+                                   output.hidden_states, output.attentions)
+
+    inference_func_config = InferenceFuncConfig(num_beams=num_beams)
+    return WrappedInferenceFunc(inference_func,
+                                inference_func_config,
+                                executables[1],
+                                transformer_config)
+
+def get_model_jax(model_name: str,
+              # Weights
+              path: str,
+              dummy: bool = False,
+              # Batch size and seq length
+              batch_size: int = 1,
+              num_micro_batches: int = 1,
+              max_target_positions: int = 2048,
+              encoder_chunk_sizes: Sequence[int] = (1, 64),
+              num_pp_stages: Optional[int] = None,
+              # Model parameters
+              autoregressive: bool = True,
+              dtype=jnp.float16,
+              torch_device: str = "cpu",
+              # Shared arguments with model.generate
+              do_sample: bool = False,
+              num_beams: int = 1,
+              num_return_sequences: int = 1,
+              return_dict_in_generate: bool = True,
+              output_attentions: bool = False,
+              output_hidden_states: bool = False):
+    """Get a model that is compatible with HuggingFace's generation API.
+    Args:
+        model_name: "jax/bloom-".
+        path: The path to opt weights.
+        dummy: Use dummy weights for faster debugging.
+        batch_size: The batch size.
+        num_micro_batches: The number of micro batch sizs in pipeline
+          parallelism.
+        max_target_positions: The max sequence length.
+        encoder_chunk_sizes: Compile mutliple executables with different
+          chunk sizes. These executables are used to encoding prompts
+          chunk by chunk.
+        num_pp_stages: The number of pipeline parallelism stages.
+        autoregressive: Whether to run the model for autoregressive generation.
+        dtype: The type of parameters.
+        torch_device: "cpu" or "gpu". This only controls the device used
+          by pytorch. Alpa always runs on GPU.
+        other parameters: shared with huggingface's model.generate API.
+    """
+    # figure out the actual input size
+    if do_sample:
+        expand_size = batch_size * num_beams * num_return_sequences
+    else:
+        if num_return_sequences > num_beams:
+            raise ValueError(
+                "`num_return_sequences` has to be smaller or equal to `num_beams`."
+            )
+        expand_size = batch_size * num_beams
+
+    config = get_bloom_config('350M', max_target_positions=max_target_positions)
+    transformer_config = TransformerModelConfig(
+        H=config.hidden_size,
+        L=config.num_hidden_layers,
+        n_head=config.n_head,
+        seq_len=max_target_positions,
+        vocab_size=config.vocab_size)
+
+    executables, params_aval = get_jax_executable(
+        config, encoder_chunk_sizes,
+        output_attentions=output_attentions,
+        output_hidden_states=output_hidden_states)
+
+    # load params
+    # params = load_params_np(params_aval, path, config, dummy)
+    init_cache = init_cache_np(config, batch_size=expand_size)
+    params = load_params_np(params_aval, "/home/x/Desktop/dedong_2022_summer/softwares/350M_Bloom_np", config, dummy)
+    params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
+
+    num_valid_tokens = None
+    last_token = None
+    step_ct = 0
+
+    def inference_func(input_ids,
+                       past_key_values,
+                       attention_mask,
+                       output_attentions,
+                       output_hidden_states):
+        # print(input_ids)
+        assert input_ids.shape[0] == expand_size, (
+            f"Expect batch size = {expand_size}, but got {input_ids.shape[0]}")
+        input_ids = input_ids.cpu().numpy()
+        attention_mask = attention_mask.cpu().numpy()
+
+        def run_one(_executable, _input_ids, _past_key_values, _attention_mask, num_internal_pad):
+            nonlocal num_valid_tokens
+            nonlocal last_token
+            nonlocal step_ct
             if _past_key_values is None:
                 # Init all states
                 _past_key_values = init_cache
@@ -448,7 +673,6 @@ def get_model(model_name: str,
                 i += step_input_ids.shape[1]
 
         logits_step = torch.from_numpy(np.array(output.logits)).to(torch_device).float()
-        # torch.save(logits_step, "../../logits_FlaxBloom.txt")
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)
 
@@ -490,6 +714,29 @@ def pad_attention_mask(mask, max_target_positions):
     ret_mask[:, :mask.shape[-1]] = mask
     ret_mask = ret_mask[:, np.newaxis, np.newaxis, :]
     return ret_mask
+
+def download_weights(model_name, path):
+    """Download weights from huggingface."""
+    huggingface_model_name = "huggingface/" + model_name
+    print(f"Load the pre-trained pytorch weights of {model_name} from huggingface. "
+          f"The downloading and cpu loading can take dozens of minutes. "
+          f"If it seems to get stuck, you can monitor the progress by "
+          f"checking the memory usage of this process.")
+
+    disable_torch_init()
+    model = BloomForCausalLM.from_pretrained(huggingface_model_name, torch_dtype=torch.float16,
+                                           _fast_init=True)
+    restore_torch_init()
+
+    os.makedirs(path, exist_ok=True)
+
+    print(f"Convert the weights to alpa format under {path} ...")
+    for name, param in tqdm(list(model.model.named_parameters())):
+        name = name.replace("decoder.final_layer_norm", "decoder.layer_norm")
+        param_path = os.path.join(path, name)
+        with open(param_path, "wb") as f:
+            np.save(f, param.cpu().detach().numpy())
+
 
 global torch_linear_init_backup
 global torch_layer_norm_init_backup

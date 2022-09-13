@@ -823,8 +823,14 @@ def compute_intermediate_size(serialized_proto, intermediate_vars,
         sharding_specs = None
     else:
         hlo_sharding = xe.HloSharding(serialized_proto[0])
-        sharding_specs = hlo_sharding_to_sharding_spec(hlo_sharding, avals,
-                                                       logical_mesh_shape)
+        if len(avals) == 1:
+            sharding_specs = [
+                hlo_sharding_to_sharding_spec(hlo_sharding, avals[0],
+                                              logical_mesh_shape)
+            ]
+        else:
+            sharding_specs = hlo_sharding_to_sharding_spec(
+                hlo_sharding, avals, logical_mesh_shape)
     return _compute_vars_size(sharding_specs, intermediate_vars,
                               logical_mesh_shape)
 

@@ -1,7 +1,8 @@
 """Utilities for testing."""
+from functools import partial
 import unittest
 from collections.abc import Iterable
-from typing import Optional
+from typing import Callable, Optional
 
 import jax
 import jax.numpy as jnp
@@ -13,7 +14,7 @@ from flax.core.frozen_dict import FrozenDict as FrozenDictFlax
 
 from alpa.api import init, shutdown, parallelize, value_and_grad
 from alpa.model.bert_model import BertConfig, FlaxBertLayer
-from alpa.model.model_util import FlaxBaseModelOutput, TrainState
+from alpa.model.model_util import FlaxBaseModelOutput, DynamicScale, TrainState
 from alpa.parallel_method import PipeshardParallel
 from alpa.pipeline_parallel.layer_construction import (AutoLayerOption,
                                                        ManualLayerOption)
@@ -129,6 +130,7 @@ class BertLayerModel(nn.Module):
 
 def get_bert_layer_train_state_and_step(batch_size, seq_len, num_layers,
                                         hidden_size, num_heads,
+                                        clip_by_global_norm, use_dynamic_scale,
                                         add_manual_pipeline_marker):
     rngkey = jax.random.PRNGKey(0)
     x = jax.random.normal(rngkey, (batch_size, seq_len, hidden_size))
@@ -143,11 +145,25 @@ def get_bert_layer_train_state_and_step(batch_size, seq_len, num_layers,
                           num_hidden_layers=num_layers),
         add_manual_pipeline_marker=add_manual_pipeline_marker)
     params = model.init(rngkey, batch["x"], batch["attention_mask"])
-    tx = optax.adam(learning_rate=1e-2)
+
+    if clip_by_global_norm:
+        tx = optax.chain(optax.clip_by_global_norm(0.05),
+                         optax.adam(learning_rate=1e-2))
+    else:
+        tx = optax.adam(learning_rate=1e-2)
+
+    if use_dynamic_scale:
+        use_master_copy = False
+        dynamic_scale = DynamicScale()
+    else:
+        dynamic_scale = None
+        use_master_copy = False
+
     state = TrainState.create(apply_fn=model.apply,
                               params=params,
                               tx=tx,
-                              dynamic_scale=None)
+                              dynamic_scale=dynamic_scale,
+                              use_master_copy=use_master_copy)
 
     def train_step(state, batch):
 
@@ -156,8 +172,26 @@ def get_bert_layer_train_state_and_step(batch_size, seq_len, num_layers,
             loss = jnp.mean((out - batch["y"])**2)
             return loss
 
-        val, grads = value_and_grad(loss_func)(state.params)
+        dynamic_scale = state.dynamic_scale
+        if dynamic_scale:
+            grad_fn = dynamic_scale.value_and_grad(loss_func)
+            dynamic_scale, is_fin, val, grads = grad_fn(state.params)
+        else:
+            grad_fn = value_and_grad(loss_func)
+            val, grads = grad_fn(state.params)
+
         new_state = state.apply_gradients(grads=grads)
+
+        if dynamic_scale:
+            new_state = new_state.replace(
+                opt_state=jax.tree_map(partial(jnp.where, is_fin),
+                                       new_state.opt_state, state.opt_state),
+                params=jax.tree_map(partial(jnp.where, is_fin),
+                                    new_state.params, state.params),
+                master_copy=jax.tree_map(partial(jnp.where,
+                                                 is_fin), new_state.master_copy,
+                                         state.master_copy),
+                dynamic_scale=dynamic_scale)
         return new_state, val
 
     return state, batch, train_step
@@ -257,6 +291,9 @@ class PipelineBasicTest(unittest.TestCase):
                          hidden_size=512,
                          num_heads=512 // 64,
                          use_remat=False,
+                         clip_by_global_norm=False,
+                         use_dynamic_scale=False,
+                         inject_train_step=None,
                          manual_pipeline_layer=True,
                          stage_option: Optional[StageOption] = None,
                          as_option: Optional[AutoShardingOption] = None,
@@ -276,7 +313,12 @@ class PipelineBasicTest(unittest.TestCase):
             num_layers=num_layers,
             hidden_size=hidden_size,
             num_heads=num_heads,
+            clip_by_global_norm=clip_by_global_norm,
+            use_dynamic_scale=use_dynamic_scale,
             add_manual_pipeline_marker=manual_pipeline_layer)
+        if inject_train_step is not None:
+            assert isinstance(inject_train_step, Callable)
+            train_step = inject_train_step
 
         # Compile
         serial_train_step = train_step

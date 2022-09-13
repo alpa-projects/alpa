@@ -12,45 +12,50 @@ handler = None
 
 
 def build_logger():
-    formatter = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
-    logging.basicConfig(
-        format=formatter,
-        datefmt="%Y-%m-%d %H:%M:%S",
-        level=os.environ.get("LOGLEVEL", "INFO").upper(),
-        stream=sys.stdout,
-    )
-    logging.getLogger("absl").setLevel("WARNING")
-    logging.getLogger("werkzeug").setLevel("WARNING")
-    logger = logging.getLogger("alpa.opt_serving")
+    global handler
 
-    stdout_logger = logging.getLogger('stdout')
+    formatter = logging.Formatter(
+        fmt="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    # Set the format of root handlers
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO)
+    logging.getLogger().handlers[0].setFormatter(formatter)
+    logging.getLogger("werkzeug").setLevel("WARNING")
+
+    # Redirect stdout and stderr to loggers
+    stdout_logger = logging.getLogger("stdout")
+    stdout_logger.setLevel(logging.INFO)
     sl = StreamToLogger(stdout_logger, logging.INFO)
     sys.stdout = sl
-    sys.stdout.fileno = lambda: False
 
-    stderr_logger = logging.getLogger('stderr')
-    sl = StreamToLogger(stderr_logger, logging.INFO)
+    stderr_logger = logging.getLogger("stderr")
+    stderr_logger.setLevel(logging.ERROR)
+    sl = StreamToLogger(stderr_logger, logging.ERROR)
     sys.stderr = sl
-    sys.stderr.fileno = lambda: False
 
-    global handler
-    os.makedirs(LOGDIR, exist_ok=True)
-    logfile_path = os.path.join(
-        LOGDIR,
-        f"alpa.opt_serving.log.{datetime.datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}"
-    )
+    # Get logger
+    logger = logging.getLogger("alpa.opt_serving")
+    logger.setLevel(logging.INFO)
+
+    # Add a file handler for all loggers
     if handler is None:
+        os.makedirs(LOGDIR, exist_ok=True)
+        logfile_path = os.path.join(
+            LOGDIR,
+            f"alpa.opt_serving.log.{datetime.datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}"
+        )
         handler = logging.handlers.RotatingFileHandler(logfile_path,
                                                        maxBytes=1024 * 1024,
                                                        backupCount=100000)
-        handler.setFormatter(logging.Formatter(formatter))
+        handler.setFormatter(formatter)
 
-    for name, item in logging.root.manager.loggerDict.items():
-        if isinstance(item, logging.Logger):
-            item.addHandler(handler)
-    # logger.addHandler(handler)
-    # Set the webserver logger
-    # logging.getLogger("werkzeug").addHandler(handler)
+        for name, item in logging.root.manager.loggerDict.items():
+            if isinstance(item, logging.Logger):
+                item.addHandler(handler)
+
     return logger
 
 
@@ -59,9 +64,13 @@ class StreamToLogger(object):
     Fake file-like stream object that redirects writes to a logger instance.
     """
     def __init__(self, logger, log_level=logging.INFO):
+        self.terminal = sys.stdout
         self.logger = logger
         self.log_level = log_level
         self.linebuf = ''
+
+    def __getattr__(self, attr):
+        return getattr(self.terminal, attr)
 
     def write(self, buf):
         temp_linebuf = self.linebuf + buf

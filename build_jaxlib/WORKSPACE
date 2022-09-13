@@ -1,40 +1,31 @@
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
-# Force a sufficiently new copy of @platforms, see https://github.com/bazelbuild/bazel/issues/15175 and
-# https://github.com/google/jax/issues/10132. When our transitive dependencies aren't pulling in an
-# old version, we can remove this (the current hypothesis is that the cause is in TFRT).
-http_archive(
-    name = "platforms",
-    sha256 = "379113459b0feaf6bfbb584a91874c065078aa673222846ac765f86661c27407",
-    urls = [
-        "https://mirror.bazel.build/github.com/bazelbuild/platforms/releases/download/0.0.5/platforms-0.0.5.tar.gz",
-        "https://github.com/bazelbuild/platforms/releases/download/0.0.5/platforms-0.0.5.tar.gz",
-    ],
-)
-
 # To update TensorFlow to a new revision,
 # a) update URL and strip_prefix to the new git commit hash
 # b) get the sha256 hash of the commit by running:
 #    curl -L https://github.com/tensorflow/tensorflow/archive/<git hash>.tar.gz | sha256sum
 #    and update the sha256 with the result.
-#http_archive(
-#    name = "org_tensorflow",
-#    sha256 = "a491d6c2fac467956809d100fdeaeaada35103c724acebba1168f7cfd47f1209",
-#    strip_prefix = "tensorflow-0d5668cbdc6b46d099bd3abd93374c09b2e8121f",
-#    urls = [
-#        "https://github.com/tensorflow/tensorflow/archive/0d5668cbdc6b46d099bd3abd93374c09b2e8121f.tar.gz",
-#    ],
-#)
+http_archive(
+    name = "org_tensorflow",
+    sha256 = "6b2b714e00db7b82fd79aaa1deacd321c7f0aeab8b17cf8c32062a80070842a8",
+    strip_prefix = "tensorflow-579c67bd60220fe66a29318191f0850ff0aa825f",
+    urls = [
+        "https://github.com/tensorflow/tensorflow/archive/579c67bd60220fe66a29318191f0850ff0aa825f.tar.gz",
+    ],
+)
 
-# For development, one can use a local TF repository instead.
+# For development, one often wants to make changes to the TF repository as well
+# as the JAX repository. You can override the pinned repository above with a
+# local checkout by either:
+# a) overriding the TF repository on the build.py command line by passing a flag
+#    like:
+#    python build/build.py --bazel_options=--override_repository=org_tensorflow=/path/to/tensorflow
+#    or
+# b) by commenting out the http_archive above and uncommenting the following:
 # local_repository(
 #    name = "org_tensorflow",
-#    path = "tensorflow",
+#    path = "/path/to/tensorflow",
 # )
-
-# Load the path of tensorflow from environment variable TF_PATH
-load("//build:load_tensorflow_from_env.bzl", "load_tensorflow_from_env")
-load_tensorflow_from_env(name="org_tensorflow")
 
 load("//third_party/pocketfft:workspace.bzl", pocketfft = "repo")
 pocketfft()

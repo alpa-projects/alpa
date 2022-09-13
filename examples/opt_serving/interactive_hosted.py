@@ -2,6 +2,7 @@ import argparse
 from collections import defaultdict
 import logging.handlers
 import logging
+import json
 import os
 import queue
 import random
@@ -26,11 +27,18 @@ from opt_serving.service.constants import (
 
 app = Flask(__name__, template_folder='service')
 
+# authentication
+recaptcha = None
+allowed_api_keys = []
+
 # The global text generator
 generator: Generator= None
 # The request queues
 generate_batch_queue = PriorityQueueRingShard()
 logprobs_batch_queue = PriorityQueueRingShard()
+# The current working batch
+generate_batch = []
+logprobs_batch = []
 # Past key caches
 logprobs_past_cache = defaultdict(lambda: (0, None))
 # Logging
@@ -63,8 +71,7 @@ def batching_loop():
     # TODO(roller):
     # - group by generation type, topp etc, as we cannot share these
     # - modify timeout logic to be cumulative
-    generate_batch = []
-    logprobs_batch = []
+    global generate_batch, logprobs_batch
 
     generate_batch_timeout = 0
     while True:
@@ -141,39 +148,33 @@ def logprobs_loop(logprobs_batch, timeout, max_bs):
     except:
         logger.debug(f"Prepare to process logprobs batch: {logprobs_batch}")
         if logprobs_batch:
-            for work_item in logprobs_batch: # for loop over work items to keep it as batch size 1 for now, to avoid annoying logic with mixing past key values
-                inputs = []
-                cache_ids = []
+            for work_item in logprobs_batch: # each work item should contain its own batch (not necessarily up to MAX_BS)
                 ro = work_item.data
-                inputs.append(ro["input"])
-                cache_ids.append(ro["cache_id"])
+                inputs = ro["input"]
+                num_inputs = len(inputs)
+                cache_id = ro["cache_id"]
                 # do the actual generations
-                outputs = generator.forward(inputs, cache_ids, pasts=logprobs_past_cache)
-                generations = []
-                for cache_id, output in zip(cache_ids, outputs):
-                    # add to or update the cache with newly computed values
-                    logprobs_past_cache[cache_id] = (time.time(), output.past_key_values)
-                    # delete oldest key in cache if cache too big
-                    if len(logprobs_past_cache) > LOGPROBS_PAST_CACHE_SIZE_LIMIT:
-                        oldest_key = min(list(logprobs_past_cache.keys()), key=lambda k: logprobs_past_cache[k][0])
-                        del logprobs_past_cache[oldest_key]
+                output = generator.forward(inputs, cache_id, pasts=logprobs_past_cache)
+                # add to or update the cache with newly computed values
+                logprobs_past_cache[cache_id] = (time.time(), output.past_key_values)
+                # delete oldest key in cache if cache too big
+                if len(logprobs_past_cache) > LOGPROBS_PAST_CACHE_SIZE_LIMIT:
+                    oldest_key = min(list(logprobs_past_cache.keys()), key=lambda k: logprobs_past_cache[k][0])
+                    del logprobs_past_cache[oldest_key]
 
-                    last_position = min(output.logits.shape[1], len(inputs[0])) - 1
-                    logprobs = torch.log_softmax(output.logits[0, last_position], dim=-1)
-                    sorted_logprobs, sorted_indices = torch.sort(logprobs, descending=True)
-                    cumulative_probs = torch.cumsum(torch.softmax(sorted_logprobs, dim=-1), dim=-1)
-                    num_to_return = 1 + (cumulative_probs < ro['top_p']).sum().item()
-                    # return at most top_k tokens, e.g. if network limited
-                    num_to_return = min(num_to_return, ro["top_k"])
-                    generations.append({
-                        'logprobs': sorted_logprobs[:num_to_return].tolist(),
-                        'indices': sorted_indices[:num_to_return].tolist()
-                    })
+                logits = output.logits[:num_inputs, -1]
+                logprobs = torch.log_softmax(logits, dim=-1)
+                top_logprobs, top_indices = logprobs.topk(ro["top_k"], dim=1)
+
+                # return at most top_k tokens, e.g. if network limited
+                return_dict = {
+                    'logprobs': top_logprobs.cpu().tolist(),
+                    'indices': top_indices.cpu().tolist()
+                }
                 # broadcast them back
-                for work_item, gen in zip(logprobs_batch, generations):
-                    work_item.return_queue.put((work_item.uid, gen))
+                work_item.return_queue.put((work_item.uid, return_dict))
 
-                logprobs_batch.clear()
+            logprobs_batch.clear()
 
     # clear old keys in logprobs_past_cache which haven't been used recently
     existing_cache_ids = list(logprobs_past_cache.keys())
@@ -186,9 +187,7 @@ def logprobs_loop(logprobs_batch, timeout, max_bs):
 
 
 def worker_main(model_name, path, torch_device):
-    global generator
-    global num_beams
-    global sampling_css
+    global generator, num_beams, sampling_css
 
     # Disable multithreading in tokenizers and torch, as different Flask threads
     # may then fight for resources.
@@ -213,7 +212,22 @@ def worker_main(model_name, path, torch_device):
                           num_beams=num_beams,
                           num_return_sequences=num_return_sequences,
                           do_sample=do_sample)
-    batching_loop()
+
+    while True:
+        try:
+            batching_loop()
+        except Exception as e:
+            info = str(traceback.format_exc())
+            logger.error(info)
+
+            return_errors(generate_batch, e)
+            return_errors(logprobs_batch, e)
+
+
+def return_errors(batch, e):
+    for work_item in batch:
+        work_item.return_queue.put((work_item.uid, e))
+    batch.clear()
 
 
 @app.errorhandler(Exception)
@@ -226,7 +240,7 @@ def handle_exception(e):
         "error": {
             "message": str(e),
             "type": "error",
-            "stacktrace": traceback.format_tb(e.__traceback__),
+            "stacktrace": [""] #traceback.format_tb(e.__traceback__),
         }
     })
     if isinstance(e, ValueError):
@@ -259,11 +273,12 @@ def normalize_prompts(prompts):
 
 @app.route("/completions", methods=["POST"])
 def completions():
-    check_model_loading()
-
     if "redirect_logprobs" in request.json:
         # A redirection to workaround some security settings.
         return logprobs()
+
+    check_model_loading()
+    check_authorization()
 
     # Normalize prompts
     prompts = request.json["prompt"]
@@ -301,6 +316,7 @@ def completions():
                 f"max_len: {generation_args.get('max_tokens', 0)}, "
                 f"temperature: {generation_args['temperature']}, "
                 f"top_p: {generation_args['top_p']}, "
+                f"api_key: {generation_args.get('api_key', None)}, "
                 f"ip: {request.remote_addr}")
 
     cur_len = max(len(p) for p in prompts)
@@ -316,11 +332,13 @@ def completions():
     unordered_results = []
     for _ in prompts:
         unordered_results.append(ret_queue.get())
-    # resort results by the original ordering
+    # re-sort results by the original ordering
     # weirdly, openai returns to you a flat list if you gave multiple prompts
     reordered = sorted(unordered_results, key=lambda x: x[0])
     results = []
     for prompt, (_, generations) in zip(prompts, reordered):
+        if isinstance(generations, Exception):
+            raise generations
         results += generations
     # transform the result into the openai format
     return OAIResponse(results).__dict__()
@@ -328,12 +346,20 @@ def completions():
 
 @app.route("/logprobs", methods=["POST"])
 def logprobs():
+    # Note: the past_key_values cache assumes the prompts are in the same order each time
     check_model_loading()
+    check_authorization()
 
     # Normalize prompts
     prompts = request.json["prompt"]
     del request.json["prompt"]
     prompts = normalize_prompts(prompts)
+
+    # we're going to cache the keys for all the prompts in the request all together, so limit batch size
+    assert len(prompts) <= MAX_BS, "Please submit a smaller batch"
+    prompt_length = len(prompts[0])
+    for prompt in prompts:
+        assert len(prompt) == prompt_length, "All prompts must be the same length to work with current caching implementation"
 
     # Generation arguments
     generation_args = request.json
@@ -342,36 +368,32 @@ def logprobs():
     generation_args["max_tokens"] = int(
         generation_args.get("max_tokens", MAX_SEQ_LEN))
 
-    generation_args["top_p"] = round(
-        float(generation_args.get("top_p", 1.0)), 1)
     generation_args["top_k"] = int(generation_args.get("top_k", 100000))
 
+    generation_args['top_p'] = -1
     generation_args["temperature"] = -1
     generation_args["n"] = int(generation_args.get("n", num_return_sequences))
 
     logger.info(f"Received new logprobs request: "
                 f"prompt length {[len(p) for p in prompts]}, "
-                f"top_p: {generation_args['top_p']}, "
-                f"top_k: {generation_args['top_k']}.")
+                f"top_k: {generation_args['top_k']}, "
+                f"api_key: {generation_args.get('api_key', None)}, "
+                f"ip: {request.remote_addr}")
 
     cur_len = max(len(p) for p in prompts)
     check_max_length_limit(cur_len, MAX_SEQ_LEN)
 
     # Push the request to the batch queue
-    cache_ids = [request.json["cache_id"]] if "cache_id" in request.json else [str(uuid.uuid4()) for _ in range(len(prompts))]
+    cache_id = request.json["cache_id"] if "cache_id" in request.json else str(uuid.uuid4())
     ret_queue = queue.Queue()
-    for i, (prompt, cache_id) in enumerate(zip(prompts, cache_ids)):
-        request_object = {"input": prompt, "cache_id": cache_id,
-                          **generation_args}
-        item = WorkItem(len(prompt), i, ret_queue, request_object)
-        logprobs_batch_queue.put(item
-            )
-    unordered_results = []
-    for _ in prompts:
-        unordered_results.append(ret_queue.get())
-    # resort results by the original ordering
-    reordered = sorted(unordered_results, key=lambda x: x[0])
-    return jsonify({"cache_id": cache_ids[0], "logprobs": reordered[0][1]['logprobs'], "indices": reordered[0][1]['indices']})
+    request_object = {"input": prompts, "cache_id": cache_id,
+                        **generation_args}
+    item = WorkItem(cur_len, 0, ret_queue, request_object)
+    logprobs_batch_queue.put(item)
+    results = ret_queue.get()
+    if isinstance(results, Exception):
+        raise results
+    return jsonify({"cache_id": cache_id, "logprobs": results[1]['logprobs'], "indices": results[1]['indices']})
 
 
 @app.route("/")
@@ -383,20 +405,32 @@ def index():
 
 def check_max_length_limit(cur_len, max_len):
     if cur_len > max_len:
-        logger.info(f"Rejected a prompt with length = {cur_len}.")
-        raise Exception(f"Your prompt length  = {cur_len} is too long. "
-                        f"Please make sure len(prompt) + response length <= {max_len}. "
-                        f"Since this is a public service, we have limited the max length supported. "
-                        f"If you want to try longer sequence length, "
-                        f"please consider hosting your own service using Alpa.")
+        logger.info(f"Rejected a request with max prompt length = {cur_len}.")
+        raise ValueError(f"Your prompt length  = {cur_len} is too long. "
+                         f"Please make sure len(prompt) + response length <= {max_len}. "
+                         f"Since this is a public service, we have limited the max length supported. "
+                         f"If you want to try longer sequence length, "
+                         f"please consider hosting your own service using Alpa.")
 
 
 def check_model_loading():
     if generator is None:
+        logger.error(f"Rejected a request during model loading.")
         raise RuntimeError(
             "The server just restarted after regular maintenance. "
             "It is loading the model now, which can take several minutes. "
             "Please come back later. ")
+
+
+def check_authorization():
+    if request.json.get("api_key", None) in allowed_api_keys:
+        return
+
+    if recaptcha and not recaptcha.verify():
+        logger.error(f"Rejected a request with invalid captcha.")
+        raise ValueError("Invalid captcha. If you are using the website, please click the "
+                         "\"I'm not a robot\" button. If you are using client APIs, please "
+                         "contact alpa developers to get an API key.")
 
 
 if __name__ == "__main__":
@@ -404,12 +438,22 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="alpa/opt-125m")
     parser.add_argument("--path", type=str, default="~/opt_weights/")
     parser.add_argument("--port", type=int, default=20001)
-    parser.add_argument("--serve-logprobs", action="store_true", default=False)
     parser.add_argument("--torch-device", type=str, default="cpu")
+    parser.add_argument("--use-recaptcha", action="store_true")
+    parser.add_argument("--keys-file", type=str, default="keys.json")
     args = parser.parse_args()
 
     thread = threading.Thread(target=worker_main,
                               args=(args.model, args.path, args.torch_device), daemon=True)
     thread.start()
+
+    if args.use_recaptcha:
+        from opt_serving.service.recaptcha import ReCaptcha
+
+        keys = json.load(open(args.keys_file, "r"))
+        app.config['RECAPTCHA_SITE_KEY'] = keys["RECAPTCHA_SITE_KEY"]
+        app.config['RECAPTCHA_SECRET_KEY'] = keys["RECAPTCHA_SECRET_KEY"]
+        allowed_api_keys = keys["allowed_api_keys"]
+        recaptcha = ReCaptcha(app)
 
     app.run(host="0.0.0.0", port=args.port, threaded=True)

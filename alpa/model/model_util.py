@@ -478,7 +478,7 @@ def concrete_remat_internal(
     prevent_cse: bool = True,
     policy: Optional[Callable[..., bool]] = None,
 ) -> Callable[..., Any]:
-    """This is the same as ``flax.lift.checkpoint``, except that concrete is
+    """This is the same as ``flax.core.lift.checkpoint``, except that concrete is
   always True and alpa fixes a bug when `concrete==True`.
   """
 

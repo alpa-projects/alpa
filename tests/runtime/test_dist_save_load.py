@@ -201,6 +201,8 @@ class DistSaveLoadTest(unittest.TestCase):
             num_layers=4,
             hidden_size=128,
             num_heads=8,
+            clip_by_global_norm=False,
+            use_dynamic_scale=False,
             add_manual_pipeline_marker=True)
 
         # Compile

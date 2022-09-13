@@ -3,6 +3,7 @@ import logging
 
 import ray
 import cupy
+from jaxlib import xla_extension
 
 from alpa.collective.const import ENV
 from alpa.collective.collective_group import nccl_util
@@ -17,6 +18,7 @@ from alpa.collective.collective_group.cuda_stream import get_stream_pool
 logger = logging.getLogger(__name__)
 
 
+# FIXME: should not assume that each worker has the same number of devices
 class NCCLGroup(BaseGroup):
     """NCCL-based collective operations."""
 
@@ -51,7 +53,9 @@ class NCCLGroup(BaseGroup):
             # Destroy the communicators and streams.
             for comm_key, comms in self._dev_comm_map.items():
                 for c in comms:
-                    c.destroy()
+                    # FIXME(yonghao): comms created in XLA should be destroied
+                    if hasattr(c, "destroy"):
+                        c.destroy()
                 self._dev_comm_map[comm_key] = None
 
         if self.rank == 0:
@@ -394,7 +398,10 @@ class NCCLGroup(BaseGroup):
         self._point2point(tensors, p2p_fn, recv_options.src_rank,
                           recv_options.src_gpu_index)
 
-    def _get_nccl_collective_communicator(self, comm_key, device_list):
+    def _get_nccl_collective_communicator(self,
+                                          comm_key,
+                                          device_list,
+                                          lib="cupy"):
         """Create or retrieve an NCCL communicator from cache.
 
         If the communicator is found in cache, return the communicator. If not,
@@ -439,12 +446,21 @@ class NCCLGroup(BaseGroup):
         comms = [None] * len(device_list)
         streams = [None] * len(device_list)
         events = [None] * len(device_list)
+
+        if lib == "xla":
+            # FIXME: pass the start rank at the initial point
+            start_rank = self.rank * len(device_list)
+            actual_ranks = [start_rank + i for i in range(len(device_list))]
+            local_ids = list(range(len(device_list)))
+            comms = xla_extension.nccl_create_communicators_no_stream(
+                actual_world_size, actual_ranks, local_ids, nccl_uid)
         nccl_util.groupStart()
         for i, device in enumerate(device_list):
             actual_rank = self.rank * len(device_list) + i
             with nccl_util.Device(device):
-                comms[i] = nccl_util.create_nccl_communicator(
-                    actual_world_size, nccl_uid, actual_rank)
+                if lib == "cupy":
+                    comms[i] = nccl_util.create_nccl_communicator(
+                        actual_world_size, nccl_uid, actual_rank)
                 # request a stream from the pool
                 # note the device_idx is absolute index.
                 streams[i] = get_stream_pool(device).get_stream()
@@ -456,6 +472,10 @@ class NCCLGroup(BaseGroup):
         self._dev_streams_map[comm_key] = streams
         self._dev_event_map[comm_key] = events
         return comms
+
+    def get_nccl_collective_communicator(self, devices, lib="cupy"):
+        key = _get_comm_key_from_devices(devices)
+        return self._get_nccl_collective_communicator(key, devices, lib)
 
     @staticmethod
     def _sync_streams(device_list, events, streams):

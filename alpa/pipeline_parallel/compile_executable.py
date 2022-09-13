@@ -20,9 +20,9 @@ from alpa.pipeline_parallel.computation import (
     create_donation_mapping, generate_computations_from_modules,
     generate_sharded_xla_computations,
     generate_sharded_xla_computations_arguments, get_donatable_intermediate,
-    mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
-    pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks,
-    split_donate_invars, XlaShardedPipelineComputation)
+    mark_missing_vars_in_backward_computation_pipeline_marks, pipeline_dce,
+    slice_closed_jaxpr_by_full_pipeline_marks, split_donate_invars,
+    XlaShardedPipelineComputation)
 from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
                                                process_apply_gradient,
                                                split_compute_grad_and_apply_grad
@@ -164,8 +164,6 @@ def compile_pipeshard_executable_internal(
     # TODO(yonghao): remove this pass. we can clear these vars when rewriting
     # compute grad to accumulate grad
     jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
-    if not inference_mode:
-        jax_pipeline_layers = offload_remat(jax_pipeline_layers, gensym_func)
 
     (jax_apply_layers,
      apply_grad_global_info) = _slice_apply_grad_for_stage_construction(
@@ -185,11 +183,12 @@ def compile_pipeshard_executable_internal(
     debug_compilation_time("stage construction")
 
     # Process apply_gradient and donation
+    num_devices = [vmesh.num_devices for vmesh in sliced_virtual_meshes]
     (sliced_apply_grad_stages, n_stages, dependency, apply_grad_placement,
-     global_outvars, donated_invars) = process_apply_gradient(
+     global_outvars, donated_invars, allreduce_groups) = process_apply_gradient(
          apply_grad_jaxpr, microbatch_bound, jax_pipeline_stages, stage_to_mesh,
          gensym_func, num_microbatch, num_meshes, global_invars, global_outvars,
-         donated_invars, reduction_vector)
+         donated_invars, reduction_vector, False, num_devices)
     jax_all_stages = jax_pipeline_stages + sliced_apply_grad_stages
 
     donation_mapping = create_donation_mapping(donation_mapping, donated_invars,
@@ -263,7 +262,8 @@ def compile_pipeshard_executable_internal(
         num_batch=num_microbatch,
         default_auto_sharding_option=default_as_option,
         manual_stage_option=manual_stage_option,
-        flop_count=total_flops).compile()
+        flop_count=total_flops,
+        allreduce_groups=allreduce_groups).compile()
 
     debug_compilation_time("runtime emitter")
     return pipeshard_config
@@ -393,11 +393,12 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
         num_mesh = num_layers // 2
         layer_to_mesh = (list(range(num_mesh)) +
                          list(reversed(range(num_mesh))))
-    (layers, _, _,
-     apply_grad_placement, _, donated_invars) = process_apply_gradient(
-         apply_grad_jaxpr, microbatch_bound, pipeline_layers, layer_to_mesh,
-         gensym_func, num_microbatch, num_mesh, global_invars, global_outvars,
-         donated_invars, reduction_vector)
+    (layers, _, _, apply_grad_placement, _, donated_invars,
+     _) = process_apply_gradient(apply_grad_jaxpr, microbatch_bound,
+                                 pipeline_layers, layer_to_mesh, gensym_func,
+                                 num_microbatch, num_mesh, global_invars,
+                                 global_outvars, donated_invars,
+                                 reduction_vector, True, None)
     apply_grad_donation = create_donation_mapping(donation_mapping,
                                                   donated_invars, global_invars,
                                                   global_outvars)
@@ -442,8 +443,9 @@ def _get_full_batch_apply_grad(closed_jaxpr,
             assert tuple(expected_microbatched_shape) == microbatch_shape
             if len(apply_grad_jaxpr.eqns) > 0:
                 raise NotImplementedError(
-                    "apply gradient with non-reduced input is not supported "
-                    "yet.")
+                    "Some vars marked by gradient markers are not reduced "
+                    "but concatenated. This case in the training mode "
+                    "is not supported yet.")
         reduced_vector.append(microbatch_shape == batch_shape)
 
     return reduced_vector, post_microbatch_bound, apply_grad_jaxpr

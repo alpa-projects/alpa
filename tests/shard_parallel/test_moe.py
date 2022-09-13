@@ -3,7 +3,6 @@
 import unittest
 
 from flax import linen as nn
-from flax import optim
 import jax
 import jax.numpy as jnp
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
@@ -34,20 +33,19 @@ class AutoShardingMoETest(unittest.TestCase):
 
         @parallelize(method=ShardParallel(devices=device_mesh,
                                           auto_sharding_option=self.as_option))
-        def train_step(optimizer, batch, deterministic, apply_fn):
+        def train_step(state, batch, deterministic):
 
             def loss_func(params):
                 rngs = {"dropout": batch["rng"]}
-                out = apply_fn(params,
-                               batch["hidden_states"],
-                               batch["attention_mask"],
-                               deterministic,
-                               rngs=rngs)[0]
+                out = state.apply_fn(params,
+                                     batch["hidden_states"],
+                                     batch["attention_mask"],
+                                     deterministic,
+                                     rngs=rngs)[0]
                 return jnp.mean((out - batch["labels"])**2)
 
-            grad = jax.grad(loss_func)(optimizer.target)
-            new_optimizer = optimizer.apply_gradient(grad)
-            return new_optimizer
+            grads = jax.grad(loss_func)(state.params)
+            return state.apply_gradients(grads=grads)
 
         dtype = jnp.float32
         hidden_states = jnp.ones((batch_size, seq_len, hidden_size),
@@ -66,20 +64,24 @@ class AutoShardingMoETest(unittest.TestCase):
                              dtype=dtype)
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, hidden_states, attention_mask)
-        optimizer = optim.Adam(1e-2).create(params)
+        tx = optax.adam(1e-2)
+        state = TrainState.create(apply_fn=model.apply,
+                                  params=params,
+                                  tx=tx,
+                                  dynamic_scale=None)
 
         # JIT compile
-        optimizer = train_step(
-            optimizer, {
+        state = train_step(
+            state, {
                 "hidden_states": hidden_states,
                 "attention_mask": attention_mask,
                 "labels": labels,
                 "rng": rngkey
-            }, deterministic, model.apply)
+            }, deterministic)
 
         # Get optimized HLO IR
         executable = train_step.get_last_executable()
-        return (optimizer, executable.get_hlo_text(),
+        return (state, executable.get_hlo_text(),
                 executable.auto_sharding_objective)
 
     def run_moe_lm(self, batch_size, seq_len, num_layers, hidden_size,
@@ -106,8 +108,7 @@ class AutoShardingMoETest(unittest.TestCase):
                 return loss
 
             grads = jax.grad(loss_func)(state.params)
-            new_state = state.apply_gradients(grads=grads)
-            return new_state
+            return state.apply_gradients(grads=grads)
 
         # Init model and optimizer
         input_ids = jnp.ones((batch_size, seq_len), dtype=jnp.int32)
@@ -141,7 +142,6 @@ class AutoShardingMoETest(unittest.TestCase):
             weight_decay_mask=weight_decay_mask,
             min_dim_size_to_factor=4,
         )
-
         state = TrainState.create(apply_fn=model.apply,
                                   params=params,
                                   tx=tx,
@@ -175,7 +175,7 @@ class AutoShardingMoETest(unittest.TestCase):
         # Test on different logical mesh shapes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
             device_mesh = self.get_device_mesh(mesh_shape, [1, 1], [1, 1])
-            optimizer, hlo_ir, objective = self.run_moe_layer(
+            state, hlo_ir, objective = self.run_moe_layer(
                 batch_size, seq_len, hidden_size, num_heads, S, E,
                 deterministic, device_mesh)
 
@@ -202,16 +202,16 @@ class AutoShardingMoETest(unittest.TestCase):
             # Check sharding specification
             num_devices = np.prod(device_mesh.shape)
             assert_all_replicated(
-                optimizer.target["params"]["attention"]["output"]["dense"]
+                state.params["params"]["attention"]["output"]["dense"]
                 ["kernel"], num_devices)
             assert_all_replicated(
-                optimizer.target["params"]["attention"]["self"]["qvk_combined"]
+                state.params["params"]["attention"]["self"]["qvk_combined"]
                 ["kernel"], num_devices)
-            assert_all_replicated(optimizer.target["params"]["moe"]["wg"],
+            assert_all_replicated(state.params["params"]["moe"]["wg"],
                                   num_devices)
-            assert_expert_partitioned(optimizer.target["params"]["moe"]["wi"],
+            assert_expert_partitioned(state.params["params"]["moe"]["wi"],
                                       num_devices, i)
-            assert_expert_partitioned(optimizer.target["params"]["moe"]["wo"],
+            assert_expert_partitioned(state.params["params"]["moe"]["wo"],
                                       num_devices, i)
 
     def test_moe_layer_2d(self):
@@ -227,9 +227,10 @@ class AutoShardingMoETest(unittest.TestCase):
 
         # Test on different logical mesh shapes
         device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 1])
-        optimizer, hlo_ir, objective = self.run_moe_layer(
-            batch_size, seq_len, hidden_size, num_heads, S, E, deterministic,
-            device_mesh)
+        state, hlo_ir, objective = self.run_moe_layer(batch_size, seq_len,
+                                                      hidden_size, num_heads, S,
+                                                      E, deterministic,
+                                                      device_mesh)
 
         # Check communication cost
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all = (
@@ -253,9 +254,10 @@ class AutoShardingMoETest(unittest.TestCase):
 
         # Test on different logical mesh shapes
         device_mesh = self.get_device_mesh([2, 2], [1, 1], [1, 1])
-        optimizer, hlo_ir, objective = self.run_moe_layer(
-            batch_size, seq_len, hidden_size, num_heads, S, E, deterministic,
-            device_mesh)
+        state, hlo_ir, objective = self.run_moe_layer(batch_size, seq_len,
+                                                      hidden_size, num_heads, S,
+                                                      E, deterministic,
+                                                      device_mesh)
 
         # Check communication cost
         n_total, n_all_reduce, n_all_gather, n_reduce_scatter, n_all_to_all = (

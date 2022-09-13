@@ -2,18 +2,12 @@
 computations."""
 import numpy as np
 
-from jax.core import Primitive, new_jaxpr_eqn
+from jax.core import Primitive
 from jax.interpreters import xla, ad
 from jax.lib import xla_client as xc
 from jax.tree_util import tree_flatten, tree_unflatten
 
-from alpa.pipeline_parallel.xla_custom_call_marker import (pipeline_marker,
-                                                           identity)
-
-xc.register_custom_call_target(b"pipeline_marker",
-                               pipeline_marker(),
-                               platform="gpu")
-xc.register_custom_call_target(b"identity", identity(), platform="gpu")
+from alpa.util import new_jaxpr_eqn
 
 ########## Public APIs ##########
 
@@ -47,15 +41,16 @@ def mark_pipeline_jaxpreqn(invars, outvars, name: str, mark_type: str):
 
 
 def mark_hook_jaxpreqn(invars, outvars):
-    """TODO(zhuohan): docstring."""
+    """Mark some variables in a hook. We then extract the information
+    of the variables in the hook."""
     return new_jaxpr_eqn(invars, outvars, pipeline_p, {
         "name": "hook",
         "mark_type": "hook"
     })
 
 
+########## Internal Registration ##########
 def flatten_shape_byte_sizes(shape):
-    """TODO(zhuohan): docstring."""
 
     def _flatten_shape_byte_sizes(shape):
         if shape.is_tuple():
@@ -70,11 +65,11 @@ def flatten_shape_byte_sizes(shape):
     return np.array(res, dtype=np.int64)
 
 
-def xla_custom_call(c, call_name, op_type, op_name, *args):
+def xla_custom_call(c, call_name, op_name, *args):
     input_params = xc.ops.Tuple(c, args)
     input_shape = c.get_shape(input_params)
     flattened_byte_sizes = flatten_shape_byte_sizes(input_shape)
-    op_metadata = xc.OpMetadata(op_type=op_type, op_name=op_name)
+    op_metadata = xc.OpMetadata(op_name=op_name)
     c.set_op_metadata(op_metadata)
 
     if len(args) == 0:
@@ -84,31 +79,23 @@ def xla_custom_call(c, call_name, op_type, op_name, *args):
         sharding.type = sharding.type.REPLICATED
         c.set_sharding(sharding)
 
-    # Note that the custom call used here all act like an identity function,
-    # so the inputs and outputs are alias pairs. However, we do not set them
-    # here because the alias setting will be dropped during jaxpr->HLO
-    # conversion due to a bug in MLIR. We use a custom XLA pass
-    # RematIdentityFixer to set the alias for "identity" and "pipeline_marker".
-    output_tuple = xc.ops.CustomCall(c,
-                                     call_name,
-                                     operands=(input_params,),
-                                     shape=input_shape,
-                                     has_side_effect=True,
-                                     opaque=flattened_byte_sizes.tobytes())
+    if call_name == "pipeline_marker":
+        output_tuple = xc.ops.CustomCall(
+            c,
+            b"pipeline_marker",
+            operands=(input_params,),
+            shape=input_shape,
+            # Prevent the deletion of an empty marker
+            has_side_effect=True,
+            opaque=flattened_byte_sizes.tobytes())
+    elif call_name == "optimization_barrier":
+        output_tuple = xc.ops.OptimizationBarrier(input_params)
+    else:
+        raise ValueError("Invalid call_name: {call_name}")
+
     c.clear_op_metadata()
     c.clear_sharding()
     return output_tuple
-
-
-def xla_identity(c, op_type, *args):
-    return xla_custom_call(c, b"identity", op_type, "", *args)
-
-
-def xla_pipeline_marker(c, mark_type, name, *args):
-    return xla_custom_call(c, b"pipeline_marker", mark_type, name, *args)
-
-
-########## Internal Registration ##########
 
 
 def _pipeline_impl(*args, **kwargs):
@@ -124,10 +111,13 @@ def _pipeline_abstract_eval(*args, **kwargs):
 
 
 def _pipeline_xla_translation(c, *args, **kwargs):
-    # TODO(yonghao): separate identity and marker in JAX
-    if kwargs["mark_type"] == "hook":
-        return xla_identity(c, "hook", *args)
-    return xla_pipeline_marker(c, kwargs["mark_type"], kwargs["name"], *args)
+    name = kwargs["name"] + "$" + kwargs["mark_type"]
+    if kwargs["name"] == "hook":
+        call_name = "optimization_barrier"
+    else:
+        call_name = "pipeline_marker"
+
+    return xla_custom_call(c, call_name, name, *args)
 
 
 def _pipeline_value_and_jvp(arg_values, arg_tangents, name, mark_type):

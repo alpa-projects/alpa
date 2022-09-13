@@ -10,7 +10,7 @@ from jax._src.api import _check_callable
 from jax._src.api import make_jaxpr
 from jax._src.tree_util import tree_unflatten
 from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun,
-                      new_jaxpr_eqn, gensym, raise_to_shaped, get_aval)
+                      gensym, raise_to_shaped, get_aval)
 from jax.interpreters.partial_eval import remat_call_p
 
 from alpa.global_env import global_config
@@ -21,8 +21,9 @@ from alpa.pipeline_parallel.layer_stats import (global_invar_size,
                                                 log_layer_slicing_stats)
 from alpa.pipeline_parallel.primitive_def import (pipeline_p,
                                                   mark_pipeline_jaxpreqn)
-from alpa.util import (clone_jaxpr, slices_to_jaxpr, OrderedSet,
-                       get_var_mapping, maybe_numba_jit)
+from alpa.util import (clone_jaxpr, clone_jaxpr_eqn, slices_to_jaxpr,
+                       OrderedSet, get_var_mapping, maybe_numba_jit,
+                       new_jaxpr_eqn)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -210,9 +211,7 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
                 get_var_mapping(computation_var_mapping, var)
                 for var in eqn.invars
             ]
-            new_eqns.append(
-                new_jaxpr_eqn(new_invars, eqn.outvars, eqn.primitive,
-                              eqn.params, eqn.source_info))
+            new_eqns.append(clone_jaxpr_eqn(eqn, new_invars))
 
         # pipeline end eqn
         pipeline_end_invars = list(

@@ -1,27 +1,23 @@
 import unittest
-import os
 
-import jax
 from jax._src.api import make_jaxpr
 from jax.core import ClosedJaxpr, Var, gensym
 import jax.numpy as jnp
-import ray
 
 from alpa import init, grad
-from alpa.model.bert_model import BertConfig
 from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
                                                process_apply_gradient,
                                                split_compute_grad_and_apply_grad
                                               )
 from alpa.pipeline_parallel.computation import (
     create_donation_mapping,
-    mark_missing_vars_in_backward_computation_pipeline_marks, offload_remat,
-    pipeline_dce, slice_closed_jaxpr_by_full_pipeline_marks)
+    mark_missing_vars_in_backward_computation_pipeline_marks, pipeline_dce,
+    slice_closed_jaxpr_by_full_pipeline_marks)
 from alpa.pipeline_parallel.layer_construction import ManualLayerOption
-from alpa.pipeline_parallel.stage_profiling import (
-    ApplyGradConfig, CompileConfig, ProfileConfig, generate_stage_info,
-    compile_all, profile_all, compute_intermediate_size,
-    compute_apply_grad_invar_size)
+from alpa.pipeline_parallel.stage_profiling import (ApplyGradConfig,
+                                                    CompileConfig,
+                                                    ProfileConfig,
+                                                    generate_stage_info)
 from alpa.testing import get_bert_layer_train_state_and_step
 from alpa.util import OrderedSet, GradFuncTransformContext
 
@@ -51,6 +47,8 @@ class StageConstructUtilTest(unittest.TestCase):
             num_layers=num_layers,
             hidden_size=512,
             num_heads=512 // 64,
+            clip_by_global_norm=False,
+            use_dynamic_scale=False,
             add_manual_pipeline_marker=True,
         )
 
@@ -101,7 +99,6 @@ class StageConstructUtilTest(unittest.TestCase):
             jax_pipeline_layers, acc_grad_invars, acc_grad_outvars, gensym_func)
         jax_pipeline_layers = pipeline_dce(jax_pipeline_layers,
                                            acc_grad_outvars)
-        jax_pipeline_layers = offload_remat(jax_pipeline_layers, gensym_func)
 
         global_invars = closed_jaxpr.jaxpr.invars
         global_outvars = closed_jaxpr.jaxpr.outvars
@@ -112,12 +109,13 @@ class StageConstructUtilTest(unittest.TestCase):
                                list(reversed(range(num_forward_layers))))
         reduce_invars = [True] * len(microbatch_bound.invars)
 
-        (jax_apply_layers, _, _, _, _,
-         dummy_donated_invars) = process_apply_gradient(
-             apply_grad_jaxpr, microbatch_bound, jax_pipeline_layers,
-             layer_to_dummy_mesh, gensym_func, num_microbatch,
-             len(jax_pipeline_layers) // 2, global_invars, global_outvars,
-             donated_invars, reduce_invars)
+        (jax_apply_layers, _, _, _, _, dummy_donated_invars,
+         _) = process_apply_gradient(apply_grad_jaxpr, microbatch_bound,
+                                     jax_pipeline_layers, layer_to_dummy_mesh,
+                                     gensym_func, num_microbatch,
+                                     len(jax_pipeline_layers) // 2,
+                                     global_invars, global_outvars,
+                                     donated_invars, reduce_invars, True, None)
         apply_grad_donation = create_donation_mapping(donation_mapping,
                                                       dummy_donated_invars,
                                                       global_invars,

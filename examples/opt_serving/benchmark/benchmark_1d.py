@@ -1,10 +1,10 @@
 import argparse
+
 import copy
-import time
-from examples.opt_serving.model.test_1d import setup, runner_1d, runner_2d, runner_2d_batch
-import jax.numpy as jnp
-from examples.opt_serving.benchmark.benchmark_text_gen import test_prompts
-from alpa.util import print_used_time
+import numpy as np
+
+from alpa.timer import timers
+from examples.opt_serving.model.test_1d import setup, runner_1d, runner_2d, Jax1DInput
 
 input_id_list = [
     [45942, 2866, 16, 5, 892, 9, 44042, 8],
@@ -19,66 +19,189 @@ input_id_list = [
     [534, 10311, 12, 246, 16, 10, 739, 2777, 1421, 14, 16, 4453, 9],
 ]
 
-input_id_list = input_id_list
+input_id_list = input_id_list * 4
 
-def print_execution_cost(execution_cost):
-    output = []
-    for key, value in execution_cost.items():
-        output.append(f"{key}: {value:.4f}")
-    print(", ".join(output))
 
+def print_execution_time_costs(timer_name="overall", return_all_costs=False):
+    """Get the execution time costs with internal timers."""
+    if timer_name not in timers:
+        raise RuntimeError()
+    if return_all_costs:
+        print(f"{timer_name}: {timers(timer_name).costs}")
+    else:
+        print(f"{timer_name}: {timers(timer_name).costs[-1]}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="jax/opt-125m")
     parser.add_argument("--path", type=str, default="~/opt_weights/")
-    parser.add_argument("--n-warmup", type=int, default=1)
-
-    batch_size = 5
-
+    parser.add_argument("--n-warmup", type=int, default=3)
+    parser.add_argument("--batch-size-2d", type=int, default=1)
+    parser.add_argument("--batch-size-1d", type=int, default=128)
+    parser.add_argument("--cache-size", type=int, default=512)
+    parser.add_argument("--cache--size-per-seq", type=int, default=32)
     args = parser.parse_args()
-    model_1d, input_pool_1d = setup("1d", input_id_list, np_weights_folder=args.path)
-    model_2d, input_pool_2d = setup("2d", input_id_list, np_weights_folder=args.path, batch_size=batch_size)
 
-    # Warm up
-    for i in range(args.n_warmup):
-        warmup_pool_2d = copy.deepcopy(input_pool_2d)
-        _, cost = runner_2d_batch(model_2d, warmup_pool_2d)
-        print_execution_cost(cost)
-    exit(1)
-    for i in range(args.n_warmup):
-        warmup_pool_1d = copy.deepcopy(input_pool_1d)
-        warmup_pool_1d.kv_caches = [(jnp.asarray(k), jnp.asarray(v)) for k, v in warmup_pool_1d.kv_caches]
-        _, cost = runner_1d(model_1d, warmup_pool_1d)
-        print_execution_cost(cost)
-    print(" === Warm up done! ===")
+    def extend_input(input_lists, min_factor=1, max_factor=40):
+        ret = []
+        for seq in input_lists:
+            f = np.random.randint(min_factor, high=max_factor+1)
+            ret.append(seq * f)
+        return ret
 
-    # benchmark prompt
-    print("Run 1D")
-    tic = time.time()
-    ret_pool_1d, _ = runner_1d(model_1d, input_pool_1d)
-    latency_1d = time.time() - tic
-    print("Run 2D")
-    tic = time.time()
-    ret_pool_2d, _ = runner_2d_batch(model_2d, input_pool_2d)
-    latency_2d = time.time() - tic
-    print(f"Results 3 prompts: 1d {latency_1d}, 2d {latency_2d}")
-    exit(1)
-    #
-    # # benchmark mixed
-    # tic = time.time()
-    # ret_pool_1d, _ = runner_1d(input_pool_1d[:2] + ret_pool_1d)
-    # latency_1d = time.time() - tic
-    # tic = time.time()
-    # ret_pool_2d = runner_2d(input_pool_2d[:2] + ret_pool_2d)
-    # latency_2d = time.time() - tic
-    # print(f"- Benchmark 2 prompts + 3 decode: 1d {latency_1d}, 2d {latency_2d}")
-    #
-    # # benchmark decoding only
-    # tic = time.time()
-    # runner_1d(ret_pool_1d)
-    # latency_1d = time.time() - tic
-    # tic = time.time()
-    # runner_2d(ret_pool_2d)
-    # latency_2d = time.time() - tic
-    # print(f"- Benchmark 5 decode: 1d {latency_1d}, 2d {latency_2d}")
+    def benchmark_2d(model, input_pool):
+        timer_names = ["2d_overall", "2d_compute"]
+        for _ in range(args.n_warmup):
+            runner_2d(model, input_pool)
+            # print_execution_time_costs("2d_overall")
+            # print_execution_time_costs("2d_compute")
+        for timer_name in timer_names:
+            timers(timer_name).reset()
+        for _ in range(5):
+            runner_2d(model, input_pool)
+        print("Results: ", end="")
+        timers.log(["2d_overall", "2d_compute"])
+
+    def benchmark_1d(model, input_pool):
+        timer_names =  ["1d_overall", "1d_compute", "1d_update_cache"]
+        for _ in range(args.n_warmup):
+            warmup_pool_1d = copy.deepcopy(input_pool)
+            runner_1d(model, warmup_pool_1d)
+            # print_execution_time_costs("1d_overall")
+            # print_execution_time_costs("1d_compute")
+        for timer_name in timer_names:
+            timers(timer_name).reset()
+        for _ in range(5):
+            temp_pool_1d = copy.deepcopy(input_pool)
+            runner_1d(model, temp_pool_1d)
+        print("Results: ", end="")
+        timers.log(timer_names)
+
+    def benchmark_prompt(input_list, mode, batch_size, cache_size=None, max_cache_len_per_seq=None):
+        if mode not in ["1d", "2d"]:
+            raise RuntimeError()
+        num_seq = len(input_list)
+        seq_lens = [len(seq) for seq in input_list]
+        max_seq_len = max(seq_lens)
+        min_seq_len = min(seq_lens)
+        print(f"- Benchmark {mode}, {num_seq} prompts with "
+              f"bs_{mode} = {batch_size} "
+              f"seq_len = [{min_seq_len}->{max_seq_len}] ", end="")
+        if mode == "1d":
+            if not cache_size:
+                cache_size = (max_seq_len + 2) * len(input_list)
+            if not max_cache_len_per_seq:
+                max_cache_len_per_seq = cache_size // len(input_list)
+            print(f"cache = {cache_size} ", end="")
+        model, input_pool = setup(mode, input_list,
+                                  np_weights_folder=args.path,
+                                  batch_size=batch_size,
+                                  cache_size=cache_size,
+                                  max_cache_len_per_seq=max_cache_len_per_seq)
+        if mode == "2d":
+            benchmark_2d(model, input_pool)
+        else:
+            benchmark_1d(model, input_pool)
+
+
+    def benchmark_mixed(input_list, mode, batch_size=1, num_decoding=None, cache_size=None, max_cache_len_per_seq=None):
+        if mode not in ["1d", "2d"]:
+            raise RuntimeError()
+        num_seq = len(input_list)
+        if not num_decoding:
+            num_decoding = num_seq // 2
+        num_prompt = num_seq - num_decoding
+        if mode == "2d":
+            batch_size = 1
+        seq_lens = [len(seq) for seq in input_list[num_decoding:]]
+        min_seq_len = min(seq_lens)
+        max_seq_len = max(seq_lens)
+        print(f"- Benchmark {mode}, {num_prompt} prompts, {num_decoding} decoding with "
+              f"bs_{mode} = {batch_size} "
+              f"seq_len = [{min_seq_len}->{max_seq_len}] ", end="")
+        if mode == "2d":
+            model, input_pool = setup(mode, input_list,
+                                      np_weights_folder=args.path,
+                                      batch_size=batch_size)
+            output_pool = runner_2d(model, input_pool[:num_decoding])
+            mixed_pool = output_pool + input_pool[num_decoding:]
+            benchmark_2d(model, mixed_pool)
+        else:
+            if not cache_size:
+                cache_size = (max_seq_len + 2) * len(input_list)
+            if not max_cache_len_per_seq:
+                max_cache_len_per_seq= cache_size // len(input_list)
+            print(f"cache = {cache_size} ", end="")
+            model, input_pool = setup(mode, input_list[:num_decoding],
+                                      np_weights_folder=args.path,
+                                      batch_size=batch_size,
+                                      cache_size=cache_size,
+                                      max_cache_len_per_seq=max_cache_len_per_seq)
+            output_pool = runner_1d(model, input_pool)
+            mixed_pool = Jax1DInput(
+                input_id_list[num_decoding:] + output_pool.input_tokens,
+                [i+1 for i in range(num_decoding, len(input_id_list))] + output_pool.input_sentence_ids,
+                output_pool.kv_caches,
+                output_pool.kv_cache_ids,
+                output_pool.num_prev_tokens
+            )
+            benchmark_1d(model, mixed_pool)
+
+
+    print(f"Benchmark prompt-only on short sequences.")
+    # 2D, short sequence, bs = 1
+    benchmark_prompt(input_id_list, "2d", 1)
+    # 2D, short sequence, bs = 8
+    benchmark_prompt(input_id_list, "2d", 8)
+    # 1D, short sequence
+    batch_size_1d = sum(len(seq) for seq in input_id_list) + 50
+    benchmark_prompt(input_id_list, "1d", batch_size_1d)
+    # 1D, vary cache size
+    max_seq_len = max(len(seq) for seq in input_id_list)
+    num_seq = len(input_id_list)
+    benchmark_prompt(input_id_list, "1d", batch_size_1d, cache_size=(max_seq_len + 2) * num_seq * 2)
+    benchmark_prompt(input_id_list, "1d", batch_size_1d, cache_size=(max_seq_len + 2) * num_seq * 10)
+    benchmark_prompt(input_id_list, "1d", batch_size_1d, cache_size=(max_seq_len + 2) * num_seq * 100)
+
+
+    print(f"Benchmark prompt-only on long sequences.")
+    extended_input_id_list = extend_input(input_id_list)
+    # 2D, longer sequence, bs = 1
+    benchmark_prompt(extended_input_id_list, "2d", 1)
+    # 2D, longer sequence, bs = 8
+    benchmark_prompt(extended_input_id_list, "2d", 8)
+    # 1D, longer sequence
+    batch_size_1d = sum(len(seq) for seq in extended_input_id_list) + 50
+    max_seq_len = max(len(seq) for seq in extended_input_id_list)
+    benchmark_prompt(extended_input_id_list, "1d", batch_size_1d, cache_size=(max_seq_len + 2) * len(extended_input_id_list))
+    benchmark_prompt(extended_input_id_list, "1d", batch_size_1d, cache_size=(max_seq_len + 2) * len(extended_input_id_list) * 2)
+    benchmark_prompt(extended_input_id_list, "1d", batch_size_1d, cache_size=(max_seq_len + 2) * len(extended_input_id_list) * 3)
+
+
+    print(f"Benchmark mixed prompts + decoding on short sequences.")
+    # 2D, short seq
+    benchmark_mixed(input_id_list, "2d", batch_size=1)
+    # 1D, short seq
+    batch_size_1d = sum(len(seq) for seq in input_id_list) + 50
+    max_seq_len = max(len(seq) for seq in input_id_list)
+    benchmark_mixed(input_id_list, "1d", batch_size=batch_size_1d,
+                    cache_size=(max_seq_len + 2) * len(input_id_list))
+    benchmark_mixed(input_id_list, "1d", batch_size=batch_size_1d,
+                    cache_size=(max_seq_len + 2) * len(input_id_list) * 2)
+    benchmark_mixed(input_id_list, "1d", batch_size=batch_size_1d,
+                    cache_size=(max_seq_len + 2) * len(input_id_list) * 10)
+    benchmark_mixed(input_id_list, "1d", batch_size=batch_size_1d,
+                    cache_size=(max_seq_len + 2) * len(input_id_list) * 100)
+
+    print(f"Benchmark mixed prompts + decoding on long sequences.")
+    # 1D, long seq
+    benchmark_mixed(extended_input_id_list, "2d", batch_size=1)
+    # 2D, longer seq
+    max_seq_len = max(len(seq) for seq in extended_input_id_list)
+    batch_size_1d = sum(len(seq) for seq in extended_input_id_list) + 50
+    benchmark_mixed(extended_input_id_list, "1d", batch_size=batch_size_1d,
+                    cache_size=(max_seq_len + 2) * len(extended_input_id_list))
+    benchmark_mixed(extended_input_id_list, "1d", batch_size=batch_size_1d,
+                    cache_size=(max_seq_len + 2) * len(extended_input_id_list) * 2)
+    benchmark_mixed(extended_input_id_list, "1d", batch_size=batch_size_1d,
+                    cache_size=(max_seq_len + 2) * len(extended_input_id_list) * 3)

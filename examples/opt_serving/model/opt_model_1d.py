@@ -1,16 +1,20 @@
 import dataclasses
 from dataclasses import dataclass
+
+import cupy
 from functools import partial
 import itertools
 import math
 import os
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional, Tuple, Sequence, List
 
 import alpa
+from alpa.collective.worker_nccl_util_cupy import jax_tensor_to_cupy
 from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
                               MeshHostWorker, create_remote_array_refs)
 from alpa.model.model_util import ModelOutput
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
+from alpa.timer import timers
 import flax.linen as nn
 import jax
 import flax
@@ -457,7 +461,7 @@ class OPTForLMModule(nn.Module):
 
 
 def init_model_aval(config, total_input_len, total_cache_len):
-    """Woosuk's version: we declare total_input_len and total_cache_len in advance."""
+    """In 1D: we specify total_input_len and total_cache_len in advance."""
     model = OPTForLMModule(config, dtype=config.dtype)
     rngkey = jax.core.ShapedArray((2,), jnp.uint32)
     input_ids = jax.core.ShapedArray((total_input_len,), jnp.int32)
@@ -515,6 +519,131 @@ def build_position_ids(input_ids, padding_idx):
     mask = (input_ids != padding_idx).astype(np.int32)
     position_ids = np.cumsum(mask).astype(np.int32) * mask + padding_idx
     return position_ids
+
+
+class TransformerInputPool:
+    """This pool is for batch-level scheduling."""
+    def __init__(self,
+                 config,
+                 batch_size=512,
+                 cache_size=512,
+                 max_cache_per_seq=32):
+        # Opt model config
+        self._config = config
+        self.batch_size = batch_size
+        self.cache_size = cache_size
+        self.max_cache_per_seq = max_cache_per_seq
+
+        # caches, which is staticly allocated
+        self.kv_caches = jax.tree_map(jnp.array, init_cache_np(config, self.cache_size))
+        self.kv_cache_ids = np.zeros((self.cache_size, ), dtype=np.int32)
+        self.kv_caches_cupy = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in self.kv_caches]
+
+        # internal states
+        # num_prev_tokens tracks the progress of each sentence.
+        self.input_sequence_ids = []
+        self.num_prev_tokens = {}
+        self._entered = False
+
+    def enter_prompts(self, input_sequences: List[List[int]]):
+        # reset cache, sentence_ids, etc.
+        self.reset()
+        assert not self._entered, "This pool can only process a batch at a time."
+        # check input has no padding
+        for seq in input_sequences:
+            assert self.pad not in seq
+        # generate IDs for them
+        self.input_sequence_ids = [i for i in range(0, len(input_sequences))]
+
+        # update num_prev_tokens for the sentence
+        # for i, sentence_id in enumerate(sentence_ids):
+        for id in self.input_sequence_ids:
+            assert id not in self.num_prev_tokens
+            self.num_prev_tokens[id] = 0
+        self._entered = True
+        input, input_index, position_ids = self._generate_1d_inputs(input_sequences)
+        return input, input_index, position_ids
+
+    def enter_decoding(self, input_sequences: List[List[int]]):
+        # do some check:
+        assert len(input_sequences) == len(self.input_sequence_ids)
+        for i, id in enumerate(self.input_sequence_ids):
+            assert id in self.num_prev_tokens
+            assert len(input_sequences[i]) == 1
+            assert self.num_prev_tokens[id] > 0
+        assert self._entered, "No prompts entered yet."
+
+        input, input_index, position_ids = self._generate_1d_inputs(input_sequences)
+        return input, input_index, position_ids
+
+    def _generate_1d_inputs(self, input_sequences: List[List[int]]):
+        """Generate the three elements: input tokens, input token index, and position_ids"""
+        input = sum(input_sequences, [])
+        assert len(input) <= self.batch_size, "Please allocate a larger batch size"
+        input = jnp.asarray(input + [self.pad] * (self.batch_size - len(input)),
+                               dtype=jnp.int32)
+
+        # generate an index array that tells the sentence id of each token
+        assert len(input_sequences) == len(self.input_sequence_ids)
+        input_index = []
+        for i, sentence_id in enumerate(self.input_sequence_ids):
+            input_index.extend([sentence_id] * len(input_sequences[i]))
+        assert len(input_index) <= self.batch_size
+        input_index = np.array(input_index + [0] * (self.batch_size - len(input_index)), dtype=np.int32)
+
+        # generate position ids
+        position_ids = []
+        for i, sentence_id in enumerate(self.input_sequence_ids):
+            start_idx = 1 + self.pad + self.num_prev_tokens[sentence_id]
+            position_ids.extend(list(range(start_idx, start_idx + len(input_sequences[i]))))
+        position_ids = position_ids + [self.pad] * (self.batch_size - len(position_ids))
+        position_ids = jnp.asarray(position_ids, dtype=jnp.int32)
+
+        return input, input_index, position_ids
+
+    def reset(self):
+        self._entered = False
+        self.num_prev_tokens = {}
+        self.input_sequence_ids = []
+        self.erase_cache()
+
+    def erase_cache(self):
+        self.kv_caches_cupy.fill(0.0)
+
+    def update_cache(self, input_sequences: List[List[int]], kv):
+        for layer_idx, (key_1d, value_1d) in enumerate(kv):
+
+            k_cache, v_cache = self.kv_caches_cupy[layer_idx]
+            key_1d = jax_tensor_to_cupy(key_1d)
+            value_1d = jax_tensor_to_cupy(value_1d)
+            idx = 0
+            for i, sentence_id in enumerate(self.input_sequence_ids):
+                cache_idx = (sentence_id - 1) * self.max_cache_per_seq + self.num_prev_tokens[sentence_id]
+                k_cache[cache_idx:cache_idx + len(input_sequences[i]), :] = cupy.squeeze(
+                    key_1d[idx:idx + len(input_sequences[i]), :])
+                v_cache[cache_idx:cache_idx + len(input_sequences[i]), :] = cupy.squeeze(
+                    value_1d[idx:idx + len(input_sequences[i]), :])
+                self.kv_cache_ids[cache_idx:cache_idx + len(input_sequences[i])] = sentence_id
+                idx += len(input_sequences[i])
+
+    def update_num_prev_tokens(self, input_sequences: List[List[int]]):
+        for i, sentence_id in enumerate(self.input_sequence_ids):
+            self.num_prev_tokens[sentence_id] += len(input_sequences[i])
+
+
+    @property
+    def pad(self):
+        return self._config.pad if "pad" in dir(self._config) else 1
+
+    # def next_sentence_ids(self, number):
+    #     """Generate sentence ids when new sentences enter the pool."""
+    #     id = self._sentence_counter
+    #     if number == 1:
+    #         ret = [id]
+    #     else:
+    #         ret = [i for i in range(id, id + number)]
+    #     self._sentence_counter = (id + number) % (1 << 60)
+    #     return ret
 
 
 def load_params_np(params, path, config, dummy=False):
@@ -600,10 +729,12 @@ def load_params_np(params, path, config, dummy=False):
     return flax.core.freeze(params)
 
 
-def get_jax_executable(config,
-                       support_output_attentions=False,
-                       support_output_hidden_states=False):
-    model, params = init_model_aval(config)
+def get_jax_executable(config: OPTConfig,
+                       output_attentions: bool = False,
+                       output_hidden_states: bool = False):
+    """Get a single-gpu executable."""
+    # Note(Hao):
+    model, params = init_model_aval(config, total_input_len=256, total_cache_len=512)
 
     @jax.jit
     def inference_step(params, batch):
@@ -611,12 +742,15 @@ def get_jax_executable(config,
                              batch["input_ids"],
                              batch["position_ids"],
                              attention_cache=batch["cache"],
-                             output_attentions=support_output_attentions,
-                             output_hidden_states=support_output_hidden_states)
+                             # attention_mask=batch["mask"],
+                             output_attentions=output_attentions,
+                             output_hidden_states=output_hidden_states)
         return output
 
-    executable = inference_step
-    return executable, params
+    # executables = {}
+    # for length in encoder_chunk_sizes:
+    #     executables[length] = inference_step
+    return inference_step, params
 
 
 def get_pipeshard_executable(config,

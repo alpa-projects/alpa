@@ -21,8 +21,7 @@ from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves
 from jax.interpreters import pxla
 import jaxlib.xla_extension as jax_xla
 import numpy as np
-import ray
-from tqdm import tqdm
+
 
 ACT2FN = {
     "gelu": partial(nn.gelu, approximate=False),
@@ -718,7 +717,7 @@ def load_params_np(params, path, config, dummy=False):
 def get_jax_executable(config: OPTConfig,
                        encoder_chunk_sizes: Sequence[int],
                        output_attentions: bool = False,
-                       output_hidden_states:bool = False):
+                       output_hidden_states: bool = False):
     """Get a single-gpu executable."""
     model, params = init_model_aval(config)
 

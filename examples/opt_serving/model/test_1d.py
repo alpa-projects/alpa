@@ -229,7 +229,7 @@ def runner_1d(model, input_pool):
         assert config.pad not in input_sentence
 
     # TODO(Woosuk): Reorder the input sentences.
-    timers("1d_overall").start()
+    timers("1d_overall").start(sync)
     # Pre-update num_prev_tokens.
     for i, sentence_id in enumerate(input_sentence_ids):
         if sentence_id in num_prev_tokens:

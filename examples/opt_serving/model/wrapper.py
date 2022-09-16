@@ -5,18 +5,15 @@ import time
 from typing import Sequence, Any, Optional
 
 import alpa
+from alpa import timers
 from alpa.device_mesh import DistributedArray
 from alpa.mesh_executable import get_index_select_mesh_executable
 import jax
-from jax import xla
-from jax import ShapeDtypeStruct, ShapedArray
-from jax.interpreters import pxla
-from jax.interpreters.pxla import NoSharding, Replicated, ShardingSpec
 import jax.numpy as jnp
 import numpy as np
 import torch
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
-from transformers import OPTForCausalLM, GPT2LMHeadModel
+from transformers import OPTForCausalLM
 from tqdm import tqdm
 
 from opt_serving.model.opt_model import (get_opt_config,
@@ -27,6 +24,10 @@ from opt_serving.model.opt_model import (get_opt_config,
                                          get_jax_executable)
 from opt_serving.model.opt_utils import (TransformerModelConfig,
                                          jax_index_select, is_power_of_two)
+
+from opt_serving.model.opt_model_1d import get_jax_executable as get_jax_executable_1d
+from opt_serving.model.opt_model_1d import init_cache_np as init_cache_np_1d
+from opt_serving.model.opt_model_1d import TransformerInputPool
 
 
 @dataclass
@@ -221,6 +222,98 @@ def get_hf_opt_model(model_name, device, num_beams):
                                 executable, transformer_config)
 
 
+def get_model_1d(model_name: str,
+                 path: str,
+                 dummy: bool = False,
+                 # batch size, this batch is #tokens
+                 batch_size: int = 1,
+                 max_target_positions: int = 2048,
+                 cache_size: int = 4096,
+                 # model parameters
+                 dtype=jnp.float16,
+                 torch_device: str = "cpu",
+                 # Shared arguments with model.generate
+                 do_sample: bool = False,
+                 num_beams: int = 1,
+                 num_return_sequences: int = 1,
+                 return_dict_in_generate: bool = True,
+                 output_attentions: bool = False,
+                 output_hidden_states: bool = False):
+    """Experimental 1D transformer implementation."""
+    assert "1d" in model_name, "are you sure you want to use the experimental 1D version?"
+
+    # weight path
+    name = model_name.split("-")[1].upper()
+    path = os.path.abspath(os.path.expanduser(os.path.join(path, f"{name}_np")))
+    if not dummy:
+        # Check the existence of weights.
+        if not os.path.exists(path):
+            if name in ["175B"]:
+                raise ValueError(f"Cannot find cached weights under '{path}'. "
+                                  "Please follow the instructions to download "
+                                  "and convert weights manually. ")
+            print(f"Cannot find cached weights under '{path}'.")
+            download_weights(model_name.split("/")[1], path)
+
+        assert os.path.exists(path), f"No such file or directory: '{path}'"
+        embed_weight = os.path.join(path, "decoder.embed_tokens.weight")
+        assert os.path.exists(embed_weight), f"No such file or directory: '{embed_weight}'"
+
+    # TODO(Hao): figure out the actual input size
+    config = get_opt_config(name,
+                            dtype=dtype,
+                            max_target_positions=max_target_positions)
+    transformer_config = TransformerModelConfig(
+        H=config.decoder_embed_dim,
+        L=config.decoder_layers,
+        n_head=config.decoder_attention_heads,
+        seq_len=config.max_target_positions,
+        vocab_size=config.vocab_size)
+
+    executable, params_aval = get_jax_executable_1d(
+        config,
+        output_attentions=output_attentions,
+        output_hidden_states=output_hidden_states)
+
+    # load params
+    params = load_params_np(params_aval, path, config, dummy)
+    params = jax.tree_map(jnp.array, params)
+    input_pool = TransformerInputPool(config, batch_size=batch_size, cache_size=cache_size)
+
+    # TODO(Hao): implement this
+    def inference_func(input_ids,
+                       past_key_values,
+                       attention_mask,
+                       output_attentions,
+                       output_hidden_states):
+        if input_ids.shape[1] > 1:
+            input, input_index, position_ids = input_pool.enter_prompts(input_ids)
+        else:
+            input, input_index, position_ids = input_pool.enter_decoding(input_ids)
+
+        # set envvar
+        os.environ["FT_INPUT_INDEX_ADDR"] = str(input_index.ctypes.data)
+        os.environ["FT_CACHE_INDEX_ADDR"] = str(input_pool.kv_cache_ids.ctypes.data)
+        os.environ["FT_MAX_CACHE_LEN_PER_SEQ"] = str(input_pool.max_cache_per_seq)
+
+        batch = {
+            "input_ids": input,
+            "position_ids": position_ids,
+            "cache": input_pool.kv_caches
+        }
+
+        logits, kv = executable(params, batch)
+        input_pool.update_cache(kv)
+        logits_step = torch.from_numpy(np.array(logits)).to(torch_device).float()
+        return InferenceFuncOutput(logits_step, kv, None, None)
+
+    inference_func_config = InferenceFuncConfig()
+    return WrappedInferenceFunc(inference_func,
+                                inference_func_config,
+                                executable,
+                                transformer_config)
+
+
 def get_model(model_name: str,
               # Weights
               path: str,
@@ -245,7 +338,7 @@ def get_model(model_name: str,
     """Get a model that is compatible with HuggingFace's generation API.
 
     Args:
-        model_name: "facebook/opt-", or "alpa/opt-".
+        model_name: "facebook/opt-", "jax/opt-", or "alpa/opt-[size]-[1d|2d]"
         path: The path to opt weights.
         dummy: Use dummy weights for faster debugging.
         batch_size: The batch size.

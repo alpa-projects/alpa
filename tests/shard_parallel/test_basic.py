@@ -6,7 +6,8 @@ import jax.numpy as jnp
 from jax.interpreters import pxla
 from jax.interpreters.pxla import Chunked, ShardedAxis, NoSharding, Replicated
 from flax import linen as nn
-from flax import optim
+from flax.training.train_state import TrainState
+import optax
 
 from alpa import parallelize, ShardParallel
 from alpa.util import count_communication_primitives
@@ -93,21 +94,21 @@ class AutoShardingBasicTest(unittest.TestCase):
         model = Model()
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x, True)
-        optimizer = optim.GradientDescent(1e-2).create(params)
+        tx = optax.sgd(learning_rate=1e-2)
+        state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
         @parallelize(method=self.method)
-        def func(optimizer, x, y, rngs):
+        def func(state, x, y, rngs):
 
             def loss_func(params):
                 out = model.apply(params, x, False, rngs=rngs)
                 return jnp.mean((out - y)**2)
 
-            grad = jax.grad(loss_func)(optimizer.target)
-            new_optimizer = optimizer.apply_gradient(grad)
-            return new_optimizer
+            grad = jax.grad(loss_func)(state.params)
+            return state.apply_gradients(grads=grad)
 
         # Check sharding strategy (data-parallel)
-        executable = func.get_executable(optimizer, x, y, {"dropout": rngkey})
+        executable = func.get_executable(state, x, y, {"dropout": rngkey})
         assert executable.auto_sharding_objective < 1e6
 
         hlo_ir = executable.get_hlo_text()
@@ -134,20 +135,20 @@ class AutoShardingBasicTest(unittest.TestCase):
         model = Model()
         rngkey = jax.random.PRNGKey(0)
         params = model.init(rngkey, x)
-        optimizer = optim.GradientDescent(1e-2).create(params)
+        tx = optax.sgd(learning_rate=1e-2)
+        state = TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
         @parallelize(method=self.method)
-        def func(optimizer, x, y):
+        def func(state, x, y):
 
             def loss_func(params):
                 out = model.apply(params, x)
                 return jnp.mean((out - y)**2)
 
-            grad = jax.grad(loss_func)(optimizer.target)
-            new_optimizer = optimizer.apply_gradient(grad)
-            return new_optimizer
+            grad = jax.grad(loss_func)(state.params)
+            return state.apply_gradients(grads=grad)
 
-        executable = func.get_executable(optimizer, x, y)
+        executable = func.get_executable(state, x, y)
         assert executable.auto_sharding_objective < 1e6
 
         hlo_ir = executable.get_hlo_text()
@@ -227,8 +228,8 @@ def suite():
     suite.addTest(AutoShardingBasicTest("test_donate_buffer"))
     suite.addTest(AutoShardingBasicTest("test_dot_reshape_transpose"))
     suite.addTest(AutoShardingBasicTest("test_one_by_one_mesh"))
-    suite.addTest(AutoShardingBasicTest("test_gather"))
     suite.addTest(AutoShardingBasicTest("test_dropout"))
+    suite.addTest(AutoShardingBasicTest("test_gather"))
     suite.addTest(AutoShardingBasicTest("test_reshape_uneven_partition"))
     suite.addTest(AutoShardingBasicTest("test_argmax"))
     suite.addTest(AutoShardingBasicTest("test_sort"))

@@ -29,10 +29,6 @@ jobs:
     runs-on: [self-hosted]
     needs: [build-image]
 
-    strategy:
-      matrix:
-        python: ["3.7", "3.8", "3.9"]
-
     steps:
       - uses: actions/checkout@v3
 
@@ -41,9 +37,8 @@ jobs:
           mkdir -p dist
           docker run --gpus all --tmpfs /build:exec \
           --rm -v $(pwd)/dist:/dist --entrypoint /build_alpa.sh \
-          build-alpa-image ${PYTHON_VERSION} ${ALPA_BRANCH}
+          build-alpa-image 3.8 ${ALPA_BRANCH}
         env:
-          PYTHON_VERSION: ${{ matrix.python }}
           ALPA_BRANCH: ${{ github.ref }}
 
       - name: Set up Python 3.8

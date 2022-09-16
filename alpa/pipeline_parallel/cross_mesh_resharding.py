@@ -34,13 +34,6 @@ def next_resharding_task_uuid():
     return resharding_task_counter
 
 
-def _suffix_prod(ary):
-    out = [1]
-    for e in reversed(ary):
-        out.append(out[-1] * e)
-    return list(reversed(out))
-
-
 def _get_chunk_value(spec):
     if isinstance(spec, pxla.Chunked):
         return int(np.prod(spec.chunks))

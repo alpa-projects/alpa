@@ -25,7 +25,7 @@ from typing import Sequence
 import unittest
 
 slow_testcases = set([
-    "pipeline_parallel/test_stage_construction.py",
+    "pipeline_parallel/test_stage_construction_slow.py",
     "torch_frontend/test_zhen.py",
 ])
 

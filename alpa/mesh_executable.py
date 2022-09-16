@@ -405,7 +405,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         Dump intermediate representations and other informations for debugging.
         """
         os.makedirs(folder, exist_ok=True)
-        name = self.hlo_module.name()
+        name = self.hlo_module.name
         name = name[:name.index("shard_parallel") - 1]
         prefix = os.path.join(folder, name)
         with open(f"{prefix}.hlo", "w") as f:
@@ -639,7 +639,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             self.grad_sync_channel_ids = get_grad_sync_channel_ids(
                 self.accumulate_grad.hlo_modules()[0])
             self.skip_allreduce_env_name = (
-                self.accumulate_grad.hlo_modules()[0].name() +
+                self.accumulate_grad.hlo_modules()[0].name +
                 "XLA_SKIP_NCCL_COLLECTIVE_IDS")
 
         # Set up timers
@@ -800,7 +800,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         Dump intermediate representations and other informations for debugging.
         """
         os.makedirs(folder, exist_ok=True)
-        name = self.accumulate_grad_module.name()
+        name = self.accumulate_grad_module.name
         name = name[:name.index("shard_parallel") - 1]
         prefix = os.path.join(folder, name)
         with open(f"{prefix}.hlo", "w") as f:
@@ -847,7 +847,7 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
         self.grad_sync_channel_ids = get_grad_sync_channel_ids(
             self.accumulate_grad.hlo_modules()[0])
         self.skip_allreduce_env_name = (
-            self.accumulate_grad.hlo_modules()[0].name() +
+            self.accumulate_grad.hlo_modules()[0].name +
             "XLA_SKIP_NCCL_COLLECTIVE_IDS")
 
         # Set up timers
@@ -964,7 +964,7 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
             self.grad_sync_channel_ids = get_grad_sync_channel_ids(
                 self.compiled.hlo_modules()[0])
             self.skip_allreduce_env_name = (
-                self.compiled.hlo_modules()[0].name() +
+                self.compiled.hlo_modules()[0].name +
                 "XLA_SKIP_NCCL_COLLECTIVE_IDS")
 
     def launch_on_driver(self, *args, **kwargs):
@@ -991,7 +991,7 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
         super().__init__(worker, uuid, hlo_proto, stage_plan, donated_invars)
         self.grad_sync_channel_ids = get_grad_sync_channel_ids(
             self.compiled.hlo_modules()[0])
-        self.skip_allreduce_env_name = (self.compiled.hlo_modules()[0].name() +
+        self.skip_allreduce_env_name = (self.compiled.hlo_modules()[0].name +
                                         "XLA_SKIP_NCCL_COLLECTIVE_IDS")
 
     # pylint: disable=arguments-differ

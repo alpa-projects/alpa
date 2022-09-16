@@ -43,6 +43,12 @@ alpa.init(cluster="ray")
 # Alternatively, you can use the following command to connect to an existing
 # ray cluster.
 # ray.init(address="auto")
+#
+# Note: `alpa.init(cluster="ray")` uses the gpus resources of the whole ray
+# cluster. To configure Alpa to only use a subset of gpu resources, one can 
+# specific the number of nodes and number of gpus per node.
+# For example, only run 2 gpus when 8 gpus are available 
+# alpa.init('ray', devices_per_node=2, num_nodes=1)  
 
 ################################################################################
 # Train an MLP on a Single Device

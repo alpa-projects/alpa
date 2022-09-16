@@ -196,25 +196,21 @@ class Generator:
     def forward(
         self,
         inputs,
-        cache_ids,
+        cache_id,
         pasts=None,
     ):
-        logger.info(f"Forward begin. cache_ids: {cache_ids}")
+        logger.info(f"Forward begin. cache_id: {cache_id}")
         time_start = time.time()
 
-        assert len(inputs) == 1, "enforcing batch size 1 for now to avoid messy logic with caching past key values"
         inputs = pad_batch(inputs, self.tokenizer.pad_token_id, MAX_BS)
         input_ids = torch.IntTensor(inputs).to(self.torch_device)
 
-        outputs = []
-        cache_id = cache_ids[0]
-
         attention_mask = self.model_wrapper._prepare_attention_mask_for_generation(input_ids, pad_token_id=self.model_wrapper.config.pad_token_id, eos_token_id=self.model_wrapper.config.eos_token_id)
         model_inputs = self.model_wrapper.prepare_inputs_for_generation(input_ids, past=pasts[cache_id][1] if pasts is not None else None, attention_mask=attention_mask)
-        outputs.append(self.model_wrapper(**model_inputs))
+        output = self.model_wrapper(**model_inputs)
 
         logger.info(f"Forward end. e2e latency: {time.time() - time_start:.2f}")
-        return outputs
+        return output
 
     def estimate_performance(self, output_ids, latency):
         """Report the tflops, decoding speed, and latency for decoding 32 tokens."""

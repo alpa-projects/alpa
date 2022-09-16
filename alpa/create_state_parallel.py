@@ -3,8 +3,8 @@ from collections import defaultdict, deque
 from typing import Sequence, Optional
 
 from jax._src.lib import xla_extension as xe
-from jax.core import ClosedJaxpr, Var
-from jax.interpreters import partial_eval as pe, pxla
+from jax.core import Var
+from jax.interpreters import pxla
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 import numpy as np
 
@@ -19,7 +19,7 @@ from alpa.pipeline_parallel.runtime_emitter import PipeshardConfig
 from alpa.pipeline_parallel.stage_construction import UniformStageOption
 from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                AutoShardingOption)
-from alpa.util import jaxpr_to_hlo_module
+from alpa.util import jaxpr_to_hlo_module, trace_jaxpr_with_micro_batch
 
 
 class CreateStateExecutable(PipeshardDriverExecutable):
@@ -74,8 +74,10 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
                                     static_argnums, donated_invars, train_step,
                                     other_args, *avals):
     # Trace to get jaxpr and HloModule
-    jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, avals)
-    closed_jaxpr = ClosedJaxpr(jaxpr, consts)
+    closed_jaxpr, _ = trace_jaxpr_with_micro_batch(fun, [False] * len(avals), 1,
+                                                   avals)
+    out_avals = [v.aval for v in closed_jaxpr.jaxpr.outvars]
+    jaxpr = closed_jaxpr.jaxpr
 
     name = f"{fun.__name__}_create_state_parallel"
     hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, donated_invars)

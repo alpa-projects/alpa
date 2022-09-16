@@ -3,7 +3,7 @@ from collections import namedtuple, defaultdict
 from dataclasses import dataclass
 import enum
 import logging
-from typing import Any, Callable, Dict, Optional, Sequence, Union, Set
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union, Set
 
 from jax.core import Var
 from jax.interpreters import pxla
@@ -245,6 +245,7 @@ class PipeshardConfig:
     schedule: PipelineSchedule
     # Resharding task configs
     device_str_groups: Sequence[Sequence[OrderedSet]]
+    allreduce_groups: Tuple[Sequence[int], Var]
     resharding_tasks: Sequence[ReshardingTask]
     # Input configs
     input_config: PipeshardInputConfig
@@ -275,7 +276,8 @@ class PipelineInstEmitter:
                  schedule: PipelineSchedule, is_batch: Sequence[bool],
                  num_batch: int,
                  default_auto_sharding_option: AutoShardingOption,
-                 manual_stage_option: ManualStageOption, flop_count: int):
+                 manual_stage_option: ManualStageOption, flop_count: int,
+                 allreduce_groups: Tuple[Sequence[int], Var]):
         ##### Input arguments #####
         self.stages = stages
         self.global_invars = global_invars
@@ -291,6 +293,7 @@ class PipelineInstEmitter:
         self.manual_stage_option = manual_stage_option
         self.flop_count = flop_count
         self.sharding_annotated_hlo_texts = [x.get_hlo_text() for x in stages]
+        self.allreduce_groups = allreduce_groups
 
         ##### Internal states #####
         self.uuid_counter = 0  # counter for local buffer uuid
@@ -467,6 +470,7 @@ class PipelineInstEmitter:
             self.schedule,
             # Resharding task configs
             device_str_groups,
+            self.allreduce_groups,
             self._gather_resharding_tasks(),
             # Input configs
             input_config,
@@ -603,6 +607,7 @@ class PipelineInstEmitter:
             hlo_proto = hlo_module.as_serialized_hlo_module_proto()
             exec_config = PartialGradWorkerExecutableConfig(
                 exec_uuid, hlo_proto, stage.stage_plan, stage.donated_invars)
+
             for worker in self.mesh_group[mesh_idx].workers:
                 executable_config_lists[worker].append(exec_config)
 

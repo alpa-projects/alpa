@@ -17,6 +17,7 @@
 
     <link rel="stylesheet" type="text/css" href="//cdn.jsdelivr.net/npm/slick-carousel@1.8.1/slick/slick.css"/>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.9.0/slick.min.js"></script>
+
     <script type="text/javascript">
     // these constants are only used for providing user expectations.
     var OVERHEAD = 1;
@@ -155,6 +156,7 @@
             complete: function () {
                 $("#loader_holder").css("visibility", "hidden");
                 $("#generate-form-button").prop("disabled", false);
+                grecaptcha.reset();
             },
             success: function (data) {
                 console.log("Response:");
@@ -179,13 +181,16 @@
     });
     </script>
 </head>
+
 <style>
+/***** For logo slider *****/
 .slick-slide {
   margin: 0px 20px;
 }
 
 .logo-carousel {
   overflow: inherit;
+  margin-top: 32px;
   /*border-top: 1px solid #353535;*/
   /*border-bottom: 1px solid #353535;*/
 }
@@ -233,8 +238,6 @@
   left: -40px;
 }
 
-/* Media Queries */
-
 @media (max-width: 768px) {
   .slick-arrow {
     width: 1rem;
@@ -246,11 +249,7 @@
   overflow: hidden;
 }
 
-/* JsFiddle Example only/don't use */
-.logo-carousel {
-  margin-top: 32px;
-}
-
+/***** Prompt and result display *****/
 .result-block {
     white-space: pre-wrap;
     word-wrap: break-word;
@@ -260,26 +259,75 @@
 #promptDisplay {
     font-weight: 600;
 }
-.loader {
-    border: 4px solid #f3f3f3;
-    border-radius: 50%;
-    border-top: 4px solid #3498db;
-    width: 30px;
-    height: 30px;
-    animation: spin 2s linear infinite;
-    margin-right: 1em;
-}
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-#loader_holder {
-    visibility: hidden;
-    display: flex;
-    align-items: center;
-}
 #error {
     color: red;
+}
+
+/***** Loader *****/
+#loader_holder {
+    visibility: hidden;
+}
+
+#loaderInline {
+  display: inline-block;
+  vertical-align:middle;
+  width: 20px;
+  height: 20px;
+  margin-left: 5px;
+  margin-right: 5px;
+  border: 2px solid #f3f3f3;
+  border-radius: 50%;
+  border-top: 2px solid #3498db;
+  -webkit-animation: spin 2s linear infinite;
+  animation: spin 2s linear infinite;
+}
+
+@-webkit-keyframes spin {
+  0% {
+    -webkit-transform: rotate(0deg);
+  }
+  100% {
+    -webkit-transform: rotate(360deg);
+  }
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-bottom {
+  position: relative;
+  -webkit-animation-name: animatebottom;
+  -webkit-animation-duration: 1s;
+  animation-name: animatebottom;
+  animation-duration: 1s
+}
+
+@-webkit-keyframes animatebottom {
+  from {
+    bottom: -100px;
+    opacity: 0
+  }
+  to {
+    bottom: 0px;
+    opacity: 1
+  }
+}
+
+@keyframes animatebottom {
+  from {
+    bottom: -100px;
+    opacity: 0
+  }
+  to {
+    bottom: 0;
+    opacity: 1
+  }
 }
 </style>
 
@@ -376,15 +424,14 @@
        <output class='col col-form-label'>0.5</output>
     </div>
 
-    <div> <input class="btn btn-primary btn-lg mt-2" type="submit" value="Generate" id="generate-form-button"/> </div>
-</form>
-
-<div id="loader_holder_super" class="py-2">
-    <div id="loader_holder">
-        <div class="loader"></div>
-        <div>Please be patient. Your generation may take <span id="eta">X</span> seconds. Note that each run may produce different results due to random sampling.</div>
+    <div>
+        {{ recaptcha }}
+        <input class="btn btn-primary btn-lg mt-2" type="submit" value="Generate" id="generate-form-button"/>
+        <div id="loader_holder" style="display:inline; vertical-align:middle">
+            <div id="loaderInline"></div> Please be patient. Your generation may take <span id="eta">X</span> seconds.  <!-- Each run may produce different results due to random sampling. -->
+        </div>
     </div>
-</div>
+</form>
 
 {% if num_return_sequences > 1 %}
 <ul class="nav nav-tabs" id="resultTabNav" role="tablist">

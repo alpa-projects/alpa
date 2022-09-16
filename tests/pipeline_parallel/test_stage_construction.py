@@ -17,31 +17,11 @@ class StageConstructionTest(PipelineBasicTest):
     def test_mlp_layer_and_stage(self):
         self.run_mlp(manual_pipeline_layer=False, stage_option=auto_stage())
 
-    def test_2_layer_bert_stage_construction(self):
-        self.run_n_layer_bert(num_layers=2, stage_option=auto_stage())
-
-    def test_2_layer_bert_layer_and_stage(self):
-        self.run_n_layer_bert(num_layers=2,
-                              manual_pipeline_layer=False,
-                              stage_option=auto_stage())
-
-    def test_8_layer_bert_stage_construction(self):
-        self.run_n_layer_bert(num_layers=8, stage_option=auto_stage())
-
-    def test_8_layer_bert_layer_and_stage(self):
-        self.run_n_layer_bert(num_layers=8,
-                              manual_pipeline_layer=False,
-                              stage_option=auto_stage())
-
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(StageConstructionTest('test_mlp_stage_construction'))
     suite.addTest(StageConstructionTest('test_mlp_layer_and_stage'))
-    suite.addTest(StageConstructionTest('test_2_layer_bert_stage_construction'))
-    suite.addTest(StageConstructionTest('test_2_layer_bert_layer_and_stage'))
-    suite.addTest(StageConstructionTest('test_8_layer_bert_stage_construction'))
-    suite.addTest(StageConstructionTest('test_8_layer_bert_layer_and_stage'))
     return suite
 
 

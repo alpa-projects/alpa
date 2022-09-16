@@ -45,6 +45,7 @@ YAPF_EXCLUDES=(
     '--exclude' 'benchmark/alpa/old_backup/*'
     '--exclude' 'benchmark/deepspeed/*'
     '--exclude' 'benchmark/megatron/*'
+    '--exclude' 'build_jaxlib/*'
     '--exclude' 'docs/*'
     '--exclude' 'examples/*'
     '--exclude' 'playground/*'

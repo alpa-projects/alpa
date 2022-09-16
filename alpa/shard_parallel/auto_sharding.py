@@ -370,7 +370,7 @@ def run_auto_sharding_pass(
     elif return_mode == "stages_and_hook":
         return hlo_stage_names, hlo_stages, hooked_proto, stage_plan
     else:
-        raise ValueError("Invalid return mode:" + return_mode)
+        raise ValueError("Invalid return mode: " + return_mode)
 
 
 def run_spmd_partitioner_pass(
@@ -500,7 +500,7 @@ def get_input_output_sharding_specs(
 
 
 def _hlo_sharding_to_sharding_spec_no_tuple(
-        proto: bytes, aval: ShapedArray,
+        proto: xc.OpSharding, aval: ShapedArray,
         logical_mesh: Sequence[int]) -> pxla.ShardingSpec:
     """The internal function of hlo_sharding_to_sharding_spec."""
     sharding_type, tile_assignment_dimensions, tile_assignment_devices = (
@@ -571,7 +571,8 @@ def _hlo_sharding_to_sharding_spec_no_tuple(
 
 
 def hlo_sharding_to_sharding_spec(
-        hlo_sharding: xe.HloSharding, aval: ShapedArray,
+        hlo_sharding: xe.HloSharding, aval: Union[Sequence[ShapedArray],
+                                                  ShapedArray],
         logical_mesh_shape: Sequence[int]) -> pxla.ShardingSpec:
     """Convert hlo sharding to sharding spec."""
     logical_mesh = LogicalDeviceMesh(

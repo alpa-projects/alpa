@@ -83,8 +83,9 @@ def get_cuda_version_str(no_dot=False):
 install_require_list = [
     "tqdm",
     "ray>=1.13.0",
-    "jax==0.3.5",
-    "flax==0.4.1",
+    "jax==0.3.15",
+    "chex==0.1.4",
+    "flax==0.5.2",
     "pulp>=2.6.0",
     "numpy>=1.20",
     "numba",
@@ -109,69 +110,14 @@ def get_alpa_version():
     raise RuntimeError("Unable to find version string.")
 
 
-def build():
-    """Build the custom pipeline marker API."""
-    # Check cuda version
-    build_command = []
-    if "CUDACXX" in os.environ and os.path.exists(os.environ["CUDACXX"]):
-        cudacxx_path = os.environ["CUDACXX"]
-    else:
-        # infer CUDACXX
-        cuda_version = get_cuda_version_str()
-        cudacxx_path = f"/usr/local/cuda-{cuda_version}/bin/nvcc"
-        if not os.path.exists(cudacxx_path):
-            raise ValueError("Cannot find CUDACXX compiler.")
-
-    # Enter the folder and build
-    build_command += [f"cd alpa/pipeline_parallel/xla_custom_call_marker; "]
-    build_command += [f"CUDACXX={cudacxx_path} ./build.sh"]
-    build_command = " ".join(build_command)
-    print(build_command)
-    ret = subprocess.call(build_command, shell=True)
-    if ret != 0:
-        raise RuntimeError("Failed to build the pipeline markers "
-                           f"with exit code {ret}")
-
-
-def move_file(target_dir, filename):
-    source = filename
-    destination = os.path.join(
-        target_dir, "alpa/pipeline_parallel/xla_custom_call_marker/build",
-        filename.split('/')[-1])
-    # Create the target directory if it doesn't already exist.
-    os.makedirs(os.path.dirname(destination), exist_ok=True)
-    if not os.path.exists(destination):
-        print("Copying {} to {}.".format(source, destination))
-        if IS_WINDOWS:
-            # Does not preserve file mode (needed to avoid read-only bit)
-            shutil.copyfile(source, destination, follow_symlinks=True)
-        else:
-            # Preserves file mode (needed to copy executable bit)
-            shutil.copy(source, destination, follow_symlinks=True)
-
-
-def build_and_move(build_ext):
-    build()
-    files_to_include = glob.glob(
-        "alpa/pipeline_parallel/xla_custom_call_marker/build/*.so")
-    for filename in files_to_include:
-        move_file(build_ext.build_lib, filename)
-
-
 if __name__ == "__main__":
     import setuptools
-    import setuptools.command.build_ext
     from setuptools.command.install import install
-
-    class build_ext(setuptools.command.build_ext.build_ext):
-
-        def run(self):
-            return build_and_move(self)
 
     class BinaryDistribution(setuptools.Distribution):
 
         def has_ext_modules(self):
-            return True
+            return False
 
     class InstallPlatlib(install):
 
@@ -200,13 +146,9 @@ if __name__ == "__main__":
         ],
         keywords=("alpa distributed parallel machine-learning model-parallelism"
                   "gpt-3 deep-learning language-model python"),
-        packages=find_packages(exclude=["playground"]),
+        packages=find_packages(exclude=["benchmark", "examples", "playground", "tests"]),
         python_requires='>=3.7',
-        cmdclass={
-            "build_ext": build_ext,
-            "install": InstallPlatlib
-        },
-        distclass=BinaryDistribution,
+        cmdclass={"install": InstallPlatlib},
         install_requires=install_require_list,
         extras_require={
             'dev': dev_require_list,

@@ -10,34 +10,38 @@ import time
 from collections import OrderedDict
 from functools import partial, partialmethod
 import threading
-from typing import Iterable, Sequence, Any, Union, List
+from typing import Iterable, Dict, Sequence, Any, Union, List
 from warnings import warn
 
-import jax
-import jax.numpy as jnp
-from jax._src import dispatch
-from jax._src.api import FLAGS, ShapeDtypeStruct
-from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
-from jax.api_util import shaped_abstractify
-from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
-                      ShapedArray, Var, AbstractValue)
-from jax.experimental.maps import FrozenDict
-from jax import linear_util as lu
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla, pxla
-from jax.interpreters.xla import _DeviceArray
-from jax.tree_util import tree_map, tree_flatten, PyTreeDef
-import numpy as np
 import flax
 from flax.training import train_state
 from flax.training.common_utils import stack_forest
+import jax
+from jax._src.source_info_util import SourceInfo
+import jax.numpy as jnp
+from jax._src import dispatch, util
+from jax._src.api import FLAGS, ShapeDtypeStruct
+from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
+from jax.api_util import shaped_abstractify
+from jax import core
+from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
+                      Primitive, ShapedArray, Var, AbstractValue, gensym)
+from jax.experimental.maps import FrozenDict
+from jax import linear_util as lu
+from jax.interpreters import partial_eval as pe
+from jax.interpreters import xla, pxla, mlir
+from jax.interpreters.xla import _DeviceArray
+from jax.tree_util import tree_map, tree_flatten, PyTreeDef
+import numpy as np
 import ray
 from ray.util.placement_group import get_current_placement_group,\
     PlacementGroup
-
 import tqdm
+
 import alpa
 from alpa.global_env import global_config, is_worker
+from alpa.monkey_patch import (restore_random, monkey_patch_random,
+                               rng_primitives)
 
 PLACEMENT_GROUP_TIMEOUT_S_ENV = "ALPA_PLACEMENT_GROUP_TIMEOUT_S_ENV"
 
@@ -349,8 +353,6 @@ def jaxpr_to_hlo_module(name: str,
     """
     if backend is None:
         backend = xb.get_backend("gpu")
-    backend_name = backend.platform
-    in_avals = [var.aval for var in closed_jaxpr.jaxpr.invars]
     consts = closed_jaxpr.consts
     map(dispatch.prefetch,
         it.chain(consts, dispatch.jaxpr_literals(closed_jaxpr.jaxpr)))
@@ -358,35 +360,24 @@ def jaxpr_to_hlo_module(name: str,
     # Convert jaxpr to XLA HLO
     tuple_args = False
     axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())
-    name_stack = xla.new_name_stack(xla.wrap_name(name, "parallelize"))
-    c = xc.XlaBuilder(name)
-    xla_consts = xla._xla_consts(c, consts)  # pylint: disable=protected-access
-    xla_args, donated_invars = xla._xla_callable_args(  # pylint: disable=protected-access
-        c,
-        in_avals,
-        tuple_args,
-        donated_invars=donated_invars)
-    ctx = xla.TranslationContext(c, backend_name, axis_env, name_stack)
-    out_nodes = xla.jaxpr_subcomp(ctx, closed_jaxpr.jaxpr, xla_consts,
-                                  *xla_args)
-    out_tuple = xc.ops.Tuple(c, out_nodes)
-
-    # Set up aliases (donating invars)
-    if donated_invars:
-        if backend.platform in ("gpu", "tpu"):
-            donation_results = xla.set_up_aliases(c, xla_args,
-                                                  c.GetShape(out_tuple),
-                                                  donated_invars, tuple_args)
-        if any(donation_results):
-            unused_donations = [
-                str(c.GetShape(a))
-                for a, d in zip(xla_args, donation_results)
-                if d
-            ]
-            warn_msg = ", ".join(unused_donations)
-            warn(f"Some donated buffers were not usable: {warn_msg}")
-
-    return c.build(out_tuple).as_hlo_module()
+    name_stack = util.new_name_stack(xla.wrap_name(name, "parallelize"))
+    closed_jaxpr = ClosedJaxpr(closed_jaxpr.jaxpr, consts)
+    unordered_effects = [
+        eff for eff in closed_jaxpr.effects if eff not in core.ordered_effects
+    ]
+    ordered_effects = [
+        eff for eff in closed_jaxpr.effects if eff in core.ordered_effects
+    ]
+    lowering_result = mlir.lower_jaxpr_to_module(
+        name, closed_jaxpr,
+        unordered_effects, ordered_effects, backend.platform,
+        mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars)
+    xla_computation = xe.mlir.mlir_module_to_xla_computation(
+        mlir.module_to_string(lowering_result.module),
+        use_tuple_args=tuple_args,
+        return_tuple=True)
+    ret = xla_computation.as_hlo_module()
+    return ret
 
 
 def setup_computation_alias(xla_computation: Union[xc.XlaComputation,
@@ -704,6 +695,228 @@ def clone_jaxpr(closed_jaxpr: ClosedJaxpr,
     return ClosedJaxpr(jaxpr, consts)
 
 
+def new_jaxpr_eqn(invars,
+                  outvars,
+                  primitive,
+                  params,
+                  effects=None,
+                  source_info=None):
+    """Create a new jaxpr equation."""
+    effects = effects or core.no_effects
+    return core.new_jaxpr_eqn(invars, outvars, primitive, params, effects,
+                              source_info)
+
+
+def clone_jaxpr_eqn(eqn: JaxprEqn,
+                    invars: Sequence[Atom] = None,
+                    outvars: Sequence[Var] = None,
+                    primitive: Primitive = None,
+                    params: Dict[str, Any] = None,
+                    effects: Any = None,
+                    source_info: SourceInfo = None):
+    invars = list(invars or eqn.invars)
+    outvars = list(outvars or eqn.outvars)
+    primitive = primitive or eqn.primitive
+    params = dict(params or eqn.params)
+    source_info = source_info or eqn.source_info
+    effects = effects or eqn.effects
+    return new_jaxpr_eqn(invars, outvars, primitive, params, effects,
+                         source_info)
+
+
+def process_remat(closed_jaxpr: ClosedJaxpr):
+    """Offload remat call from forward to backward.
+
+    remat in Jax generates some remat_call in the forward part, but these
+    remat_call only outputs constant and does not rely on inputs.
+    Hence, offloading them into the backward part does not enlong any liveness
+    interval, while helps reduce forward output size.
+
+    As Alpa monkey patches random number generation to stateful version,
+    this function also gets the generated rng state and set it an input
+    of the offloaded remat part.
+
+    Args:
+        closed_jaxpr: the original jaxpr.
+
+    Returns:
+        new_jaxpr: the processed jaxpr
+    """
+    # pylint: disable=import-outside-toplevel
+    from alpa.pipeline_parallel.primitive_def import pipeline_p
+
+    def only_create_consts(jaxpr: Jaxpr):
+        const_vars = OrderedSet()
+        for eqn in jaxpr.eqns:
+            for var in eqn.invars:
+                if isinstance(var, Var) and var not in const_vars:
+                    return False
+            const_vars.update(
+                [v for v in eqn.outvars if not isinstance(v, DropVar)])
+        return True
+
+    def only_input_consts(eqn: JaxprEqn):
+        in_bytes = 0
+        for var in eqn.invars:
+            if not isinstance(var, Var):
+                continue
+            if isinstance(var, DropVar):
+                continue
+            in_bytes += np.prod(var.aval.shape) * np.dtype(
+                var.aval.dtype).itemsize
+        return in_bytes == 0
+
+    def is_meaningful(inv: Atom):
+        return isinstance(inv, Var) and not isinstance(inv, DropVar)
+
+    def _offload_remat_process_pipeline(eqn: JaxprEqn,
+                                        discard_invars: Sequence[Var]):
+        discard_invars = set(discard_invars)
+        new_invars = []
+        new_outvars = []
+        for inv, outv in zip(eqn.invars, eqn.outvars):
+            if not (is_meaningful(inv) and inv in discard_invars):
+                new_invars.append(inv)
+                new_outvars.append(outv)
+        return clone_jaxpr_eqn(eqn, new_invars, new_outvars)
+
+    def difference_cross_marker(eqns, base, dif):
+        base = set(base)
+        dif = set(v for v in dif if is_meaningful(v))
+        pipeline_mapping = {}
+        for eqn in eqns:
+            if eqn.primitive is pipeline_p:
+                for inv, outv in zip(eqn.invars, eqn.outvars):
+                    if is_meaningful(inv) and is_meaningful(outv):
+                        pipeline_mapping[outv] = inv
+        for var in dif:
+            base.discard(var)
+            while var in pipeline_mapping:
+                var = pipeline_mapping[var]
+                base.discard(var)
+        return base
+
+    rng_primitives_set = set(rng_primitives)
+
+    def add_rng_as_output(jaxpr: Jaxpr):
+        rng_outvars = []
+        for eqn in jaxpr.eqns:
+            if eqn.primitive in rng_primitives_set:
+                assert not eqn.primitive.multiple_results
+                rng_outvars.append(eqn.outvars[0])
+        new_outvars = jaxpr.outvars + rng_outvars
+        return Jaxpr(jaxpr.constvars, jaxpr.invars, new_outvars,
+                     jaxpr.eqns), rng_outvars
+
+    def get_rng_from_input(jaxpr: Jaxpr):
+        new_invars = list(jaxpr.invars)
+        new_eqns = []
+        for eqn in jaxpr.eqns:
+            if eqn.primitive in rng_primitives_set:
+                new_invars.append(eqn.outvars[0])
+            else:
+                new_eqns.append(eqn)
+        return Jaxpr(jaxpr.constvars, new_invars, jaxpr.outvars, new_eqns)
+
+    def clone_outvars(outvars):
+        new_outvars = []
+        var_mapping = {}
+        for v in outvars:
+            if isinstance(v, DropVar):
+                new_outvars.append(v)
+            else:
+                new_v = gensym_fn(v.aval)
+                new_outvars.append(new_v)
+                var_mapping[v] = new_v
+                while v in var_pipeline_mapping:
+                    v = var_pipeline_mapping[v]
+                    var_mapping[v] = new_v
+        return new_outvars, var_mapping
+
+    # Find offloaded eqns
+    offloaded_eqns = set()
+    gensym_fn = gensym([closed_jaxpr.jaxpr])
+
+    for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
+        if (eqn.primitive == pe.remat_call_p and only_input_consts(eqn) and
+                only_create_consts(eqn.params["call_jaxpr"])):
+            offloaded_eqns.add(eqn_idx)
+    # Find where each eqn is offloaded
+    # A faster way is to rewrite remat to set each call's name unique, but users
+    # may use 'from jax import remat' instead of 'jax.remat()' which disables
+    # monkey patch to remat.
+    # Dict[fwd_outvar -> fwd_remat_call_idx]
+    offloaded_vars_from = {}
+    # Dict[var -> var]
+    var_pipeline_mapping = {}
+    # Dict[bwd_remat_call_idx -> fwd_remat_call_idx]
+    offload_to = {}
+    for eqn_idx in offloaded_eqns:
+        for var in closed_jaxpr.eqns[eqn_idx].outvars:
+            if is_meaningful(var):
+                offloaded_vars_from[var] = eqn_idx
+    for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
+        if (eqn.primitive == pe.remat_call_p and eqn.params["differentiated"]):
+            for inv in eqn.invars:
+                if is_meaningful(inv) and inv in offloaded_vars_from:
+                    fwd_eqn_idx = offloaded_vars_from[inv]
+                    assert (eqn_idx not in offload_to or
+                            offload_to[eqn_idx] == fwd_eqn_idx
+                           ), "A backward matches multiple forward."
+                    offload_to[eqn_idx] = fwd_eqn_idx
+        elif eqn.primitive == pipeline_p:
+            for inv, outv in zip(eqn.invars, eqn.outvars):
+                if is_meaningful(inv) and inv in offloaded_vars_from:
+                    offloaded_vars_from[outv] = eqn
+                    var_pipeline_mapping[inv] = outv
+    # Insert the fwd remat call and rewrite corresponding bwd remat call
+    new_eqns = []
+    discarded = difference_cross_marker(closed_jaxpr.eqns,
+                                        offloaded_vars_from.keys(),
+                                        closed_jaxpr.jaxpr.outvars)
+    # Dict[fwd_eqn_idx -> Sequence[fwd_rng_outvars]]
+    rng_vars = {}
+    for eqn_idx, eqn in enumerate(closed_jaxpr.eqns):
+        if eqn.primitive is pipeline_p:
+            # Rewrite pipeline_markers
+            new_eqns.append(_offload_remat_process_pipeline(eqn, discarded))
+        elif eqn_idx in offloaded_eqns:
+            # add rng result as an output
+            new_params = dict(eqn.params)
+            new_called, rng_outvars = add_rng_as_output(
+                new_params["call_jaxpr"])
+            new_params["call_jaxpr"] = new_called
+            rng_outvars = [gensym_fn(v.aval) for v in rng_outvars]
+            new_outvars = list(eqn.outvars) + rng_outvars
+            rng_vars[eqn_idx] = rng_outvars
+            cloned_eqn = clone_jaxpr_eqn(eqn,
+                                         outvars=new_outvars,
+                                         params=new_params)
+            new_eqns.append(cloned_eqn)
+        elif eqn_idx not in offload_to:
+            new_eqns.append(eqn)
+        else:
+            inserted_idx = offload_to[eqn_idx]
+            # clone the forward remat call
+            # rewrite the inserted. Remove its rng, add invars from the cloned
+            inserted = closed_jaxpr.eqns[inserted_idx]
+            cloned_invars = list(inserted.invars)
+            cloned_invars.extend(rng_vars[inserted_idx])
+            cloned_params = dict(inserted.params)
+            cloned_params["call_jaxpr"] = get_rng_from_input(
+                inserted.params["call_jaxpr"])
+            cloned_outvars, var_mapping = clone_outvars(inserted.outvars)
+            cloned_fwd = clone_jaxpr_eqn(inserted,
+                                         cloned_invars,
+                                         cloned_outvars,
+                                         params=cloned_params)
+            # rewrite invars for bwd remat call
+            new_invars = [get_var_mapping(var_mapping, v) for v in eqn.invars]
+            new_eqn = clone_jaxpr_eqn(eqn, invars=new_invars)
+            new_eqns.extend([cloned_fwd, new_eqn])
+    return clone_jaxpr(closed_jaxpr, eqns=new_eqns)
+
+
 def trace_jaxpr_with_micro_batch(fun: lu.WrappedFun,
                                  batch_invars: Sequence[bool],
                                  num_micro_batches: int,
@@ -711,6 +924,8 @@ def trace_jaxpr_with_micro_batch(fun: lu.WrappedFun,
                                  batch_dim: int = 0):
     """Trace the jaxpr of the computation of a micro batch."""
     assert batch_dim == 0, "Only support batch_dim == 0"
+    # Monkey patch jax.random to fast stateful version
+    monkey_patch_random()
 
     avals = []
     batch_size = None
@@ -732,6 +947,10 @@ def trace_jaxpr_with_micro_batch(fun: lu.WrappedFun,
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
+    closed_jaxpr = process_remat(closed_jaxpr)
+
+    # Restore jax.random to original stateless version
+    restore_random()
     return closed_jaxpr, batch_size
 
 

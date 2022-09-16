@@ -7,7 +7,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import linen as nn
-from flax import optim
 from flax.training.train_state import TrainState
 from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 import optax
@@ -82,12 +81,8 @@ def assert_fully_sharded(x):
 
 
 def assert_sharding_zero_stage_3(state, allow_not_sharded_params=0):
-    if isinstance(state, optim.base.Optimizer):
-        params = jax.tree_util.tree_leaves(state.target)
-        opt_state = jax.tree_util.tree_leaves(state.state.param_states)
-    else:
-        params = jax.tree_util.tree_leaves(state.params)
-        opt_state = jax.tree_util.tree_leaves(state.opt_state)
+    params = jax.tree_util.tree_leaves(state.params)
+    opt_state = jax.tree_util.tree_leaves(state.opt_state)
 
     num_not_sharded = 0
     for weight in chain(params, opt_state):
@@ -104,12 +99,8 @@ def assert_data_parallel_cost(state,
                               mesh_dim,
                               allow_not_sharded_params=0,
                               optimizer_type=None):
-    if isinstance(state, optim.base.Optimizer):
-        params = jax.tree_util.tree_leaves(state.target)
-        opt_state = jax.tree_util.tree_leaves(state.state.param_states)
-    else:
-        params = jax.tree_util.tree_leaves(state.params)
-        opt_state = jax.tree_util.tree_leaves(state.opt_state)
+    params = jax.tree_util.tree_leaves(state.params)
+    opt_state = jax.tree_util.tree_leaves(state.opt_state)
 
     # Check communication cost
     replicated_penalty = int(
@@ -311,8 +302,10 @@ class AutoShardingMLPTest(unittest.TestCase):
             count_communication_primitives(hlo_ir))
         if self.method.as_option.prefer_reduce_scatter:
             assert n_all_reduce == num_layers - 1
-            assert n_all_gather == 1
+            # two reduce-scatter for two tensor dimensions
             assert n_reduce_scatter == 2
+            # two for two tensor dimensions, although we can merge them
+            assert n_all_gather <= 2
             assert n_total == n_all_reduce + n_all_gather + n_reduce_scatter
         else:
             assert n_all_reduce == num_layers

@@ -29,7 +29,6 @@ import threading
 import time
 from typing import Any, List, Union, Sequence, Tuple, Optional
 
-import jax
 from jax import core, xla, device_put
 from jax._src.api import ShapeDtypeStruct
 from jax._src.lib import xla_bridge as xb, xla_extension as xe
@@ -121,7 +120,7 @@ class MeshHostWorker:
         self.launched = False
         self.distributed_client = (
             xla_client._xla.get_distributed_runtime_client(
-                server_address, host_id))
+                server_address, host_id, use_coordination_service=False))
         logger.debug(
             f"{host_id}: Trying to connect to xla runtime at {server_address}")
         self.distributed_client.connect()
@@ -208,10 +207,10 @@ class MeshHostWorker:
     def _get_buffers_with_local_ids(self, uuid: int, device_ids: Sequence[int]):
         bufs = self.buffers[uuid]
         if device_ids is None:
-            return bufs
+            return map(np.asarray, bufs)
         elif not isinstance(device_ids, Iterable):
-            return bufs[device_ids]
-        return [bufs[device_id] for device_id in device_ids]
+            return np.asarray(bufs[device_ids])
+        return [np.asarray(bufs[device_id]) for device_id in device_ids]
 
     def get_buffers(self,
                     uuids: Union[Sequence[int], int],
@@ -284,6 +283,7 @@ class MeshHostWorker:
         return self.executables[uuid].grad_sync_channel_ids
 
     def set_runtime_random_seed(self, seed: int):
+        seed = seed + (self.mesh_id << 20 if self.mesh_id else 0)
         for d in self.local_devices:
             d.set_seed(seed)
 
@@ -397,6 +397,16 @@ class MeshHostWorker:
     @staticmethod
     def destroy_collective_group(group_name: str = "default"):
         col.destroy_collective_group(group_name)
+
+    def create_and_set_cross_mesh_communicators(self, world_size, rank, backend,
+                                                group_name):
+        """Create collective communicators for the cross mesh group."""
+        if not col.is_group_initialized(group_name):
+            self.init_collective_group(world_size, rank, backend, group_name)
+        g = col.check_and_get_group(group_name)
+        devices = list(range(self.num_devices))
+        comms = g.get_nccl_collective_communicator(devices, "xla")
+        xe.set_cross_mesh_communicator(comms, "")
 
     def put_resharding_send_task(self, uuid, tasks, group_name):
         self.send_tasks[uuid] = ReshardingSendTask(tile_specs=tasks,
@@ -835,9 +845,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
             shards = [
                 args[i][shard_indices[i][k]] for k in range(len(self.devices))
             ]
-            buffers = [
-                jax.device_put(x, d) for x, d in zip(shards, self.devices)
-            ]
+            buffers = [device_put(x, d) for x, d in zip(shards, self.devices)]
             arrays.append(
                 pxla._ShardedDeviceArray(avals[i], sharding_specs[i], buffers,
                                          shard_indices[i]))
@@ -845,8 +853,9 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def get_outputs_handler(self, avals: Sequence[ShapedArray],
                             sharding_specs: Sequence[ShardingSpec]):
-        outs_handler = pxla.local_avals_to_results_handler(
-            sharding_specs, avals)
+        pmap_specs = pxla._get_pmap_sharding(np.arange(self.num_devices),
+                                             sharding_specs)
+        outs_handler = pxla.local_avals_to_results_handler(avals, pmap_specs)
         return outs_handler
 
     def set_runtime_random_seed(self, seed: int):
@@ -955,7 +964,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.server_address = f"{self.head_ip}:{port}"
         logger.debug(f"Trying to start XLA gRPC server on port: {port}...")
         self.service_server = xla_client._xla.get_distributed_runtime_service(
-            self.server_address, self.num_hosts)
+            self.server_address, self.num_hosts, use_coordination_service=False)
         logger.debug(f"Success to start XLA gRPC server on port: {port}...")
         time.sleep(0.4)
 
@@ -1136,8 +1145,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def delete_remote_buffers(self, ary_refs: List["RemoteArrayRef"]):
         """Delete remote buffers."""
-        if (self.workers is None or not ray or not ray_worker or
-                not ray.is_initialized()):
+        if not self.workers or not ray or not ray_worker or not np.array:
             return
 
         # Put delete requests into a buffer
@@ -1149,10 +1157,13 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         if (self.to_delete_remote_ref_ct >
                 global_config.delete_remote_arrays_threshold):
             to_delete_remote_refs = np.array(self.to_delete_remote_refs)
-            for host_id in range(self.num_hosts):
-                self.workers[host_id].delete_buffers.remote(
-                    to_delete_remote_refs)
-                self.to_delete_remote_refs = []
+            try:
+                for host_id in range(self.num_hosts):
+                    self.workers[host_id].delete_buffers.remote(
+                        to_delete_remote_refs)
+            except AttributeError:
+                pass
+            self.to_delete_remote_refs = []
             self.to_delete_remote_ref_ct = 0
 
     def block_until_ready_remote_buffers(self,
@@ -1257,11 +1268,14 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def delete_remote_executable(self, exec_uuid: int):
         """Delete remote worker executables of a driver executable."""
-        if ray is None or self.workers is None or not ray.is_initialized():
+        if not self.workers or not ray or not ray_worker or not np.array:
             return
 
-        for w in self.workers:
-            w.delete_executable.remote(exec_uuid)
+        try:
+            for w in self.workers:
+                w.delete_executable.remote(exec_uuid)
+        except AttributeError:
+            pass
 
     def set_runtime_random_seed(self, seed: int):
         for w in self.workers:
@@ -1928,7 +1942,7 @@ class PhysicalDeviceMeshGroup:
 
     def set_runtime_random_seed(self, seed: int):
         for m in self.meshes:
-            m.set_runtime_random_seed(seed + m.mesh_id << 20)
+            m.set_runtime_random_seed(seed)
 
     def sync_workers(self):
         """Sync device activities on all workers."""
@@ -2174,7 +2188,9 @@ def init_global_cluster(cluster: str,
         global_physical_mesh = LocalPhysicalDeviceMesh()
     elif cluster == "ray":
         if not ray.is_initialized():
-            ray.init(address="auto", ignore_reinit_error=True)
+            ray.init(address="auto",
+                     ignore_reinit_error=True,
+                     namespace="alpa_ray_space")
         update_jax_platform("cpu")
         global_cluster = DeviceCluster(devices_per_node, num_nodes)
         global_virtual_physical_mesh = (
@@ -2253,6 +2269,24 @@ def get_global_num_devices():
         return global_physical_mesh.num_devices
 
     raise RuntimeError("Please call alpa.init first")
+
+
+def create_and_record_cross_mesh_collective_communicators(
+        meshes: Sequence[DistributedPhysicalDeviceMesh]):
+    workers = []
+    device_strs = []
+    for mesh in meshes:
+        workers.extend(mesh.workers)
+        device_strs.extend(mesh.device_strs)
+    world_size = len(workers)
+    backend = "nccl"
+    group_name = ",".join(device_strs)
+    refs = []
+    for rank, worker in enumerate(workers):
+        ref = worker.create_and_set_cross_mesh_communicators.remote(
+            world_size, rank, backend, group_name)
+        refs.append(ref)
+    return refs
 
 
 ########################################

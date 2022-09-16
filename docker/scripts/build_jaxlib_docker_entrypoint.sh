@@ -7,8 +7,8 @@ then
   exit 1
 fi
 
-export CC=/dt7/usr/bin/gcc
-export GCC_HOST_COMPILER_PATH=/dt7/usr/bin/gcc
+export CC=/dt8/usr/bin/gcc
+export GCC_HOST_COMPILER_PATH=/dt8/usr/bin/gcc
 export CUDA_PATH=/usr/local/cuda
 export LD_LIBRARY_PATH=$CUDA_PATH/lib64:$LD_LIBRARY_PATH
 
@@ -85,19 +85,19 @@ python -m cupyx.tools.install_library --library nccl --cuda $JAX_CUDA_VERSION
 cd /build/alpa/build_jaxlib
 case $2 in
   cuda)
-    python build/build.py --enable_cuda --bazel_startup_options="--output_user_root=/build/root" --tf_path=$(pwd)/../third_party/tensorflow-alpa
+    python build/build.py --enable_cuda --bazel_startup_options="--output_user_root=/build/root" --bazel_options=--override_repository=org_tensorflow=$(pwd)/../third_party/tensorflow-alpa 
     ;;
   nocuda)
-    python build/build.py --enable_tpu --bazel_startup_options="--output_user_root=/build/root" --tf_path=$(pwd)/../third_party/tensorflow-alpa
+    python build/build.py --enable_tpu --bazel_startup_options="--output_user_root=/build/root" --bazel_options=--override_repository=org_tensorflow=$(pwd)/../third_party/tensorflow-alpa
     ;;
   *)
     usage
 esac
 
-if ! python -m auditwheel show dist/jaxlib-*.whl | egrep 'platform tag: "(manylinux2010_x86_64|manylinux_2_12_x86_64)"' > /dev/null; then
+if ! python -m auditwheel show dist/jaxlib-*.whl | egrep 'platform tag: "(manylinux2014_x86_64|manylinux_2_17_x86_64)"' > /dev/null; then
   # Print output for debugging
   python -m auditwheel show dist/jaxlib-*.whl
-  echo "jaxlib wheel is not manylinux2010 compliant"
+  echo "jaxlib wheel is not manylinux2014 compliant"
   exit 1
 fi
 cp -r dist/* /dist

@@ -5,7 +5,7 @@ import jax
 from jax.lib import xla_client as xc, xla_bridge as xb
 import jax.numpy as jnp
 
-from alpa.pipeline_parallel.primitive_def import xla_pipeline_marker, pipeline_p
+from alpa.pipeline_parallel.primitive_def import xla_custom_call, pipeline_p
 from alpa.testing import assert_allclose
 
 ops = xc.ops
@@ -29,12 +29,12 @@ class PipelineMarkerTest(unittest.TestCase):
         a = ops.Add(x, y)
         b = ops.Mul(x, y)
 
-        output_tuple = xla_pipeline_marker(c, "start", "1", a, b)
+        output_tuple = xla_custom_call(c, "pipeline_marker", "1$start", a, b)
         a = ops.GetTupleElement(output_tuple, 0)
         b = ops.GetTupleElement(output_tuple, 1)
 
         z = ops.Add(a, b)
-        output_tuple = xla_pipeline_marker(c, "end", "1", z)
+        output_tuple = xla_custom_call(c, "pipeline_marker", "1$end", z)
         z = ops.GetTupleElement(output_tuple, 0)
 
         c = c.build(z)

@@ -51,14 +51,14 @@ git checkout -qf FETCH_HEAD
 
 # install jaxlib and jax
 python3 update_version.py --git-describe
-python3 setup.py bdist_wheel
+python3 setup.py bdist_wheel sdist
 
-if ! python3 -m auditwheel show dist/alpa-*.whl  | egrep 'platform tag: "(manylinux2014_x86_64|manylinux_2_17_x86_64)"' > /dev/null; then
-  # Print output for debugging
-  python3 -m auditwheel show dist/alpa-*.whl
-  echo "jaxlib wheel is not manylinux2014 compliant"
-  exit 1
-fi
+#if ! python3 -m auditwheel show dist/alpa-*.whl  | egrep 'platform tag: "(manylinux2014_x86_64|manylinux_2_17_x86_64)"' > /dev/null; then
+#  # Print output for debugging
+#  python3 -m auditwheel show dist/alpa-*.whl
+#  echo "jaxlib wheel is not manylinux2014 compliant"
+#  exit 1
+#fi
 
-rename 'linux' manylinux2014 dist/*.whl
+#rename 'linux' manylinux2014 dist/*.whl
 cp -r dist/*whl /dist/

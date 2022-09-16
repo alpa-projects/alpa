@@ -144,7 +144,6 @@ class OPTSelfAttention(nn.Module):
         query_states, key_states, value_states = jnp.split(qkv_combined_states,
                                                            3,
                                                            axis=3)
-
         # shape: [B, S, #head, head_dim]
         query_states = query_states.reshape(hidden_states.shape[:2] + (
             self.config.decoder_attention_heads, head_dim))
@@ -182,10 +181,13 @@ class OPTSelfAttention(nn.Module):
             # the padding added by the tokenizer. This internal padding
             # should not update cache and step_ct
             # shape: [B, 1, 1, S_max]
-            is_internal_padding = (attention_mask == 2)
-            num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
-            attention_mask = (attention_mask == 1)
 
+            if attention_mask is not None:
+                is_internal_padding = (attention_mask == 2)
+                num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
+                attention_mask = (attention_mask == 1)
+            else:
+                num_internal_pad = 0
             attention_cache = key_states, value_states, cache_index + query_len - num_internal_pad
 
             # shape: [B, 1, S_max, S_max]

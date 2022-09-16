@@ -144,7 +144,6 @@ class OPTSelfAttention(nn.Module):
 
     def __call__(self,
                  hidden_states,
-                 batch_idxs,
                  output_attentions: bool = False,
                  attention_cache=None):
         head_dim = self.config.decoder_embed_dim // self.config.decoder_attention_heads
@@ -163,11 +162,15 @@ class OPTSelfAttention(nn.Module):
 
         # Shape of cache_key and cache_value: [batch * max_length, heads, head_dim]
         # Shape of cache_index: [batch * max_length]
-        cache_key, cache_value, cache_index = attention_cache
+        cache_key, cache_value = attention_cache
 
+        # perform_attention = True
+        # if perform_attention:
         attn_output = fused_mmha(qkv_combined_states, self.qkv_combined_bias,
-                                 batch_idxs, cache_key, cache_value,
-                                 cache_index)
+                                 cache_key, cache_value)
+        # else:
+        #     attn_output = jnp.ones((qkv_combined_states.shape[0], qkv_combined_states.shape[2], qkv_combined_states.shape[3]))
+
         attn_output = attn_output.reshape(attn_output.shape[:1] + (-1,))
 
         # Update cache key and value. Note that the cache index should
@@ -199,13 +202,11 @@ class OPTAttention(nn.Module):
 
     def __call__(self,
                  hidden_states,
-                 batch_idxs,
                  output_attentions: bool = False,
                  attention_cache=None):
         residual = hidden_states
         hidden_states = self.layer_norm(hidden_states)
         attn_outputs = self.self(hidden_states,
-                                 batch_idxs,
                                  output_attentions=output_attentions,
                                  attention_cache=attention_cache)
         attn_output = attn_outputs[0]
@@ -261,12 +262,10 @@ class OPTTransformerLayer(nn.Module):
 
     def __call__(self,
                  hidden_states,
-                 batch_idxs,
                  output_attentions: bool = False,
                  attention_cache=None):
 
         attention_outputs = self.attention(hidden_states,
-                                           batch_idxs,
                                            output_attentions=output_attentions,
                                            attention_cache=attention_cache)
         attention_output = attention_outputs[0]
@@ -294,7 +293,6 @@ class OPTTransformerLayerCollection(nn.Module):
     def __call__(
         self,
         hidden_states,
-        batch_idxs,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
@@ -321,7 +319,6 @@ class OPTTransformerLayerCollection(nn.Module):
             if attention_cache is not None:
                 layer_attention_cache = attention_cache[i]
             layer_outputs = layer(hidden_states,
-                                  batch_idxs,
                                   output_attentions=output_attentions,
                                   attention_cache=layer_attention_cache)
             hidden_states = layer_outputs[0]
@@ -361,7 +358,6 @@ class OPTTransformerModule(nn.Module):
         self,
         input_ids,
         position_ids,
-        batch_idxs,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
@@ -370,7 +366,6 @@ class OPTTransformerModule(nn.Module):
         hidden_states = self.embeddings(input_ids, position_ids)
         outputs = self.encoder(
             hidden_states,
-            batch_idxs,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
@@ -417,7 +412,6 @@ class OPTForLMModule(nn.Module):
         self,
         input_ids,
         position_ids,
-        batch_idxs,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
@@ -427,7 +421,6 @@ class OPTForLMModule(nn.Module):
         outputs = self.transformers(
             input_ids,
             position_ids,
-            batch_idxs,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
@@ -463,47 +456,43 @@ class OPTForLMModule(nn.Module):
         )
 
 
-def init_model_aval(config, batch_size=1, max_length=128):
-    """Initialize model with parameters with abstract values (shape-only arrays)."""
+def init_model_aval(config, total_input_len, total_cache_len):
+    """Woosuk's version: we declare total_input_len and total_cache_len in advance."""
     model = OPTForLMModule(config, dtype=config.dtype)
     rngkey = jax.core.ShapedArray((2,), jnp.uint32)
-    input_ids = jax.core.ShapedArray((batch_size * max_length,), jnp.int32)
-    position_ids = jax.core.ShapedArray((batch_size * max_length,), jnp.int32)
-    batch_ids = jax.core.ShapedArray((batch_size * max_length,), jnp.int32)
-    cache = init_cache_aval(config, batch_size)
+    input_ids = jax.core.ShapedArray((total_input_len,), jnp.int32)
+    position_ids = jax.core.ShapedArray((total_input_len,), jnp.int32)
+    cache = init_cache_aval(config, total_cache_len)
+
     params = jax.eval_shape(model.init,
                             rngkey,
                             input_ids,
                             position_ids,
-                            batch_ids,
                             attention_cache=cache)
     params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, config.dtype),
                           params)
     return model, params
 
 
-def init_cache_aval(config, batch_size):
-    """Initialize cache with abstract values (shape-only arrays)."""
+def init_cache_aval(config, total_cache_len):
     dtype = config.dtype
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
 
     all_cache = []
     for i in range(config.decoder_layers):
         layer_cache = (
-            jax.core.ShapedArray((batch_size * config.max_target_positions,
+            jax.core.ShapedArray((total_cache_len,
                                   config.decoder_attention_heads, head_dim),
                                  dtype),
-            jax.core.ShapedArray((batch_size * config.max_target_positions,
+            jax.core.ShapedArray((total_cache_len,
                                   config.decoder_attention_heads, head_dim),
                                  dtype),
-            jax.core.ShapedArray((batch_size * config.max_target_positions,),
-                                 jnp.int32),
         )
         all_cache.append(layer_cache)
     return tuple(all_cache)
 
 
-def init_cache_np(config):
+def init_cache_np(config, total_cache_len):
     """Init cache per sequence with numpy arrays."""
     np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
     head_dim = config.decoder_embed_dim // config.decoder_attention_heads
@@ -511,13 +500,12 @@ def init_cache_np(config):
     all_cache = []
     for i in range(config.decoder_layers):
         layer_cache = (
-            np.zeros((config.max_target_positions,
+            np.zeros((total_cache_len,
                       config.decoder_attention_heads, head_dim),
                      dtype=np_dtype),
-            np.zeros((config.max_target_positions,
+            np.zeros((total_cache_len,
                       config.decoder_attention_heads, head_dim),
                      dtype=np_dtype),
-            np.zeros((1,), np.int32),
         )
         all_cache.append(layer_cache)
     return tuple(all_cache)
@@ -566,7 +554,7 @@ def load_params_np(params, path, config, dummy=False):
                    load_array("decoder.layer_norm.weight"))
         load_param("params.transformers.layer_norm.bias",
                    load_array("decoder.layer_norm.bias"))
-    for i in tqdm(range(config.decoder_layers)):
+    for i in range(config.decoder_layers):
         param_prefix = f"params.transformers.encoder.{i}."
         load_prefix = f"decoder.layers.{i}."
         # Attention weights

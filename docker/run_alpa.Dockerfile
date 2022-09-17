@@ -27,6 +27,3 @@ RUN . /opt/conda/etc/profile.d/conda.sh && \
     pip3 install cupy-cuda113 && \
     pip3 install alpa && \
     pip3 install jaxlib==0.3.15+cuda113.cudnn820 -f https://alpa-projects.github.io/wheels.html
-
-# run test_install
-RUN python -m alpa.test_install

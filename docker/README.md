@@ -1,24 +1,23 @@
 # Alpa Docker
 This directory contains Alpa's docker infrastructure. Alpa uses docker to provide environment to build and release Python wheels and to perform unit tests.
-Most docker files in this directory rely on [nvidia-docker](https://github.com/NVIDIA/nvidia-docker/).
+Most docker files in this directory depend on [nvidia-docker](https://github.com/NVIDIA/nvidia-docker/).
 
 Below we provide instructions on 
-- How to use docker to build jaxlib-alpa wheels 
-- How to use docker to run Alpa
+- How to build Alpa-modified jaxlib in a docker container 
+- How to run Alpa in a docker container
 
-More example usage of Alpa docker files can be found in the directory of [Alpa CI/CD](../.github/workflows).
+More docker examples can be found in the directory of [Alpa CI/CD](../.github/workflows).
 
 ## Build Jaxlib-alpa wheels using Docker
-We provide a Docker image to build the Alpa-modified Jaxlib wheel inside a container. The modified Jaxlib contains 
-the intra-op parallelism ILP solver and other related implementations, which are necessary to Alpa.
+We provide a Docker image to build the Alpa-modified jaxlib wheels inside a container. 
 
 
 ### Steps
-First, please figure out the CUDA and Python version you want to use to build JaxLib. Current supported versions are below:
+First, figure out the CUDA and Python versions you want to use to build jaxlib. Current we support the following versions:
 - CUDA: 11.1, 11.2, 11.3
 - Python: 3.7, 3.8, 3.9
 
-Supposed we want to build the Jaxlib-alpa with CUDA 11.1 and Python 3.8.
+Suppose we want to build the jaxlib-alpa with CUDA 11.1 and Python 3.8.
 #### Build the docker image
 ```python
 # create a folder to save the output wheels
@@ -42,8 +41,7 @@ mv -f dist/*.whl dist/cuda111/
 Check out the wheel under the folder ``alpa/build/dist/cuda111/``.
 
 ## Run Alpa in a docker container
-You can run Alpa inside a docker container. Below we provide an example to show how to run
-Alpa in a docker container in an interactive shell.
+You can run Alpa inside a docker container. Below are steps on how to run Alpa in a docker container in the interactive mode.
 
 First, build a docker image based on the provided dockerfile:
 ```bash 
@@ -65,4 +63,3 @@ python -m alpa.test_install
 ```
 
 Alternatively, you can skip the interactive shell, and pass commands or job scripts via the `docker run` command to the container.
-

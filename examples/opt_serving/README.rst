@@ -132,7 +132,7 @@ We provide detailed instructions below on how to convert the original OPT-175B w
 
     .. code:: shell
 
-      python3 step_3_convert_to_numpy_weights.py --ckpt_path PATH_TO_SAVE_CHECKPOINT --output-folder OUTPUT_PATH
+      python3 step_3_convert_to_numpy_weights.py --ckpt-path PATH_TO_SAVE_CHECKPOINT --output-folder OUTPUT_PATH
 
 
     The weights will be saved at the folder ``OUTPUT_PATH`` as specified in the command.

@@ -21,7 +21,8 @@ from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves
 from jax.interpreters import pxla
 import jaxlib.xla_extension as jax_xla
 import numpy as np
-
+import ray
+from tqdm import tqdm
 
 ACT2FN = {
     "gelu": partial(nn.gelu, approximate=False),

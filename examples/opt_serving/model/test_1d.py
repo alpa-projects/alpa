@@ -300,12 +300,6 @@ def runner_1d(model, input_pool):
             v_cache[cache_idx:cache_idx+len(input_tokens[i]),:] = cupy.squeeze(value_1d[idx:idx+len(input_tokens[i]),:])
             kv_cache_ids[cache_idx:cache_idx+len(input_tokens[i])] = sentence_id
             idx += len(input_tokens[i])
-            # for _ in range(len(input_tokens[i])):
-            #     k_cache[cache_idx] = key_1d[idx]
-            #     v_cache[cache_idx] = value_1d[idx]
-            #     kv_cache_ids[cache_idx] = sentence_id
-            #     cache_idx += 1
-            #     idx += 1
     # Post-update num_prev_tokens.
     for i, sentence_id in enumerate(input_sentence_ids):
         # TODO: Handle EOS here.

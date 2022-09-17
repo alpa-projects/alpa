@@ -946,6 +946,7 @@ def get_pipeshard_executable(config: BloomConfig,
             output = model.apply(
                 params,
                 batch["input_ids"],
+                attention_mask=batch["mask"],
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states)
             return output
@@ -958,6 +959,9 @@ def get_pipeshard_executable(config: BloomConfig,
                 "input_ids":
                     jax.core.ShapedArray(
                         (batch_size, seq_len), jnp.int32),
+                "mask":
+                    jax.core.ShapedArray(
+                        (batch_size, 1, 1, seq_len), jnp.int8),
                 # "position_ids":
                 #     jax.core.ShapedArray(
                 #         (batch_size, seq_len), jnp.int32),

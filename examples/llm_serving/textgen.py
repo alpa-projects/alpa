@@ -7,11 +7,17 @@ from transformers import AutoTokenizer
 from llm_serving.model.wrapper import get_model
 
 def main(args):
-    # Load the tokenizer. We have to use the 30B version because
-    # other versions have some issues. The 30B version works for all OPT models.
-    tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", use_fast=False)
-    tokenizer.add_bos_token = False
-    
+    # Load the tokenizer.
+    if "opt" in args.model:
+        # We have to use the 30B version because other versions have some issues.
+        # The 30B version works for all OPT models.
+        tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", use_fast=False)
+        tokenizer.add_bos_token = False
+    elif "bloom" in args.model:
+        name = args.model.replace("alpa", "bigscience")\
+                         .replace("jax", "bigscience")
+        tokenizer = AutoTokenizer.from_pretrained(name, use_fast=False)
+
     generate_params = {
         "do_sample": args.do_sample,
         "num_beams": args.num_beams,
@@ -21,15 +27,15 @@ def main(args):
     # Load the model
     model = get_model(model_name=args.model,
                       path="~/opt_weights",
-                      batch_size=4,
+                      batch_size=1,
                       **generate_params)
 
     # Generate
     prompts = [
         "Paris is the capital city of",
-        "Today is a good day and I'd like to",
-        "Computer Science studies the area of",
-        "University of California Berkeley is a public university"
+        #"Today is a good day and I'd like to",
+        #"Computer Science studies the area of",
+        #"University of California Berkeley is a public university"
     ]
     input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
     output_ids = model.generate(input_ids=input_ids,

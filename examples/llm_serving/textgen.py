@@ -39,7 +39,7 @@ def main(args):
     ]
     input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
     output_ids = model.generate(input_ids=input_ids,
-                                max_length=20,
+                                max_length=64,
                                 **generate_params)
     outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
     

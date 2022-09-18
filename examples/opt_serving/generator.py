@@ -60,7 +60,6 @@ class Generator:
         # Init model
         self.model_wrapper = get_model(self.model_name, self.path,
                                        torch_device=self.torch_device,
-                                       autoregressive=True,
                                        batch_size=MAX_BS,
                                        encoder_chunk_sizes=[1, 64],
                                        max_target_positions=MAX_SEQ_LEN,

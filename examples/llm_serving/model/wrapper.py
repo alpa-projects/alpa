@@ -3,6 +3,7 @@ from collections import defaultdict
 import os
 import time
 from typing import Sequence, Any, Optional
+import warnings
 
 import alpa
 from alpa.device_mesh import DistributedArray
@@ -16,15 +17,10 @@ import jax.numpy as jnp
 import numpy as np
 import torch
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
-from transformers import OPTForCausalLM, GPT2LMHeadModel
+from transformers import OPTForCausalLM, BloomForCausalLM, GPT2LMHeadModel
 from tqdm import tqdm
 
-from llm_serving.model.opt_model import (get_opt_config,
-                                         get_pipeshard_executable,
-                                         load_multi_executable_params_dis_array,
-                                         init_multi_executable_cache_dis_array,
-                                         load_params_np, init_cache_np,
-                                         get_jax_executable)
+from llm_serving.model import opt_model, bloom_model
 from llm_serving.model.opt_utils import (TransformerModelConfig,
                                          jax_index_select, is_power_of_two)
 
@@ -187,13 +183,20 @@ class WrappedInferenceFunc(GenerationMixin):
             for layer_loc in self.cache_location)
 
 
-def get_hf_opt_model(model_name, device):
-    """Get a huggingface OPT model."""
+def get_hf_model(model_name, device):
+    """Get a huggingface model."""
     disable_torch_init()
-    raw_model = OPTForCausalLM.from_pretrained(
+    if "opt" in model_name:
+        model_class = OPTForCausalLM
+    elif "bloom" in model_name:
+        model_class = BloomForCausalLM
+    else:
+        raise ValueError(f"Invalid model name: {model_name}")
+
+    model = model_class.from_pretrained(
         model_name,
         torch_dtype=torch.float16 if "cuda" in device else torch.float32)
-    raw_model = raw_model.to(device)
+    model = model.to(device)
     restore_torch_init()
 
     def inference_func(input_ids,
@@ -201,7 +204,7 @@ def get_hf_opt_model(model_name, device):
                        attention_mask,
                        output_attentions,
                        output_hidden_states):
-        out = raw_model(input_ids=input_ids,
+        out = model(input_ids=input_ids,
                         past_key_values=past_key_values,
                         attention_mask=attention_mask,
                         output_attentions=output_attentions,
@@ -210,38 +213,43 @@ def get_hf_opt_model(model_name, device):
 
     inference_func_config = InferenceFuncConfig()
     for key in inference_func_config.__dataclass_fields__.keys():
-        setattr(inference_func_config, key, getattr(raw_model.config, key))
+        setattr(inference_func_config, key, getattr(model.config, key))
+    if hasattr(model.config, "seq_length"):
+        seq_len = model.config.seq_length
+    else:
+        seq_len = model.config.max_position_embeddings
+
     transformer_config = TransformerModelConfig(
-        H=raw_model.config.hidden_size,
-        L=raw_model.config.num_hidden_layers,
-        n_head=raw_model.config.num_attention_heads,
-        seq_len=raw_model.config.max_position_embeddings,
-        vocab_size=raw_model.config.vocab_size)
+        H=model.config.hidden_size,
+        L=model.config.num_hidden_layers,
+        n_head=model.config.num_attention_heads,
+        seq_len=seq_len,
+        vocab_size=model.config.vocab_size)
     executable = None
     return WrappedInferenceFunc(inference_func, inference_func_config,
                                 executable, transformer_config)
 
 
-def get_alpa_opt_model(model_name: str,
-                       # Weights
-                       path: str,
-                       dummy: bool = False,
-                       # Batch size and seq length
-                       batch_size: int = 1,
-                       num_micro_batches: int = 1,
-                       max_target_positions: int = 2048,
-                       encoder_chunk_sizes: Sequence[int] = (1, 64),
-                       num_pp_stages: Optional[int] = None,
-                       # Model parameters
-                       dtype=jnp.float16,
-                       torch_device: str = "cpu",
-                       # Shared arguments with model.generate
-                       do_sample: bool = False,
-                       num_beams: int = 1,
-                       num_return_sequences: int = 1,
-                       return_dict_in_generate: bool = True,
-                       output_attentions: bool = False,
-                       output_hidden_states: bool = False):
+def get_alpa_model(model_name: str,
+                   # Weights
+                   path: str,
+                   dummy: bool = False,
+                   # Batch size and seq length
+                   batch_size: int = 1,
+                   num_micro_batches: int = 1,
+                   max_seq_len: int = 2048,
+                   encoder_chunk_sizes: Sequence[int] = (1, 64),
+                   num_pp_stages: Optional[int] = None,
+                   # Model parameters
+                   dtype=jnp.float16,
+                   torch_device: str = "cpu",
+                   # Shared arguments with model.generate
+                   do_sample: bool = False,
+                   num_beams: int = 1,
+                   num_return_sequences: int = 1,
+                   return_dict_in_generate: bool = True,
+                   output_attentions: bool = False,
+                   output_hidden_states: bool = False):
     """Get a alpa-based model that is compatible with HuggingFace's generation API."""
     if num_micro_batches > 1:
         raise NotImplementedError()
@@ -253,23 +261,27 @@ def get_alpa_opt_model(model_name: str,
     encoder_chunk_sizes.sort()
 
     # weight path
-    name = model_name.split("-")[1].upper()
-    path = os.path.abspath(os.path.expanduser(os.path.join(path, f"{name}_np")))
+    name = model_name.split("/")[1].lower()
+    path = os.path.abspath(os.path.expanduser(os.path.join(path, f"{name}-np")))
     if not dummy:
-        # Check the existence of weights.
+        # Download weights if there is no cached weights.
         if not os.path.exists(path):
-            if name in ["175B"]:
+            if name in ["opt-175b"]:
                 raise ValueError(f"Cannot find cached weights under '{path}'. "
                                   "Please follow the instructions to download "
                                   "and convert weights manually. ")
             print(f"Cannot find cached weights under '{path}'.")
             download_weights(model_name.split("/")[1], path)
 
+        # Do some sanity check
         assert os.path.exists(path), f"No such file or directory: '{path}'"
-        embed_weight = os.path.join(path, "decoder.embed_tokens.weight")
+        if "opt" in name:
+            embed_weight = os.path.join(path, "decoder.embed_tokens.weight")
+        elif "bloom" in name:
+            embed_weight = os.path.join(path, "word_embeddings.weight")
         assert os.path.exists(embed_weight), f"No such file or directory: '{embed_weight}'"
 
-    # figure out the actual input size
+    # Figure out the actual input size
     if do_sample:
         batch_size = batch_size * num_beams * num_return_sequences
     else:
@@ -279,56 +291,72 @@ def get_alpa_opt_model(model_name: str,
             )
         batch_size = batch_size * num_beams
 
-    if "jax/opt" in model_name:
-        config = get_opt_config(name,
-                                num_pp_stages=None,
-                                mark_boundary=False,
-                                dtype=dtype,
-                                max_target_positions=max_target_positions)
+    if "jax" in model_name:
+        if "opt" in model_name:
+            m = opt_model
+        elif "bloom" in model_name:
+            m = bloom_model
+            if any(x > 1 for x in encoder_chunk_sizes):
+                # TODO: support chunk size > 1
+                warnings.warn("encoder_chunk_size > 1 is not supported. Ignored.")
+                encoder_chunk_sizes = [1]
+        config = m.get_config(name,
+                              num_pp_stages=None,
+                              mark_boundary=False,
+                              dtype=dtype,
+                              max_seq_len=max_seq_len)
         transformer_config = TransformerModelConfig(
-            H=config.decoder_embed_dim,
-            L=config.decoder_layers,
-            n_head=config.decoder_attention_heads,
-            seq_len=config.max_target_positions,
+            H=config.hidden_size,
+            L=config.num_hidden_layers,
+            n_head=config.n_head,
+            seq_len=config.max_seq_len,
             vocab_size=config.vocab_size)
 
-        executables, params_aval = get_jax_executable(
+        executables, params_aval = m.get_jax_executable(
             config, encoder_chunk_sizes,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states)
 
         # load params
-        params = load_params_np(params_aval, path, config, dummy)
-        init_cache = init_cache_np(config, batch_size=batch_size)
+        params = m.load_params_np(params_aval, path, config, dummy)
+        init_cache = m.init_cache_np(config, batch_size=batch_size)
         params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
-    else:
-        assert "alpa/opt" in model_name
-        assert is_power_of_two(num_beams), "num_beams must be a power of two"
+    elif "alpa" in model_name:
+        if "opt" in model_name:
+            m = opt_model
+        elif "bloom" in model_name:
+            m = bloom_model
+            if any(x > 1 for x in encoder_chunk_sizes):
+                # TODO: support chunk size > 1
+                warnings.warn("encoder_chunk_size > 1 is not supported. Ignored.")
+                encoder_chunk_sizes = [1]
+
         alpa.init()
 
         print(
-            f"Load model {model_name} ... (This can take several minutes for very large models)"
+            f"Load model {model_name} ... "
+            f"(This can take several minutes for very large models)"
         )
 
         if num_pp_stages is None:
             num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
             num_pp_stages = min(num_pp_stages,
                                 alpa.get_global_cluster().num_devices)
-        config = get_opt_config(name,
-                                num_pp_stages=num_pp_stages,
-                                dtype=dtype,
-                                max_target_positions=max_target_positions)
+        config = m.get_config(name,
+                              num_pp_stages=num_pp_stages,
+                              dtype=dtype,
+                              max_seq_len=max_seq_len)
         transformer_config = TransformerModelConfig(
-            H=config.decoder_embed_dim,
-            L=config.decoder_layers,
-            n_head=config.decoder_attention_heads,
-            seq_len=config.max_target_positions,
+            H=config.hidden_size,
+            L=config.num_hidden_layers,
+            n_head=config.n_head,
+            seq_len=config.max_seq_len,
             vocab_size=config.vocab_size)
 
         print(f" - Compile executables for encoder_chunk_sizes={encoder_chunk_sizes}. ",
               end="", flush=True)
         tic = time.time()
-        executables, params_aval = get_pipeshard_executable(
+        executables, params_aval = m.get_pipeshard_executable(
             config,
             batch_size=batch_size,
             num_micro_batches=num_micro_batches,
@@ -340,18 +368,18 @@ def get_alpa_opt_model(model_name: str,
         # Load params
         print(" - Load parameters. ", end="", flush=True)
         tic = time.time()
-        params = load_multi_executable_params_dis_array(
+        params = m.load_multi_executable_params_dis_array(
             path, executables, params_aval, config, dummy)
 
-        init_cache = init_multi_executable_cache_dis_array(executables,
-                                                           config,
-                                                           batch_size,
-                                                           dummy=dummy)
+        init_cache = m.init_multi_executable_cache_dis_array(
+            executables, config, batch_size, dummy=dummy)
         set_skip_shard_args_check(init_cache)
 
         for executable in executables.values():
             executable.sync()
         print(f"elapsed: {time.time() - tic:.2f} second.")
+    else:
+        raise ValueError(f"Invalid model name: {model_name}")
 
     num_valid_tokens = None
     last_token = None
@@ -401,7 +429,7 @@ def get_alpa_opt_model(model_name: str,
             if num_internal_pad:
                 # Use value "2" as a special mask to represent internal padding
                 _attention_mask[:,-num_internal_pad:] = 2
-            _attention_mask = pad_attention_mask(_attention_mask, max_target_positions)
+            _attention_mask = pad_attention_mask(_attention_mask, max_seq_len)
 
             output = _executable(
                 params, {
@@ -467,7 +495,7 @@ def get_model(model_name: str,
               # Batch size and seq length
               batch_size: int = 1,
               num_micro_batches: int = 1,
-              max_target_positions: int = 2048,
+              max_seq_len: int = 2048,
               encoder_chunk_sizes: Sequence[int] = (1, 64),
               num_pp_stages: Optional[int] = None,
               # Model parameters
@@ -489,7 +517,7 @@ def get_model(model_name: str,
         batch_size: The batch size.
         num_micro_batches: The number of micro batch sizs in pipeline
           parallelism.
-        max_target_positions: The max sequence length.
+        max_seq_len: The max sequence length.
         encoder_chunk_sizes: Compile mutliple executables with different
           chunk sizes. These executables are used to encoding prompts
           chunk by chunk.
@@ -499,16 +527,17 @@ def get_model(model_name: str,
           by pytorch. Alpa always runs on GPU.
         other parameters: shared with huggingface's model.generate API.
     """
-    if "facebook/opt" in model_name:
-        return get_hf_opt_model(model_name, torch_device)
-    elif "jax/opt" in model_name or "alpa/opt" in model_name:
-        return get_alpa_opt_model(
+    if "facebook/opt" in model_name or "bigscience/bloom" in model_name:
+        return get_hf_model(model_name, torch_device)
+    elif ("jax/opt" in model_name or "alpa/opt" in model_name or
+          "jax/bloom" in model_name or "alpa/bloom" in model_name):
+        return get_alpa_model(
               model_name,
               path,
               dummy,
               batch_size,
               num_micro_batches,
-              max_target_positions,
+              max_seq_len,
               encoder_chunk_sizes,
               num_pp_stages,
               dtype,
@@ -548,10 +577,10 @@ def set_skip_shard_args_check(attention_cache):
                     x.skip_shard_args_check = True
 
 
-def pad_attention_mask(mask, max_target_positions):
-    """Pad attention mask to the shape [B, 1, 1, max_target_positions]. """
+def pad_attention_mask(mask, max_seq_len):
+    """Pad attention mask to the shape [B, 1, 1, max_seq_len]. """
     batch_size = mask.shape[0]
-    ret_mask = np.zeros((batch_size, max_target_positions), dtype=np.int8)
+    ret_mask = np.zeros((batch_size, max_seq_len), dtype=np.int8)
     ret_mask[:, :mask.shape[-1]] = mask
     ret_mask = ret_mask[:, np.newaxis, np.newaxis, :]
     return ret_mask
@@ -559,25 +588,37 @@ def pad_attention_mask(mask, max_target_positions):
 
 def download_weights(model_name, path):
     """Download weights from huggingface."""
-    facebook_model_name = "facebook/" + model_name
+    if "opt" in model_name:
+        hf_model_name = "facebook/" + model_name
+        model_class = OPTForCausalLM
+    elif "bloom" in model_name:
+        hf_model_name = "bigscience/" + model_name
+        model_class = BloomForCausalLM
+
     print(f"Load the pre-trained pytorch weights of {model_name} from huggingface. "
           f"The downloading and cpu loading can take dozens of minutes. "
           f"If it seems to get stuck, you can monitor the progress by "
           f"checking the memory usage of this process.")
 
     disable_torch_init()
-    model = OPTForCausalLM.from_pretrained(facebook_model_name, torch_dtype=torch.float16,
-                                           _fast_init=True)
+    model = model_class.from_pretrained(hf_model_name, torch_dtype=torch.float16,
+                                        _fast_init=True)
     restore_torch_init()
 
     os.makedirs(path, exist_ok=True)
 
     print(f"Convert the weights to alpa format under {path} ...")
-    for name, param in tqdm(list(model.model.named_parameters())):
-        name = name.replace("decoder.final_layer_norm", "decoder.layer_norm")
-        param_path = os.path.join(path, name)
-        with open(param_path, "wb") as f:
-            np.save(f, param.cpu().detach().numpy())
+    if "opt" in model_name:
+        for name, param in tqdm(list(model.model.named_parameters())):
+            name = name.replace("decoder.final_layer_norm", "decoder.layer_norm")
+            param_path = os.path.join(path, name)
+            with open(param_path, "wb") as f:
+                np.save(f, param.cpu().detach().numpy())
+    elif "bloom" in model_name:
+        for name, param in tqdm(list(model.transformer.named_parameters())):
+            param_path = os.path.join(path, name)
+            with open(param_path, "wb") as f:
+                np.save(f, param.cpu().detach().numpy())
 
 
 global torch_linear_init_backup

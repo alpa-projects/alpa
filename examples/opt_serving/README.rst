@@ -207,6 +207,9 @@ Launch the web server:
 
 Then open ``https://[IP-ADDRESS]:20001`` in your browser to try out the model!
 
+There is also a client library which can be used to query the web server
+via a python script. Please check ``test_completions.py`` for the usage.
+
 Improving Generation Speed
 ==========================
 Here are some tips for improving the generation speed.

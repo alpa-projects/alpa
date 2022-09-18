@@ -21,8 +21,6 @@ import flax.linen as nn
 from flax.core.frozen_dict import FrozenDict, freeze, unfreeze
 from flax.linen import combine_masks, dot_product_attention_weights, make_causal_mask
 from flax.linen.activation import tanh
-from flax.linen.partitioning import scan_with_axes
-from flax.traverse_util import flatten_dict, unflatten_dict
 import jax
 from jax import lax
 from jax.interpreters import pxla
@@ -30,16 +28,10 @@ import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves
 import jaxlib.xla_extension as jax_xla
 import numpy as np
-from transformers.modeling_flax_utils import FlaxPreTrainedModel, append_call_sample_docstring
-from transformers.utils import add_start_docstrings, add_start_docstrings_to_model_forward, logging
 from tqdm import tqdm
 
+from llm_serving.model.opt_model import init_cache_np
 
-logger = logging.get_logger(__name__)
-
-_CHECKPOINT_FOR_DOC = "bigscience/bloom"
-_CONFIG_FOR_DOC = "BloomConfig"
-_TOKENIZER_FOR_DOC = "BloomTokenizerFast"
 
 @dataclass(frozen=True)
 class BloomConfig:
@@ -66,12 +58,14 @@ class BloomConfig:
     mark_boundary: bool = True
     num_pp_stages: int = None
 
+
 @flax.struct.dataclass
 class BloomModelOutput(ModelOutput):
     last_hidden_state: jax_xla.DeviceArray
     hidden_states: Optional[Tuple[jax_xla.DeviceArray]] = None
     attentions: Optional[Tuple[jax_xla.DeviceArray]] = None
     attention_cache: Optional[Tuple[Tuple[jax_xla.DeviceArray]]] = None
+
 
 @flax.struct.dataclass
 class BloomLMOutput(ModelOutput):
@@ -80,57 +74,6 @@ class BloomLMOutput(ModelOutput):
     attentions: Optional[Tuple[jax_xla.DeviceArray]] = None
     attention_cache: Optional[Tuple[Tuple[jax_xla.DeviceArray]]] = None
 
-BLOOM_START_DOCSTRING = r"""
-    This model inherits from [`FlaxPreTrainedModel`]. Check the superclass documentation for the generic methods the
-    library implements for all its model (such as downloading or saving, resizing the input embeddings, pruning heads
-    etc.)
-    This model is also a Flax Linen
-    [flax.nn.Module](https://flax.readthedocs.io/en/latest/_autosummary/flax.nn.module.html) subclass. Use it as a
-    regular Flax Module and refer to the Flax documentation for all matter related to general usage and behavior.
-    Finally, this model supports inherent JAX features such as:
-    - [Just-In-Time (JIT) compilation](https://jax.readthedocs.io/en/latest/jax.html#just-in-time-compilation-jit)
-    - [Automatic Differentiation](https://jax.readthedocs.io/en/latest/jax.html#automatic-differentiation)
-    - [Vectorization](https://jax.readthedocs.io/en/latest/jax.html#vectorization-vmap)
-    - [Parallelization](https://jax.readthedocs.io/en/latest/jax.html#parallelization-pmap)
-    Parameters:
-        config ([`BloomConfig`]): Model configuration class with all the parameters of the model.
-            Initializing with a config file does not load the weights associated with the model, only the
-            configuration. Check out the [`~FlaxPreTrainedModel.from_pretrained`] method to load the model weights.
-        dtype (`jax.numpy.dtype`, *optional*, defaults to `jax.numpy.float16`):
-            The data type of the computation. Can be one of `jax.numpy.float16`, `jax.numpy.float16` (on GPUs) and
-            `jax.numpy.bfloat16` (on TPUs).
-            This can be used to enable mixed-precision training or half-precision inference on GPUs or TPUs. If
-            specified all the computation will be performed with the given `dtype`.
-            **Note that this only specifies the dtype of the computation and does not influence the dtype of model
-            parameters.**
-            If you wish to change the dtype of the model parameters, see [`~FlaxPreTrainedModel.to_fp16`] and
-            [`~FlaxPreTrainedModel.to_bf16`].
-"""
-
-BLOOM_INPUTS_DOCSTRING = r"""
-    Args:
-        input_ids (`numpy.ndarray` of shape `(batch_size, input_ids_length)`):
-            `input_ids_length` = `sequence_length`. Indices of input sequence tokens in the vocabulary.
-            Indices can be obtained using [`BloomTokenizer`]. See [`PreTrainedTokenizer.encode`] and
-            [`PreTrainedTokenizer.__call__`] for details.
-            [What are input IDs?](../glossary#input-ids)
-        attention_mask (`numpy.ndarray` of shape `(batch_size, sequence_length)`, *optional*):
-            Mask to avoid performing attention on padding token indices. Mask values selected in `[0, 1]`:
-            - 1 for tokens that are **not masked**,
-            - 0 for tokens that are **masked**.
-            [What are attention masks?](../glossary#attention-mask)
-        past_key_values (`Dict[str, np.ndarray]`, *optional*, returned by `init_cache` or when passing previous `past_key_values`):
-            Dictionary of pre-computed hidden-states (key and values in the attention blocks) that can be used for fast
-            auto-regressive decoding. Pre-computed key and value hidden-states are of shape *[batch_size, max_length]*.
-        output_attentions (`bool`, *optional*):
-            Whether or not to return the attentions tensors of all attention layers. See `attentions` under returned
-            tensors for more detail.
-        output_hidden_states (`bool`, *optional*):
-            Whether or not to return the hidden states of all layers. See `hidden_states` under returned tensors for
-            more detail.
-        return_dict (`bool`, *optional*):
-            Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
-"""
 
 def build_alibi_tensor_flax(attention_mask, n_head, dtype):
     def get_slopes(n):
@@ -171,9 +114,10 @@ def build_alibi_tensor_flax(attention_mask, n_head, dtype):
     alibi = slopes_broadcast * arange_broadcast
     return alibi
 
+
 class FlaxBloomAttention(nn.Module):
     config: BloomConfig
-    dtype: jnp.dtype = jnp.float32
+    dtype: jnp.dtype = jnp.float16
 
     def setup(self):
         self.hidden_size = self.config.hidden_size
@@ -226,7 +170,7 @@ class FlaxBloomAttention(nn.Module):
             causal_attention_mask_shift = attention_cache[2][0]
         else:
             causal_attention_mask_shift = 0
-        
+
         # fast decoding for generate requires special attention_mask
         if attention_cache:
             max_decoder_length = attention_cache[0].shape[1]
@@ -284,7 +228,7 @@ class FlaxBloomAttention(nn.Module):
             dtype=self.dtype,
             precision=None,
         )
-        
+
         attn_output = jnp.einsum("...hqk,...khd->...qhd", attn_weights, value)
         attn_output = attn_output.reshape(hidden_states.shape[:2] + (self.hidden_size,))
         attn_output = self.dense(attn_output)
@@ -299,7 +243,7 @@ class FlaxBloomAttention(nn.Module):
 
 class BloomGELU(nn.Module):
     def setup(self):
-        self.dtype = jnp.float32
+        pass
 
     def __call__(self, x):
         return x * 0.5 * (1.0 + tanh(0.79788456 * x * (1 + 0.044715 * x * x)))
@@ -307,7 +251,7 @@ class BloomGELU(nn.Module):
 
 class FlaxBloomMLP(nn.Module):
     config: BloomConfig
-    dtype: jnp.dtype = jnp.float32
+    dtype: jnp.dtype = jnp.float16
 
     def setup(self):
         hidden_size = self.config.hidden_size
@@ -336,11 +280,10 @@ class FlaxBloomMLP(nn.Module):
 
 class FlaxBloomBlock(nn.Module):
     config: BloomConfig
-    dtype: jnp.dtype = jnp.float32
+    dtype: jnp.dtype = jnp.float16
 
     def setup(self):
-        self.input_layernorm = nn.LayerNorm(epsilon=self.config.layer_norm_epsilon, dtype=jnp.float32)
-
+        self.input_layernorm = nn.LayerNorm(epsilon=self.config.layer_norm_epsilon, dtype=self.dtype)
         self.self_attention = FlaxBloomAttention(self.config, dtype=self.dtype)
         self.post_attention_layernorm = nn.LayerNorm(epsilon=self.config.layer_norm_epsilon, dtype=self.dtype)
 
@@ -399,11 +342,11 @@ class FlaxBloomBlock(nn.Module):
             outputs += (attn_outputs[2],)
         return outputs
 
+
 class FlaxBloomBlockCollection(nn.Module):
     config: BloomConfig
     dtype: jnp.dtype = jnp.float16
 
-    # @nn.compact
     def setup(self):
         self.layers = [
             FlaxBloomBlock(self.config, name=str(i), dtype=self.dtype)
@@ -545,12 +488,6 @@ class FlaxBloomModule(nn.Module):
         return outputs
 
 
-@add_start_docstrings(
-    "The bare Bloom Model transformer outputting raw hidden-states without any specific head on top.",
-    BLOOM_START_DOCSTRING,
-)
-
-
 class FlaxBloomForCausalLMModule(nn.Module):
     config: BloomConfig
     dtype: jnp.dtype = jnp.float16
@@ -599,15 +536,6 @@ class FlaxBloomForCausalLMModule(nn.Module):
         return BloomLMOutput(logits=lm_logits, hidden_states=outputs.hidden_states, attentions=outputs.attentions, attention_cache=outputs.attention_cache)
 
 
-@add_start_docstrings(
-    """
-    The Bloom Model transformer with a language modeling head on top (linear layer with weights tied to the input
-    embeddings).
-    """,
-    BLOOM_START_DOCSTRING,
-)
-
-
 def get_config(name, **kwargs):
     if name == "bloom-560m":
         config = BloomConfig(
@@ -649,6 +577,7 @@ def get_config(name, **kwargs):
 
     return dataclasses.replace(config, **kwargs)
 
+
 def init_model_aval(config):
     """Initialize model with parameters with abstract values (shape-only arrays)."""
     model = FlaxBloomForCausalLMModule(config, dtype=config.dtype)
@@ -660,56 +589,6 @@ def init_model_aval(config):
                           params)
     return model, params
 
-
-def init_cache_aval(config, batch_size):
-    """Initialize cache with abstract values (shape-only arrays)."""
-    dtype = config.dtype
-    head_dim = config.hidden_size // config.n_head
-
-    all_cache = []
-    for _ in range(config.num_hidden_layers):
-        layer_cache = (
-            jax.core.ShapedArray((batch_size, config.max_seq_len,
-                                  config.n_head, head_dim),
-                                 dtype),
-            jax.core.ShapedArray((batch_size, config.max_seq_len,
-                                  config.n_head, head_dim),
-                                 dtype),
-            jax.core.ShapedArray((batch_size,), jnp.int32),
-        )
-        all_cache.append(layer_cache)
-    return tuple(all_cache)
-
-
-def init_mask_aval(config, batch_size):
-    """Initialize attention mask with abstract values (shape-only arrays)."""
-    mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_seq_len), dtype=np.int8)
-    return mask
-
-
-def init_cache_np(config, batch_size):
-    """Init cache with numpy arrays."""
-    np_dtype = config.dtype
-    head_dim = config.hidden_size // config.n_head
-
-    all_cache = []
-    for i in range(config.num_hidden_layers):
-        layer_cache = (
-            np.zeros((batch_size, config.max_seq_len,
-                      config.n_head, head_dim),
-                     dtype=np_dtype),
-            np.zeros((batch_size, config.max_seq_len,
-                      config.n_head, head_dim),
-                     dtype=np_dtype),
-            np.zeros((batch_size,), np.int32),
-        )
-        all_cache.append(layer_cache)
-    return tuple(all_cache)
-
-
-def inference_step_no_cache(params, batch, apply_func):
-    logits = apply_func(params, batch["input_ids"])[0]
-    return logits
 
 def load_params_np(params, path, config, dummy=False):
     """Load parameters with numpy arrays."""
@@ -784,6 +663,7 @@ def load_params_np(params, path, config, dummy=False):
 
     return flax.core.freeze(params)
 
+
 def get_jax_executable(config: BloomConfig,
                        encoder_chunk_sizes: Sequence[int],
                        output_attentions: bool = False,
@@ -805,6 +685,7 @@ def get_jax_executable(config: BloomConfig,
     for length in encoder_chunk_sizes:
         executables[length] = inference_step
     return executables, params
+
 
 def get_pipeshard_executable(config: BloomConfig,
                              batch_size: int,
@@ -1089,59 +970,3 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
                                                  flat_mesh_ids)
 
     return flat_arrays
-
-
-def init_cache_dis_array(executable, config, batch_size, dummy=False):
-    """Initialize cache with distributed arrays."""
-    cache = init_cache_np(config, batch_size)
-    alpa.global_config.use_dummy_value_for_benchmarking = dummy
-    _, batch_info = executable.get_input_placement_specs()
-    flat_args, in_tree = tree_flatten(cache)
-    flat_info = tree_leaves(batch_info["cache"])
-    if hasattr(executable, "mesh_group"):
-        ret = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
-    else:
-        ret = executable.physical_mesh.shard_args_to_arrays_ps(
-            flat_info, flat_args)
-    alpa.global_config.use_dummy_value_for_benchmarking = False
-    return ret
-
-
-def load_multi_executable_params_dis_array(path,
-                                           executables,
-                                           params_aval,
-                                           config,
-                                           dummy=False):
-    """Load parameters to workers that will be used by all executables. Accordingly,
-    we need to make sure the parameter sharding specs are identical for all executables.
-    """
-    shared_input_shard_specs = None
-    for executable in executables.values():
-        stage_input_shard_specs = executable.stage_input_shard_specs
-        if shared_input_shard_specs is not None:
-            assert shared_input_shard_specs == stage_input_shard_specs, \
-                "All executables must have the same input sharding specs."
-        else:
-            shared_input_shard_specs = stage_input_shard_specs
-    return load_params_dis_array(path,
-                                 list(executables.values())[0], params_aval,
-                                 config, dummy)
-
-
-def init_multi_executable_cache_dis_array(executables,
-                                          config,
-                                          batch_size,
-                                          dummy=False):
-    """Initialize cache to workers that will be used by all executables. Accordingly,
-    we need to make sure all executables are using the same cache.
-    """
-    cache_info = None
-    for executable in executables.values():
-        _, batch_info = executable.get_input_placement_specs()
-        if cache_info is not None:
-            assert cache_info == batch_info["cache"], \
-                "All executables must share the same cache"
-        else:
-            cache_info = batch_info["cache"]
-    return init_cache_dis_array(
-        list(executables.values())[0], config, batch_size, dummy)

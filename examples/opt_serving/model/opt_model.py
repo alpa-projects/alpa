@@ -176,13 +176,12 @@ class OPTSelfAttention(nn.Module):
             value_states = lax.dynamic_update_slice(cache_value, value_states, update_indices)
             query_len, key_len = query_states.shape[1], key_states.shape[1]
 
-            # Handle a special kind of internal padding added by alpa.
-            # Note that this kind of internal padding is different from
-            # the padding added by the tokenizer. This internal padding
-            # should not update cache and step_ct
-            # shape: [B, 1, 1, S_max]
-
             if attention_mask is not None:
+                # Handle a special kind of internal padding added by alpa.
+                # Note that this kind of internal padding is different from
+                # the padding added by the tokenizer. This internal padding
+                # should not update cache and step_ct
+                # shape: [B, 1, 1, S_max]
                 is_internal_padding = (attention_mask == 2)
                 num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
                 attention_mask = (attention_mask == 1)
@@ -512,7 +511,8 @@ def get_opt_config(name, **kwargs):
             decoder_embed_dim=1024, decoder_input_dim=1024, decoder_ffn_embed_dim=1024 * 4,
             version=2,
         )
-        raise NotImplementedError()
+        raise NotImplementedError("Not implemented because this model "
+                                  "has a different architecture")
     elif name == "1.3B":
         config = OPTConfig(
             max_target_positions=2048, decoder_layers=24, decoder_attention_heads=32,
@@ -737,8 +737,7 @@ def get_pipeshard_executable(config: OPTConfig,
                              encoder_chunk_sizes: Sequence[int],
                              num_micro_batches: int = 1,
                              output_attentions: bool = False,
-                             output_hidden_states: bool = False,
-                             autoregressive: bool = True):
+                             output_hidden_states: bool = False):
     """Get a parallel executable."""
     # Init model
     model, params = init_model_aval(config)
@@ -757,102 +756,74 @@ def get_pipeshard_executable(config: OPTConfig,
         ))
     #method = alpa.ShardParallel()
 
-    if autoregressive:
+    def inference_step_with_cache(params, batch):
+        output = model.apply(
+            params,
+            batch["input_ids"],
+            batch["position_ids"],
+            attention_cache=batch["cache"],
+            attention_mask=batch["mask"],
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states)
+        return output
 
-        def inference_step_with_cache(params, batch):
-            output = model.apply(
-                params,
-                batch["input_ids"],
-                batch["position_ids"],
-                attention_cache=batch["cache"],
-                attention_mask=batch["mask"],
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states)
-            return output
+    alpa.global_config.always_donate_micro_batch_vars = False
 
-        alpa.global_config.always_donate_micro_batch_vars = False
+    cache = init_cache_aval(config, batch_size)
+    mask = init_mask_aval(config, batch_size)
 
-        cache = init_cache_aval(config, batch_size)
-        mask = init_mask_aval(config, batch_size)
+    executables = {}
 
-        executables = {}
+    # Compile an executable with sequence length 1
+    executable = alpa.parallelize(
+        inference_step_with_cache, batch_argnums=(1,),
+        method=method).get_executable(
+            params, {
+                "input_ids":
+                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                "position_ids":
+                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                "cache":
+                    cache,
+                "mask":
+                    mask,
+            })
+    executable.dump_debug_info("tmp_executable_1")
+    executables[1] = executable
 
-        # Compile an executable with sequence length 1
+    # Create another parallel method with assigned input sharding specs
+    method_with_input_sharding = alpa.PipeshardParallel(
+        num_micro_batches=num_micro_batches,
+        pipeline_schedule="inference",
+        layer_option="manual",
+        default_auto_sharding_option=alpa.AutoShardingOption(
+            enable_auto_sharding=False,
+        ),
+        stage_input_shardings=executable.stage_input_shard_specs)
+
+    # Compile other executables
+    for seq_len in encoder_chunk_sizes:
         executable = alpa.parallelize(
-            inference_step_with_cache, batch_argnums=(1,),
-            method=method).get_executable(
+            inference_step_with_cache,
+            batch_argnums=(1,),
+            method=method_with_input_sharding).get_executable(
                 params, {
                     "input_ids":
-                        jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                        jax.core.ShapedArray(
+                            (batch_size, seq_len), jnp.int32),
                     "position_ids":
-                        jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                        jax.core.ShapedArray(
+                            (batch_size, seq_len), jnp.int32),
                     "cache":
                         cache,
                     "mask":
                         mask,
                 })
-        executable.dump_debug_info("tmp_executable_1")
-        executables[1] = executable
+        executable.dump_debug_info("tmp_executable_%d" % seq_len)
+        executables[seq_len] = executable
+    return executables, params
 
-        # Create another parallel method with assigned input sharding specs
-        method_with_input_sharding = alpa.PipeshardParallel(
-            num_micro_batches=num_micro_batches,
-            pipeline_schedule="inference",
-            layer_option="manual",
-            default_auto_sharding_option=alpa.AutoShardingOption(
-                enable_auto_sharding=False,
-            ),
-            stage_input_shardings=executable.stage_input_shard_specs)
-
-        # Compile other executables
-        for seq_len in encoder_chunk_sizes:
-            executable = alpa.parallelize(
-                inference_step_with_cache,
-                batch_argnums=(1,),
-                method=method_with_input_sharding).get_executable(
-                    params, {
-                        "input_ids":
-                            jax.core.ShapedArray(
-                                (batch_size, seq_len), jnp.int32),
-                        "position_ids":
-                            jax.core.ShapedArray(
-                                (batch_size, seq_len), jnp.int32),
-                        "cache":
-                            cache,
-                        "mask":
-                            mask,
-                    })
-            executable.dump_debug_info("tmp_executable_%d" % seq_len)
-            executables[seq_len] = executable
-        return executables, params
-    else:
-        assert len(encoder_chunk_sizes) == 1
-        seq_len = encoder_chunk_sizes[0]
-
-        @alpa.parallelize(batch_argnums=(1,), method=method)
-        def inference_step(params, batch):
-            output = model.apply(
-                params,
-                batch["input_ids"],
-                batch["position_ids"],
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states)
-            return output
-
-        assert batch_size % num_micro_batches == 0, "cannot divide batch_size by num_micro_batches"
-        micro_batch_size = batch_size // num_micro_batches
-
-        executable = inference_step.get_executable(
-            params, {
-                "input_ids":
-                    jax.core.ShapedArray(
-                        (batch_size, seq_len), jnp.int32),
-                "position_ids":
-                    jax.core.ShapedArray(
-                        (batch_size, seq_len), jnp.int32),
-            })
-
-        executable.dump_debug_info("tmp")
+    executable.dump_debug_info("tmp")
     return {seq_len: executable}, params
 
 

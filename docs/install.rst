@@ -108,12 +108,11 @@ Method 2: Install from Source
 
 .. note::
 
-  Building the latest Alpa-modified jaxlib requires new C++17 standards. It is known that some compiler versions such as ``gcc===7.3`` or ``gcc==9.4`` cannot correctly compile the jaxlib code.
+  Building the latest Alpa-modified jaxlib requires new C++17 standards. It is known that some compiler versions such as ``gcc==7.3`` or ``gcc==9.4`` cannot correctly compile the jaxlib code.
   See `this thread <https://gcc.gnu.org/bugzilla/show_bug.cgi?id=90415>`_ about the know issues.
 
   If you meet compilation errors, please install our recommended gcc version ``gcc==7.5``; newer gcc versions might also work.
-  Then please clean the bazel caches and try to build jaxlib again.
-
+  Then please clean the bazel cache (``rm -rf ~/.cache/bazel``) and try to build jaxlib again.
 
 .. note::
 

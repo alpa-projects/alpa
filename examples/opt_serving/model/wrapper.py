@@ -187,7 +187,8 @@ class WrappedInferenceFunc(GenerationMixin):
             for layer_loc in self.cache_location)
 
 
-def get_hf_opt_model(model_name, device, num_beams):
+def get_hf_opt_model(model_name, device):
+    """Get a huggingface OPT model."""
     disable_torch_init()
     raw_model = OPTForCausalLM.from_pretrained(
         model_name,
@@ -207,7 +208,7 @@ def get_hf_opt_model(model_name, device, num_beams):
                         output_hidden_states=output_hidden_states)
         return InferenceFuncOutput(out.logits, out.past_key_values)
 
-    inference_func_config = InferenceFuncConfig(num_beams=num_beams)
+    inference_func_config = InferenceFuncConfig()
     for key in inference_func_config.__dataclass_fields__.keys():
         setattr(inference_func_config, key, getattr(raw_model.config, key))
     transformer_config = TransformerModelConfig(
@@ -221,61 +222,32 @@ def get_hf_opt_model(model_name, device, num_beams):
                                 executable, transformer_config)
 
 
-def get_model(model_name: str,
-              # Weights
-              path: str,
-              dummy: bool = False,
-              # Batch size and seq length
-              batch_size: int = 1,
-              num_micro_batches: int = 1,
-              max_target_positions: int = 2048,
-              encoder_chunk_sizes: Sequence[int] = (1, 64),
-              num_pp_stages: Optional[int] = None,
-              # Model parameters
-              autoregressive: bool = True,
-              dtype=jnp.float16,
-              torch_device: str = "cpu",
-              # Shared arguments with model.generate
-              do_sample: bool = False,
-              num_beams: int = 1,
-              num_return_sequences: int = 1,
-              return_dict_in_generate: bool = True,
-              output_attentions: bool = False,
-              output_hidden_states: bool = False):
-    """Get a model that is compatible with HuggingFace's generation API.
-
-    Args:
-        model_name: "facebook/opt-", or "alpa/opt-".
-        path: The path to opt weights.
-        dummy: Use dummy weights for faster debugging.
-        batch_size: The batch size.
-        num_micro_batches: The number of micro batch sizs in pipeline
-          parallelism.
-        max_target_positions: The max sequence length.
-        encoder_chunk_sizes: Compile mutliple executables with different
-          chunk sizes. These executables are used to encoding prompts
-          chunk by chunk.
-        num_pp_stages: The number of pipeline parallelism stages.
-        autoregressive: Whether to run the model for autoregressive generation.
-        dtype: The type of parameters.
-        torch_device: "cpu" or "gpu". This only controls the device used
-          by pytorch. Alpa always runs on GPU.
-        other parameters: shared with huggingface's model.generate API.
-    """
-    if not model_name.startswith("alpa") and not autoregressive:
-        raise NotImplementedError(
-            f"Cannot support {model_name} in forward-only mode.")
-    if autoregressive and num_micro_batches > 1:
-        raise NotImplementedError(
-            f"Cannot support num_micro_batches > 1 in autoregressive mode.")
-
-    if "facebook/opt" in model_name:
-        return get_hf_opt_model(model_name, torch_device, num_beams)
-
-    assert ("jax/opt" in model_name or "alpa/opt" in model_name)
+def get_alpa_opt_model(model_name: str,
+                       # Weights
+                       path: str,
+                       dummy: bool = False,
+                       # Batch size and seq length
+                       batch_size: int = 1,
+                       num_micro_batches: int = 1,
+                       max_target_positions: int = 2048,
+                       encoder_chunk_sizes: Sequence[int] = (1, 64),
+                       num_pp_stages: Optional[int] = None,
+                       # Model parameters
+                       dtype=jnp.float16,
+                       torch_device: str = "cpu",
+                       # Shared arguments with model.generate
+                       do_sample: bool = False,
+                       num_beams: int = 1,
+                       num_return_sequences: int = 1,
+                       return_dict_in_generate: bool = True,
+                       output_attentions: bool = False,
+                       output_hidden_states: bool = False):
+    """Get a alpa-based model that is compatible with HuggingFace's generation API."""
+    if num_micro_batches > 1:
+        raise NotImplementedError()
     assert return_dict_in_generate
 
-    if autoregressive and 1 not in encoder_chunk_sizes:
+    if 1 not in encoder_chunk_sizes:
         encoder_chunk_sizes += [1]
     encoder_chunk_sizes = list(set(encoder_chunk_sizes))
     encoder_chunk_sizes.sort()
@@ -299,13 +271,13 @@ def get_model(model_name: str,
 
     # figure out the actual input size
     if do_sample:
-        expand_size = batch_size * num_beams * num_return_sequences
+        batch_size = batch_size * num_beams * num_return_sequences
     else:
         if num_return_sequences > num_beams:
             raise ValueError(
                 "`num_return_sequences` has to be smaller or equal to `num_beams`."
             )
-        expand_size = batch_size * num_beams
+        batch_size = batch_size * num_beams
 
     if "jax/opt" in model_name:
         config = get_opt_config(name,
@@ -327,13 +299,12 @@ def get_model(model_name: str,
 
         # load params
         params = load_params_np(params_aval, path, config, dummy)
-        init_cache = init_cache_np(config, batch_size=expand_size)
+        init_cache = init_cache_np(config, batch_size=batch_size)
         params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
     else:
         assert "alpa/opt" in model_name
         assert is_power_of_two(num_beams), "num_beams must be a power of two"
         alpa.init()
-        alpa.global_config.xla_client_mem_fraction = 0.88
 
         print(
             f"Load model {model_name} ... (This can take several minutes for very large models)"
@@ -354,16 +325,16 @@ def get_model(model_name: str,
             seq_len=config.max_target_positions,
             vocab_size=config.vocab_size)
 
-        print(f" - Compile executables for encoder_chunk_sizes={encoder_chunk_sizes}. ", end="", flush=True)
+        print(f" - Compile executables for encoder_chunk_sizes={encoder_chunk_sizes}. ",
+              end="", flush=True)
         tic = time.time()
         executables, params_aval = get_pipeshard_executable(
             config,
-            batch_size=expand_size,
+            batch_size=batch_size,
             num_micro_batches=num_micro_batches,
             encoder_chunk_sizes=encoder_chunk_sizes,
             output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            autoregressive=autoregressive)
+            output_hidden_states=output_hidden_states)
         print(f"elapsed: {time.time() - tic:.2f} second.")
 
         # Load params
@@ -372,22 +343,15 @@ def get_model(model_name: str,
         params = load_multi_executable_params_dis_array(
             path, executables, params_aval, config, dummy)
 
-        if autoregressive:
-            init_cache = init_multi_executable_cache_dis_array(executables,
-                                                               config,
-                                                               expand_size,
-                                                               dummy=dummy)
-            set_skip_shard_args_check(init_cache)
+        init_cache = init_multi_executable_cache_dis_array(executables,
+                                                           config,
+                                                           batch_size,
+                                                           dummy=dummy)
+        set_skip_shard_args_check(init_cache)
 
         for executable in executables.values():
             executable.sync()
         print(f"elapsed: {time.time() - tic:.2f} second.")
-
-        # return executable directly if not autoregressive
-        if not autoregressive:
-            assert len(executables) == 1
-            return list(
-                executables.values())[0], params, transformer_config
 
     num_valid_tokens = None
     last_token = None
@@ -398,8 +362,8 @@ def get_model(model_name: str,
                        attention_mask,
                        output_attentions,
                        output_hidden_states):
-        assert input_ids.shape[0] == expand_size, (
-            f"Expect batch size = {expand_size}, but got {input_ids.shape[0]}")
+        assert input_ids.shape[0] == batch_size, (
+            f"Expect batch size = {batch_size}, but got {input_ids.shape[0]}")
         input_ids = input_ids.cpu().numpy()
         attention_mask = attention_mask.cpu().numpy()
 
@@ -411,8 +375,8 @@ def get_model(model_name: str,
             if _past_key_values is None:
                 # Init all states
                 _past_key_values = init_cache
-                num_valid_tokens = np.zeros((expand_size, 1), dtype=np.int32)
-                last_token = np.zeros((expand_size, 1), dtype=np.int32)
+                num_valid_tokens = np.zeros((batch_size, 1), dtype=np.int32)
+                last_token = np.zeros((batch_size, 1), dtype=np.int32)
                 step_ct = 0
 
             if _input_ids.shape[1] == 1:
@@ -434,8 +398,8 @@ def get_model(model_name: str,
                      last_token)
                 _input_ids = np.where(_attention_mask[:, step_ct:], _input_ids, last_token)
 
-            # Use value "2" as a special mask to represent internal padding
             if num_internal_pad:
+                # Use value "2" as a special mask to represent internal padding
                 _attention_mask[:,-num_internal_pad:] = 2
             _attention_mask = pad_attention_mask(_attention_mask, max_target_positions)
 
@@ -453,11 +417,9 @@ def get_model(model_name: str,
             return output
 
         seq_len = input_ids.shape[1]
-        if seq_len == 1:
-            # A fast path for seq_len = 1
+        if seq_len == 1:  # A fast path for seq_len = 1
             output = run_one(executables[1], input_ids, past_key_values, attention_mask, 0)
-        else:
-            # A general path that works for all seq_len
+        else:  # A general path that works for all seq_len
             i = 0
             while i < seq_len:
                 remaining = seq_len - i
@@ -473,7 +435,7 @@ def get_model(model_name: str,
                     # the padding added by the tokenizer. This internal padding
                     # should not update cache and step_ct
                     num_internal_pad = step_len - step_input_ids.shape[1]
-                    pad_shape = (expand_size, num_internal_pad)
+                    pad_shape = (batch_size, num_internal_pad)
                     step_input_ids = np.concatenate(
                         (step_input_ids, np.zeros(pad_shape, dtype=np.int32)), axis=1)
                     step_attention_mask = np.concatenate(
@@ -491,11 +453,74 @@ def get_model(model_name: str,
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)
 
-    inference_func_config = InferenceFuncConfig(num_beams=num_beams)
+    inference_func_config = InferenceFuncConfig()
     return WrappedInferenceFunc(inference_func,
                                 inference_func_config,
                                 executables[1],
                                 transformer_config)
+
+
+def get_model(model_name: str,
+              # Weights
+              path: str,
+              dummy: bool = False,
+              # Batch size and seq length
+              batch_size: int = 1,
+              num_micro_batches: int = 1,
+              max_target_positions: int = 2048,
+              encoder_chunk_sizes: Sequence[int] = (1, 64),
+              num_pp_stages: Optional[int] = None,
+              # Model parameters
+              dtype=jnp.float16,
+              torch_device: str = "cpu",
+              # Shared arguments with model.generate
+              do_sample: bool = False,
+              num_beams: int = 1,
+              num_return_sequences: int = 1,
+              return_dict_in_generate: bool = True,
+              output_attentions: bool = False,
+              output_hidden_states: bool = False):
+    """Get a model that is compatible with HuggingFace's generation API.
+
+    Args:
+        model_name: "facebook/opt-", or "alpa/opt-".
+        path: The path to opt weights.
+        dummy: Use dummy weights for faster debugging.
+        batch_size: The batch size.
+        num_micro_batches: The number of micro batch sizs in pipeline
+          parallelism.
+        max_target_positions: The max sequence length.
+        encoder_chunk_sizes: Compile mutliple executables with different
+          chunk sizes. These executables are used to encoding prompts
+          chunk by chunk.
+        num_pp_stages: The number of pipeline parallelism stages.
+        dtype: The type of parameters.
+        torch_device: "cpu" or "gpu". This only controls the device used
+          by pytorch. Alpa always runs on GPU.
+        other parameters: shared with huggingface's model.generate API.
+    """
+    if "facebook/opt" in model_name:
+        return get_hf_opt_model(model_name, torch_device)
+    elif "jax/opt" in model_name or "alpa/opt" in model_name:
+        return get_alpa_opt_model(
+              model_name,
+              path,
+              dummy,
+              batch_size,
+              num_micro_batches,
+              max_target_positions,
+              encoder_chunk_sizes,
+              num_pp_stages,
+              dtype,
+              torch_device,
+              do_sample,
+              num_beams,
+              num_return_sequences,
+              return_dict_in_generate,
+              output_attentions,
+              output_hidden_states)
+    else:
+        raise ValueError(f"Invalid model name: {model_name}")
 
 
 def get_padded_step_len(length, encoder_chunk_sizes):

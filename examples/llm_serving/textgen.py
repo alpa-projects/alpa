@@ -27,7 +27,7 @@ def main(args):
     # Load the model
     model = get_model(model_name=args.model,
                       path="~/opt_weights",
-                      batch_size=4,
+                      batch_size=args.n_prompts,
                       **generate_params)
 
     # Generate
@@ -37,6 +37,7 @@ def main(args):
         "Computer Science studies the area of",
         "University of California Berkeley is a public university"
     ]
+    prompts = prompts[:args.n_prompts]
     input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
     output_ids = model.generate(input_ids=input_ids,
                                 max_length=64,
@@ -56,6 +57,7 @@ if __name__ == "__main__":
     parser.add_argument('--do-sample', action='store_true')
     parser.add_argument('--num-beams', type=int, default=1)
     parser.add_argument('--num-return-sequences', type=int, default=1)
+    parser.add_argument('--n-prompts', type=int, default=4)
     args = parser.parse_args()
 
     main(args)

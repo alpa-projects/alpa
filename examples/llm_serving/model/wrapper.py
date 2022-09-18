@@ -362,10 +362,8 @@ def get_alpa_model(model_name: str,
         params = opt.load_multi_executable_params_dis_array(
             path, executables, params_aval, config, dummy)
 
-        init_cache = opt.init_multi_executable_cache_dis_array(executables,
-                                                           config,
-                                                           batch_size,
-                                                           dummy=dummy)
+        init_cache = opt.init_multi_executable_cache_dis_array(
+            executables, config, batch_size, dummy=dummy)
         set_skip_shard_args_check(init_cache)
 
         for executable in executables.values():

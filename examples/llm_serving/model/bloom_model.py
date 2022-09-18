@@ -44,8 +44,9 @@ class BloomConfig:
     layer_norm_epsilon: float = 1e-5
     initializer_range: float = 0.02
     use_cache: bool = False
-    bos_token_id: int = 1
     eos_token_id: int = 2
+    pad_token_id: int = 3
+    unk_token_id: int = 0
     apply_residual_connection_post_layernorm: bool = False
     hidden_dropout: float = 0.0
     attention_dropout: float = 0.0
@@ -542,27 +543,22 @@ def get_config(name, **kwargs):
             hidden_size=1024, n_head=16, num_hidden_layers=24,
             pretraining_tp=1, use_cache=True
         )
-    elif name == "bloom-760m":
+    elif name == "bloom-1b1":
         config = BloomConfig(
             hidden_size=1536, n_head=16, num_hidden_layers=24,
             pretraining_tp=1, use_cache=True
         )
-    elif name == "bloom-1.1b":
-        config = BloomConfig(
-            hidden_size=1536, n_head=16, num_hidden_layers=24,
-            pretraining_tp=1, use_cache=True
-        )
-    elif name == "bloom-1.3b":
+    elif name == "bloom-1b7":
         config = BloomConfig(
             hidden_size=2048, n_head=16, num_hidden_layers=24,
             pretraining_tp=2, use_cache=True
         )
-    elif name == "bloom-2.5b":
+    elif name == "bloom-3b":
         config = BloomConfig(
             hidden_size=2560, n_head=32, num_hidden_layers=30,
             pretraining_tp=4, use_cache=True
         )
-    elif name == "bloom-6.3b":
+    elif name == "bloom-7b1":
         config = BloomConfig(
             hidden_size=4096, n_head=32, num_hidden_layers=30,
             pretraining_tp=4, use_cache=True

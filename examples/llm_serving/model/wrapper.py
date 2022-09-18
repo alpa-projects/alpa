@@ -3,6 +3,7 @@ from collections import defaultdict
 import os
 import time
 from typing import Sequence, Any, Optional
+import warnings
 
 import alpa
 from alpa.device_mesh import DistributedArray
@@ -295,6 +296,10 @@ def get_alpa_model(model_name: str,
             m = opt
         elif "bloom" in model_name:
             m = bloom
+            if any(x > 1 for x in encoder_chunk_sizes):
+                # TODO: support chunk size > 1
+                warnings.warn("Chunk size > 1 is not supported. Ignored.")
+                encoder_chunk_sizes = [1]
         config = m.get_config(name,
                               num_pp_stages=None,
                               mark_boundary=False,
@@ -317,7 +322,6 @@ def get_alpa_model(model_name: str,
         init_cache = m.init_cache_np(config, batch_size=batch_size)
         params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
     elif "alpa/opt" in model_name:
-        assert "alpa/opt" in model_name
         assert is_power_of_two(num_beams), "num_beams must be a power of two"
         alpa.init()
 

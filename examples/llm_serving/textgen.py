@@ -27,19 +27,19 @@ def main(args):
     # Load the model
     model = get_model(model_name=args.model,
                       path="~/opt_weights",
-                      batch_size=1,
+                      batch_size=4,
                       **generate_params)
 
     # Generate
     prompts = [
         "Paris is the capital city of",
-        #"Today is a good day and I'd like to",
-        #"Computer Science studies the area of",
-        #"University of California Berkeley is a public university"
+        "Today is a good day and I'd like to",
+        "Computer Science studies the area of",
+        "University of California Berkeley is a public university"
     ]
     input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
     output_ids = model.generate(input_ids=input_ids,
-                                max_length=64,
+                                max_length=20,
                                 **generate_params)
     outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
     

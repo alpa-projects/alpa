@@ -5,10 +5,10 @@ import numpy as np
 import torch
 from transformers import AutoTokenizer
 
-from opt_serving.model.wrapper import get_model
-from opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
-from opt_serving.service.constants import MAX_SEQ_LEN, MAX_BS
-from opt_serving.service.utils import build_logger
+from llm_serving.model.wrapper import get_model
+from llm_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
+from llm_serving.service.constants import MAX_SEQ_LEN, MAX_BS
+from llm_serving.service.utils import build_logger
 
 
 logger = build_logger()

@@ -4,7 +4,7 @@ from typing import Any
 import queue
 import math
 
-from opt_serving.service.queue import PriorityQueueRingShard
+from llm_serving.service.queue import PriorityQueueRingShard
 
 
 @dataclass

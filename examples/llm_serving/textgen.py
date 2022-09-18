@@ -4,7 +4,7 @@ import argparse
 import numpy as np
 from transformers import AutoTokenizer
 
-from opt_serving.model.wrapper import get_model
+from llm_serving.model.wrapper import get_model
 
 def main(args):
     # Load the tokenizer. We have to use the 30B version because

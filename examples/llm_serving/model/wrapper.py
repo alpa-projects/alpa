@@ -19,13 +19,13 @@ from transformers.generation_utils import GenerationMixin, ModelOutput, dataclas
 from transformers import OPTForCausalLM, GPT2LMHeadModel
 from tqdm import tqdm
 
-from opt_serving.model.opt_model import (get_opt_config,
+from llm_serving.model.opt_model import (get_opt_config,
                                          get_pipeshard_executable,
                                          load_multi_executable_params_dis_array,
                                          init_multi_executable_cache_dis_array,
                                          load_params_np, init_cache_np,
                                          get_jax_executable)
-from opt_serving.model.opt_utils import (TransformerModelConfig,
+from llm_serving.model.opt_utils import (TransformerModelConfig,
                                          jax_index_select, is_power_of_two)
 
 

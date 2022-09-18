@@ -11,7 +11,7 @@ import cupy
 import os
 
 from alpa.testing import assert_allclose
-from opt_serving.model import opt_model, opt_model_1d
+from llm_serving.model import opt_model, opt_model_1d
 from alpa.collective.worker_nccl_util_cupy import jax_tensor_to_cupy
 from alpa.timer import timers
 

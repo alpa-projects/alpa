@@ -15,12 +15,12 @@ import torch
 from flask import Flask, render_template, request, jsonify
 from werkzeug.exceptions import HTTPException
 
-from opt_serving.generator import Generator
-from opt_serving.service.queue import PriorityQueueRingShard
-from opt_serving.service.responses import OAIResponse
-from opt_serving.service.utils import build_logger
-from opt_serving.service.workers import WorkItem
-from opt_serving.service.constants import (
+from llm_serving.generator import Generator
+from llm_serving.service.queue import PriorityQueueRingShard
+from llm_serving.service.responses import OAIResponse
+from llm_serving.service.utils import build_logger
+from llm_serving.service.workers import WorkItem
+from llm_serving.service.constants import (
     MAX_SEQ_LEN, MAX_BATCH_TOKENS, BATCHING_TIMEOUT_MS,
     MAX_BS, NUM_BEAMS, NUM_RETURN_SEQ,
     LOGPROBS_PAST_CACHE_SIZE_LIMIT, LOGPROBS_PAST_CACHE_TIMEOUT)
@@ -448,7 +448,7 @@ if __name__ == "__main__":
     thread.start()
 
     if args.use_recaptcha:
-        from opt_serving.service.recaptcha import ReCaptcha
+        from llm_serving.service.recaptcha import ReCaptcha
 
         keys = json.load(open(args.keys_file, "r"))
         app.config['RECAPTCHA_SITE_KEY'] = keys["RECAPTCHA_SITE_KEY"]

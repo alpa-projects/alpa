@@ -23,14 +23,14 @@ The key features of Alpa include:
 
 ## Serving
 Alpa provides a free, unlimited OPT-175B text generation service.
-Try the service at [https://opt.alpa.ai/](https://opt.alpa.ai/) and share your [prompting results](examples/opt_serving/service/img.png)!
+Try the service at [https://opt.alpa.ai/](https://opt.alpa.ai/) and share your [prompting results](examples/llm_serving/service/img.png)!
 
 The code below shows how to use huggingface/transformers interface and Alpa distributed backend for large model inference.
-Detailed documentation is in [Serving OPT-175B using Alpa](https://alpa.ai/tutorials/opt_serving.html).
+Detailed documentation is in [Serving OPT-175B using Alpa](https://alpa.ai/tutorials/llm_serving.html).
 
 ```python
 from transformers import AutoTokenizer
-from opt_serving.model.wrapper import get_model
+from llm_serving.model.wrapper import get_model
 
 # Load the tokenizer
 tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", use_fast=False)

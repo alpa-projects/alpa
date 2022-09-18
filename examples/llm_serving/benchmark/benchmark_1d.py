@@ -4,7 +4,7 @@ import copy
 import numpy as np
 
 from alpa.timer import timers
-from examples.opt_serving.model.test_1d import setup, runner_1d, runner_2d, Jax1DInput
+from examples.llm_serving.model.test_1d import setup, runner_1d, runner_2d, Jax1DInput
 
 input_id_list = [
     [45942, 2866, 16, 5, 892, 9, 44042, 8],

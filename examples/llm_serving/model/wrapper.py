@@ -20,7 +20,7 @@ from transformers.generation_utils import GenerationMixin, ModelOutput, dataclas
 from transformers import OPTForCausalLM, BloomForCausalLM, GPT2LMHeadModel
 from tqdm import tqdm
 
-from llm_serving.model import opt_model as opt, bloom_model as bloom
+from llm_serving.model import opt_model, bloom_model
 from llm_serving.model.opt_utils import (TransformerModelConfig,
                                          jax_index_select, is_power_of_two)
 
@@ -293,12 +293,12 @@ def get_alpa_model(model_name: str,
 
     if "jax" in model_name:
         if "opt" in model_name:
-            m = opt
+            m = opt_model
         elif "bloom" in model_name:
-            m = bloom
+            m = bloom_model
             if any(x > 1 for x in encoder_chunk_sizes):
                 # TODO: support chunk size > 1
-                warnings.warn("Chunk size > 1 is not supported. Ignored.")
+                warnings.warn("encoder_chunk_size > 1 is not supported. Ignored.")
                 encoder_chunk_sizes = [1]
         config = m.get_config(name,
                               num_pp_stages=None,
@@ -321,22 +321,31 @@ def get_alpa_model(model_name: str,
         params = m.load_params_np(params_aval, path, config, dummy)
         init_cache = m.init_cache_np(config, batch_size=batch_size)
         params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
-    elif "alpa/opt" in model_name:
-        assert is_power_of_two(num_beams), "num_beams must be a power of two"
+    elif "alpa" in model_name:
+        if "opt" in model_name:
+            m = opt_model
+        elif "bloom" in model_name:
+            m = bloom_model
+            if any(x > 1 for x in encoder_chunk_sizes):
+                # TODO: support chunk size > 1
+                warnings.warn("encoder_chunk_size > 1 is not supported. Ignored.")
+                encoder_chunk_sizes = [1]
+
         alpa.init()
 
         print(
-            f"Load model {model_name} ... (This can take several minutes for very large models)"
+            f"Load model {model_name} ... "
+            f"(This can take several minutes for very large models)"
         )
 
         if num_pp_stages is None:
             num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
             num_pp_stages = min(num_pp_stages,
                                 alpa.get_global_cluster().num_devices)
-        config = opt.get_config(name,
-                                num_pp_stages=num_pp_stages,
-                                dtype=dtype,
-                                max_seq_len=max_seq_len)
+        config = m.get_config(name,
+                              num_pp_stages=num_pp_stages,
+                              dtype=dtype,
+                              max_seq_len=max_seq_len)
         transformer_config = TransformerModelConfig(
             H=config.hidden_size,
             L=config.num_hidden_layers,
@@ -347,7 +356,7 @@ def get_alpa_model(model_name: str,
         print(f" - Compile executables for encoder_chunk_sizes={encoder_chunk_sizes}. ",
               end="", flush=True)
         tic = time.time()
-        executables, params_aval = opt.get_pipeshard_executable(
+        executables, params_aval = m.get_pipeshard_executable(
             config,
             batch_size=batch_size,
             num_micro_batches=num_micro_batches,
@@ -359,10 +368,10 @@ def get_alpa_model(model_name: str,
         # Load params
         print(" - Load parameters. ", end="", flush=True)
         tic = time.time()
-        params = opt.load_multi_executable_params_dis_array(
+        params = m.load_multi_executable_params_dis_array(
             path, executables, params_aval, config, dummy)
 
-        init_cache = opt.init_multi_executable_cache_dis_array(
+        init_cache = m.init_multi_executable_cache_dis_array(
             executables, config, batch_size, dummy=dummy)
         set_skip_shard_args_check(init_cache)
 

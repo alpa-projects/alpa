@@ -62,7 +62,7 @@ class Generator:
                                        torch_device=self.torch_device,
                                        batch_size=MAX_BS,
                                        encoder_chunk_sizes=[1, 64],
-                                       max_target_positions=MAX_SEQ_LEN,
+                                       max_seq_len=MAX_SEQ_LEN,
                                        num_beams=self.num_beams,
                                        num_return_sequences=self.num_return_sequences,
                                        do_sample=self.do_sample)

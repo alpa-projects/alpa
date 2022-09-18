@@ -346,7 +346,6 @@ class OPTTransformerLayerCollection(nn.Module):
         for i, layer in enumerate(self.layers):
             if self.config.num_pp_stages is not None:
                 if i % layers_per_stage == 0 and i != 0:
-                    stage_id = i // layers_per_stage
                     if self.config.mark_boundary:
                         mark_pipeline_boundary()
 

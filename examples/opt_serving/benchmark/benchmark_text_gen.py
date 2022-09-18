@@ -90,6 +90,7 @@ if __name__ == "__main__":
     compute_tflopss = []
 
     if not autoregressive: # Forward mode
+        raise RuntimeError("This branch is deprecated")
         # Increase the frequency of deleting buffers to avoid OOM.
         global_config.delete_remote_arrays_threshold = 1
         seq_len = args.forward_encoder_length
@@ -186,7 +187,6 @@ if __name__ == "__main__":
                           args.path,
                           torch_device=torch_device,
                           dummy=args.dummy,
-                          autoregressive=autoregressive,
                           dtype=dtype,
                           encoder_chunk_sizes=encoder_chunk_sizes,
                           **generate_args)

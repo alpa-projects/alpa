@@ -500,7 +500,7 @@ def get_model(model_name: str,
         other parameters: shared with huggingface's model.generate API.
     """
     if "facebook/opt" in model_name:
-        return get_hf_opt_model(model_name, torch_device, num_beams)
+        return get_hf_opt_model(model_name, torch_device)
     elif "jax/opt" in model_name or "alpa/opt" in model_name:
         return get_alpa_opt_model(
               model_name,

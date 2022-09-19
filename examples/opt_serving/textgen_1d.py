@@ -7,10 +7,6 @@ from transformers import AutoTokenizer
 from opt_serving.model.wrapper import get_model_1d
 
 
-
-
-
-
 def main(args):
     # Load the tokenizer. We have to use the 30B version because
     # other versions have some issues. The 30B version works for all OPT models.
@@ -34,7 +30,7 @@ def main(args):
         "Computer Science studies the area of",
         "University of California Berkeley is a public university"
     ]
-    input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
+    input_ids = tokenizer(prompts, return_tensors="pt").input_ids
     output_ids = model.generate(input_ids=input_ids,
                                 max_length=64,
                                 **generate_params)
@@ -49,8 +45,10 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="alpa/opt-1.3b")
+    parser.add_argument("--model", type=str, default="alpa/opt1d-1.3b")
     parser.add_argument('--do-sample', action='store_true')
+    parser.add_argument('--num-beams', type=int, default=1)
+    parser.add_argument('--num-return-sequences', type=int, default=1)
     args = parser.parse_args()
 
     main(args)

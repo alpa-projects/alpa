@@ -28,6 +28,7 @@ from opt_serving.model.opt_utils import (TransformerModelConfig,
 from opt_serving.model.opt_model_1d import get_jax_executable as get_jax_executable_1d
 from opt_serving.model.opt_model_1d import init_cache_np as init_cache_np_1d
 from opt_serving.model.opt_model_1d import TransformerInputPool
+from opt_serving.model.opt_model_1d import load_params_np as load_params_np_1d
 
 
 @dataclass
@@ -240,7 +241,7 @@ def get_model_1d(model_name: str,
                  output_attentions: bool = False,
                  output_hidden_states: bool = False):
     """Experimental 1D transformer implementation."""
-    assert "1d" in model_name, "are you sure you want to use the experimental 1D version?"
+    assert "opt1d" in model_name, "are you sure you want to use the experimental 1D version?"
 
     # weight path
     name = model_name.split("-")[1].upper()
@@ -253,7 +254,10 @@ def get_model_1d(model_name: str,
                                   "Please follow the instructions to download "
                                   "and convert weights manually. ")
             print(f"Cannot find cached weights under '{path}'.")
-            download_weights(model_name.split("/")[1], path)
+            hf_name = model_name.split("/")
+            if "1d" in hf_name:
+                hf_name = hf_name.replace("1d", "")
+            download_weights(hf_name, path)
 
         assert os.path.exists(path), f"No such file or directory: '{path}'"
         embed_weight = os.path.join(path, "decoder.embed_tokens.weight")
@@ -276,7 +280,8 @@ def get_model_1d(model_name: str,
         output_hidden_states=output_hidden_states)
 
     # load params
-    params = load_params_np(params_aval, path, config, dummy)
+    # TODO(Hao): use the same func with 2D
+    params = load_params_np_1d(params_aval, path, config, dummy)
     params = jax.tree_map(jnp.array, params)
     input_pool = TransformerInputPool(config, batch_size=batch_size, cache_size=cache_size)
 
@@ -312,7 +317,6 @@ def get_model_1d(model_name: str,
                                 inference_func_config,
                                 executable,
                                 transformer_config)
-
 
 def get_model(model_name: str,
               # Weights

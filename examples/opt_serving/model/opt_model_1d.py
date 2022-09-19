@@ -608,7 +608,9 @@ class TransformerInputPool:
         self.erase_cache()
 
     def erase_cache(self):
-        self.kv_caches_cupy.fill(0.0)
+        for k, v in self.kv_caches_cupy:
+            k.fill(0.0)
+            v.fill(0.0)
 
     def update_cache(self, input_sequences: List[List[int]], kv):
         for layer_idx, (key_1d, value_1d) in enumerate(kv):

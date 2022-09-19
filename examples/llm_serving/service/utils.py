@@ -5,7 +5,7 @@ import logging.handlers
 import os
 import sys
 
-from opt_serving.service.constants import LOGDIR
+from llm_serving.service.constants import LOGDIR
 
 
 handler = None
@@ -37,7 +37,7 @@ def build_logger():
     sys.stderr = sl
 
     # Get logger
-    logger = logging.getLogger("alpa.opt_serving")
+    logger = logging.getLogger("alpa.llm_serving")
     logger.setLevel(logging.INFO)
 
     # Add a file handler for all loggers
@@ -45,7 +45,7 @@ def build_logger():
         os.makedirs(LOGDIR, exist_ok=True)
         logfile_path = os.path.join(
             LOGDIR,
-            f"alpa.opt_serving.log.{datetime.datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}"
+            f"alpa.llm_serving.log.{datetime.datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}"
         )
         handler = logging.handlers.RotatingFileHandler(logfile_path,
                                                        maxBytes=1024 * 1024,

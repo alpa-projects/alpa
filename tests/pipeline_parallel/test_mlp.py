@@ -26,6 +26,8 @@ class PipelineMLPTest(unittest.TestCase):
             @manual_layer_construction
             def loss_func(params, x, y):
                 out = state.apply_fn(params, x)
+                # test constant handling
+                out = out + jnp.array(range(batch_size)).reshape((-1, 1))
                 loss = jnp.mean((out - y)**2)
                 return loss
 

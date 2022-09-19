@@ -392,6 +392,10 @@ def slice_closed_jaxpr_by_full_pipeline_marks(
                 else:
                     current_computation.invars.append(var)
 
+        for var in eqn.invars:
+            if not isinstance(var, Literal) and var in global_consts_dir:
+                current_computation.consts_dir[var] = global_consts_dir[var]
+
         assert current_computation is not None
         current_computation.eqns.append(eqn)
 

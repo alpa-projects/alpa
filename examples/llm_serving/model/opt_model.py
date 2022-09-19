@@ -52,12 +52,12 @@ class OPTLMOutput(ModelOutput):
 @dataclass(frozen=True)
 class OPTConfig:
     # Inherited from OPT
-    decoder_layers: int = 12
-    max_target_positions: int = 2048
-    decoder_embed_dim: int = 768
-    decoder_attention_heads: int = 12
-    decoder_input_dim: int = 768
-    decoder_ffn_embed_dim: int = 3072
+    num_hidden_layers: int = 12
+    max_seq_len: int = 2048
+    hidden_size: int = 768
+    n_head: int = 12
+    input_dim: int = 768
+    ffn_embed_dim: int = 3072
     pad: int = 1
     activation_fn: str = 'relu'
     dtype: any = jnp.float16
@@ -84,23 +84,23 @@ class OPTEmbeddings(nn.Module):
     def setup(self):
         assert not self.config.use_stable_embedding
         self.embed_scale = 1.0 if self.config.no_scale_embedding else math.sqrt(
-            self.config.decoder_embed_dim)
+            self.config.hidden_size)
         self.word_embeddings = nn.Embed(
             self.config.vocab_size,
-            self.config.decoder_input_dim,
+            self.config.input_dim,
             dtype=self.dtype,
         )
-        assert self.config.max_target_positions is not None
+        assert self.config.max_seq_len is not None
         assert self.config.decoder_learned_pos
         self.position_embeddings = nn.Embed(
-            self.config.max_target_positions + self.config.pad + 1,
-            self.config.decoder_embed_dim,
+            self.config.max_seq_len + self.config.pad + 1,
+            self.config.hidden_size,
             dtype=self.dtype,
         )
         self.project_in_dim = nn.Dense(
-            self.config.decoder_embed_dim,
+            self.config.hidden_size,
             dtype=self.dtype,
-        ) if self.config.decoder_input_dim != self.config.decoder_embed_dim else None
+        ) if self.config.input_dim != self.config.hidden_size else None
 
     def __call__(self, input_ids, position_ids):
         # Embed
@@ -120,14 +120,14 @@ class OPTSelfAttention(nn.Module):
     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
-        if self.config.decoder_embed_dim % self.config.decoder_attention_heads != 0:
+        if self.config.hidden_size % self.config.n_head != 0:
             raise ValueError(
-                f"`decoder_embed_dim`: {self.config.decoder_embed_dim} has to be a "
-                f"multiple of `decoder_attention_heads`: {self.config.decoder_attention_heads}"
+                f"`hidden_size`: {self.config.hidden_size} has to be a "
+                f"multiple of `n_head`: {self.config.decoder_attention_heads}"
             )
 
         self.qkv_combined = nn.Dense(
-            self.config.decoder_embed_dim * 3,
+            self.config.hidden_size * 3,
             dtype=self.dtype,
         )
 
@@ -136,7 +136,7 @@ class OPTSelfAttention(nn.Module):
                  output_attentions: bool = False,
                  attention_cache=None,
                  attention_mask=None):
-        head_dim = self.config.decoder_embed_dim // self.config.decoder_attention_heads
+        head_dim = self.config.hidden_size // self.config.n_head
 
         qkv_combined_states = self.qkv_combined(hidden_states)
         qkv_combined_states = qkv_combined_states.reshape(
@@ -148,13 +148,13 @@ class OPTSelfAttention(nn.Module):
         # if perform_attention:
         # shape: [B, S, #head, head_dim]
         query_states = query_states.reshape(hidden_states.shape[:2] + (
-            self.config.decoder_attention_heads, head_dim))
+            self.config.n_head, head_dim))
         # shape: [B, S, #head, head_dim]
         value_states = value_states.reshape(hidden_states.shape[:2] + (
-            self.config.decoder_attention_heads, head_dim))
+            self.config.n_head, head_dim))
         # shape: [B, S, #head, head_dim]
         key_states = key_states.reshape(hidden_states.shape[:2] +
-                                        (self.config.decoder_attention_heads,
+                                        (self.config.n_head,
                                          head_dim))
 
         batch_size = hidden_states.shape[0]
@@ -178,13 +178,12 @@ class OPTSelfAttention(nn.Module):
             value_states = lax.dynamic_update_slice(cache_value, value_states, update_indices)
             query_len, key_len = query_states.shape[1], key_states.shape[1]
 
-            # Handle a special kind of internal padding added by alpa.
-            # Note that this kind of internal padding is different from
-            # the padding added by the tokenizer. This internal padding
-            # should not update cache and step_ct
-            # shape: [B, 1, 1, S_max]
-
             if attention_mask is not None:
+                # Handle a special kind of internal padding added by alpa.
+                # Note that this kind of internal padding is different from
+                # the padding added by the tokenizer. This internal padding
+                # should not update cache and step_ct
+                # shape: [B, 1, 1, S_max]
                 is_internal_padding = (attention_mask == 2)
                 num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
                 attention_mask = (attention_mask == 1)
@@ -234,7 +233,7 @@ class OPTAttention(nn.Module):
         assert self.config.decoder_normalize_before
         self.self = OPTSelfAttention(self.config, dtype=self.dtype)
         self.dense = nn.Dense(
-            self.config.decoder_embed_dim,
+            self.config.hidden_size,
             dtype=self.dtype,
         )
         self.layer_norm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
@@ -269,12 +268,12 @@ class OPTFFN(nn.Module):
 
     def setup(self):
         self.fc1 = nn.Dense(
-            self.config.decoder_ffn_embed_dim,
+            self.config.ffn_embed_dim,
             dtype=self.dtype,
         )
         self.activation = ACT2FN[self.config.activation_fn]
         self.fc2 = nn.Dense(
-            self.config.decoder_embed_dim,
+            self.config.hidden_size,
             dtype=self.dtype,
         )
         self.layer_norm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
@@ -331,7 +330,7 @@ class OPTTransformerLayerCollection(nn.Module):
     def setup(self):
         self.layers = [
             OPTTransformerLayer(self.config, name=str(i), dtype=self.dtype)
-            for i in range(self.config.decoder_layers)
+            for i in range(self.config.num_hidden_layers)
         ]
 
     def __call__(
@@ -348,13 +347,12 @@ class OPTTransformerLayerCollection(nn.Module):
         new_attention_cache = () if attention_cache is not None else None
 
         if self.config.num_pp_stages is not None:
-            assert self.config.decoder_layers % self.config.num_pp_stages == 0
-            layers_per_stage = self.config.decoder_layers // self.config.num_pp_stages
+            assert self.config.num_hidden_layers % self.config.num_pp_stages == 0
+            layers_per_stage = self.config.num_hidden_layers // self.config.num_pp_stages
 
         for i, layer in enumerate(self.layers):
             if self.config.num_pp_stages is not None:
                 if i % layers_per_stage == 0 and i != 0:
-                    stage_id = i // layers_per_stage
                     if self.config.mark_boundary:
                         mark_pipeline_boundary()
 
@@ -445,9 +443,9 @@ class OPTForLMModule(nn.Module):
                                                  dtype=self.dtype)
 
         self.project_out_dim = nn.Dense(
-            self.config.decoder_input_dim,
+            self.config.input_dim,
             dtype=self.dtype,
-        ) if self.config.decoder_input_dim != self.config.decoder_embed_dim else None
+        ) if self.config.input_dim != self.config.hidden_size else None
 
         if self.config.share_decoder_input_output_embed:
             self.decoder = None
@@ -506,54 +504,55 @@ class OPTForLMModule(nn.Module):
         )
 
 
-def get_opt_config(name, **kwargs):
-    if name == "125M":
+def get_config(name, **kwargs):
+    if name == "opt-125m":
         config = OPTConfig(
-            max_target_positions=2048, decoder_layers=12, decoder_attention_heads=12,
-            decoder_embed_dim=768, decoder_input_dim=768, decoder_ffn_embed_dim=768 * 4,
+            max_seq_len=2048, num_hidden_layers=12, n_head=12,
+            hidden_size=768, input_dim=768, ffn_embed_dim=768 * 4,
             version=3,
         )
-    elif name == "350M":
+    elif name == "opt-350m":
         config = OPTConfig(
-            max_target_positions=2048, decoder_layers=24, decoder_attention_heads=16,
-            decoder_embed_dim=1024, decoder_input_dim=1024, decoder_ffn_embed_dim=1024 * 4,
+            max_seq_len=2048, num_hidden_layers=24, n_head=16,
+            hidden_size=1024, input_dim=1024, ffn_embed_dim=1024 * 4,
             version=2,
         )
-        raise NotImplementedError()
-    elif name == "1.3B":
+        raise NotImplementedError("Not implemented because this model "
+                                  "has a different architecture")
+    elif name == "opt-1.3b":
         config = OPTConfig(
-            max_target_positions=2048, decoder_layers=24, decoder_attention_heads=32,
-            decoder_embed_dim=2048, decoder_input_dim=2048, decoder_ffn_embed_dim=2048 * 4,
+            max_seq_len=2048, num_hidden_layers=24, n_head=32,
+            hidden_size=2048, input_dim=2048, ffn_embed_dim=2048 * 4,
             version=3,
         )
-    elif name == "2.7B":
+    elif name == "opt-2.7b":
         config = OPTConfig(
-            max_target_positions=2048, decoder_layers=32, decoder_attention_heads=32,
-            decoder_embed_dim=2560, decoder_input_dim=2560, decoder_ffn_embed_dim=2560 * 4,
+            max_seq_len=2048, num_hidden_layers=32, n_head=32,
+            hidden_size=2560, input_dim=2560, ffn_embed_dim=2560 * 4,
             version=3,
         )
-    elif name == "6.7B":
+    elif name == "opt-6.7b":
         config = OPTConfig(
-            max_target_positions=2048, decoder_layers=32, decoder_attention_heads=32,
-            decoder_embed_dim=4096, decoder_input_dim=4096, decoder_ffn_embed_dim=4096 * 4,
+            max_seq_len=2048, num_hidden_layers=32, n_head=32,
+            hidden_size=4096, input_dim=4096, ffn_embed_dim=4096 * 4,
             version=3,
         )
-    elif name == "30B":
+    elif name == "opt-30b":
         config = OPTConfig(
-            max_target_positions=2048, decoder_layers=48, decoder_attention_heads=56,
-            decoder_embed_dim=7168, decoder_input_dim=7168, decoder_ffn_embed_dim=7168 * 4,
+            max_seq_len=2048, num_hidden_layers=48, n_head=56,
+            hidden_size=7168, input_dim=7168, ffn_embed_dim=7168 * 4,
             version=3,
         )
-    elif name == "66B":
+    elif name == "opt-66b":
         config = OPTConfig(
-            max_target_positions=2048, decoder_layers=64, decoder_attention_heads=72,
-            decoder_embed_dim=9216, decoder_input_dim=9216, decoder_ffn_embed_dim=9216 * 4,
+            max_seq_len=2048, num_hidden_layers=64, n_head=72,
+            hidden_size=9216, input_dim=9216, ffn_embed_dim=9216 * 4,
             version=3,
         )
-    elif name == "175B":
+    elif name == "opt-175b":
         config = OPTConfig(
-            max_target_positions=2048, decoder_layers=96, decoder_attention_heads=96,
-            decoder_embed_dim=12288, decoder_input_dim=12288, decoder_ffn_embed_dim=12288 * 4,
+            max_seq_len=2048, num_hidden_layers=96, n_head=96,
+            hidden_size=12288, input_dim=12288, ffn_embed_dim=12288 * 4,
             version=3,
         )
     else:
@@ -577,16 +576,16 @@ def init_model_aval(config):
 def init_cache_aval(config, batch_size):
     """Initialize cache with abstract values (shape-only arrays)."""
     dtype = config.dtype
-    head_dim = config.decoder_embed_dim // config.decoder_attention_heads
+    head_dim = config.hidden_size // config.n_head
 
     all_cache = []
-    for _ in range(config.decoder_layers):
+    for _ in range(config.num_hidden_layers):
         layer_cache = (
-            jax.core.ShapedArray((batch_size, config.max_target_positions,
-                                  config.decoder_attention_heads, head_dim),
+            jax.core.ShapedArray((batch_size, config.max_seq_len,
+                                  config.n_head, head_dim),
                                  dtype),
-            jax.core.ShapedArray((batch_size, config.max_target_positions,
-                                  config.decoder_attention_heads, head_dim),
+            jax.core.ShapedArray((batch_size, config.max_seq_len,
+                                  config.n_head, head_dim),
                                  dtype),
             jax.core.ShapedArray((batch_size,), jnp.int32),
         )
@@ -596,23 +595,23 @@ def init_cache_aval(config, batch_size):
 
 def init_mask_aval(config, batch_size):
     """Initialize attention mask with abstract values (shape-only arrays)."""
-    mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_target_positions), dtype=np.int8)
+    mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_seq_len), dtype=np.int8)
     return mask
 
 
 def init_cache_np(config, batch_size):
     """Init cache with numpy arrays."""
     np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
-    head_dim = config.decoder_embed_dim // config.decoder_attention_heads
+    head_dim = config.hidden_size // config.n_head
 
     all_cache = []
-    for i in range(config.decoder_layers):
+    for i in range(config.num_hidden_layers):
         layer_cache = (
-            np.zeros((batch_size, config.max_target_positions,
-                      config.decoder_attention_heads, head_dim),
+            np.zeros((batch_size, config.max_seq_len,
+                      config.n_head, head_dim),
                      dtype=np_dtype),
-            np.zeros((batch_size, config.max_target_positions,
-                      config.decoder_attention_heads, head_dim),
+            np.zeros((batch_size, config.max_seq_len,
+                      config.n_head, head_dim),
                      dtype=np_dtype),
             np.zeros((batch_size,), np.int32),
         )
@@ -744,8 +743,7 @@ def get_pipeshard_executable(config: OPTConfig,
                              encoder_chunk_sizes: Sequence[int],
                              num_micro_batches: int = 1,
                              output_attentions: bool = False,
-                             output_hidden_states: bool = False,
-                             autoregressive: bool = True):
+                             output_hidden_states: bool = False):
     """Get a parallel executable."""
     # Init model
     model, params = init_model_aval(config)
@@ -764,102 +762,74 @@ def get_pipeshard_executable(config: OPTConfig,
         ))
     #method = alpa.ShardParallel()
 
-    if autoregressive:
+    def inference_step_with_cache(params, batch):
+        output = model.apply(
+            params,
+            batch["input_ids"],
+            batch["position_ids"],
+            attention_cache=batch["cache"],
+            attention_mask=batch["mask"],
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states)
+        return output
 
-        def inference_step_with_cache(params, batch):
-            output = model.apply(
-                params,
-                batch["input_ids"],
-                batch["position_ids"],
-                attention_cache=batch["cache"],
-                attention_mask=batch["mask"],
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states)
-            return output
+    alpa.global_config.always_donate_micro_batch_vars = False
 
-        alpa.global_config.always_donate_micro_batch_vars = False
+    cache = init_cache_aval(config, batch_size)
+    mask = init_mask_aval(config, batch_size)
 
-        cache = init_cache_aval(config, batch_size)
-        mask = init_mask_aval(config, batch_size)
+    executables = {}
 
-        executables = {}
+    # Compile an executable with sequence length 1
+    executable = alpa.parallelize(
+        inference_step_with_cache, batch_argnums=(1,),
+        method=method).get_executable(
+            params, {
+                "input_ids":
+                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                "position_ids":
+                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                "cache":
+                    cache,
+                "mask":
+                    mask,
+            })
+    executable.dump_debug_info("tmp_executable_1")
+    executables[1] = executable
 
-        # Compile an executable with sequence length 1
+    # Create another parallel method with assigned input sharding specs
+    method_with_input_sharding = alpa.PipeshardParallel(
+        num_micro_batches=num_micro_batches,
+        pipeline_schedule="inference",
+        layer_option="manual",
+        default_auto_sharding_option=alpa.AutoShardingOption(
+            enable_auto_sharding=False,
+        ),
+        stage_input_shardings=executable.stage_input_shard_specs)
+
+    # Compile other executables
+    for seq_len in encoder_chunk_sizes:
         executable = alpa.parallelize(
-            inference_step_with_cache, batch_argnums=(1,),
-            method=method).get_executable(
+            inference_step_with_cache,
+            batch_argnums=(1,),
+            method=method_with_input_sharding).get_executable(
                 params, {
                     "input_ids":
-                        jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                        jax.core.ShapedArray(
+                            (batch_size, seq_len), jnp.int32),
                     "position_ids":
-                        jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                        jax.core.ShapedArray(
+                            (batch_size, seq_len), jnp.int32),
                     "cache":
                         cache,
                     "mask":
                         mask,
                 })
-        executable.dump_debug_info("tmp_executable_1")
-        executables[1] = executable
+        executable.dump_debug_info("tmp_executable_%d" % seq_len)
+        executables[seq_len] = executable
+    return executables, params
 
-        # Create another parallel method with assigned input sharding specs
-        method_with_input_sharding = alpa.PipeshardParallel(
-            num_micro_batches=num_micro_batches,
-            pipeline_schedule="inference",
-            layer_option="manual",
-            default_auto_sharding_option=alpa.AutoShardingOption(
-                enable_auto_sharding=False,
-            ),
-            stage_input_shardings=executable.stage_input_shard_specs)
-
-        # Compile other executables
-        for seq_len in encoder_chunk_sizes:
-            executable = alpa.parallelize(
-                inference_step_with_cache,
-                batch_argnums=(1,),
-                method=method_with_input_sharding).get_executable(
-                    params, {
-                        "input_ids":
-                            jax.core.ShapedArray(
-                                (batch_size, seq_len), jnp.int32),
-                        "position_ids":
-                            jax.core.ShapedArray(
-                                (batch_size, seq_len), jnp.int32),
-                        "cache":
-                            cache,
-                        "mask":
-                            mask,
-                    })
-            executable.dump_debug_info("tmp_executable_%d" % seq_len)
-            executables[seq_len] = executable
-        return executables, params
-    else:
-        assert len(encoder_chunk_sizes) == 1
-        seq_len = encoder_chunk_sizes[0]
-
-        @alpa.parallelize(batch_argnums=(1,), method=method)
-        def inference_step(params, batch):
-            output = model.apply(
-                params,
-                batch["input_ids"],
-                batch["position_ids"],
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states)
-            return output
-
-        assert batch_size % num_micro_batches == 0, "cannot divide batch_size by num_micro_batches"
-        micro_batch_size = batch_size // num_micro_batches
-
-        executable = inference_step.get_executable(
-            params, {
-                "input_ids":
-                    jax.core.ShapedArray(
-                        (batch_size, seq_len), jnp.int32),
-                "position_ids":
-                    jax.core.ShapedArray(
-                        (batch_size, seq_len), jnp.int32),
-            })
-
-        executable.dump_debug_info("tmp")
+    executable.dump_debug_info("tmp")
     return {seq_len: executable}, params
 
 
@@ -903,9 +873,9 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
         load_param("params.transformers.layer_norm.bias",
                    load_array("decoder.layer_norm.bias"))
 
-    layers_per_stage = config.decoder_layers // config.num_pp_stages
+    layers_per_stage = config.num_hidden_layers // config.num_pp_stages
 
-    for i in range(config.decoder_layers):
+    for i in range(config.num_hidden_layers):
         stage_id = i // layers_per_stage
         if stage_id != self.mesh_id:
             continue

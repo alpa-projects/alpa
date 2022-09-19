@@ -119,7 +119,7 @@ class FollowLayerOption(LayerOption):
 
 
 LAYER_HEAVY_OP_LOWER_BOUND = 3
-DEFAULT_EPS = 0.6
+DEFAULT_EPS = 0.1
 DEFAULT_COST_CRITERIA = "flops"
 
 

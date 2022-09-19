@@ -41,7 +41,7 @@ from tqdm import tqdm
 
 import alpa
 from alpa.model.model_util import DynamicScale, TrainState, concrete_remat
-from alpa import AutoShardingOption, AutoLayerOption
+from alpa import AutoShardingOption, AutoLayerOption, ManualStageOption
 import jax
 import jax.numpy as jnp
 import optax
@@ -340,8 +340,10 @@ def monkey_patch_remat():
 
 def get_3d_parallel_method(num_micro_batches, data_parallel, operator_parallel,
                            pipeline_parallel):
-    assert pipeline_parallel == 1, "TODO(lmzheng): Will be added later."
-    num_devices = alpa.get_global_num_devices()
+    global_cluster = alpa.get_global_cluster()
+
+    # Validity check
+    num_devices = global_cluster.num_devices
     if data_parallel == -1:
         data_parallel = num_devices // operator_parallel // pipeline_parallel
     assert num_devices % data_parallel == 0
@@ -349,13 +351,31 @@ def get_3d_parallel_method(num_micro_batches, data_parallel, operator_parallel,
     assert num_devices % pipeline_parallel == 0
     assert num_devices == data_parallel * operator_parallel * pipeline_parallel
 
-    method = alpa.ShardParallel(
+    # Decide logical and physical mesh shapes
+    logical_mesh_shape = (data_parallel, operator_parallel)
+    num_mesh_devices = np.prod(logical_mesh_shape)
+    num_devices_per_host = global_cluster.host_num_devices[0]
+    if num_mesh_devices <= num_devices_per_host:
+        physical_mesh_shape = (1, num_mesh_devices)
+    else:
+        assert num_mesh_devices % num_devices_per_host == 0
+        physical_mesh_shape = (num_mesh_devices // num_devices_per_host,
+                               num_devices_per_host)
+    # Set parallel method
+    pp = pipeline_parallel
+    method = alpa.PipeshardParallel(
         num_micro_batches=num_micro_batches,
-        auto_sharding_option=alpa.AutoShardingOption(
+        default_auto_sharding_option=AutoShardingOption(
             prefer_reduce_scatter=True,
-            force_batch_dim_to_mesh_dim=0),
-        devices=alpa.get_global_physical_mesh(create_if_not_exist=True)
-                    .get_logical_mesh([data_parallel, operator_parallel]))
+            force_batch_dim_to_mesh_dim=0,
+        ),
+        layer_option=AutoLayerOption(layer_num=pipeline_parallel),
+        #layer_option="manual",
+        stage_option=ManualStageOption(
+            forward_stage_layer_ids=[[i] for i in range(pp)],
+            submesh_physical_shapes=[physical_mesh_shape] * pp,
+            submesh_logical_shapes=[logical_mesh_shape] * pp,
+            submesh_autosharding_option_dicts=[{}] * pp))
     return method
 
 
@@ -821,6 +841,8 @@ def main():
         # train
         for step in tqdm(range(steps_per_epoch), desc="Training...", position=1, leave=False):
             batch = next(train_loader)
+            batch["position_ids"] = (batch["attention_mask"].cumsum(axis=1) *
+                                     batch["attention_mask"]) - 1
             state, train_metric = p_train_step(state, batch)
             train_metrics.append(train_metric)
 
@@ -875,6 +897,8 @@ def main():
                 for _ in tqdm(range(eval_steps), desc="Evaluating...", position=2, leave=False):
                     # Model forward
                     batch = next(eval_loader)
+                    batch["position_ids"] = (batch["attention_mask"].cumsum(axis=1) *
+                                             batch["attention_mask"]) - 1
                     metrics = p_eval_step(state.params, batch)
                     eval_metrics.append(metrics)
 
@@ -913,12 +937,6 @@ def main():
                 if training_args.push_to_hub:
                     repo.push_to_hub(commit_message=f"Saving weights and logs of step {cur_step}", blocking=False)
 
-    # Save the final model
-    alpa.prefetch(state.params)
-    params = alpa.util.map_to_nparray(state.params)
-    model.save_pretrained(training_args.output_dir, params=params)
-    tokenizer.save_pretrained(training_args.output_dir)
-
     # Eval after training
     if training_args.do_eval:
         eval_metrics = []
@@ -927,6 +945,8 @@ def main():
         for _ in tqdm(range(eval_steps), desc="Evaluating...", position=2, leave=False):
             # Model forward
             batch = next(eval_loader)
+            batch["position_ids"] = (batch["attention_mask"].cumsum(axis=1) *
+                                     batch["attention_mask"]) - 1
             metrics = p_eval_step(state.params, batch)
             eval_metrics.append(metrics)
 
@@ -943,6 +963,14 @@ def main():
         path = os.path.join(training_args.output_dir, "eval_results.json")
         with open(path, "w") as f:
             json.dump(eval_metrics, f, indent=4, sort_keys=True)
+
+    # Save the final model
+    print("\nSave the final model...")
+    alpa.prefetch(state.params)
+    params = alpa.util.map_to_nparray(state.params)
+    model.save_pretrained(training_args.output_dir, params=params)
+    tokenizer.save_pretrained(training_args.output_dir)
+
 
 if __name__ == "__main__":
     main()

@@ -17,14 +17,10 @@ from transformers.generation_utils import GenerationMixin, ModelOutput, dataclas
 from transformers import OPTForCausalLM, BloomForCausalLM, GPT2LMHeadModel
 from tqdm import tqdm
 
-from llm_serving.model import opt_model, bloom_model
+from llm_serving.model import opt_model, bloom_model, opt_model_1d
 from llm_serving.model.opt_utils import (TransformerModelConfig,
                                          jax_index_select, is_power_of_two)
-
-from opt_serving.model.opt_model_1d import get_jax_executable as get_jax_executable_1d
-from opt_serving.model.opt_model_1d import init_cache_np as init_cache_np_1d
-from opt_serving.model.opt_model_1d import TransformerInputPool
-from opt_serving.model.opt_model_1d import load_params_np as load_params_np_1d
+from llm_serving.model.opt_model_1d import TransformerInputPool
 
 
 @dataclass
@@ -237,7 +233,7 @@ def get_model_1d(model_name: str,
                  dummy: bool = False,
                  # batch size, this batch is #tokens
                  batch_size: int = 1,
-                 max_target_positions: int = 2048,
+                 max_seq_len: int = 2048,
                  cache_size: int = 4096,
                  # model parameters
                  dtype=jnp.float16,
@@ -250,47 +246,43 @@ def get_model_1d(model_name: str,
                  output_attentions: bool = False,
                  output_hidden_states: bool = False):
     """Experimental 1D transformer implementation."""
-    assert "opt1d" in model_name, "are you sure you want to use the experimental 1D version?"
-
-    # weight path
-    name = model_name.split("-")[1].upper()
-    path = os.path.abspath(os.path.expanduser(os.path.join(path, f"{name}_np")))
+    assert "opt-1d" in model_name, "are you sure you want to use the experimental 1D version?"
+    name = model_name.split("/")[1].lower()
+    name = name.replace("-1d", "")
+    path = os.path.abspath(os.path.expanduser(os.path.join(path, f"{name}-np")))
     if not dummy:
-        # Check the existence of weights.
+        # Download weights if there is no cached weights.
         if not os.path.exists(path):
-            if name in ["175B"]:
+            if name in ["opt-175b"]:
                 raise ValueError(f"Cannot find cached weights under '{path}'. "
                                   "Please follow the instructions to download "
                                   "and convert weights manually. ")
             print(f"Cannot find cached weights under '{path}'.")
-            hf_name = model_name.split("/")
-            if "1d" in hf_name:
-                hf_name = hf_name.replace("1d", "")
-            download_weights(hf_name, path)
+            download_weights(model_name.split("/")[1], path)
 
+        # Do some sanity check
         assert os.path.exists(path), f"No such file or directory: '{path}'"
-        embed_weight = os.path.join(path, "decoder.embed_tokens.weight")
+        if "opt" in name:
+            embed_weight = os.path.join(path, "decoder.embed_tokens.weight")
+        elif "bloom" in name:
+            embed_weight = os.path.join(path, "word_embeddings.weight")
         assert os.path.exists(embed_weight), f"No such file or directory: '{embed_weight}'"
-
     # TODO(Hao): figure out the actual input size
-    config = get_opt_config(name,
-                            dtype=dtype,
-                            max_target_positions=max_target_positions)
+    config = opt_model.get_config(name, dtype=dtype, max_seq_len=max_seq_len)
     transformer_config = TransformerModelConfig(
-        H=config.decoder_embed_dim,
-        L=config.decoder_layers,
-        n_head=config.decoder_attention_heads,
-        seq_len=config.max_target_positions,
+        H=config.hidden_size,
+        L=config.num_hidden_layers,
+        n_head=config.n_head,
+        seq_len=config.max_seq_len,
         vocab_size=config.vocab_size)
-
-    executable, params_aval = get_jax_executable_1d(
+    executable, params_aval = opt_model_1d.get_jax_executable(
         config,
         output_attentions=output_attentions,
         output_hidden_states=output_hidden_states)
 
     # load params
     # TODO(Hao): use the same func with 2D
-    params = load_params_np_1d(params_aval, path, config, dummy)
+    params = opt_model_1d.load_params_np(params_aval, path, config, dummy)
     params = jax.tree_map(jnp.array, params)
     input_pool = TransformerInputPool(config, batch_size=batch_size, cache_size=cache_size)
 

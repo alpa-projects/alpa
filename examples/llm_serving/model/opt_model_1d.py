@@ -59,12 +59,12 @@ class OPTLMOutput(ModelOutput):
 @dataclass(frozen=True)
 class OPTConfig:
     # Inherited from OPT
-    decoder_layers: int = 12
-    max_target_positions: int = 2048
-    decoder_embed_dim: int = 768
-    decoder_attention_heads: int = 12
-    decoder_input_dim: int = 768
-    decoder_ffn_embed_dim: int = 3072
+    num_hidden_layers: int = 12
+    max_seq_len: int = 2048
+    hidden_size: int = 768
+    n_head: int = 12
+    input_dim: int = 768
+    ffn_embed_dim: int = 3072
     pad: int = 1
     activation_fn: str = 'relu'
     dtype: any = jnp.float16
@@ -91,23 +91,23 @@ class OPTEmbeddings(nn.Module):
     def setup(self):
         assert not self.config.use_stable_embedding
         self.embed_scale = 1.0 if self.config.no_scale_embedding else math.sqrt(
-            self.config.decoder_embed_dim)
+            self.config.hidden_size)
         self.word_embeddings = nn.Embed(
             self.config.vocab_size,
-            self.config.decoder_input_dim,
+            self.config.input_dim,
             dtype=self.dtype,
         )
-        assert self.config.max_target_positions is not None
+        assert self.config.max_seq_len is not None
         assert self.config.decoder_learned_pos
         self.position_embeddings = nn.Embed(
-            self.config.max_target_positions + self.config.pad + 1,
-            self.config.decoder_embed_dim,
+            self.config.max_seq_len + self.config.pad + 1,
+            self.config.hidden_size,
             dtype=self.dtype,
         )
         self.project_in_dim = nn.Dense(
-            self.config.decoder_embed_dim,
+            self.config.hidden_size,
             dtype=self.dtype,
-        ) if self.config.decoder_input_dim != self.config.decoder_embed_dim else None
+        ) if self.config.input_dim != self.config.hidden_size else None
 
     def __call__(self, input_ids, position_ids):
         # Embed
@@ -127,37 +127,37 @@ class OPTSelfAttention(nn.Module):
     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
-        if self.config.decoder_embed_dim % self.config.decoder_attention_heads != 0:
+        if self.config.hidden_size % self.config.n_head != 0:
             raise ValueError(
-                f"`decoder_embed_dim`: {self.config.decoder_embed_dim} has to be a "
-                f"multiple of `decoder_attention_heads`: {self.config.decoder_attention_heads}"
+                f"`hidden_size`: {self.config.hidden_size} has to be a "
+                f"multiple of `n_head`: {self.config.n_head}"
             )
 
         self.qkv_combined = nn.Dense(
-            self.config.decoder_embed_dim * 3,
+            self.config.hidden_size * 3,
             dtype=self.dtype,
             use_bias=False,
         )
 
         # The fused_mmha kernel fuses the bias add, so we do not load the bias in Dense and
         # instead feed it into the kernel.
-        head_dim = self.config.decoder_embed_dim // self.config.decoder_attention_heads
+        head_dim = self.config.hidden_size // self.config.n_head
         self.qkv_combined_bias = self.param(
             'qkv_combined_bias', flax.linen.initializers.zeros,
-            (3, self.config.decoder_attention_heads, head_dim), self.dtype)
+            (3, self.config.n_head, head_dim), self.dtype)
 
     def __call__(self,
                  hidden_states,
                  output_attentions: bool = False,
                  attention_cache=None):
-        head_dim = self.config.decoder_embed_dim // self.config.decoder_attention_heads
+        head_dim = self.config.hidden_size // self.config.n_head
         assert attention_cache is not None, "Attention cache must be provided for now"
 
         # Shape: [1D seq, heads, head_dim, 3]
         qkv_combined_states = self.qkv_combined(hidden_states)
         qkv_combined_states = qkv_combined_states.reshape(
             qkv_combined_states.shape[:1] +
-            (self.config.decoder_attention_heads, head_dim, 3))
+            (self.config.n_head, head_dim, 3))
 
         # Shape: [1D seq, 3, heads, head_dim]
         qkv_combined_states = qkv_combined_states.transpose((0, 3, 1, 2))
@@ -198,7 +198,7 @@ class OPTAttention(nn.Module):
         assert self.config.decoder_normalize_before
         self.self = OPTSelfAttention(self.config, dtype=self.dtype)
         self.dense = nn.Dense(
-            self.config.decoder_embed_dim,
+            self.config.hidden_size,
             dtype=self.dtype,
         )
         self.layer_norm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
@@ -231,12 +231,12 @@ class OPTFFN(nn.Module):
 
     def setup(self):
         self.fc1 = nn.Dense(
-            self.config.decoder_ffn_embed_dim,
+            self.config.ffn_embed_dim,
             dtype=self.dtype,
         )
         self.activation = ACT2FN[self.config.activation_fn]
         self.fc2 = nn.Dense(
-            self.config.decoder_embed_dim,
+            self.config.hidden_size,
             dtype=self.dtype,
         )
         self.layer_norm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
@@ -291,7 +291,7 @@ class OPTTransformerLayerCollection(nn.Module):
     def setup(self):
         self.layers = [
             OPTTransformerLayer(self.config, name=str(i), dtype=self.dtype)
-            for i in range(self.config.decoder_layers)
+            for i in range(self.config.num_hidden_layers)
         ]
 
     def __call__(
@@ -307,8 +307,8 @@ class OPTTransformerLayerCollection(nn.Module):
         new_attention_cache = () if attention_cache is not None else None
 
         if self.config.num_pp_stages is not None:
-            assert self.config.decoder_layers % self.config.num_pp_stages == 0
-            layers_per_stage = self.config.decoder_layers // self.config.num_pp_stages
+            assert self.config.num_hidden_layers % self.config.num_pp_stages == 0
+            layers_per_stage = self.config.num_hidden_layers // self.config.num_pp_stages
 
         for i, layer in enumerate(self.layers):
             if self.config.num_pp_stages is not None:
@@ -401,9 +401,9 @@ class OPTForLMModule(nn.Module):
                                                  dtype=self.dtype)
 
         self.project_out_dim = nn.Dense(
-            self.config.decoder_input_dim,
+            self.config.input_dim,
             dtype=self.dtype,
-        ) if self.config.decoder_input_dim != self.config.decoder_embed_dim else None
+        ) if self.config.input_dim != self.config.hidden_size else None
 
         if self.config.share_decoder_input_output_embed:
             self.decoder = None
@@ -480,16 +480,16 @@ def init_model_aval(config, total_input_len, total_cache_len):
 
 def init_cache_aval(config, total_cache_len):
     dtype = config.dtype
-    head_dim = config.decoder_embed_dim // config.decoder_attention_heads
+    head_dim = config.hidden_size // config.n_head
 
     all_cache = []
-    for i in range(config.decoder_layers):
+    for i in range(config.num_hidden_layers):
         layer_cache = (
             jax.core.ShapedArray((total_cache_len,
-                                  config.decoder_attention_heads, head_dim),
+                                  config.n_head, head_dim),
                                  dtype),
             jax.core.ShapedArray((total_cache_len,
-                                  config.decoder_attention_heads, head_dim),
+                                  config.n_head, head_dim),
                                  dtype),
         )
         all_cache.append(layer_cache)
@@ -499,16 +499,16 @@ def init_cache_aval(config, total_cache_len):
 def init_cache_np(config, total_cache_len):
     """Init cache per sequence with numpy arrays."""
     np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
-    head_dim = config.decoder_embed_dim // config.decoder_attention_heads
+    head_dim = config.hidden_size // config.n_head
 
     all_cache = []
-    for i in range(config.decoder_layers):
+    for i in range(config.num_hidden_layers):
         layer_cache = (
             np.zeros((total_cache_len,
-                      config.decoder_attention_heads, head_dim),
+                      config.n_head, head_dim),
                      dtype=np_dtype),
             np.zeros((total_cache_len,
-                      config.decoder_attention_heads, head_dim),
+                      config.n_head, head_dim),
                      dtype=np_dtype),
         )
         all_cache.append(layer_cache)
@@ -549,7 +549,7 @@ class TransformerInputPool:
         # reset cache, sentence_ids, etc.
         self.reset()
         assert not self._entered, "This pool can only process a batch at a time."
-        unpadded = self._maybe_remove_padding(input_sequences)
+        unpadded = self._maybe_remove_padding(input_sequences.tolist())
         # check input has no padding
         for seq in unpadded:
             assert self.pad not in seq
@@ -680,8 +680,8 @@ def load_params_np(params, path, config, dummy=False):
             else:
                 param_dict = param_dict[key]
 
-    head = config.decoder_attention_heads
-    head_dim = config.decoder_embed_dim // head
+    head = config.n_head
+    head_dim = config.hidden_size // head
 
     params = params.unfreeze()
     load_param("params.transformers.embeddings.word_embeddings.embedding",
@@ -693,7 +693,7 @@ def load_params_np(params, path, config, dummy=False):
                    load_array("decoder.layer_norm.weight"))
         load_param("params.transformers.layer_norm.bias",
                    load_array("decoder.layer_norm.bias"))
-    for i in range(config.decoder_layers):
+    for i in range(config.num_hidden_layers):
         param_prefix = f"params.transformers.encoder.{i}."
         load_prefix = f"decoder.layers.{i}."
         # Attention weights
@@ -872,11 +872,11 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
         load_param("params.transformers.layer_norm.bias",
                    load_array("decoder.layer_norm.bias"))
 
-    layers_per_stage = config.decoder_layers // config.num_pp_stages
-    head = config.decoder_attention_heads
-    head_dim = config.decoder_embed_dim // head
+    layers_per_stage = config.num_hidden_layers // config.num_pp_stages
+    head = config.n_head
+    head_dim = config.hidden_size // head
 
-    for i in range(config.decoder_layers):
+    for i in range(config.num_hidden_layers):
         stage_id = i // layers_per_stage
         if stage_id != self.mesh_id:
             continue

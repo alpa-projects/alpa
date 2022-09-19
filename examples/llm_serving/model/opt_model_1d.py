@@ -549,11 +549,12 @@ class TransformerInputPool:
         # reset cache, sentence_ids, etc.
         self.reset()
         assert not self._entered, "This pool can only process a batch at a time."
+        unpadded = self._maybe_remove_padding(input_sequences)
         # check input has no padding
-        for seq in input_sequences:
+        for seq in unpadded:
             assert self.pad not in seq
         # generate IDs for them
-        self.input_sequence_ids = [i for i in range(0, len(input_sequences))]
+        self.input_sequence_ids = [i for i in range(0, len(unpadded))]
 
         # update num_prev_tokens for the sentence
         # for i, sentence_id in enumerate(sentence_ids):
@@ -561,7 +562,7 @@ class TransformerInputPool:
             assert id not in self.num_prev_tokens
             self.num_prev_tokens[id] = 0
         self._entered = True
-        input, input_index, position_ids = self._generate_1d_inputs(input_sequences)
+        input, input_index, position_ids = self._generate_1d_inputs(unpadded)
         return input, input_index, position_ids
 
     def enter_decoding(self, input_sequences: List[List[int]]):
@@ -575,6 +576,13 @@ class TransformerInputPool:
 
         input, input_index, position_ids = self._generate_1d_inputs(input_sequences)
         return input, input_index, position_ids
+
+    def _maybe_remove_padding(self, inputs):
+        unpadded_inputs = []
+        for seq in inputs:
+            if self.pad in seq:
+                unpadded_inputs.append(seq[:inputs.index(self.pad)])
+        return unpadded_inputs
 
     def _generate_1d_inputs(self, input_sequences: List[List[int]]):
         """Generate the three elements: input tokens, input token index, and position_ids"""

@@ -31,7 +31,7 @@ import numpy as np
 from tqdm import tqdm
 
 from llm_serving.model.opt_model import (init_cache_aval, init_mask_aval,
-    init_cache_np, init_multi_executable_cache_dis_array)
+    init_cache_np, init_cache_dis_array, init_multi_executable_cache_dis_array)
 
 
 @dataclass(frozen=True)
@@ -565,6 +565,11 @@ def get_config(name, **kwargs):
     elif name == "bloom-176b":
         config = BloomConfig(
             hidden_size=14336, n_head=112, num_hidden_layers=70,
+            pretraining_tp=4, use_cache=True
+        )
+    elif name == "bloom-debug":
+        config = BloomConfig(
+            hidden_size=1024, n_head=16, num_hidden_layers=8,
             pretraining_tp=4, use_cache=True
         )
     else:

@@ -9,12 +9,12 @@ from alpa.util import OrderedSet, jaxpr_to_hlo_module
 
 def eqn_flops(eqn: JaxprEqn) -> float:
     """Get the FLOP of a jaxpr equation."""
-    jaxpr = Jaxpr([], eqn.invars, eqn.outvars, [eqn])
+    if "call_jaxpr" in eqn.params:
+        jaxpr = eqn.params["call_jaxpr"]
+    else:
+        jaxpr = Jaxpr([], eqn.invars, eqn.outvars, [eqn])
     closed_jaxpr = ClosedJaxpr(jaxpr, [])
     backend = xb.get_backend("gpu")
-    if any(isinstance(x, Literal) for x in eqn.invars):
-        # A temporary workaround
-        return 0
     hlo_module = jaxpr_to_hlo_module("tmp", closed_jaxpr, [
         False,
     ] * len(eqn.invars), backend)
@@ -46,8 +46,7 @@ def heavy_count(eqn):
     """Check the number of heavy ops in the eqn."""
     if eqn.primitive in non_trivial_primitive:
         return 1
-    if isinstance(eqn.primitive, CallPrimitive):
-        assert "call_jaxpr" in eqn.params
+    if "call_jaxpr" in eqn.params:
         called = eqn.params["call_jaxpr"]
         cnt = 0
         for subjaxpr_eqn in called.eqns:

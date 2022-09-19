@@ -494,10 +494,11 @@ def layer_level_jaxpr_transformation(fn: Callable,
                                                    eps,
                                                    costs,
                                                    cost_criteria=cost_criteria)
-            if global_config.print_auto_layer_stats:
-                log_layer_slicing_stats(jaxpr, sliced_eqns)
         else:
             sliced_eqns = slice_eqns_by_layer_boundary(jaxpr)
+
+        if global_config.print_auto_layer_stats:
+            log_layer_slicing_stats(jaxpr, sliced_eqns)
 
         if remat:
             sliced_eqns = remat_sliced_eqns(jaxpr, sliced_eqns)

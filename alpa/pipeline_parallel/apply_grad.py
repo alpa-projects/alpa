@@ -527,7 +527,7 @@ def _propagate_var_at_mesh(eqns, var_mesh):
         at_mesh = OrderedSet()
         at_each_mesh = True
         for invar in eqn.invars:
-            if isinstance(invar, Var) and not invar in allreduce_outvars:
+            if isinstance(invar, Var) and invar not in allreduce_outvars:
                 at_mesh.update(var_mesh.setdefault(invar, OrderedSet()))
                 at_each_mesh = False
         if at_mesh:
@@ -630,6 +630,7 @@ class ApplyGradRewriter:
         self.var_def: Dict[Var, int] = {}
 
     def _reducable(self, eqn):
+        """An eqn is reducable if it is a reducable and scalar operation"""
         # the is_scalar is to avoid a large all-reduce for tied-embedding
         # it can be improved by adding computation-communication tradeoff
         return (eqn.primitive in _reducable_operators and
@@ -650,7 +651,6 @@ class ApplyGradRewriter:
         multiple meshes.
         """
         self.eqn_mesh = {}
-        var_mesh = dict(self.var_mesh)
         self.var_use = {}
         self.var_def = {}
         # Propagate the first round
@@ -658,63 +658,65 @@ class ApplyGradRewriter:
             at_mesh = OrderedSet()
             for invar in eqn.invars:
                 if isinstance(invar, Var):
-                    at_mesh.update(var_mesh.setdefault(invar, OrderedSet()))
+                    at_mesh.update(self.var_mesh.setdefault(invar, OrderedSet()))
                     self.var_use.setdefault(invar, OrderedSet()).add(eqn_idx)
             if len(at_mesh) == 1:
                 for invar in eqn.invars:
                     if isinstance(invar, Var):
-                        var_mesh.setdefault(invar, OrderedSet()).update(at_mesh)
-                self.eqn_mesh[eqn_idx] = list(at_mesh)[0]
+                        self.var_mesh.setdefault(invar, OrderedSet()).update(at_mesh)
+            self.eqn_mesh[eqn_idx] = list(at_mesh)
             for outvar in eqn.outvars:
                 if not isinstance(outvar, DropVar):
-                    var_mesh[outvar] = OrderedSet(at_mesh)
+                    self.var_mesh[outvar] = OrderedSet(at_mesh)
                     self.var_def[outvar] = eqn_idx
-        for eqn_idx, eqn in enumerate(self.eqns):
-            if eqn_idx in self.eqn_mesh:
-                mesh = self.eqn_mesh[eqn_idx]
-                for var in eqn.invars:
-                    if isinstance(var, Var):
-                        self.var_mesh[var] = OrderedSet([mesh])
-                for var in eqn.outvars:
-                    if not isinstance(var, DropVar):
-                        self.var_mesh[var] = OrderedSet([mesh])
 
     def _reducable_chain_lookup(self, eqn_idx, num_mesh):
         """
-        Pattern matching. For: c = a + b and e = c + d, if a, b and d are all at
-        one mesh, and c is only used once, then we can do the reduction to
-        translate additions into an allreduce.
+        Pattern matching. For y = x_0 op x_1 op x_2 ... op x_n, it is as
+        y_0 = x_0 op x_1, y_1 = y_0 op x_2, ... in jaxpr. This function collects
+        all such x_0, x_1, ... x_n by making sure that intermediates like y_0 &
+        y_1 are not used elsewhere.
+
+        Returns:
+            mesh_vars: list of variables being reduced in a certain mesh.
+            final_var: The final outvar(the y above)
+            removed: Indices of eqns being removed. They compute intermediates.
+            literals: Literals along with the reduction
         """
         # List[mesh_idx -> List[Vars]]
         mesh_vars = [[] for _ in range(num_mesh)]
         literals = []
         eqn = self.eqns[eqn_idx]
-        cur_var = eqn.invars[0]
         nxt_idx, nxt_eqn = eqn_idx, eqn
         reducable_chain = []
-        while (self._reducable(nxt_eqn) and
-               (nxt_eqn.primitive == eqn.primitive) and
-               self._other_invar_at_one_mesh(cur_var, nxt_eqn)):
+        while self._reducable(nxt_eqn) and (nxt_eqn.primitive == eqn.primitive):
             cur_idx, cur_eqn = nxt_idx, nxt_eqn
-            cur_var = cur_eqn.outvars[0]
             reducable_chain.append(cur_idx)
             outv_use = self.var_use.setdefault(cur_eqn.outvars[0], OrderedSet())
+            # If the var is used in multiple places or global output, it is not
+            # a safe intermediate variable and the chain ends.
             if len(outv_use) != 1 or cur_eqn.outvars[0] in self.outvars:
                 break
             nxt_idx = list(outv_use)[0]
             nxt_eqn = self.eqns[nxt_idx]
+        if cur_idx == eqn_idx:
+            return None, None, None, None
         final_var = cur_eqn.outvars[0]
         # split eqns on the reducable chain into meshes
         reducable_set = set(reducable_chain)
         for reduced_idx in reducable_chain:
             reduced_eqn = self.eqns[reduced_idx]
             for op in reduced_eqn.invars:
+                # We can assign all literals to mesh 0 cuz they'll be optimized
+                # by arithmetic simplification.
                 if isinstance(op, Literal):
                     mesh_vars[0].append(op)
                     continue
                 def_idx = self.var_def[op]
                 if def_idx not in reducable_set:
-                    mesh_vars[self.eqn_mesh[def_idx]].append(op)
+                    def_meshes = self.eqn_mesh[def_idx]
+                    # TODO(yonghao): round-robin this
+                    mesh_vars[list(def_meshes)[0]].append(op)
         return mesh_vars, final_var, reducable_chain[:-1], literals
 
     def _rewrite_eqns(self, primitive, mesh_vars, gensym_fn, outvar, literals):
@@ -761,11 +763,15 @@ class ApplyGradRewriter:
         allreduce_groups = OrderedSet()
         for eqn_idx, eqn in enumerate(self.eqns):
             # Do not handle c = a(mesh1 and 2) + b(mesh1) case
-            if (eqn_idx not in self.eqn_mesh and self._reducable(eqn) and
-                    self._var_at_one_mesh(eqn.invars[0]) and
-                    self._var_at_one_mesh(eqn.invars[1])):
+            if eqn_idx in removed_eqns:
+                continue
+            if (eqn_idx in self.eqn_mesh and len(self.eqn_mesh[eqn_idx]) > 1 and
+                    self._reducable(eqn)):
                 (mesh_vars, final_var, removed,
                  literals) = self._reducable_chain_lookup(eqn_idx, num_mesh)
+                if mesh_vars is None:
+                    # Only one eqn matches the pattern, skip it
+                    continue
                 removed_eqns.update(removed)
                 appended_eqns, allreduce_group = self._rewrite_eqns(
                     eqn.primitive, mesh_vars, gensym_fn, final_var, literals)

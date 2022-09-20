@@ -527,7 +527,7 @@ class TransformerInputPool:
                  config,
                  batch_size=512,
                  cache_size=512,
-                 max_cache_per_seq=32):
+                 max_cache_per_seq=128):
         # Opt model config
         self._config = config
         self.batch_size = batch_size
@@ -549,12 +549,11 @@ class TransformerInputPool:
         # reset cache, sentence_ids, etc.
         self.reset()
         assert not self._entered, "This pool can only process a batch at a time."
-        unpadded = self._maybe_remove_padding(input_sequences.tolist())
         # check input has no padding
-        for seq in unpadded:
+        for seq in input_sequences:
             assert self.pad not in seq
         # generate IDs for them
-        self.input_sequence_ids = [i for i in range(0, len(unpadded))]
+        self.input_sequence_ids = [i + 1 for i in range(0, len(input_sequences))]
 
         # update num_prev_tokens for the sentence
         # for i, sentence_id in enumerate(sentence_ids):
@@ -562,7 +561,7 @@ class TransformerInputPool:
             assert id not in self.num_prev_tokens
             self.num_prev_tokens[id] = 0
         self._entered = True
-        input, input_index, position_ids = self._generate_1d_inputs(unpadded)
+        input, input_index, position_ids = self._generate_1d_inputs(input_sequences)
         return input, input_index, position_ids
 
     def enter_decoding(self, input_sequences: List[List[int]]):
@@ -577,11 +576,24 @@ class TransformerInputPool:
         input, input_index, position_ids = self._generate_1d_inputs(input_sequences)
         return input, input_index, position_ids
 
-    def _maybe_remove_padding(self, inputs):
+    def reshape_logits(self, logits, input_index, original_input_shape):
+        """Unflatten the 1D logits output to be 2D."""
+        ret = np.zeros(list(original_input_shape) + [logits.shape[-1]])
+        index = 0
+        for i in range(1, original_input_shape[0] + 1):
+            num_elements = np.sum(input_index==i)
+            ret[i-1, :num_elements, :] = logits[index:index+num_elements, :]
+            index = index + num_elements
+        return ret
+
+    def unpad(self, inputs_np: np.ndarray):
+        inputs = inputs_np.tolist()
         unpadded_inputs = []
         for seq in inputs:
             if self.pad in seq:
-                unpadded_inputs.append(seq[:inputs.index(self.pad)])
+                unpadded_inputs.append(seq[:seq.index(self.pad)])
+            else:
+                unpadded_inputs.append(seq)
         return unpadded_inputs
 
     def _generate_1d_inputs(self, input_sequences: List[List[int]]):
@@ -622,7 +634,6 @@ class TransformerInputPool:
 
     def update_cache(self, input_sequences: List[List[int]], kv):
         for layer_idx, (key_1d, value_1d) in enumerate(kv):
-
             k_cache, v_cache = self.kv_caches_cupy[layer_idx]
             key_1d = jax_tensor_to_cupy(key_1d)
             value_1d = jax_tensor_to_cupy(value_1d)
@@ -755,7 +766,7 @@ def get_jax_executable(config: OPTConfig,
                              # attention_mask=batch["mask"],
                              output_attentions=output_attentions,
                              output_hidden_states=output_hidden_states)
-        return output
+        return output.logits, output.attention_cache
 
     # executables = {}
     # for length in encoder_chunk_sizes:
@@ -763,269 +774,269 @@ def get_jax_executable(config: OPTConfig,
     return inference_step, params
 
 
-def get_pipeshard_executable(config,
-                             batch_size=1,
-                             num_micro_batches=1,
-                             decoding_length_per_step=1024,
-                             support_output_attentions=False,
-                             support_output_hidden_states=False,
-                             autoregressive=True):
-
-    # Init model
-    model, params = init_model_aval(config)
-
-    # Parallelize
-    method = alpa.PipeshardParallel(
-        num_micro_batches=num_micro_batches,
-        pipeline_schedule="inference",
-        layer_option="manual",
-        default_auto_sharding_option=alpa.AutoShardingOption(
-            # Force operator model parallel
-            force_batch_dim_to_mesh_dim=None,
-            # Disabling all-to-all and all-gather generates better intra-op strategies.
-            allow_all_to_all=False,
-            allow_all_gather=False,
-        ))
-
-    if autoregressive:
-
-        @alpa.parallelize(batch_argnums=(1,), method=method)
-        def inference_step_with_cache(params, batch):
-            output = model.apply(
-                params,
-                batch["input_ids"],
-                batch["position_ids"],
-                attention_cache=batch["cache"],
-                output_attentions=support_output_attentions,
-                output_hidden_states=support_output_hidden_states)
-            return output
-
-        alpa.global_config.always_donate_micro_batch_vars = False
-        executable = inference_step_with_cache.get_executable(
-            params, {
-                "input_ids":
-                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
-                "position_ids":
-                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
-                "cache":
-                    init_cache_aval(config, batch_size),
-            })
-    else:
-
-        @alpa.parallelize(batch_argnums=(1,), method=method)
-        def inference_step(params, batch):
-            output = model.apply(
-                params,
-                batch["input_ids"],
-                batch["position_ids"],
-                output_attentions=support_output_attentions,
-                output_hidden_states=support_output_hidden_states)
-            return output
-
-        assert batch_size % num_micro_batches == 0, "cannot divide batch_size by num_micro_batches"
-        micro_batch_size = batch_size // num_micro_batches
-
-        executable = inference_step.get_executable(
-            params, {
-                "input_ids":
-                    jax.core.ShapedArray(
-                        (batch_size, decoding_length_per_step), jnp.int32),
-                "position_ids":
-                    jax.core.ShapedArray(
-                        (batch_size, decoding_length_per_step), jnp.int32),
-            })
-
-    executable.dump_debug_info("tmp")
-    return executable, params
-
-
-def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
-                                uuids, indices, mesh_ids):
-    """The worker function to load OPT parameters."""
-
-    def load_array(key):
-        return np.load(os.path.join(path, key))
-
-    def load_param(param_key, loaded_array):
-        i = prefix_to_idx[param_key]
-
-        for j in range(len(mesh_ids[i])):
-            if self.mesh_id != mesh_ids[i][j]:
-                continue
-
-            assert shapes[i][j] == loaded_array.shape
-            uuid = uuids[i][j]
-            datas = []
-            for k in range(len(self.local_devices)):
-                idx = self.host_id * len(self.local_devices) + k
-                datas.append(loaded_array[indices[i][j][idx]])
-            self.put_buffers(uuid, datas)
-
-    load_param("params.transformers.embeddings.word_embeddings.embedding",
-               load_array("decoder.embed_tokens.weight"))
-    load_param("params.transformers.embeddings.position_embeddings.embedding",
-               load_array("decoder.embed_positions.weight"))
-
-    if config.version > 2:
-        load_param("params.transformers.layer_norm.scale",
-                   load_array("decoder.layer_norm.weight"))
-        load_param("params.transformers.layer_norm.bias",
-                   load_array("decoder.layer_norm.bias"))
-
-    layers_per_stage = config.num_hidden_layers // config.num_pp_stages
-    head = config.n_head
-    head_dim = config.hidden_size // head
-
-    for i in range(config.num_hidden_layers):
-        stage_id = i // layers_per_stage
-        if stage_id != self.mesh_id:
-            continue
-
-        param_prefix = f"params.transformers.encoder.{i}."
-        load_prefix = f"decoder.layers.{i}."
-        # Attention weights
-        wq = load_array(load_prefix + "self_attn.q_proj.weight")
-        wk = load_array(load_prefix + "self_attn.k_proj.weight")
-        wv = load_array(load_prefix + "self_attn.v_proj.weight")
-        dim = wq.shape[-1]
-        w_qkv = np.concatenate([wq, wk, wv], axis=0).reshape(
-            (3, -1, dim)).transpose([2, 1, 0]).reshape((dim, -1))
-        load_param(param_prefix + "attention.self.qkv_combined.kernel", w_qkv)
-        bq = load_array(load_prefix + "self_attn.q_proj.bias")
-        bk = load_array(load_prefix + "self_attn.k_proj.bias")
-        bv = load_array(load_prefix + "self_attn.v_proj.bias")
-        # b_qkv = np.concatenate([bq, bk, bv], axis=0).reshape(
-        #     (3, dim)).transpose([1, 0]).reshape((-1,))
-        b_qkv = np.concatenate([bq, bk, bv], axis=0).reshape(
-            (3, head, head_dim))
-        load_param(param_prefix + "attention.self.qkv_combined_bias", b_qkv)
-        load_param(
-            param_prefix + "attention.dense.kernel",
-            np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))
-        load_param(param_prefix + "attention.dense.bias",
-                   load_array(load_prefix + "self_attn.out_proj.bias"))
-        load_param(param_prefix + "attention.layer_norm.scale",
-                   load_array(load_prefix + "self_attn_layer_norm.weight"))
-        load_param(param_prefix + "attention.layer_norm.bias",
-                   load_array(load_prefix + "self_attn_layer_norm.bias"))
-        # FFN weights
-        load_param(param_prefix + "ffn.fc1.bias",
-                   load_array(load_prefix + "fc1.bias"))
-        load_param(param_prefix + "ffn.fc1.kernel",
-                   np.transpose(load_array(load_prefix + "fc1.weight")))
-        load_param(param_prefix + "ffn.fc2.bias",
-                   load_array(load_prefix + "fc2.bias"))
-        load_param(param_prefix + "ffn.fc2.kernel",
-                   np.transpose(load_array(load_prefix + "fc2.weight")))
-        load_param(param_prefix + "ffn.layer_norm.scale",
-                   load_array(load_prefix + "final_layer_norm.weight"))
-        load_param(param_prefix + "ffn.layer_norm.bias",
-                   load_array(load_prefix + "final_layer_norm.bias"))
-
-
-setattr(MeshHostWorker, "load_opt_params_worker_func",
-        load_opt_params_worker_func)
-
-
-def load_params_dis_array(path, executable, params_aval, config, dummy=False):
-    """Load parameters with distributed arrays."""
-    if dummy:
-        alpa.global_config.use_dummy_value_for_benchmarking = True
-        params_info, _ = executable.get_input_placement_specs()
-        flat_args, in_tree = tree_flatten(params_aval)
-        flat_info = tree_leaves(params_info)
-        if hasattr(executable, "mesh_group"):
-            ret = executable.mesh_group.shard_args_to_arrays(
-                flat_info, flat_args)
-        else:
-            ret = executable.physical_mesh.shard_args_to_arrays_ps(
-                flat_info, flat_args)
-        alpa.global_config.use_dummy_value_for_benchmarking = False
-        return ret
-
-    params_info, _ = executable.get_input_placement_specs()
-
-    prefix_to_flat_idx = {}
-    ct = itertools.count()
-
-    def dfs(dict_tree, result_dict, cur_prefix):
-        if isinstance(dict_tree, (dict, flax.core.FrozenDict)):
-            for key in dict_tree.keys():
-                dfs(dict_tree[key], result_dict,
-                    cur_prefix + ("." if cur_prefix else "") + key)
-        else:
-            result_dict[cur_prefix] = next(ct)
-
-    dfs(params_aval, prefix_to_flat_idx, "")
-
-    flat_infos, in_tree = tree_flatten(params_info)
-
-    flat_shapes = []
-    flat_uuids = []
-    flat_indices = []
-    flat_mesh_ids = []
-    flat_arrays = []
-
-    mesh_group = executable.mesh_group
-
-    for info in flat_infos:
-        aval = info.aval
-        if len(info.mesh_ids) == 1:
-            mesh, spec = mesh_group[info.mesh_ids[0]], info.sharding_specs[0]
-            indices = pxla.spec_to_indices(aval.shape, spec)
-            ary_refs, ary_uuid = create_remote_array_refs(mesh)
-            flat_shapes.append([aval.shape])
-            flat_uuids.append([ary_uuid[0]])
-            flat_indices.append([indices])
-            flat_mesh_ids.append([mesh.mesh_id])
-            flat_arrays.append(
-                DistributedArray(mesh, aval, spec, ary_refs[0], indices))
-        else:
-            tmp_shapes = []
-            tmp_uuids = []
-            tmp_indices = []
-            tmp_mesh_ids = []
-            tmp_arrays = []
-            tmp_meshes = []
-            for mesh_id, spec in zip(info.mesh_ids, info.sharding_specs):
-                mesh = mesh_group[mesh_id]
-                indices = pxla.spec_to_indices(aval.shape, spec)
-                ary_refs, ary_uuid = create_remote_array_refs(mesh)
-                array = DistributedArray(mesh, aval, spec, ary_refs[0], indices)
-                tmp_shapes.append(aval.shape)
-                tmp_uuids.append(ary_uuid[0])
-                tmp_indices.append(indices)
-                tmp_mesh_ids.append(mesh.mesh_id)
-                tmp_meshes.append(mesh)
-                tmp_arrays.append(array)
-            flat_shapes.append(tuple(tmp_shapes))
-            flat_uuids.append(tuple(tmp_uuids))
-            flat_indices.append(tuple(tmp_indices))
-            flat_mesh_ids.append(tuple(tmp_mesh_ids))
-            flat_arrays.append(
-                ReplicatedDistributedArray(tmp_meshes, tmp_arrays))
-
-    for m in executable.mesh_group.meshes:
-        for w in m.workers:
-            w.load_opt_params_worker_func.remote(path, prefix_to_flat_idx,
-                                                 config, flat_shapes,
-                                                 flat_uuids, flat_indices,
-                                                 flat_mesh_ids)
-
-    return flat_arrays
-
-
-def init_cache_dis_array(executable, config, batch_size, dummy=False):
-    """Initialize cache with distributed arrays."""
-    cache = init_cache_np(config, batch_size)
-    alpa.global_config.use_dummy_value_for_benchmarking = dummy
-    _, batch_info = executable.get_input_placement_specs()
-    flat_args, in_tree = tree_flatten(cache)
-    flat_info = tree_leaves(batch_info["cache"])
-    if hasattr(executable, "mesh_group"):
-        ret = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
-    else:
-        ret = executable.physical_mesh.shard_args_to_arrays_ps(
-            flat_info, flat_args)
-    alpa.global_config.use_dummy_value_for_benchmarking = False
-    return ret
+# def get_pipeshard_executable(config,
+#                              batch_size=1,
+#                              num_micro_batches=1,
+#                              decoding_length_per_step=1024,
+#                              support_output_attentions=False,
+#                              support_output_hidden_states=False,
+#                              autoregressive=True):
+#
+#     # Init model
+#     model, params = init_model_aval(config)
+#
+#     # Parallelize
+#     method = alpa.PipeshardParallel(
+#         num_micro_batches=num_micro_batches,
+#         pipeline_schedule="inference",
+#         layer_option="manual",
+#         default_auto_sharding_option=alpa.AutoShardingOption(
+#             # Force operator model parallel
+#             force_batch_dim_to_mesh_dim=None,
+#             # Disabling all-to-all and all-gather generates better intra-op strategies.
+#             allow_all_to_all=False,
+#             allow_all_gather=False,
+#         ))
+#
+#     if autoregressive:
+#
+#         @alpa.parallelize(batch_argnums=(1,), method=method)
+#         def inference_step_with_cache(params, batch):
+#             output = model.apply(
+#                 params,
+#                 batch["input_ids"],
+#                 batch["position_ids"],
+#                 attention_cache=batch["cache"],
+#                 output_attentions=support_output_attentions,
+#                 output_hidden_states=support_output_hidden_states)
+#             return output
+#
+#         alpa.global_config.always_donate_micro_batch_vars = False
+#         executable = inference_step_with_cache.get_executable(
+#             params, {
+#                 "input_ids":
+#                     jax.core.ShapedArray((batch_size, 1), jnp.int32),
+#                 "position_ids":
+#                     jax.core.ShapedArray((batch_size, 1), jnp.int32),
+#                 "cache":
+#                     init_cache_aval(config, batch_size),
+#             })
+#     else:
+#
+#         @alpa.parallelize(batch_argnums=(1,), method=method)
+#         def inference_step(params, batch):
+#             output = model.apply(
+#                 params,
+#                 batch["input_ids"],
+#                 batch["position_ids"],
+#                 output_attentions=support_output_attentions,
+#                 output_hidden_states=support_output_hidden_states)
+#             return output
+#
+#         assert batch_size % num_micro_batches == 0, "cannot divide batch_size by num_micro_batches"
+#         micro_batch_size = batch_size // num_micro_batches
+#
+#         executable = inference_step.get_executable(
+#             params, {
+#                 "input_ids":
+#                     jax.core.ShapedArray(
+#                         (batch_size, decoding_length_per_step), jnp.int32),
+#                 "position_ids":
+#                     jax.core.ShapedArray(
+#                         (batch_size, decoding_length_per_step), jnp.int32),
+#             })
+#
+#     executable.dump_debug_info("tmp")
+#     return executable, params
+#
+#
+# def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
+#                                 uuids, indices, mesh_ids):
+#     """The worker function to load OPT parameters."""
+#
+#     def load_array(key):
+#         return np.load(os.path.join(path, key))
+#
+#     def load_param(param_key, loaded_array):
+#         i = prefix_to_idx[param_key]
+#
+#         for j in range(len(mesh_ids[i])):
+#             if self.mesh_id != mesh_ids[i][j]:
+#                 continue
+#
+#             assert shapes[i][j] == loaded_array.shape
+#             uuid = uuids[i][j]
+#             datas = []
+#             for k in range(len(self.local_devices)):
+#                 idx = self.host_id * len(self.local_devices) + k
+#                 datas.append(loaded_array[indices[i][j][idx]])
+#             self.put_buffers(uuid, datas)
+#
+#     load_param("params.transformers.embeddings.word_embeddings.embedding",
+#                load_array("decoder.embed_tokens.weight"))
+#     load_param("params.transformers.embeddings.position_embeddings.embedding",
+#                load_array("decoder.embed_positions.weight"))
+#
+#     if config.version > 2:
+#         load_param("params.transformers.layer_norm.scale",
+#                    load_array("decoder.layer_norm.weight"))
+#         load_param("params.transformers.layer_norm.bias",
+#                    load_array("decoder.layer_norm.bias"))
+#
+#     layers_per_stage = config.num_hidden_layers // config.num_pp_stages
+#     head = config.n_head
+#     head_dim = config.hidden_size // head
+#
+#     for i in range(config.num_hidden_layers):
+#         stage_id = i // layers_per_stage
+#         if stage_id != self.mesh_id:
+#             continue
+#
+#         param_prefix = f"params.transformers.encoder.{i}."
+#         load_prefix = f"decoder.layers.{i}."
+#         # Attention weights
+#         wq = load_array(load_prefix + "self_attn.q_proj.weight")
+#         wk = load_array(load_prefix + "self_attn.k_proj.weight")
+#         wv = load_array(load_prefix + "self_attn.v_proj.weight")
+#         dim = wq.shape[-1]
+#         w_qkv = np.concatenate([wq, wk, wv], axis=0).reshape(
+#             (3, -1, dim)).transpose([2, 1, 0]).reshape((dim, -1))
+#         load_param(param_prefix + "attention.self.qkv_combined.kernel", w_qkv)
+#         bq = load_array(load_prefix + "self_attn.q_proj.bias")
+#         bk = load_array(load_prefix + "self_attn.k_proj.bias")
+#         bv = load_array(load_prefix + "self_attn.v_proj.bias")
+#         # b_qkv = np.concatenate([bq, bk, bv], axis=0).reshape(
+#         #     (3, dim)).transpose([1, 0]).reshape((-1,))
+#         b_qkv = np.concatenate([bq, bk, bv], axis=0).reshape(
+#             (3, head, head_dim))
+#         load_param(param_prefix + "attention.self.qkv_combined_bias", b_qkv)
+#         load_param(
+#             param_prefix + "attention.dense.kernel",
+#             np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))
+#         load_param(param_prefix + "attention.dense.bias",
+#                    load_array(load_prefix + "self_attn.out_proj.bias"))
+#         load_param(param_prefix + "attention.layer_norm.scale",
+#                    load_array(load_prefix + "self_attn_layer_norm.weight"))
+#         load_param(param_prefix + "attention.layer_norm.bias",
+#                    load_array(load_prefix + "self_attn_layer_norm.bias"))
+#         # FFN weights
+#         load_param(param_prefix + "ffn.fc1.bias",
+#                    load_array(load_prefix + "fc1.bias"))
+#         load_param(param_prefix + "ffn.fc1.kernel",
+#                    np.transpose(load_array(load_prefix + "fc1.weight")))
+#         load_param(param_prefix + "ffn.fc2.bias",
+#                    load_array(load_prefix + "fc2.bias"))
+#         load_param(param_prefix + "ffn.fc2.kernel",
+#                    np.transpose(load_array(load_prefix + "fc2.weight")))
+#         load_param(param_prefix + "ffn.layer_norm.scale",
+#                    load_array(load_prefix + "final_layer_norm.weight"))
+#         load_param(param_prefix + "ffn.layer_norm.bias",
+#                    load_array(load_prefix + "final_layer_norm.bias"))
+#
+#
+# setattr(MeshHostWorker, "load_opt_params_worker_func",
+#         load_opt_params_worker_func)
+#
+#
+# def load_params_dis_array(path, executable, params_aval, config, dummy=False):
+#     """Load parameters with distributed arrays."""
+#     if dummy:
+#         alpa.global_config.use_dummy_value_for_benchmarking = True
+#         params_info, _ = executable.get_input_placement_specs()
+#         flat_args, in_tree = tree_flatten(params_aval)
+#         flat_info = tree_leaves(params_info)
+#         if hasattr(executable, "mesh_group"):
+#             ret = executable.mesh_group.shard_args_to_arrays(
+#                 flat_info, flat_args)
+#         else:
+#             ret = executable.physical_mesh.shard_args_to_arrays_ps(
+#                 flat_info, flat_args)
+#         alpa.global_config.use_dummy_value_for_benchmarking = False
+#         return ret
+#
+#     params_info, _ = executable.get_input_placement_specs()
+#
+#     prefix_to_flat_idx = {}
+#     ct = itertools.count()
+#
+#     def dfs(dict_tree, result_dict, cur_prefix):
+#         if isinstance(dict_tree, (dict, flax.core.FrozenDict)):
+#             for key in dict_tree.keys():
+#                 dfs(dict_tree[key], result_dict,
+#                     cur_prefix + ("." if cur_prefix else "") + key)
+#         else:
+#             result_dict[cur_prefix] = next(ct)
+#
+#     dfs(params_aval, prefix_to_flat_idx, "")
+#
+#     flat_infos, in_tree = tree_flatten(params_info)
+#
+#     flat_shapes = []
+#     flat_uuids = []
+#     flat_indices = []
+#     flat_mesh_ids = []
+#     flat_arrays = []
+#
+#     mesh_group = executable.mesh_group
+#
+#     for info in flat_infos:
+#         aval = info.aval
+#         if len(info.mesh_ids) == 1:
+#             mesh, spec = mesh_group[info.mesh_ids[0]], info.sharding_specs[0]
+#             indices = pxla.spec_to_indices(aval.shape, spec)
+#             ary_refs, ary_uuid = create_remote_array_refs(mesh)
+#             flat_shapes.append([aval.shape])
+#             flat_uuids.append([ary_uuid[0]])
+#             flat_indices.append([indices])
+#             flat_mesh_ids.append([mesh.mesh_id])
+#             flat_arrays.append(
+#                 DistributedArray(mesh, aval, spec, ary_refs[0], indices))
+#         else:
+#             tmp_shapes = []
+#             tmp_uuids = []
+#             tmp_indices = []
+#             tmp_mesh_ids = []
+#             tmp_arrays = []
+#             tmp_meshes = []
+#             for mesh_id, spec in zip(info.mesh_ids, info.sharding_specs):
+#                 mesh = mesh_group[mesh_id]
+#                 indices = pxla.spec_to_indices(aval.shape, spec)
+#                 ary_refs, ary_uuid = create_remote_array_refs(mesh)
+#                 array = DistributedArray(mesh, aval, spec, ary_refs[0], indices)
+#                 tmp_shapes.append(aval.shape)
+#                 tmp_uuids.append(ary_uuid[0])
+#                 tmp_indices.append(indices)
+#                 tmp_mesh_ids.append(mesh.mesh_id)
+#                 tmp_meshes.append(mesh)
+#                 tmp_arrays.append(array)
+#             flat_shapes.append(tuple(tmp_shapes))
+#             flat_uuids.append(tuple(tmp_uuids))
+#             flat_indices.append(tuple(tmp_indices))
+#             flat_mesh_ids.append(tuple(tmp_mesh_ids))
+#             flat_arrays.append(
+#                 ReplicatedDistributedArray(tmp_meshes, tmp_arrays))
+#
+#     for m in executable.mesh_group.meshes:
+#         for w in m.workers:
+#             w.load_opt_params_worker_func.remote(path, prefix_to_flat_idx,
+#                                                  config, flat_shapes,
+#                                                  flat_uuids, flat_indices,
+#                                                  flat_mesh_ids)
+#
+#     return flat_arrays
+#
+#
+# def init_cache_dis_array(executable, config, batch_size, dummy=False):
+#     """Initialize cache with distributed arrays."""
+#     cache = init_cache_np(config, batch_size)
+#     alpa.global_config.use_dummy_value_for_benchmarking = dummy
+#     _, batch_info = executable.get_input_placement_specs()
+#     flat_args, in_tree = tree_flatten(cache)
+#     flat_info = tree_leaves(batch_info["cache"])
+#     if hasattr(executable, "mesh_group"):
+#         ret = executable.mesh_group.shard_args_to_arrays(flat_info, flat_args)
+#     else:
+#         ret = executable.physical_mesh.shard_args_to_arrays_ps(
+#             flat_info, flat_args)
+#     alpa.global_config.use_dummy_value_for_benchmarking = False
+#     return ret

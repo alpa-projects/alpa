@@ -232,7 +232,7 @@ def get_model_1d(model_name: str,
                  path: str,
                  dummy: bool = False,
                  # batch size, this batch is #tokens
-                 batch_size: int = 1,
+                 batch_size: int = 512,
                  max_seq_len: int = 2048,
                  cache_size: int = 4096,
                  # model parameters
@@ -293,9 +293,11 @@ def get_model_1d(model_name: str,
                        output_attentions,
                        output_hidden_states):
         if input_ids.shape[1] > 1:
-            input, input_index, position_ids = input_pool.enter_prompts(input_ids)
+            unpadded_input = input_pool.unpad(input_ids)
+            input, input_index, position_ids = input_pool.enter_prompts(unpadded_input)
         else:
-            input, input_index, position_ids = input_pool.enter_decoding(input_ids)
+            unpadded_input = input_ids.tolist()
+            input, input_index, position_ids = input_pool.enter_decoding(unpadded_input)
 
         # set envvar
         os.environ["FT_INPUT_INDEX_ADDR"] = str(input_index.ctypes.data)
@@ -307,10 +309,14 @@ def get_model_1d(model_name: str,
             "position_ids": position_ids,
             "cache": input_pool.kv_caches
         }
-
         logits, kv = executable(params, batch)
-        input_pool.update_cache(kv)
-        logits_step = torch.from_numpy(np.array(logits)).to(torch_device).float()
+        input_pool.update_cache(unpadded_input, kv)
+        input_pool.update_num_prev_tokens(unpadded_input)
+
+        logits = input_pool.reshape_logits(np.array(logits), input_index, input_ids.shape)
+        logits_step = torch.from_numpy(logits).to(torch_device).float()
+        print(logits_step.shape)
+
         return InferenceFuncOutput(logits_step, kv, None, None)
 
     inference_func_config = InferenceFuncConfig()
@@ -568,6 +574,7 @@ def get_alpa_model(model_name: str,
                 i += step_input_ids.shape[1]
 
         logits_step = torch.from_numpy(np.array(output.logits)).to(torch_device).float()
+        print(logits_step.shape)
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)
 

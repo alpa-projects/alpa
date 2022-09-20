@@ -583,6 +583,7 @@ class TransformerInputPool:
         for i in range(1, original_input_shape[0] + 1):
             num_elements = np.sum(input_index==i)
             ret[i-1, :num_elements, :] = logits[index:index+num_elements, :]
+            ret[i-1, num_elements:, :] = logits[index+num_elements-1,:]
             index = index + num_elements
         return ret
 

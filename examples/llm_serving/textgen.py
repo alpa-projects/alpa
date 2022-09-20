@@ -1,6 +1,8 @@
 """Use huggingface/transformers interface and Alpa backend for distributed inference."""
 import argparse
+import time
 
+import jax
 import numpy as np
 from transformers import AutoTokenizer
 
@@ -28,7 +30,7 @@ def main(args):
     model = get_model(model_name=args.model,
                       path="~/opt_weights",
                       batch_size=args.n_prompts,
-                      encoder_chunk_sizes=(1,),
+                      encoder_chunk_sizes=(1, 10),
                       **generate_params)
 
     # Generate
@@ -40,6 +42,7 @@ def main(args):
     ]
     prompts = prompts[:args.n_prompts]
     input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
+
     output_ids = model.generate(input_ids=input_ids,
                                 max_length=64,
                                 **generate_params)

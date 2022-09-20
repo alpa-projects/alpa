@@ -1,5 +1,6 @@
 """Use huggingface/transformers interface and Alpa backend for distributed inference."""
 import argparse
+import time
 
 import numpy as np
 from transformers import AutoTokenizer
@@ -27,8 +28,8 @@ def main(args):
     prompts = [
         "Paris is the capital city of",
         "Today is a good day and I'd like to",
-        "Computer Science studies the area of",
-        "University of California Berkeley is a public university"
+        # "Computer Science studies the area of",
+        # "University of California Berkeley is a public university",
     ]
     input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
     output_ids = model.generate(input_ids=input_ids,

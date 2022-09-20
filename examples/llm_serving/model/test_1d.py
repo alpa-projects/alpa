@@ -83,8 +83,8 @@ def setup(mode: str,
           batch_size=1,
           cache_size=M,
           max_cache_len_per_seq=MAX_CACHE_LEN_PER_SEQ):
-    name = model.split("-")[1].upper()
-    path = os.path.join(np_weights_folder + f"{name}_np")
+    name = model.split("/")[1].lower()
+    path = os.path.join(np_weights_folder + f"{name}-np")
     if mode == "2d":
         model_tuple = init_2d_inference_step(name, path, batch_size=batch_size)
         config = model_tuple[-1]
@@ -126,7 +126,7 @@ def setup(mode: str,
 
 def init_2d_inference_step(name, np_weights_folder, batch_size=1):
     # Init 2D model
-    config = opt_model.get_opt_config(name, dtype=jnp.float32)
+    config = opt_model.get_config(name, dtype=jnp.float32)
     model_2d, params_2d = opt_model.init_model_aval(config)
     params_2d = opt_model.load_params_np(params_2d, np_weights_folder, config)
     params_2d = jax.tree_map(jnp.array, params_2d)
@@ -196,7 +196,7 @@ def init_1d_inference_step(name,
                            np_weights_folder,
                            total_input_len=N,
                            total_cache_len=M):
-    config = opt_model.get_opt_config(name, dtype=jnp.float32)
+    config = opt_model.get_config(name, dtype=jnp.float32)
     model_1d, params_1d = opt_model_1d.init_model_aval(config, total_input_len, total_cache_len)
     params_1d = opt_model_1d.load_params_np(params_1d, np_weights_folder, config)
     params_1d = jax.tree_map(jnp.array, params_1d)
@@ -408,20 +408,37 @@ def test_opt_125M():
     verify_next_token(output_pool_1d, output_pool_2d)
     verify_caches(output_pool_1d, output_pool_2d)
 
-    # batch the second 5 prompts and the first 5 words
-    # Note(Hao): prompts must go first.
+
+    second_batch_size = 2
+
+    # continue to decode
     output_pool_1d = Jax1DInput(
-        input_id_list[batch_size:] + output_pool_1d.input_tokens,
-        [i+1 for i in range(batch_size, len(input_id_list))] + output_pool_1d.input_sentence_ids,
+        output_pool_1d.input_tokens[0:second_batch_size],
+        output_pool_1d.input_sentence_ids[0:second_batch_size],
         output_pool_1d.kv_caches,
         output_pool_1d.kv_cache_ids,
         output_pool_1d.num_prev_tokens
     )
-    output_pool_2d = input_pool_2d[batch_size:] + output_pool_2d
-    output_pool_2d = runner_2d(model_2d, output_pool_2d)
-    output_pool_1d = runner_1d(model_1d, output_pool_1d)
-    verify_next_token(output_pool_1d, output_pool_2d)
-    verify_caches(output_pool_1d, output_pool_2d)
+
+    output_pool_1d_final = runner_1d(model_1d, output_pool_1d)
+    output_pool_2d_final = runner_2d(model_2d, output_pool_2d[0:second_batch_size])
+    verify_next_token(output_pool_1d_final, output_pool_2d_final)
+    verify_caches(output_pool_1d_final, output_pool_2d_final)
+
+    # # batch the second 5 prompts and the first 5 words
+    # # Note(Hao): prompts must go first.
+    # output_pool_1d = Jax1DInput(
+    #     input_id_list[batch_size:] + output_pool_1d.input_tokens,
+    #     [i+1 for i in range(batch_size, len(input_id_list))] + output_pool_1d.input_sentence_ids,
+    #     output_pool_1d.kv_caches,
+    #     output_pool_1d.kv_cache_ids,
+    #     output_pool_1d.num_prev_tokens
+    # )
+    # output_pool_2d = input_pool_2d[batch_size:] + output_pool_2d
+    # output_pool_2d = runner_2d(model_2d, output_pool_2d)
+    # output_pool_1d = runner_1d(model_1d, output_pool_1d)
+    # verify_next_token(output_pool_1d, output_pool_2d)
+    # verify_caches(output_pool_1d, output_pool_2d)
 
 
 if __name__ == "__main__":

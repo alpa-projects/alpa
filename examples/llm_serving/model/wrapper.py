@@ -292,6 +292,7 @@ def get_model_1d(model_name: str,
                        attention_mask,
                        output_attentions,
                        output_hidden_states):
+        print(input_ids)
         if input_ids.shape[1] > 1:
             unpadded_input = input_pool.unpad(input_ids)
             input, input_index, position_ids = input_pool.enter_prompts(unpadded_input)
@@ -315,8 +316,8 @@ def get_model_1d(model_name: str,
 
         logits = input_pool.reshape_logits(np.array(logits), input_index, input_ids.shape)
         logits_step = torch.from_numpy(logits).to(torch_device).float()
-        print(logits_step.shape)
-
+        # print(logits_step.shape)
+        # dump_logits("1d_logits", logits_step)
         return InferenceFuncOutput(logits_step, kv, None, None)
 
     inference_func_config = InferenceFuncConfig()
@@ -574,7 +575,8 @@ def get_alpa_model(model_name: str,
                 i += step_input_ids.shape[1]
 
         logits_step = torch.from_numpy(np.array(output.logits)).to(torch_device).float()
-        print(logits_step.shape)
+        # print(logits_step.shape)
+        # dump_logits("2d_logits", logits_step)
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)
 
@@ -583,6 +585,10 @@ def get_alpa_model(model_name: str,
                                 inference_func_config,
                                 executables[1],
                                 transformer_config)
+
+
+def dump_logits(file_name, logits):
+    jnp.save(file_name, logits)
 
 
 def get_model(model_name: str,

@@ -671,7 +671,7 @@ def load_params_np(params, path, config, dummy=False):
                    load_array("decoder.layer_norm.weight"))
         load_param("params.transformers.layer_norm.bias",
                    load_array("decoder.layer_norm.bias"))
-    for i in range(config.decoder_layers):
+    for i in range(config.num_hidden_layers):
         param_prefix = f"params.transformers.encoder.{i}."
         load_prefix = f"decoder.layers.{i}."
         # Attention weights

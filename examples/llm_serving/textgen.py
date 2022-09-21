@@ -40,28 +40,42 @@ def main(args):
         "Computer Science studies the area of",
         "University of California Berkeley is a public university"
     ]
+    prompts = [
+        "Computer science is the study of computation and",
+        "Ion Stoica is a Romanian-American computer scientist specializing in",
+        "The University of California, Berkeley is a public",
+        "Today is a good day and I want to", "What is the valuation of Databricks?",
+        "Paris is the capital city of", "Which country has the most population?",
+        "What do you think about the future of Cryptocurrency?",
+        "What do you think about the meaning of life?",
+        "Donald Trump is the president of",
+        "GPT-3 is a large language model that is capable of"
+    ]
+
     prompts = prompts[:args.n_prompts]
     input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
-
-    output_ids = model.generate(input_ids=input_ids,
-                                max_length=64,
-                                **generate_params)
-    outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
-    
-    # Print results
-    print("Outputs:\n" + 100 * '-')
-    for i, output in enumerate(outputs):
-        print(f"{i}: {output}")
-        print(100 * '-')
+    for i in range(10):
+        tic = time.time()
+        output_ids = model.generate(input_ids=input_ids,
+                                    max_length=64,
+                                    **generate_params)
+        elapsed = time.time() - tic
+        print(f"- It takes {elapsed}")
+        outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+        if False:
+            print("Outputs:\n" + 100 * '-')
+            for i, output in enumerate(outputs):
+                print(f"{i}: {output}")
+                print(100 * '-')
     
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="alpa/opt-125m")
+    parser.add_argument("--model", type=str, default="jax/opt-125m")
     parser.add_argument('--do-sample', action='store_true')
     parser.add_argument('--num-beams', type=int, default=1)
     parser.add_argument('--num-return-sequences', type=int, default=1)
-    parser.add_argument('--n-prompts', type=int, default=4)
+    parser.add_argument('--n-prompts', type=int, default=10)
     args = parser.parse_args()
 
     main(args)

@@ -576,8 +576,23 @@ class TransformerInputPool:
         input, input_index, position_ids = self._generate_1d_inputs(input_sequences)
         return input, input_index, position_ids
 
+    # def reshape_logits(self, logits, input_index, original_input_shape):
+    #     """Unflatten the 1D logits output to be 2D."""
+    #     ret_shape = list(original_input_shape) + [logits.shape[-1]]
+    #     logits_cupy = jax_tensor_to_cupy(logits)
+    #     ret_cupy = cupy.zeros(ret_shape, dtype=logits_cupy.dtype)
+    #     index = 0
+    #     for i in range(1, original_input_shape[0] + 1):
+    #         num_elements = np.sum(input_index==i)
+    #         ret_cupy[i-1, :num_elements, :] = logits_cupy[index:index+num_elements, :]
+    #         ret_cupy[i-1, num_elements:, :] = logits_cupy[index+num_elements-1,:]
+    #         index = index + num_elements
+    #     ret = cupy.asnumpy(ret_cupy)
+    #     return ret
+
     def reshape_logits(self, logits, input_index, original_input_shape):
         """Unflatten the 1D logits output to be 2D."""
+        logits = np.array(logits)
         ret = np.zeros(list(original_input_shape) + [logits.shape[-1]])
         index = 0
         for i in range(1, original_input_shape[0] + 1):
@@ -652,20 +667,9 @@ class TransformerInputPool:
         for i, sentence_id in enumerate(self.input_sequence_ids):
             self.num_prev_tokens[sentence_id] += len(input_sequences[i])
 
-
     @property
     def pad(self):
         return self._config.pad if "pad" in dir(self._config) else 1
-
-    # def next_sentence_ids(self, number):
-    #     """Generate sentence ids when new sentences enter the pool."""
-    #     id = self._sentence_counter
-    #     if number == 1:
-    #         ret = [id]
-    #     else:
-    #         ret = [i for i in range(id, id + number)]
-    #     self._sentence_counter = (id + number) % (1 << 60)
-    #     return ret
 
 
 def load_params_np(params, path, config, dummy=False):

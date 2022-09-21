@@ -6,6 +6,7 @@ import numpy as np
 from transformers import AutoTokenizer
 
 from llm_serving.model.wrapper import get_model_1d
+from alpa.timer import timers
 
 
 def main(args):
@@ -28,20 +29,46 @@ def main(args):
     prompts = [
         "Paris is the capital city of",
         "Today is a good day and I'd like to",
-        # "Computer Science studies the area of",
-        # "University of California Berkeley is a public university",
+        "Computer Science studies the area of",
+        "University of California Berkeley is a public university",
     ]
-    input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
-    output_ids = model.generate(input_ids=input_ids,
-                                max_length=64,
-                                **generate_params)
-    outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
 
-    # Print results
-    print("Outputs:\n" + 100 * '-')
-    for i, output in enumerate(outputs):
-        print(f"{i}: {output}")
-        print(100 * '-')
+    prompts = [
+        "Computer science is the study of computation and",
+        "Ion Stoica is a Romanian-American computer scientist specializing in",
+        "The University of California, Berkeley is a public",
+        "Today is a good day and I want to", "What is the valuation of Databricks?",
+        "Paris is the capital city of", "Which country has the most population?",
+        "What do you think about the future of Cryptocurrency?",
+        "What do you think about the meaning of life?",
+        "Donald Trump is the president of",
+        "GPT-3 is a large language model that is capable of"
+    ]
+
+    timer_names = ["enter", "compute", "update", "reshape"]
+
+    input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
+
+    for i in range(10):
+        tic = time.time()
+        output_ids = model.generate(input_ids=input_ids,
+                                    max_length=64,
+                                    **generate_params)
+        elapsed = time.time() - tic
+        # for timer_name in timer_names:
+        #     timers(timer_name).stop()
+        print(f"- It takes {elapsed}")
+        # timers.log(timer_names)
+        # for timer_name in timer_names:
+        #     timers(timer_name).reset()
+        # Print results
+
+        outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+        if True:
+            print("Outputs:\n" + 100 * '-')
+            for i, output in enumerate(outputs):
+                print(f"{i}: {output}")
+                print(100 * '-')
 
 
 if __name__ == "__main__":

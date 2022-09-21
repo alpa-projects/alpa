@@ -235,6 +235,7 @@ def get_model_1d(model_name: str,
                  batch_size: int = 512,
                  max_seq_len: int = 2048,
                  cache_size: int = 4096,
+                 max_cache_per_seq: int = 128,
                  # model parameters
                  dtype=jnp.float16,
                  torch_device: str = "cpu",
@@ -284,21 +285,25 @@ def get_model_1d(model_name: str,
     # TODO(Hao): use the same func with 2D
     params = opt_model_1d.load_params_np(params_aval, path, config, dummy)
     params = jax.tree_map(jnp.array, params)
-    input_pool = TransformerInputPool(config, batch_size=batch_size, cache_size=cache_size)
+    input_pool = TransformerInputPool(config, batch_size=batch_size, cache_size=cache_size,
+                                      max_cache_per_seq=max_cache_per_seq)
 
-    # TODO(Hao): implement this
+    def sync(device_id=0):
+        jax.devices()[device_id].synchronize_all_activity()
+
     def inference_func(input_ids,
                        past_key_values,
                        attention_mask,
                        output_attentions,
                        output_hidden_states):
-        print(input_ids)
+        # timers("enter").start(sync)
         if input_ids.shape[1] > 1:
             unpadded_input = input_pool.unpad(input_ids)
             input, input_index, position_ids = input_pool.enter_prompts(unpadded_input)
         else:
             unpadded_input = input_ids.tolist()
             input, input_index, position_ids = input_pool.enter_decoding(unpadded_input)
+        # timers("enter").suspend(sync)
 
         # set envvar
         os.environ["FT_INPUT_INDEX_ADDR"] = str(input_index.ctypes.data)
@@ -310,14 +315,20 @@ def get_model_1d(model_name: str,
             "position_ids": position_ids,
             "cache": input_pool.kv_caches
         }
+        # timers("compute").start(sync)
         logits, kv = executable(params, batch)
+        # timers("compute").suspend(sync)
+
+        # timers("update").start(sync)
         input_pool.update_cache(unpadded_input, kv)
         input_pool.update_num_prev_tokens(unpadded_input)
+        # timers("update").suspend(sync)
 
-        logits = input_pool.reshape_logits(np.array(logits), input_index, input_ids.shape)
+        # timers("reshape").start(sync)
+        logits = input_pool.reshape_logits(logits, input_index, input_ids.shape)
         logits_step = torch.from_numpy(logits).to(torch_device).float()
-        # print(logits_step.shape)
-        # dump_logits("1d_logits", logits_step)
+        # timers("reshape").suspend(sync)
+
         return InferenceFuncOutput(logits_step, kv, None, None)
 
     inference_func_config = InferenceFuncConfig()
@@ -574,9 +585,8 @@ def get_alpa_model(model_name: str,
                 past_key_values = output.attention_cache
                 i += step_input_ids.shape[1]
 
+        # print(output.logits.shape)
         logits_step = torch.from_numpy(np.array(output.logits)).to(torch_device).float()
-        # print(logits_step.shape)
-        # dump_logits("2d_logits", logits_step)
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)
 
@@ -585,10 +595,6 @@ def get_alpa_model(model_name: str,
                                 inference_func_config,
                                 executables[1],
                                 transformer_config)
-
-
-def dump_logits(file_name, logits):
-    jnp.save(file_name, logits)
 
 
 def get_model(model_name: str,

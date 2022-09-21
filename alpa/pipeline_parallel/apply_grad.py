@@ -518,10 +518,15 @@ def _cross_mesh_allreduce_xla_translation(c, *args, **kwargs):
 xla.translations[cross_mesh_allreduce_p] = _cross_mesh_allreduce_xla_translation
 
 
-def _propagate_var_at_mesh(eqns, var_mesh):
+def _propagate_var_at_mesh(eqns, var_mesh, not_update_vars):
     """Propagate mesh assignments from input."""
     eqn_mesh = {}
     var_mesh = dict(var_mesh)
+    # We skip propagating with allreduce vars. Otherwise it will dirty other
+    # vars like when c = a(allreduced at m1,m2) + b(m1), then b should not be
+    # extended to locate on m2.
+    # FIXME: for the case that c = a(allreduced at m1,m2) + b(m3), we need to
+    # handle which mesh is the eqn.
     allreduce_outvars = set()
     for eqn_idx, eqn in enumerate(eqns):
         at_mesh = OrderedSet()
@@ -530,11 +535,16 @@ def _propagate_var_at_mesh(eqns, var_mesh):
             if isinstance(invar, Var) and invar not in allreduce_outvars:
                 at_mesh.update(var_mesh.setdefault(invar, OrderedSet()))
                 at_each_mesh = False
+        for var in eqn.outvars:
+            if var in not_update_vars:
+                assert len(var_mesh[var]) == 1
+                assert list(var_mesh[var])[0] in at_mesh
+                at_mesh = var_mesh[var]
         if at_mesh:
-            eqn_mesh[eqn_idx] = OrderedSet(at_mesh)
             for outvar in eqn.outvars:
                 if not isinstance(outvar, DropVar):
                     var_mesh[outvar] = OrderedSet(at_mesh)
+            eqn_mesh[eqn_idx] = OrderedSet(at_mesh)
             if eqn.primitive == cross_mesh_allreduce_p:
                 allreduce_outvars.add(eqn.outvars[0])
                 continue
@@ -636,15 +646,6 @@ class ApplyGradRewriter:
         return (eqn.primitive in _reducable_operators and
                 eqn.outvars[0].aval.shape == ())
 
-    def _var_at_one_mesh(self, var):
-        if not isinstance(var, Var):
-            return True
-        return var in self.var_mesh and len(self.var_mesh[var]) == 1
-
-    def _other_invar_at_one_mesh(self, var, dst):
-        op = dst.invars[0] if var == dst.invars[1] else dst.invars[1]
-        return self._var_at_one_mesh(op)
-
     def _forward_propagate(self):
         """
         A conservative propagation that stops when the eqn's invars are from
@@ -726,6 +727,7 @@ class ApplyGradRewriter:
         allreduce_vars = []
         mesh_ids = []
         literal_handled = False
+        force_var_at_mesh = {}
         for mesh_id, per_mesh_vars in enumerate(mesh_vars):
             cur_val = None
             for v in per_mesh_vars:
@@ -733,6 +735,10 @@ class ApplyGradRewriter:
                     cur_val = v
                     continue
                 new_var = gensym_fn(cur_val.aval)
+                def_idx = self.var_def[v]
+                def_meshes = self.eqn_mesh[def_idx]
+                if len(def_meshes) > 1:
+                    force_var_at_mesh[new_var] = mesh_id
                 appended_eqns.append(
                     new_jaxpr_eqn([cur_val, v], [new_var], primitive, {}))
                 cur_val = new_var
@@ -752,7 +758,7 @@ class ApplyGradRewriter:
         appended_eqns.append(
             new_jaxpr_eqn(allreduce_vars, [outvar], cross_mesh_allreduce_p,
                           {'type': primitive}))
-        return appended_eqns, mesh_ids
+        return appended_eqns, mesh_ids, force_var_at_mesh
 
     def split_replicated_eqns(self, gensym_fn, num_mesh):
         """Rewrite apply grad jaxpr to eqns so as to """
@@ -761,8 +767,12 @@ class ApplyGradRewriter:
         # Try to match the pattern
         removed_eqns = set()
         allreduce_groups = OrderedSet()
+        # There are some vars that is infered at multiple meshes, but should be
+        # at only one mesh. For example, with tied embedding + global norm,
+        # some intermediates from the tied embedding's gradient are infered on
+        # both meshes, but we will only keep one version on a mesh.
+        force_var_mesh = {}
         for eqn_idx, eqn in enumerate(self.eqns):
-            # Do not handle c = a(mesh1 and 2) + b(mesh1) case
             if eqn_idx in removed_eqns:
                 continue
             if (eqn_idx in self.eqn_mesh and len(self.eqn_mesh[eqn_idx]) > 1 and
@@ -773,8 +783,10 @@ class ApplyGradRewriter:
                     # Only one eqn matches the pattern, skip it
                     continue
                 removed_eqns.update(removed)
-                appended_eqns, allreduce_group = self._rewrite_eqns(
-                    eqn.primitive, mesh_vars, gensym_fn, final_var, literals)
+                (appended_eqns, allreduce_group,
+                 intermediate_at_mesh) = self._rewrite_eqns(
+                     eqn.primitive, mesh_vars, gensym_fn, final_var, literals)
+                force_var_mesh.update(intermediate_at_mesh)
                 new_eqns_before_var[final_var] = appended_eqns
                 allreduce_groups.add(tuple(allreduce_group))
         if len(allreduce_groups) > 1:
@@ -790,7 +802,8 @@ class ApplyGradRewriter:
                 new_eqns.extend(new_eqns_before_var[outv])
             else:
                 new_eqns.append(eqn)
-        return clone_jaxpr(self.jaxpr, eqns=new_eqns), tuple(allreduce_groups)
+        return (clone_jaxpr(self.jaxpr, eqns=new_eqns), tuple(allreduce_groups),
+                force_var_mesh)
 
     @staticmethod
     def rewrite_allreduce(closed_jaxpr: ClosedJaxpr, rewrite_to_dummy,
@@ -869,11 +882,13 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     for var in outvar_mesh:
         var_mesh.setdefault(var, OrderedSet()).update(outvar_mesh[var])
     # TODO(yonghao): running the split multiple times until no new splits
-    closed_jaxpr, groups = ApplyGradRewriter(closed_jaxpr,
-                                             var_mesh).split_replicated_eqns(
-                                                 gensym_fn, num_mesh)
+    (closed_jaxpr, groups, var_only_at_mesh) = ApplyGradRewriter(
+        closed_jaxpr, var_mesh).split_replicated_eqns(gensym_fn, num_mesh)
+    for var in var_only_at_mesh:
+        var_mesh.setdefault(var, OrderedSet()).add(var_only_at_mesh[var])
     # propagate to get var_at_mesh
-    eqn_mesh, var_mesh = _propagate_var_at_mesh(closed_jaxpr.eqns, var_mesh)
+    eqn_mesh, var_mesh = _propagate_var_at_mesh(closed_jaxpr.eqns, var_mesh,
+                                                set(var_only_at_mesh.keys()))
     changed = True
     while changed:
         changed = _reverse_propagate_var_at_mesh(closed_jaxpr, donation_mapping,

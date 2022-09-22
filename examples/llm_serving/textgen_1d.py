@@ -49,22 +49,23 @@ def main(args):
 
     input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
 
-    for i in range(10):
+    n_warmup = 5
+    for i in range(n_warmup):
         tic = time.time()
         output_ids = model.generate(input_ids=input_ids,
                                     max_length=64,
                                     **generate_params)
         elapsed = time.time() - tic
-        # for timer_name in timer_names:
-        #     timers(timer_name).stop()
+        for timer_name in timer_names:
+            timers(timer_name).stop()
         print(f"- It takes {elapsed}")
-        # timers.log(timer_names)
-        # for timer_name in timer_names:
-        #     timers(timer_name).reset()
-        # Print results
+        timers.log(timer_names)
+        for timer_name in timer_names:
+            timers(timer_name).reset()
 
+        # Print results
         outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
-        if True:
+        if False:
             print("Outputs:\n" + 100 * '-')
             for i, output in enumerate(outputs):
                 print(f"{i}: {output}")

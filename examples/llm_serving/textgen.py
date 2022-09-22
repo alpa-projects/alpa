@@ -7,6 +7,7 @@ import numpy as np
 from transformers import AutoTokenizer
 
 from llm_serving.model.wrapper import get_model
+from alpa.timer import timers
 
 def main(args):
     # Load the tokenizer.
@@ -30,7 +31,7 @@ def main(args):
     model = get_model(model_name=args.model,
                       path="~/opt_weights",
                       batch_size=args.n_prompts,
-                      encoder_chunk_sizes=(1, 10),
+                      encoder_chunk_sizes=(1, 16),
                       **generate_params)
 
     # Generate
@@ -52,6 +53,7 @@ def main(args):
         "GPT-3 is a large language model that is capable of"
     ]
 
+    timer_names = ["enter", "compute", "move logits"]
     prompts = prompts[:args.n_prompts]
     input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
     for i in range(10):
@@ -60,7 +62,13 @@ def main(args):
                                     max_length=64,
                                     **generate_params)
         elapsed = time.time() - tic
+        for timer_name in timer_names:
+            timers(timer_name).stop()
         print(f"- It takes {elapsed}")
+        timers.log(timer_names)
+        for timer_name in timer_names:
+            timers(timer_name).reset()
+
         outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
         if False:
             print("Outputs:\n" + 100 * '-')

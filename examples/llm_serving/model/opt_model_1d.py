@@ -2,6 +2,7 @@ import dataclasses
 from dataclasses import dataclass
 
 import cupy
+import cupyx.jit
 from functools import partial
 import itertools
 import math
@@ -22,6 +23,7 @@ from jax import lax
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_leaves
 from jax.interpreters import pxla
+from jax._src.lib import xla_client as xc
 import jaxlib.xla_extension as jax_xla
 import numpy as np
 from tqdm import tqdm
@@ -543,6 +545,7 @@ class TransformerInputPool:
         # num_prev_tokens tracks the progress of each sentence.
         self.input_sequence_ids = []
         self.num_prev_tokens = {}
+        self.next_cache_index = {}
         self._entered = False
 
     def enter_prompts(self, input_sequences: List[List[int]]):
@@ -557,9 +560,11 @@ class TransformerInputPool:
 
         # update num_prev_tokens for the sentence
         # for i, sentence_id in enumerate(sentence_ids):
-        for id in self.input_sequence_ids:
+        for i, id in enumerate(self.input_sequence_ids):
             assert id not in self.num_prev_tokens
             self.num_prev_tokens[id] = 0
+            assert id not in self.next_cache_index
+            self.next_cache_index[id] = i * self.max_cache_per_seq + self.num_prev_tokens[id]
         self._entered = True
         input, input_index, position_ids = self._generate_1d_inputs(input_sequences)
         return input, input_index, position_ids
@@ -569,6 +574,7 @@ class TransformerInputPool:
         assert len(input_sequences) == len(self.input_sequence_ids)
         for i, id in enumerate(self.input_sequence_ids):
             assert id in self.num_prev_tokens
+            assert id in self.next_cache_index
             assert len(input_sequences[i]) == 1
             assert self.num_prev_tokens[id] > 0
         assert self._entered, "No prompts entered yet."
@@ -576,31 +582,31 @@ class TransformerInputPool:
         input, input_index, position_ids = self._generate_1d_inputs(input_sequences)
         return input, input_index, position_ids
 
-    # def reshape_logits(self, logits, input_index, original_input_shape):
-    #     """Unflatten the 1D logits output to be 2D."""
-    #     ret_shape = list(original_input_shape) + [logits.shape[-1]]
-    #     logits_cupy = jax_tensor_to_cupy(logits)
-    #     ret_cupy = cupy.zeros(ret_shape, dtype=logits_cupy.dtype)
-    #     index = 0
-    #     for i in range(1, original_input_shape[0] + 1):
-    #         num_elements = np.sum(input_index==i)
-    #         ret_cupy[i-1, :num_elements, :] = logits_cupy[index:index+num_elements, :]
-    #         ret_cupy[i-1, num_elements:, :] = logits_cupy[index+num_elements-1,:]
-    #         index = index + num_elements
-    #     ret = cupy.asnumpy(ret_cupy)
-    #     return ret
-
     def reshape_logits(self, logits, input_index, original_input_shape):
         """Unflatten the 1D logits output to be 2D."""
-        logits = np.array(logits)
-        ret = np.zeros(list(original_input_shape) + [logits.shape[-1]])
+        ret_shape = list(original_input_shape) + [logits.shape[-1]]
+        logits_cupy = jax_tensor_to_cupy(logits)
+        ret_cupy = cupy.zeros(ret_shape, dtype=logits_cupy.dtype)
         index = 0
         for i in range(1, original_input_shape[0] + 1):
             num_elements = np.sum(input_index==i)
-            ret[i-1, :num_elements, :] = logits[index:index+num_elements, :]
-            ret[i-1, num_elements:, :] = logits[index+num_elements-1,:]
+            ret_cupy[i-1, :num_elements, :] = logits_cupy[index:index+num_elements, :]
+            ret_cupy[i-1, num_elements:, :] = logits_cupy[index+num_elements-1,:]
             index = index + num_elements
+        ret = cupy.asnumpy(ret_cupy)
         return ret
+
+    # def reshape_logits(self, logits, input_index, original_input_shape):
+    #     """Unflatten the 1D logits output to be 2D."""
+    #     logits = np.array(logits)
+    #     ret = np.zeros(list(original_input_shape) + [logits.shape[-1]])
+    #     index = 0
+    #     for i in range(1, original_input_shape[0] + 1):
+    #         num_elements = np.sum(input_index==i)
+    #         ret[i-1, :num_elements, :] = logits[index:index+num_elements, :]
+    #         ret[i-1, num_elements:, :] = logits[index+num_elements-1,:]
+    #         index = index + num_elements
+    #     return ret
 
     def unpad(self, inputs_np: np.ndarray):
         inputs = inputs_np.tolist()
@@ -640,36 +646,78 @@ class TransformerInputPool:
     def reset(self):
         self._entered = False
         self.num_prev_tokens = {}
+        self.next_cache_index = {}
         self.input_sequence_ids = []
-        self.erase_cache()
-
-    def erase_cache(self):
         for k, v in self.kv_caches_cupy:
             k.fill(0.0)
             v.fill(0.0)
+        self.kv_cache_ids.fill(0)
 
-    def update_cache(self, input_sequences: List[List[int]], kv):
+    def update_cache_legacy(self, input_sequences: List[List[int]], kv):
         for layer_idx, (key_1d, value_1d) in enumerate(kv):
-            k_cache, v_cache = self.kv_caches_cupy[layer_idx]
-            key_1d = jax_tensor_to_cupy(key_1d)
-            value_1d = jax_tensor_to_cupy(value_1d)
+            dst_k, dst_v = self.kv_caches_cupy[layer_idx]
+            src_k = cupy.squeeze(jax_tensor_to_cupy(key_1d))
+            src_v = cupy.squeeze(jax_tensor_to_cupy(value_1d))
             idx = 0
             for i, sentence_id in enumerate(self.input_sequence_ids):
-                cache_idx = (sentence_id - 1) * self.max_cache_per_seq + self.num_prev_tokens[sentence_id]
-                k_cache[cache_idx:cache_idx + len(input_sequences[i]), :] = cupy.squeeze(
-                    key_1d[idx:idx + len(input_sequences[i]), :])
-                v_cache[cache_idx:cache_idx + len(input_sequences[i]), :] = cupy.squeeze(
-                    value_1d[idx:idx + len(input_sequences[i]), :])
-                self.kv_cache_ids[cache_idx:cache_idx + len(input_sequences[i])] = sentence_id
+                start = self.next_cache_index[sentence_id]
+                dst_k[start:start + len(input_sequences[i]), :] = src_k[idx:idx+len(input_sequences[i]),:]
+                dst_v[start:start + len(input_sequences[i]), :] = src_v[idx:idx+len(input_sequences[i]),:]
+                self.kv_cache_ids[start:start + len(input_sequences[i])] = sentence_id
                 idx += len(input_sequences[i])
+
+    def update_cache(self, input_sequences: List[List[int]], kv):
+        dst_indices = []
+        for i, sentence_id in enumerate(self.input_sequence_ids):
+            start = self.next_cache_index[sentence_id]
+            dst_indices.extend(list(range(start, start + len(input_sequences[i]))))
+        dst_indices = cupy.array(dst_indices)
+        sum_src_len = sum(len(seq) for seq in input_sequences)
+        src_kv = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in kv]
+        for layer_idx, (src_k, src_v) in enumerate(src_kv):
+            dst_k, dst_v = self.kv_caches_cupy[layer_idx]
+            custom_memcpy[sum_src_len, 256](dst_k.ravel(), src_k.ravel(), dst_indices)
+            custom_memcpy[sum_src_len, 256](dst_v.ravel(), src_v.ravel(), dst_indices)
+        for i, sentence_id in enumerate(self.input_sequence_ids):
+            start = self.next_cache_index[sentence_id]
+            self.kv_cache_ids[start:start+len(input_sequences[i])] = sentence_id
 
     def update_num_prev_tokens(self, input_sequences: List[List[int]]):
         for i, sentence_id in enumerate(self.input_sequence_ids):
             self.num_prev_tokens[sentence_id] += len(input_sequences[i])
+        for i, sentence_id in enumerate(self.input_sequence_ids):
+            self.next_cache_index[sentence_id]  = (sentence_id - 1) * \
+                                                  self.max_cache_per_seq + self.num_prev_tokens[sentence_id]
 
     @property
     def pad(self):
         return self._config.pad if "pad" in dir(self._config) else 1
+
+
+@cupyx.jit.rawkernel()
+def custom_memcpy(dst, src, dst_indices):
+    """
+    dst: X * num_head * head_dim
+    src: Y * num_head * head_dim
+    dst_index: list of length num_setencne_in_this_batch
+    src_len: list of length num_setencne_in_this_batch
+    """
+    block_idx = cupyx.jit.blockIdx.x
+    thread_idx = cupyx.jit.threadIdx.x
+    # num_blocks = sum(src_len)
+    src_idx = block_idx
+    dst_idx = dst_indices[block_idx]
+    num_elements = 768
+    num_elements_per_thread = (num_elements + 256 - 1) // 256
+    for i in range(num_elements_per_thread):
+        j = thread_idx + 256 * i
+        if j < num_elements:
+            dst[dst_idx * num_elements + j] = src[src_idx * num_elements + j]
+
+
+def jax_to_cupy(jax_array):
+    return cupy.fromDlpack(
+        xc._xla.buffer_to_dlpack_managed_tensor(jax_array, take_ownership=False))
 
 
 def load_params_np(params, path, config, dummy=False):

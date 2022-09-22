@@ -232,7 +232,7 @@ def get_model_1d(model_name: str,
                  path: str,
                  dummy: bool = False,
                  # batch size, this batch is #tokens
-                 batch_size: int = 512,
+                 batch_size: int = 256,
                  max_seq_len: int = 2048,
                  cache_size: int = 4096,
                  max_cache_per_seq: int = 128,
@@ -290,20 +290,21 @@ def get_model_1d(model_name: str,
 
     def sync(device_id=0):
         jax.devices()[device_id].synchronize_all_activity()
+        return
 
     def inference_func(input_ids,
                        past_key_values,
                        attention_mask,
                        output_attentions,
                        output_hidden_states):
-        # timers("enter").start(sync)
+        timers("enter").start(sync)
         if input_ids.shape[1] > 1:
             unpadded_input = input_pool.unpad(input_ids)
             input, input_index, position_ids = input_pool.enter_prompts(unpadded_input)
         else:
             unpadded_input = input_ids.tolist()
             input, input_index, position_ids = input_pool.enter_decoding(unpadded_input)
-        # timers("enter").suspend(sync)
+        timers("enter").suspend(sync)
 
         # set envvar
         os.environ["FT_INPUT_INDEX_ADDR"] = str(input_index.ctypes.data)
@@ -315,19 +316,19 @@ def get_model_1d(model_name: str,
             "position_ids": position_ids,
             "cache": input_pool.kv_caches
         }
-        # timers("compute").start(sync)
+        timers("compute").start(sync)
         logits, kv = executable(params, batch)
-        # timers("compute").suspend(sync)
+        timers("compute").suspend(sync)
 
-        # timers("update").start(sync)
+        timers("update").start(sync)
         input_pool.update_cache(unpadded_input, kv)
         input_pool.update_num_prev_tokens(unpadded_input)
-        # timers("update").suspend(sync)
+        timers("update").suspend(sync)
 
-        # timers("reshape").start(sync)
+        timers("reshape").start(sync)
         logits = input_pool.reshape_logits(logits, input_index, input_ids.shape)
         logits_step = torch.from_numpy(logits).to(torch_device).float()
-        # timers("reshape").suspend(sync)
+        timers("reshape").suspend(sync)
 
         return InferenceFuncOutput(logits_step, kv, None, None)
 
@@ -493,15 +494,22 @@ def get_alpa_model(model_name: str,
     last_token = None
     step_ct = 0
 
+    def sync(device_id=0):
+        jax.devices()[device_id].synchronize_all_activity()
+        return
+
     def inference_func(input_ids,
                        past_key_values,
                        attention_mask,
                        output_attentions,
                        output_hidden_states):
+
+        timers("enter").start(sync)
         assert input_ids.shape[0] == batch_size, (
             f"Expect batch size = {batch_size}, but got {input_ids.shape[0]}")
         input_ids = input_ids.cpu().numpy()
         attention_mask = attention_mask.cpu().numpy()
+        timers("enter").suspend(sync)
 
         def run_one(_executable, _input_ids, _past_key_values, _attention_mask, num_internal_pad):
             nonlocal num_valid_tokens
@@ -552,6 +560,8 @@ def get_alpa_model(model_name: str,
 
             return output
 
+
+        timers("compute").start(sync)
         seq_len = input_ids.shape[1]
         if seq_len == 1:  # A fast path for seq_len = 1
             output = run_one(executables[1], input_ids, past_key_values, attention_mask, 0)
@@ -584,9 +594,11 @@ def get_alpa_model(model_name: str,
                                  num_internal_pad)
                 past_key_values = output.attention_cache
                 i += step_input_ids.shape[1]
+        timers("compute").suspend(sync)
 
-        # print(output.logits.shape)
+        timers("move logits").start(sync)
         logits_step = torch.from_numpy(np.array(output.logits)).to(torch_device).float()
+        timers("move logits").suspend(sync)
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)
 

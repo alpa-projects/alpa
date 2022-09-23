@@ -347,7 +347,7 @@ def get_compile_options(num_replicas: int, num_partitions: int,
 def jaxpr_to_hlo_module(name: str,
                         closed_jaxpr: ClosedJaxpr,
                         donated_invars: Sequence[bool],
-                        platform: str = "gpu"):
+                        platform: str = "cuda"):
     """Convert a jaxpr to an XLA HloModule.
 
     Reference code: jax/jax/_src/dispatch.py::lower_xla_callable

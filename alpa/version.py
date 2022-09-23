@@ -1,10 +1,11 @@
-# pylint: disable=pointless-string-statement
+# pylint: disable=pointless-string-statement, line-too-long
 """Version information."""
 from jax._src.lib import xla_extension as xe
 
 __version__ = "1.0.0.dev0"
 
 minimal_alpa_jaxlib_version = (0, 1, 1)
+
 
 def check_alpa_jaxlib_version():
     """Check the minimal requirement of alpa's jaxlib."""

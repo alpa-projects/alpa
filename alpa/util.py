@@ -347,13 +347,11 @@ def get_compile_options(num_replicas: int, num_partitions: int,
 def jaxpr_to_hlo_module(name: str,
                         closed_jaxpr: ClosedJaxpr,
                         donated_invars: Sequence[bool],
-                        backend=None):
+                        platform: str = "gpu"):
     """Convert a jaxpr to an XLA HloModule.
 
     Reference code: jax/jax/_src/dispatch.py::lower_xla_callable
     """
-    if backend is None:
-        backend = xb.get_backend("cpu")
     consts = closed_jaxpr.consts
     map(dispatch.prefetch,
         it.chain(consts, dispatch.jaxpr_literals(closed_jaxpr.jaxpr)))
@@ -371,7 +369,7 @@ def jaxpr_to_hlo_module(name: str,
     ]
     lowering_result = mlir.lower_jaxpr_to_module(
         name, closed_jaxpr,
-        unordered_effects, ordered_effects, backend.platform,
+        unordered_effects, ordered_effects, platform,
         mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars)
     xla_computation = xe.mlir.mlir_module_to_xla_computation(
         mlir.module_to_string(lowering_result.module),

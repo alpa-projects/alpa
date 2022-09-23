@@ -7,7 +7,6 @@ from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union, Set
 
 from jax.core import Var
 from jax.interpreters import pxla
-from jax.lib import xla_bridge as xb
 import numpy as np
 
 from alpa.global_env import global_config

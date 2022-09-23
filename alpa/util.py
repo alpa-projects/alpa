@@ -435,7 +435,7 @@ def count_communication_primitives(hlo_ir: str,
     return total, all_reduce, all_gather, reduce_scatter, all_to_all
 
 
-def compile_dummy_zero_constant(num_devices: int):
+def compile_dummy_zero_constant():
     """Compile an Hlo module that returns a constant zero."""
     c = xc.XlaBuilder("dummy_zero_constant")
     sharding = xc.OpSharding()
@@ -513,8 +513,7 @@ def compile_memset_zero_buffers(backend, num_devices: int,
     return compiled
 
 
-def compile_concatenate(mesh_shape, sharding_spec, batch_size,
-                        batch_dim, aval):
+def compile_concatenate(mesh_shape, sharding_spec, batch_size, batch_dim, aval):
     """
     Compile an XLA executable that concatenates values over the batch dimension,
     keeping the sharding spec unchanged.

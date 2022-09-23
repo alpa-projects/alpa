@@ -24,8 +24,7 @@ is_initialized = False
 
 def init(cluster: str = "ray",
          devices_per_node: Optional[int] = None,
-         num_nodes: Optional[int] = None,
-         namespace: Optional[str] = None):
+         num_nodes: Optional[int] = None):
     """Initialize the global environment.
 
     `devices_per_node, num_nodes` are used to specify the number of devices.
@@ -49,7 +48,7 @@ def init(cluster: str = "ray",
         return
     is_initialized = True
 
-    init_global_cluster(cluster, devices_per_node, num_nodes, namespace)
+    init_global_cluster(cluster, devices_per_node, num_nodes)
 
 
 def shutdown():

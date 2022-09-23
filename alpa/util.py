@@ -521,23 +521,14 @@ def compile_memset_zero_buffers(backend, num_devices: int,
     return compiled
 
 
-def compile_concatenate(backend, mesh_shape, sharding_spec, batch_size,
+def compile_concatenate(mesh_shape, sharding_spec, batch_size,
                         batch_dim, aval):
     """
     Compile an XLA executable that concatenates values over the batch dimension,
     keeping the sharding spec unchanged.
     """
-    num_devices = np.prod(mesh_shape)
-    sharding = pxla.sharding_spec_sharding_proto(sharding_spec)
-    build_random_seed = global_config.compile_random_seed
-    compile_options = get_compile_options(
-        num_replicas=1,
-        num_partitions=num_devices,
-        device_assignment=np.arange(num_devices).reshape((1, -1)),
-        use_spmd_partitioning=True,
-        parameter_is_tupled_arguments=False,
-        build_random_seed=build_random_seed)
     c = xc.XlaBuilder("concatenate buffers")
+    sharding = pxla.sharding_spec_sharding_proto(sharding_spec)
     c.set_sharding(sharding)
     operands = []
     for batch_idx in range(batch_size):
@@ -546,10 +537,19 @@ def compile_concatenate(backend, mesh_shape, sharding_spec, batch_size,
                 c, batch_idx,
                 xc.shape_from_pyval(np.ones(aval.shape, aval.dtype))))
     concated = xc.ops.ConcatInDim(c, operands, batch_dim)
-    c = c.build(concated)
-    compiled = backend.compile(c, compile_options)
-    hlo_proto = compiled.hlo_modules()[0].as_serialized_hlo_module_proto()
-    return hlo_proto
+    hlo_module = c.build(concated).as_hlo_module()
+
+    num_devices = np.prod(mesh_shape)
+    build_random_seed = global_config.compile_random_seed
+    compile_options = get_compile_options(
+        num_replicas=1,
+        num_partitions=num_devices,
+        device_assignment=np.arange(num_devices).reshape((1, -1)),
+        use_spmd_partitioning=True,
+        parameter_is_tupled_arguments=False,
+        build_random_seed=build_random_seed)
+    xe.run_spmd_partitioner(hlo_module, compile_options)
+    return hlo_module.as_serialized_hlo_module_proto()
 
 
 def compile_allgather(shape, dtype, src_spec, dst_spec, num_devices):

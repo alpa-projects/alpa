@@ -43,8 +43,6 @@ from alpa.util import (compile_allocate_zero_buffers,
 mesh_executable_counter = 0
 remote_buffer_counter = 0
 
-GLOBAL_BACKEND_NAME = "gpu"
-
 
 class MeshDriverExecutable(ABC):
     """The base class of the driver part of a mesh executable."""

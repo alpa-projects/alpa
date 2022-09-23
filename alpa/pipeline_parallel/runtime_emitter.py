@@ -7,7 +7,6 @@ from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union, Set
 
 from jax.core import Var
 from jax.interpreters import pxla
-from jax.lib import xla_bridge as xb
 import numpy as np
 
 from alpa.global_env import global_config
@@ -817,8 +816,7 @@ class PipelineInstEmitter:
                 # create and run concat executable
                 exec_uuid = next_mesh_executable_uuid()
                 spec = to_concate_specs[mesh_idx][src_var]
-                hlo_proto = compile_concatenate(xb.get_backend("gpu"),
-                                                physical_mesh.shape, spec,
+                hlo_proto = compile_concatenate(physical_mesh.shape, spec,
                                                 self.num_batch, batch_dim,
                                                 src_var.aval)
                 exec_config = ConcatWorkerExecutableConfig(exec_uuid, hlo_proto)

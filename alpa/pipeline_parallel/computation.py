@@ -219,9 +219,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
         stage_plan = StagePlan(global_config.compile_random_seed,
                                logical_mesh_shape, 1, 1, AutoShardingOption(),
                                None, 0)
-        compiled = compile_dummy_zero_constant(xb.get_backend("gpu"),
-                                               np.prod(logical_mesh_shape))
-        sharding_annotated_module = compiled.hlo_modules()[0]
+        sharding_annotated_module = compile_dummy_zero_constant()
         outvar = gensym_func(ShapedArray((), np.dtype(np.int32)))
         return cls(
             name=name,

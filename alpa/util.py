@@ -110,6 +110,7 @@ def abstractify_with_aval(x):
 
 def update_jax_platform(platform):
     """Update the jax backend platform."""
+    jax.config.update("jax_platforms", platform)
     jax.config.update("jax_platform_name", platform)
     xb.get_backend.cache_clear()
 
@@ -346,13 +347,11 @@ def get_compile_options(num_replicas: int, num_partitions: int,
 def jaxpr_to_hlo_module(name: str,
                         closed_jaxpr: ClosedJaxpr,
                         donated_invars: Sequence[bool],
-                        backend=None):
+                        platform: str = "cuda"):
     """Convert a jaxpr to an XLA HloModule.
 
     Reference code: jax/jax/_src/dispatch.py::lower_xla_callable
     """
-    if backend is None:
-        backend = xb.get_backend("gpu")
     consts = closed_jaxpr.consts
     map(dispatch.prefetch,
         it.chain(consts, dispatch.jaxpr_literals(closed_jaxpr.jaxpr)))
@@ -369,8 +368,7 @@ def jaxpr_to_hlo_module(name: str,
         eff for eff in closed_jaxpr.effects if eff in core.ordered_effects
     ]
     lowering_result = mlir.lower_jaxpr_to_module(
-        name, closed_jaxpr,
-        unordered_effects, ordered_effects, backend.platform,
+        name, closed_jaxpr, unordered_effects, ordered_effects, platform,
         mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars)
     xla_computation = xe.mlir.mlir_module_to_xla_computation(
         mlir.module_to_string(lowering_result.module),
@@ -437,8 +435,8 @@ def count_communication_primitives(hlo_ir: str,
     return total, all_reduce, all_gather, reduce_scatter, all_to_all
 
 
-def compile_dummy_zero_constant(backend, num_devices: int):
-    """Compile an XLA executable that returns a constant zero."""
+def compile_dummy_zero_constant():
+    """Compile an Hlo module that returns a constant zero."""
     c = xc.XlaBuilder("dummy_zero_constant")
     sharding = xc.OpSharding()
     sharding.type = sharding.type.REPLICATED
@@ -446,15 +444,7 @@ def compile_dummy_zero_constant(backend, num_devices: int):
     zero = xc.ops.Constant(c, np.array(0, dtype=np.dtype(np.int32)))
     c.clear_sharding()
     c = c.build(xc.ops.Tuple(c, [zero]))
-
-    compile_options = xb.get_compile_options(
-        num_replicas=1,
-        num_partitions=num_devices,
-        device_assignment=np.arange(num_devices).reshape((1, -1)),
-        use_spmd_partitioning=True,
-    )
-    compiled = backend.compile(c, compile_options)
-    return compiled
+    return c.get_hlo_module()
 
 
 def compile_allocate_zero_buffers(backend, num_devices: int,
@@ -523,23 +513,13 @@ def compile_memset_zero_buffers(backend, num_devices: int,
     return compiled
 
 
-def compile_concatenate(backend, mesh_shape, sharding_spec, batch_size,
-                        batch_dim, aval):
+def compile_concatenate(mesh_shape, sharding_spec, batch_size, batch_dim, aval):
     """
     Compile an XLA executable that concatenates values over the batch dimension,
     keeping the sharding spec unchanged.
     """
-    num_devices = np.prod(mesh_shape)
-    sharding = pxla.sharding_spec_sharding_proto(sharding_spec)
-    build_random_seed = global_config.compile_random_seed
-    compile_options = get_compile_options(
-        num_replicas=1,
-        num_partitions=num_devices,
-        device_assignment=np.arange(num_devices).reshape((1, -1)),
-        use_spmd_partitioning=True,
-        parameter_is_tupled_arguments=False,
-        build_random_seed=build_random_seed)
     c = xc.XlaBuilder("concatenate buffers")
+    sharding = pxla.sharding_spec_sharding_proto(sharding_spec)
     c.set_sharding(sharding)
     operands = []
     for batch_idx in range(batch_size):
@@ -548,10 +528,19 @@ def compile_concatenate(backend, mesh_shape, sharding_spec, batch_size,
                 c, batch_idx,
                 xc.shape_from_pyval(np.ones(aval.shape, aval.dtype))))
     concated = xc.ops.ConcatInDim(c, operands, batch_dim)
-    c = c.build(concated)
-    compiled = backend.compile(c, compile_options)
-    hlo_proto = compiled.hlo_modules()[0].as_serialized_hlo_module_proto()
-    return hlo_proto
+    hlo_module = c.build(concated).as_hlo_module()
+
+    num_devices = np.prod(mesh_shape)
+    build_random_seed = global_config.compile_random_seed
+    compile_options = get_compile_options(
+        num_replicas=1,
+        num_partitions=num_devices,
+        device_assignment=np.arange(num_devices).reshape((1, -1)),
+        use_spmd_partitioning=True,
+        parameter_is_tupled_arguments=False,
+        build_random_seed=build_random_seed)
+    xe.run_spmd_partitioner(hlo_module, compile_options)
+    return hlo_module.as_serialized_hlo_module_proto()
 
 
 def compile_allgather(shape, dtype, src_spec, dst_spec, num_devices):

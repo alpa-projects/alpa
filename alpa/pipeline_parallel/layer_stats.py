@@ -11,13 +11,14 @@ def eqn_flops(eqn: JaxprEqn) -> float:
     """Get the FLOP of a jaxpr equation."""
     jaxpr = Jaxpr([], eqn.invars, eqn.outvars, [eqn])
     closed_jaxpr = ClosedJaxpr(jaxpr, [])
-    backend = xb.get_backend("gpu")
     if any(isinstance(x, Literal) for x in eqn.invars):
         # A temporary workaround
         return 0
     hlo_module = jaxpr_to_hlo_module("tmp", closed_jaxpr, [
         False,
-    ] * len(eqn.invars), backend)
+    ] * len(eqn.invars))
+
+    backend = xb.get_backend("cpu")
     properties = xc._xla.hlo_module_cost_analysis(  # pylint: disable=protected-access
         backend, hlo_module)
     return properties["flops"] if "flops" in properties else 0.0

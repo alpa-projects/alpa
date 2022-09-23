@@ -10,7 +10,9 @@ try:
     from cupy.cuda.nccl import groupStart  # pylint: disable=unused-import
     from cupy.cuda.nccl import groupEnd  # pylint: disable=unused-import
 except ImportError as error:
-    raise ImportError("NCCL requires Cupy being available!") from error
+    # pylint: disable=raise-missing-from
+    raise ImportError(
+        "Please install nccl library following the above instructions")
 
 from alpa.collective.types import ReduceOp, torch_available
 

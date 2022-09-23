@@ -110,6 +110,7 @@ def abstractify_with_aval(x):
 
 def update_jax_platform(platform):
     """Update the jax backend platform."""
+    jax.config.update("jax_platforms", platform)
     jax.config.update("jax_platform_name", platform)
     xb.get_backend.cache_clear()
 
@@ -352,7 +353,7 @@ def jaxpr_to_hlo_module(name: str,
     Reference code: jax/jax/_src/dispatch.py::lower_xla_callable
     """
     if backend is None:
-        backend = xb.get_backend("gpu")
+        backend = xb.get_backend("cpu")
     consts = closed_jaxpr.consts
     map(dispatch.prefetch,
         it.chain(consts, dispatch.jaxpr_literals(closed_jaxpr.jaxpr)))

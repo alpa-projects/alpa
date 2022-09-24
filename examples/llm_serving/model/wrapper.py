@@ -326,10 +326,10 @@ def get_model_1d(model_name: str,
         timers("update").suspend(sync)
 
         timers("reshape").start(sync)
-        logits = input_pool.reshape_logits(logits, input_index, input_ids.shape)
+        logits = input_pool.reshape_logits(logits, unpadded_input, tuple(input_ids.shape))
+        # logits = input_pool.reshape_logits_legacy(logits, input_index, tuple(input_ids.shape))
         logits_step = torch.from_numpy(logits).to(torch_device).float()
         timers("reshape").suspend(sync)
-
         return InferenceFuncOutput(logits_step, kv, None, None)
 
     inference_func_config = InferenceFuncConfig()

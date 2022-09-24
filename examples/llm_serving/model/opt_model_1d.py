@@ -1,32 +1,22 @@
-import dataclasses
+import math
 from dataclasses import dataclass
+from typing import Callable, Optional, Tuple, List
 
 import cupy
 import cupyx.jit
-from functools import partial
-import itertools
-import math
-import os
-from typing import Callable, Optional, Tuple, Sequence, List
-
-import alpa
-from alpa.collective.worker_nccl_util_cupy import jax_tensor_to_cupy
-from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
-                              MeshHostWorker, create_remote_array_refs)
-from alpa.model.model_util import ModelOutput
-from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
-from alpa.timer import timers
+import flax
 import flax.linen as nn
 import jax
-import flax
-from jax import lax
 import jax.numpy as jnp
-from jax.tree_util import tree_flatten, tree_leaves
-from jax.interpreters import pxla
-from jax._src.lib import xla_client as xc
 import jaxlib.xla_extension as jax_xla
 import numpy as np
-from tqdm import tqdm
+import os
+from functools import partial
+from jax._src.lib import xla_client as xc
+
+from alpa.collective.worker_nccl_util_cupy import jax_tensor_to_cupy
+from alpa.model.model_util import ModelOutput
+from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 
 try:
     from ft_mha import fused_mmha
@@ -531,12 +521,17 @@ class TransformerInputPool:
                  cache_size=512,
                  max_cache_per_seq=128):
         # Opt model config
-        self._config = config
+        self.model_config = config
         self.batch_size = batch_size
         self.cache_size = cache_size
         self.max_cache_per_seq = max_cache_per_seq
 
-        # caches, which is staticly allocated
+        # other useful configs
+        self.pad = self.model_config.pad if "pad" in dir(self.model_config) else 1
+        self.hidden_dim = self.model_config.hidden_size
+        self.vocab_size = self.model_config.vocab_size
+
+        # caches, which is statically allocated
         self.kv_caches = jax.tree_map(jnp.array, init_cache_np(config, self.cache_size))
         self.kv_cache_ids = np.zeros((self.cache_size, ), dtype=np.int32)
         self.kv_caches_cupy = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in self.kv_caches]
@@ -546,12 +541,10 @@ class TransformerInputPool:
         self.input_sequence_ids = []
         self.num_prev_tokens = {}
         self.next_cache_index = {}
-        self._entered = False
 
     def enter_prompts(self, input_sequences: List[List[int]]):
         # reset cache, sentence_ids, etc.
         self.reset()
-        assert not self._entered, "This pool can only process a batch at a time."
         # check input has no padding
         for seq in input_sequences:
             assert self.pad not in seq
@@ -565,7 +558,6 @@ class TransformerInputPool:
             self.num_prev_tokens[id] = 0
             assert id not in self.next_cache_index
             self.next_cache_index[id] = i * self.max_cache_per_seq + self.num_prev_tokens[id]
-        self._entered = True
         input, input_index, position_ids = self._generate_1d_inputs(input_sequences)
         return input, input_index, position_ids
 
@@ -577,18 +569,16 @@ class TransformerInputPool:
             assert id in self.next_cache_index
             assert len(input_sequences[i]) == 1
             assert self.num_prev_tokens[id] > 0
-        assert self._entered, "No prompts entered yet."
-
         input, input_index, position_ids = self._generate_1d_inputs(input_sequences)
         return input, input_index, position_ids
 
-    def reshape_logits(self, logits, input_index, original_input_shape):
+    def reshape_logits_legacy(self, logits, input_index, padded_shape):
         """Unflatten the 1D logits output to be 2D."""
-        ret_shape = list(original_input_shape) + [logits.shape[-1]]
+        ret_shape = padded_shape + (logits.shape[-1],)
         logits_cupy = jax_tensor_to_cupy(logits)
         ret_cupy = cupy.zeros(ret_shape, dtype=logits_cupy.dtype)
         index = 0
-        for i in range(1, original_input_shape[0] + 1):
+        for i in range(1, padded_shape[0] + 1):
             num_elements = np.sum(input_index==i)
             ret_cupy[i-1, :num_elements, :] = logits_cupy[index:index+num_elements, :]
             ret_cupy[i-1, num_elements:, :] = logits_cupy[index+num_elements-1,:]
@@ -596,17 +586,23 @@ class TransformerInputPool:
         ret = cupy.asnumpy(ret_cupy)
         return ret
 
-    # def reshape_logits(self, logits, input_index, original_input_shape):
-    #     """Unflatten the 1D logits output to be 2D."""
-    #     logits = np.array(logits)
-    #     ret = np.zeros(list(original_input_shape) + [logits.shape[-1]])
-    #     index = 0
-    #     for i in range(1, original_input_shape[0] + 1):
-    #         num_elements = np.sum(input_index==i)
-    #         ret[i-1, :num_elements, :] = logits[index:index+num_elements, :]
-    #         ret[i-1, num_elements:, :] = logits[index+num_elements-1,:]
-    #         index = index + num_elements
-    #     return ret
+    def reshape_logits(self, logits, unpadded_input, padded_shape):
+        """Reshape the 1D logits output to be 2D."""
+        src_logits = jax_tensor_to_cupy(logits)
+        dst_shape = padded_shape + (self.vocab_size, )
+        num_blocks = dst_shape[0] * dst_shape[1]
+        seq_lens = [len(seq) for seq in unpadded_input]
+        src_indices = []
+        start = 0
+        for seq_index, seq_len in enumerate(seq_lens):
+            end = start + seq_len
+            src_indices.extend(list(range(start, end)) + [end - 1] * (dst_shape[1] - seq_len))
+            start = end
+        src_indices = cupy.array(src_indices)
+        dst_logits = cupy.zeros(dst_shape, dtype=logits.dtype)
+        custom_reshape_logits[num_blocks, 1024](dst_logits.ravel(), src_logits.ravel(), src_indices)
+        ret = cupy.asnumpy(dst_logits)
+        return ret
 
     def unpad(self, inputs_np: np.ndarray):
         inputs = inputs_np.tolist()
@@ -622,8 +618,8 @@ class TransformerInputPool:
         """Generate the three elements: input tokens, input token index, and position_ids"""
         input = sum(input_sequences, [])
         assert len(input) <= self.batch_size, "Please allocate a larger batch size"
-        input = jnp.asarray(input + [self.pad] * (self.batch_size - len(input)),
-                               dtype=jnp.int32)
+        input_list = input + [self.pad] * (self.batch_size - len(input))
+        input = np.array(input_list, dtype=np.int32)
 
         # generate an index array that tells the sentence id of each token
         assert len(input_sequences) == len(self.input_sequence_ids)
@@ -639,12 +635,10 @@ class TransformerInputPool:
             start_idx = 1 + self.pad + self.num_prev_tokens[sentence_id]
             position_ids.extend(list(range(start_idx, start_idx + len(input_sequences[i]))))
         position_ids = position_ids + [self.pad] * (self.batch_size - len(position_ids))
-        position_ids = jnp.asarray(position_ids, dtype=jnp.int32)
-
+        position_ids = np.array(position_ids, dtype=jnp.int32)
         return input, input_index, position_ids
 
     def reset(self):
-        self._entered = False
         self.num_prev_tokens = {}
         self.next_cache_index = {}
         self.input_sequence_ids = []
@@ -653,31 +647,21 @@ class TransformerInputPool:
             v.fill(0.0)
         self.kv_cache_ids.fill(0)
 
-    def update_cache_legacy(self, input_sequences: List[List[int]], kv):
-        for layer_idx, (key_1d, value_1d) in enumerate(kv):
-            dst_k, dst_v = self.kv_caches_cupy[layer_idx]
-            src_k = cupy.squeeze(jax_tensor_to_cupy(key_1d))
-            src_v = cupy.squeeze(jax_tensor_to_cupy(value_1d))
-            idx = 0
-            for i, sentence_id in enumerate(self.input_sequence_ids):
-                start = self.next_cache_index[sentence_id]
-                dst_k[start:start + len(input_sequences[i]), :] = src_k[idx:idx+len(input_sequences[i]),:]
-                dst_v[start:start + len(input_sequences[i]), :] = src_v[idx:idx+len(input_sequences[i]),:]
-                self.kv_cache_ids[start:start + len(input_sequences[i])] = sentence_id
-                idx += len(input_sequences[i])
-
     def update_cache(self, input_sequences: List[List[int]], kv):
+        num_threads_per_block = 256
         dst_indices = []
         for i, sentence_id in enumerate(self.input_sequence_ids):
             start = self.next_cache_index[sentence_id]
             dst_indices.extend(list(range(start, start + len(input_sequences[i]))))
         dst_indices = cupy.array(dst_indices)
         sum_src_len = sum(len(seq) for seq in input_sequences)
+        # Note(Hao): this jax -> cupy conversion has a little overhead, though
         src_kv = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in kv]
         for layer_idx, (src_k, src_v) in enumerate(src_kv):
             dst_k, dst_v = self.kv_caches_cupy[layer_idx]
-            custom_memcpy[sum_src_len, 256](dst_k.ravel(), src_k.ravel(), dst_indices)
-            custom_memcpy[sum_src_len, 256](dst_v.ravel(), src_v.ravel(), dst_indices)
+            custom_memcpy[sum_src_len, num_threads_per_block](dst_k.ravel(), dst_v.ravel(),
+                                                              src_k.ravel(), src_v.ravel(),
+                                                              dst_indices, self.hidden_dim)
         for i, sentence_id in enumerate(self.input_sequence_ids):
             start = self.next_cache_index[sentence_id]
             self.kv_cache_ids[start:start+len(input_sequences[i])] = sentence_id
@@ -689,30 +673,31 @@ class TransformerInputPool:
             self.next_cache_index[sentence_id]  = (sentence_id - 1) * \
                                                   self.max_cache_per_seq + self.num_prev_tokens[sentence_id]
 
-    @property
-    def pad(self):
-        return self._config.pad if "pad" in dir(self._config) else 1
+
+@cupyx.jit.rawkernel()
+def custom_memcpy(dst_k, dst_v, src_k, src_v, dst_indices, hidden_dim):
+    thread_idx = cupyx.jit.threadIdx.x
+    src_idx = cupyx.jit.blockIdx.x
+    dst_idx = dst_indices[src_idx]
+    num_elements_per_thread = (hidden_dim + 256 - 1) // 256
+    for i in range(num_elements_per_thread):
+        j = thread_idx + 256 * i
+        if j < hidden_dim:
+            dst_k[dst_idx * hidden_dim + j] = src_k[src_idx * hidden_dim + j]
+            dst_v[dst_idx * hidden_dim + j] = src_v[src_idx * hidden_dim + j]
 
 
 @cupyx.jit.rawkernel()
-def custom_memcpy(dst, src, dst_indices):
-    """
-    dst: X * num_head * head_dim
-    src: Y * num_head * head_dim
-    dst_index: list of length num_setencne_in_this_batch
-    src_len: list of length num_setencne_in_this_batch
-    """
-    block_idx = cupyx.jit.blockIdx.x
+def custom_reshape_logits(dst, src, indices):
     thread_idx = cupyx.jit.threadIdx.x
-    # num_blocks = sum(src_len)
-    src_idx = block_idx
-    dst_idx = dst_indices[block_idx]
-    num_elements = 768
-    num_elements_per_thread = (num_elements + 256 - 1) // 256
+    dst_idx = cupyx.jit.blockIdx.x
+    src_idx = indices[dst_idx]
+    vocab_size = 50272
+    num_elements_per_thread = (vocab_size + 1024 - 1) // 1024
     for i in range(num_elements_per_thread):
-        j = thread_idx + 256 * i
-        if j < num_elements:
-            dst[dst_idx * num_elements + j] = src[src_idx * num_elements + j]
+        j = thread_idx + 1024 * i
+        if j < vocab_size:
+            dst[dst_idx * vocab_size + j] = src[src_idx * vocab_size + j]
 
 
 def jax_to_cupy(jax_array):

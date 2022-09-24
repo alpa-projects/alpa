@@ -49,7 +49,7 @@ def main(args):
 
     input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
 
-    n_warmup = 5
+    n_warmup = 10
     for i in range(n_warmup):
         tic = time.time()
         output_ids = model.generate(input_ids=input_ids,

@@ -16,5 +16,5 @@ python3 run_clm_flax.py \
     --overwrite_output_dir \
     --num_train_epochs="8" \
     --logging_steps="16" \
-    --save_steps="32" \
-    --eval_steps="32"
+    --save_steps="96" \
+    --eval_steps="48"

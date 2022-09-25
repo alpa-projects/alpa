@@ -376,7 +376,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         return costs
 
     def get_total_allocation_size(self):
-        """Get the total allocated memory size of this executable."""
+        """Get the total memory allocation size in bytes."""
         if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
             return (ray.get(self.physical_mesh.workers[0].
                             get_exec_total_allocation_size.remote(
@@ -767,7 +767,7 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
                             tree_leaves(self.get_input_placement_specs()))
 
     def get_total_allocation_size(self):
-        """Get the total allocated memory size of this executable."""
+        """Get the total memory allocation size in bytes."""
         if isinstance(self.physical_mesh, DistributedPhysicalDeviceMesh):
             return ray.get(self.physical_mesh.workers[0].
                            get_exec_total_allocation_size.remote(
@@ -912,7 +912,7 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
                 self.apply_grad.hlo_modules()[0].to_string())
 
     def get_total_allocation_size(self):
-        """Get the total allocated memory size of this executable."""
+        """Get the total memory allocation size in bytes."""
         return max(self.accumulate_grad.total_allocation_size(),
                    self.apply_grad.total_allocation_size())
 

@@ -246,9 +246,10 @@ class PipelineBasicTest(unittest.TestCase):
         method = PipeshardParallel(
             num_micro_batches=4,
             default_auto_sharding_option=as_option or AutoShardingOption(),
-            layer_option=ManualLayerOption(
-                remat_layer=use_remat) if manual_pipeline_layer else
-            AutoLayerOption(layer_num=2, remat_layer=use_remat),
+            layer_option=ManualLayerOption(remat_layer=use_remat)
+            if manual_pipeline_layer else AutoLayerOption(
+                layer_num=2,
+                remat_mode="coarse_grained_remat" if use_remat else "none"),
             stage_option=stage_option or UniformStageOption())
 
         # Init model
@@ -301,9 +302,10 @@ class PipelineBasicTest(unittest.TestCase):
         method = PipeshardParallel(
             num_micro_batches=4,
             default_auto_sharding_option=as_option or AutoShardingOption(),
-            layer_option=ManualLayerOption(
-                remat_layer=use_remat) if manual_pipeline_layer else
-            AutoLayerOption(layer_num=num_layers, remat_layer=use_remat),
+            layer_option=ManualLayerOption(remat_layer=use_remat)
+            if manual_pipeline_layer else AutoLayerOption(
+                layer_num=num_layers,
+                remat_mode="coarse_grained_remat" if use_remat else "none"),
             stage_option=stage_option or UniformStageOption())
 
         # Init model

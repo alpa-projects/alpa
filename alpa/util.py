@@ -915,6 +915,7 @@ def trace_jaxpr_with_micro_batch(fun: lu.WrappedFun,
     assert batch_dim == 0, "Only support batch_dim == 0"
     # Monkey patch jax.random to fast stateful version
     monkey_patch_random()
+    monkey_patch_jaxarray()
 
     avals = []
     batch_size = None
@@ -940,7 +941,23 @@ def trace_jaxpr_with_micro_batch(fun: lu.WrappedFun,
 
     # Restore jax.random to original stateless version
     restore_random()
+    restore_jaxarray()
     return closed_jaxpr, batch_size
+
+
+backup_jnp_array = jnp.array
+
+
+def monkey_patch_jaxarray():
+    """Monkey patch jnp.array as jnp.asarray to avoid unnecessary copy."""
+    jnp.array = jnp.asarray
+    setattr(Literal, "__hash__", lambda self: self.hash)
+
+
+def restore_jaxarray():
+    """Monkey patch jnp.array as jnp.asarray to avoid unnecessary copy."""
+    jnp.array = backup_jnp_array
+    setattr(Literal, "__hash__", None)
 
 
 def slices_to_jaxpr(

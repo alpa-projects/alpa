@@ -916,14 +916,14 @@ class PipelineInstEmitter:
                 in_uuids = []
                 out_uuids = output_uuids
             instruction_lists[worker].append(
-                PipelineInstruction.run(config.exec_uuid,
-                                        in_uuids,
-                                        out_uuids, {
-                                            "sync_before": False,
-                                            "sync_after": False
-                                        },
-                                        info="mem set zero" if preallocated else
-                                        "allocate zero for recv"))
+                PipelineInstruction.run(
+                    config.exec_uuid,
+                    in_uuids,
+                    out_uuids, {
+                        "sync_before": False,
+                        "sync_after": False
+                    },
+                    info="mem set zero" if preallocated else "allocate zero"))
 
         # shape: (#args, num_hosts, num_devices_per_host)
         for var_idx, var in enumerate(variables):

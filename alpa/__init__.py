@@ -30,9 +30,10 @@ from alpa.device_mesh import (
     set_global_virtual_physical_mesh, set_seed, get_global_num_devices)
 from alpa.global_env import global_config
 from alpa.mesh_profiling import ProfilingResultDatabase
-from alpa.parallel_method import (ShardParallel, PipeshardParallel,
-                                  DataParallel, Zero2Parallel, Zero3Parallel,
-                                  CreateStateParallel, FollowParallel)
+from alpa.parallel_method import (ShardParallel, DataParallel, Zero2Parallel,
+                                  Zero3Parallel, PipeshardParallel,
+                                  ThreeDParallel, CreateStateParallel,
+                                  FollowParallel)
 from alpa.parallel_plan import plan_to_method
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 from alpa.pipeline_parallel.layer_construction import (manual_remat,

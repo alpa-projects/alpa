@@ -51,9 +51,6 @@ class PipelineInferenceTest(unittest.TestCase):
         parallel_out = parallel_inference_step(state, batch)
         assert_allclose(serial_out, parallel_out, 1e-3, 1e-3)
 
-        hlo_text = executable.get_hlo_text()
-        return hlo_text
-
     def run_bert_layer_collection_inference(self, manual_pipeline_layer):
         method = PipeshardParallel(num_micro_batches=4,
                                    pipeline_schedule="inference",
@@ -93,9 +90,6 @@ class PipelineInferenceTest(unittest.TestCase):
         serial_out = serial_inference_step(state, batch)
         parallel_out = parallel_inference_step(state, batch)
         assert_allclose(serial_out, parallel_out, 1e-3, 1e-3)
-
-        hlo_text = executable.get_hlo_text()
-        return hlo_text
 
     def test_mlp(self):
         self.run_mlp_inference(True)

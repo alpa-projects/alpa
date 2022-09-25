@@ -319,7 +319,7 @@ class PipeshardDriverExecutable:
             assert len(mesh_idx) == 1
             mesh_idx = list(mesh_idx)[0]
             physical_mesh = self.mesh_group[mesh_idx]
-            size = physical_mesh.workers[0].get_total_allocation_size.remote(
+            size = physical_mesh.workers[0].get_exec_total_allocation_size.remote(
                 self.executable_uuids[stage_idx])
             sizes.append(size)
         self.stage_allocation_sizes = ray.get(sizes)

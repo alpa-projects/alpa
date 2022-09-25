@@ -1591,9 +1591,13 @@ def prefetch(dis_arrays: Sequence[Union[ShardedDeviceArray, DistributedArray]]):
     for array in tree_leaves(dis_arrays):
         if isinstance(array, ShardedDeviceArray):
             array.copy_to_host_async()
-        else:
-            assert isinstance(array, DistributedArray)
+        elif isinstance(array, DistributedArray):
             group_by_mesh[array.device_mesh].append(array)
+        elif isinstance(array, ReplicatedDistributedArray):
+            array = array.replica
+            group_by_mesh[array.device_mesh].append(array)
+        else:
+            raise ValueError(f"Unhandled array type: {array}")
 
     for device_mesh, arrays in group_by_mesh.items():
         buf_refs = []

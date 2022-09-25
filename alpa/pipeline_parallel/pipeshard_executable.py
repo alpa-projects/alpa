@@ -70,6 +70,8 @@ class PipeshardDriverExecutable:
         self.output_placement_specs = pipeshard_config.output_placement_specs
         # List[stage_idx -> str]
         self.fully_optimized_hlo_texts = []
+        # List[stage_idx -> int]
+        self.stage_allocation_sizes = []
         self.sharding_annotated_hlo_texts = (
             pipeshard_config.sharding_annotated_hlo_texts)
         # List[stage_idx -> executable_uuid]
@@ -306,6 +308,24 @@ class PipeshardDriverExecutable:
         else:
             return self.sharding_annotated_hlo_texts
 
+    def get_stage_allocation_size(self):
+        """Get the total memory allocation size in bytes of all stages."""
+        if self.stage_allocation_sizes:
+            return self.stage_allocation_sizes
+
+        sizes = []
+        for stage_idx in range(len(self.stages)):
+            mesh_idx = self.schedule.stage_placement(stage_idx)
+            assert len(mesh_idx) == 1
+            mesh_idx = list(mesh_idx)[0]
+            physical_mesh = self.mesh_group[mesh_idx]
+            size = physical_mesh.workers[
+                0].get_exec_total_allocation_size.remote(
+                    self.executable_uuids[stage_idx])
+            sizes.append(size)
+        self.stage_allocation_sizes = ray.get(sizes)
+        return self.stage_allocation_sizes
+
     def dump_debug_info(self, folder: str):
         """
         Dump intermediate representations and other informations for debugging.
@@ -316,18 +336,18 @@ class PipeshardDriverExecutable:
         prefix = os.path.join(folder, name)
 
         fully_optimized_hlo_texts = self.get_hlo_text(HloStatus.FULLY_OPTIMIZED)
+        allocation_sizes = self.get_stage_allocation_size()
         for stage_idx in range(len(self.stages)):
             with open(f"{prefix}_stage_{stage_idx}.hlo", "w") as f:
                 f.write(fully_optimized_hlo_texts[stage_idx])
 
+            with open(f"{prefix}_stage_{stage_idx}.mem_usage.txt", "w") as f:
+                f.write(f"total_allocation_size: "
+                        f"{allocation_sizes[stage_idx]/(1024**3):.3f} GB\n")
+
         with open(f"{prefix}_resharding_tasks.txt", "w") as f:
             for task in self.resharding_tasks:
                 f.write(str(task) + "\n\n")
-
-    def get_total_allocation_size(self):
-        """Get the total allocated memory size on each mesh."""
-        # TODO: compute the theoretical total allocation size
-        raise NotImplementedError()
 
     def profile_all_executable_with_dummy_inputs(self):
         """Profile all stage executables with dummy inputs."""
@@ -469,11 +489,14 @@ class PipeshardMeshWorkerExecuable:
         # Execute
         timers("overall").start(sync_func=sync_func)
         for instruction in self.instructions:
-            # print(f"memory_allocated: "
-            #       f"{self.worker.get_memory_allocated()/1024**3:.3f} GB  "
-            #       f"max_memory_allocated: "
-            #       f"{self.worker.get_max_memory_allocated()/1024**3:.3f} GB "
-            #       f"next instruction: {instruction}")
+            #self.worker.sync()
+            #print(f"memory_allocated: "
+            #      f"{self.worker.get_memory_allocated()/1024**3:.3f} GB  "
+            #      f"max_memory_allocated: "
+            #      f"{self.worker.get_max_memory_allocated()/1024**3:.3f} GB "
+            #      f"next instruction: {instruction}", flush=True)
+            #self.worker.sync()
+
             if instruction.opcode == PipelineInstType.RUN:
                 timers("compute").start()
                 self.worker.run_executable(instruction.task_uuid,

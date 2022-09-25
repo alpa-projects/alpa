@@ -34,6 +34,7 @@ from alpa.pipeline_parallel.layer_construction import (LayerOption,
                                                        ManualLayerOption)
 from alpa.pipeline_parallel.stage_construction import (StageOption,
                                                        AutoStageOption,
+                                                       ManualStageOption,
                                                        UniformStageOption)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption, LogicalDeviceMesh
 from alpa.shard_parallel.compile_executable import compile_shard_executable
@@ -234,6 +235,65 @@ class PipeshardParallel(ParallelMethod):
             batch_invars, mesh, self.num_micro_batches, self.pipeline_schedule,
             self.as_option, self.layer_option, self.stage_option, None,
             self.stage_input_shardings, *avals)
+
+
+def get_3d_parallel_method(num_micro_batches: int,
+                           data_parallel: int,
+                           operator_parallel: int,
+                           pipeline_parallel: int,
+                           allow_degenerate_into_shard_parallel: bool = True):
+    """
+    Get a parallel method for 3D parallelism, which reguarlly combines
+    data parallelism, operator parallelism and pipeline parallelism.
+    """
+    # Validity check
+    virtual_mesh = get_global_virtual_physical_mesh()
+    num_devices = virtual_mesh.num_devices
+    num_devices_per_host = virtual_mesh.num_devices_per_host
+    if data_parallel == -1:
+        data_parallel = (num_devices // operator_parallel // pipeline_parallel)
+    assert num_devices % data_parallel == 0
+    assert num_devices % operator_parallel == 0
+    assert num_devices % pipeline_parallel == 0
+    assert (num_devices == data_parallel * operator_parallel *
+            pipeline_parallel)
+    pp = pipeline_parallel
+
+    # Decide logical and physical mesh shapes
+    logical_mesh_shape = (data_parallel, operator_parallel)
+    num_mesh_devices = np.prod(logical_mesh_shape)
+    if num_mesh_devices <= num_devices_per_host:
+        physical_mesh_shape = (1, num_mesh_devices)
+    else:
+        assert num_mesh_devices % num_devices_per_host == 0
+        physical_mesh_shape = (num_mesh_devices // num_devices_per_host,
+                               num_devices_per_host)
+
+    # If no pipeline parallel, degenerate into shard parallel
+    if pp == 1 and allow_degenerate_into_shard_parallel:
+        return ShardParallel(num_micro_batches=num_micro_batches,
+                             auto_sharding_option=AutoShardingOption(
+                                 prefer_reduce_scatter=True,
+                                 force_batch_dim_to_mesh_dim=0),
+                             devices=get_global_physical_mesh(
+                                 create_if_not_exist=True).get_logical_mesh(
+                                     [data_parallel, operator_parallel]))
+
+    # Return pipeshard parallel
+    layer_option = AutoLayerOption(layer_num=pp, eps=0.1)
+    return PipeshardParallel(
+        devices=virtual_mesh,
+        num_micro_batches=num_micro_batches,
+        default_auto_sharding_option=AutoShardingOption(
+            prefer_reduce_scatter=True,
+            force_batch_dim_to_mesh_dim=0,
+        ),
+        layer_option=layer_option,
+        stage_option=ManualStageOption(
+            forward_stage_layer_ids=[[i] for i in range(pp)],
+            submesh_physical_shapes=[physical_mesh_shape] * pp,
+            submesh_logical_shapes=[logical_mesh_shape] * pp,
+            submesh_autosharding_option_dicts=[{}] * pp))
 
 
 class LocalPipelineParallel(ParallelMethod):

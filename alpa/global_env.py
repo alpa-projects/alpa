@@ -89,5 +89,6 @@ global_config = GlobalConfig()
 # Other environment setup
 is_worker = os.environ.get("ALPA_IS_WORKER", "False") == "True"
 
-os.environ["XLA_FLAGS"] = os.environ.get(
-    "XLA_FLAGS", "") + " --xla_gpu_enable_async_all_reduce=false"
+os.environ["XLA_FLAGS"] = (os.environ.get("XLA_FLAGS", "") +
+                           " --xla_gpu_enable_async_all_reduce=false" +
+                           " --xla_gpu_force_compilation_parallelism=8")

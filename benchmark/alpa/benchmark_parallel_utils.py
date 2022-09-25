@@ -54,9 +54,6 @@ def get_pipeshard_parallel_method(benchmark_case: BenchmarkCase,
           parallel mode.
         allow_mixed_mesh_shape: Whether to allow the mixed mesh shape in
           the autosharding pass.
-        use_fine_grained_remat: Whether to use fine grained remat. If True,
-          the remat pass in auto layer pass will be skipped. This option only
-          works for load_solution parallel mode now.
     """
 
     num_micro_batches = benchmark_case.num_micro_batches
@@ -70,6 +67,7 @@ def get_pipeshard_parallel_method(benchmark_case: BenchmarkCase,
         add_manual_layer_marker = None
         num_manual_pipeline_stages = None
         add_manual_remat = None
+        remat_mode = "coarse_grained_remat" if use_remat else "none"
         auto_stage_option["cached_compute_cost"] = None
         method = PipeshardParallel(
             num_micro_batches=num_micro_batches,
@@ -79,7 +77,7 @@ def get_pipeshard_parallel_method(benchmark_case: BenchmarkCase,
             ),
             pipeline_schedule=pipeline_schedule,
             layer_option=AutoLayerOption(layer_num=num_auto_layers,
-                                         remat_layer=use_remat),
+                                         remat_model=remat_mode),
             stage_option=AutoStageOption(**auto_stage_option))
     elif parallel_mode == "load_solution":
         assert isinstance(parallel_args, LoadSolutionParallelArgs)
@@ -90,8 +88,12 @@ def get_pipeshard_parallel_method(benchmark_case: BenchmarkCase,
         add_manual_layer_marker = None
         num_manual_pipeline_stages = None
         add_manual_remat = None
-        if use_fine_grained_remat:
-            use_remat = False
+        if use_remat:
+            remat_mode = ("fine_grained_remat" if use_fine_grained_remat else
+                          "coarse_grained_remat")
+        else:
+            remat_mode = "none"
+        model_num_layers = benchmark_case.model_config.num_layers
         method = PipeshardParallel(
             num_micro_batches=num_micro_batches,
             default_auto_sharding_option=AutoShardingOption(
@@ -99,8 +101,10 @@ def get_pipeshard_parallel_method(benchmark_case: BenchmarkCase,
                 allow_mixed_mesh_shape=allow_mixed_mesh_shape,
             ),
             pipeline_schedule=pipeline_schedule,
-            layer_option=AutoLayerOption(layer_num=num_auto_layers,
-                                         remat_layer=use_remat),
+            layer_option=AutoLayerOption(
+                layer_num=num_auto_layers,
+                remat_mode=remat_mode,
+                fine_grained_remat_layer_num=model_num_layers),
             stage_option=ManualStageOption(forward_stage_layer_ids,
                                            submesh_physical_shapes,
                                            submesh_logical_shapes,

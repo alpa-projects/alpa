@@ -36,12 +36,6 @@ def main(args):
 
     # Generate
     prompts = [
-        "Paris is the capital city of",
-        "Today is a good day and I'd like to",
-        "Computer Science studies the area of",
-        "University of California Berkeley is a public university"
-    ]
-    prompts = [
         "Computer science is the study of computation and",
         "Ion Stoica is a Romanian-American computer scientist specializing in",
         "The University of California, Berkeley is a public",

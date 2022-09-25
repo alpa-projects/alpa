@@ -503,13 +503,10 @@ def get_alpa_model(model_name: str,
                        attention_mask,
                        output_attentions,
                        output_hidden_states):
-
-        timers("enter").start(sync)
         assert input_ids.shape[0] == batch_size, (
             f"Expect batch size = {batch_size}, but got {input_ids.shape[0]}")
         input_ids = input_ids.cpu().numpy()
         attention_mask = attention_mask.cpu().numpy()
-        timers("enter").suspend(sync)
 
         def run_one(_executable, _input_ids, _past_key_values, _attention_mask, num_internal_pad):
             nonlocal num_valid_tokens
@@ -560,8 +557,6 @@ def get_alpa_model(model_name: str,
 
             return output
 
-
-        timers("compute").start(sync)
         seq_len = input_ids.shape[1]
         if seq_len == 1:  # A fast path for seq_len = 1
             output = run_one(executables[1], input_ids, past_key_values, attention_mask, 0)
@@ -594,11 +589,8 @@ def get_alpa_model(model_name: str,
                                  num_internal_pad)
                 past_key_values = output.attention_cache
                 i += step_input_ids.shape[1]
-        timers("compute").suspend(sync)
 
-        timers("move logits").start(sync)
         logits_step = torch.from_numpy(np.array(output.logits)).to(torch_device).float()
-        timers("move logits").suspend(sync)
         return InferenceFuncOutput(logits_step, output.attention_cache,
                                    output.hidden_states, output.attentions)
 

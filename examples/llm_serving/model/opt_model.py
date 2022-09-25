@@ -144,8 +144,6 @@ class OPTSelfAttention(nn.Module):
         query_states, key_states, value_states = jnp.split(qkv_combined_states,
                                                            3,
                                                            axis=3)
-        # perform_attention = True
-        # if perform_attention:
         # shape: [B, S, #head, head_dim]
         query_states = query_states.reshape(hidden_states.shape[:2] + (
             self.config.n_head, head_dim))
@@ -212,11 +210,6 @@ class OPTSelfAttention(nn.Module):
 
         attn_output = jnp.einsum("...hqk,...khd->...qhd", attn_weights,
                                  value_states)
-        # else:
-        #     attn_output = jnp.ones((value_states.shape[0], query_states.shape[1],
-        #                              value_states.shape[2], value_states.shape[3]))
-        #     attn_weights = jnp.ones((value_states.shape[0], attn_output.shape[2],
-        #                             query_states.shape[1], value_states.shape[1]))
         attn_output = attn_output.reshape(attn_output.shape[:2] + (-1,))
 
         outputs = (attn_output, attention_cache,
@@ -671,7 +664,7 @@ def load_params_np(params, path, config, dummy=False):
                    load_array("decoder.layer_norm.weight"))
         load_param("params.transformers.layer_norm.bias",
                    load_array("decoder.layer_norm.bias"))
-    for i in range(config.num_hidden_layers):
+    for i in tqdm(range(config.num_hidden_layers)):
         param_prefix = f"params.transformers.encoder.{i}."
         load_prefix = f"decoder.layers.{i}."
         # Attention weights

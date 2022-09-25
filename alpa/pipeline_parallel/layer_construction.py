@@ -731,9 +731,7 @@ def slice_jaxpr_with_var_assignment(jaxpr, var2mesh, num_meshes):
     cur_mesh = 0
     for idx, eqn in enumerate(jaxpr.eqns):
         if eqn.primitive is pipeline_p:
-            raise ValueError("FollowParallel is not compatible with manual "
-                             "pipeline marker. Please do not insert manual "
-                             "pipeline marker in the function.")
+            continue
         for var in eqn.invars:
             if isinstance(var, Var) and var in var2mesh:
                 mesh_idx = var2mesh[var]

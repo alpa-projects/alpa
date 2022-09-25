@@ -1581,35 +1581,6 @@ class DistributedArray:
         self.delete()
 
 
-def prefetch(dis_arrays: Sequence[Union[ShardedDeviceArray, DistributedArray]]):
-    """Prefetch a pytree of DistributedArray in a batch.
-
-    If you want to get a lot of DistributedArrays from remote workers,
-    call this batched prefetch can make the later access faster.
-    """
-    group_by_mesh = defaultdict(list)
-    for array in tree_leaves(dis_arrays):
-        if isinstance(array, ShardedDeviceArray):
-            array.copy_to_host_async()
-        else:
-            assert isinstance(array, DistributedArray)
-            group_by_mesh[array.device_mesh].append(array)
-
-    for device_mesh, arrays in group_by_mesh.items():
-        buf_refs = []
-        host_local_ids = []
-        for array in arrays:
-            buf_refs.append(array.remote_ref)
-            host_local_ids.append(array.one_replica_host_local_ids)
-
-        np_arrays = device_mesh.get_remote_buffers(buf_refs,
-                                                   host_local_ids,
-                                                   batching=True)
-
-        for array, np_value in zip(arrays, np_arrays):
-            array._fetched_np_buffers = np_value  # pylint: disable=protected-access
-
-
 core.pytype_aval_mappings[DistributedArray] = attrgetter("aval")
 xla.pytype_aval_mappings[DistributedArray] = attrgetter("aval")
 xla.canonicalize_dtype_handlers[DistributedArray] = lambda x: x
@@ -1671,6 +1642,40 @@ class ReplicatedDistributedArray:
 core.pytype_aval_mappings[ReplicatedDistributedArray] = attrgetter("aval")
 xla.pytype_aval_mappings[ReplicatedDistributedArray] = attrgetter("aval")
 xla.canonicalize_dtype_handlers[ReplicatedDistributedArray] = lambda x: x
+
+
+def prefetch(dis_arrays: Sequence[Union[ShardedDeviceArray, DistributedArray,
+                                        ReplicatedDistributedArray]]):
+    """Prefetch a pytree of DistributedArray in a batch.
+
+    If you want to get a lot of DistributedArrays from remote workers,
+    call this batched prefetch can make the later access faster.
+    """
+    group_by_mesh = defaultdict(list)
+    for array in tree_leaves(dis_arrays):
+        if isinstance(array, ShardedDeviceArray):
+            array.copy_to_host_async()
+        elif isinstance(array, DistributedArray):
+            group_by_mesh[array.device_mesh].append(array)
+        elif isinstance(array, ReplicatedDistributedArray):
+            array = array.replica
+            group_by_mesh[array.device_mesh].append(array)
+        else:
+            raise ValueError(f"Unhandled array type: {array}")
+
+    for device_mesh, arrays in group_by_mesh.items():
+        buf_refs = []
+        host_local_ids = []
+        for array in arrays:
+            buf_refs.append(array.remote_ref)
+            host_local_ids.append(array.one_replica_host_local_ids)
+
+        np_arrays = device_mesh.get_remote_buffers(buf_refs,
+                                                   host_local_ids,
+                                                   batching=True)
+
+        for array, np_value in zip(arrays, np_arrays):
+            array._fetched_np_buffers = np_value  # pylint: disable=protected-access
 
 
 ########################################

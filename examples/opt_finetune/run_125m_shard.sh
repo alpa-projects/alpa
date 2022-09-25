@@ -1,6 +1,6 @@
 python3 run_clm_flax.py \
     --output_dir="./output" \
-    --model_name_or_path="facebook/opt-2.7b" \
+    --model_name_or_path="facebook/opt-125m" \
     --dataset_name="wikitext" \
     --dataset_config_name="wikitext-2-raw-v1" \
     --do_train --do_eval \
@@ -16,5 +16,5 @@ python3 run_clm_flax.py \
     --overwrite_output_dir \
     --num_train_epochs="8" \
     --logging_steps="16" \
-    --save_steps="2500" \
-    --eval_steps="2500"
+    --save_steps="32" \
+    --eval_steps="32"

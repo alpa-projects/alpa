@@ -41,7 +41,7 @@ from tqdm import tqdm
 
 import alpa
 from alpa.model.model_util import DynamicScale, TrainState, concrete_remat
-from alpa import AutoShardingOption, AutoLayerOption
+from alpa import AutoShardingOption, AutoLayerOption, ManualStageOption
 import jax
 import jax.numpy as jnp
 import optax
@@ -338,27 +338,6 @@ def monkey_patch_remat():
     setattr(FlaxOPTDecoderLayerCollection, "setup", setup)
 
 
-def get_3d_parallel_method(num_micro_batches, data_parallel, operator_parallel,
-                           pipeline_parallel):
-    assert pipeline_parallel == 1, "TODO(lmzheng): Will be added later."
-    num_devices = alpa.get_global_num_devices()
-    if data_parallel == -1:
-        data_parallel = num_devices // operator_parallel // pipeline_parallel
-    assert num_devices % data_parallel == 0
-    assert num_devices % operator_parallel == 0
-    assert num_devices % pipeline_parallel == 0
-    assert num_devices == data_parallel * operator_parallel * pipeline_parallel
-
-    method = alpa.ShardParallel(
-        num_micro_batches=num_micro_batches,
-        auto_sharding_option=alpa.AutoShardingOption(
-            prefer_reduce_scatter=True,
-            force_batch_dim_to_mesh_dim=0),
-        devices=alpa.get_global_physical_mesh(create_if_not_exist=True)
-                    .get_logical_mesh([data_parallel, operator_parallel]))
-    return method
-
-
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
@@ -540,6 +519,13 @@ def main():
             dtype=getattr(jnp, model_args.dtype),
             use_auth_token=True if model_args.use_auth_token else None,
         )
+        #from transformers import FlaxOPTForCausalLM
+        #config.num_hidden_layers = 2
+        #model = FlaxOPTForCausalLM(
+        #    config=config,
+        #    seed=training_args.seed,
+        #    dtype=getattr(jnp, model_args.dtype),
+        #)
     else:
         model = FlaxAutoModelForCausalLM.from_config(
             config,
@@ -728,7 +714,9 @@ def main():
     def loss_fn(logits, labels):
         shift_logits = logits[..., :-1, :]
         shift_labels = labels[..., 1:]
-        loss = optax.softmax_cross_entropy(shift_logits, onehot(shift_labels, shift_logits.shape[-1]))
+        loss = optax.softmax_cross_entropy(
+            shift_logits,
+            jax.nn.one_hot(shift_labels, logits.shape[-1]))
         return loss.mean()
 
     # Define gradient update step fn
@@ -778,10 +766,12 @@ def main():
         return metrics
 
     # Create parallel version of the train and eval step
-    method = get_3d_parallel_method(num_micro_batches=training_args.num_micro_batches,
-                                    data_parallel=-1,
-                                    operator_parallel=training_args.operator_parallel,
-                                    pipeline_parallel=training_args.pipeline_parallel)
+    method = alpa.ThreeDParallel(
+            num_micro_batches=training_args.num_micro_batches,
+            data_parallel=-1,
+            operator_parallel=training_args.operator_parallel,
+            pipeline_parallel=training_args.pipeline_parallel)
+
     p_train_step = alpa.parallelize(train_step,
                                     method=method,
                                     donate_argnums=(0,))
@@ -821,6 +811,8 @@ def main():
         # train
         for step in tqdm(range(steps_per_epoch), desc="Training...", position=1, leave=False):
             batch = next(train_loader)
+            batch["position_ids"] = (batch["attention_mask"].cumsum(axis=1) *
+                                     batch["attention_mask"]) - 1
             state, train_metric = p_train_step(state, batch)
             train_metrics.append(train_metric)
 
@@ -875,6 +867,8 @@ def main():
                 for _ in tqdm(range(eval_steps), desc="Evaluating...", position=2, leave=False):
                     # Model forward
                     batch = next(eval_loader)
+                    batch["position_ids"] = (batch["attention_mask"].cumsum(axis=1) *
+                                             batch["attention_mask"]) - 1
                     metrics = p_eval_step(state.params, batch)
                     eval_metrics.append(metrics)
 
@@ -898,7 +892,6 @@ def main():
                     f" {eval_metrics['perplexity']})"
                 )
                 epochs.write(desc)
-                epochs.desc = desc
 
                 # Save metrics
                 if has_tensorboard:
@@ -906,18 +899,13 @@ def main():
 
             if cur_step % training_args.save_steps == 0 and cur_step > 0:
                 # save checkpoint after each epoch and push checkpoint to the hub
+                epochs.write("\nSave checkpoint...")
                 alpa.prefetch(state.params)
                 params = alpa.util.map_to_nparray(state.params)
                 model.save_pretrained(training_args.output_dir, params=params)
                 tokenizer.save_pretrained(training_args.output_dir)
                 if training_args.push_to_hub:
                     repo.push_to_hub(commit_message=f"Saving weights and logs of step {cur_step}", blocking=False)
-
-    # Save the final model
-    alpa.prefetch(state.params)
-    params = alpa.util.map_to_nparray(state.params)
-    model.save_pretrained(training_args.output_dir, params=params)
-    tokenizer.save_pretrained(training_args.output_dir)
 
     # Eval after training
     if training_args.do_eval:
@@ -927,6 +915,8 @@ def main():
         for _ in tqdm(range(eval_steps), desc="Evaluating...", position=2, leave=False):
             # Model forward
             batch = next(eval_loader)
+            batch["position_ids"] = (batch["attention_mask"].cumsum(axis=1) *
+                                     batch["attention_mask"]) - 1
             metrics = p_eval_step(state.params, batch)
             eval_metrics.append(metrics)
 
@@ -943,6 +933,14 @@ def main():
         path = os.path.join(training_args.output_dir, "eval_results.json")
         with open(path, "w") as f:
             json.dump(eval_metrics, f, indent=4, sort_keys=True)
+
+    # Save the final model
+    epochs.write("\nSave the final model...")
+    alpa.prefetch(state.params)
+    params = alpa.util.map_to_nparray(state.params)
+    model.save_pretrained(training_args.output_dir, params=params)
+    tokenizer.save_pretrained(training_args.output_dir)
+
 
 if __name__ == "__main__":
     main()

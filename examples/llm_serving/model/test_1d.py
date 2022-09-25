@@ -83,8 +83,8 @@ def setup(mode: str,
           batch_size=1,
           cache_size=M,
           max_cache_len_per_seq=MAX_CACHE_LEN_PER_SEQ):
-    name = model.split("-")[1].upper()
-    path = os.path.join(np_weights_folder + f"{name}_np")
+    name = model.split("/")[1].lower()
+    path = os.path.join(np_weights_folder + f"{name}-np")
     if mode == "2d":
         model_tuple = init_2d_inference_step(name, path, batch_size=batch_size)
         config = model_tuple[-1]
@@ -126,7 +126,7 @@ def setup(mode: str,
 
 def init_2d_inference_step(name, np_weights_folder, batch_size=1):
     # Init 2D model
-    config = opt_model.get_opt_config(name, dtype=jnp.float32)
+    config = opt_model.get_config(name, dtype=jnp.float32)
     model_2d, params_2d = opt_model.init_model_aval(config)
     params_2d = opt_model.load_params_np(params_2d, np_weights_folder, config)
     params_2d = jax.tree_map(jnp.array, params_2d)
@@ -196,7 +196,7 @@ def init_1d_inference_step(name,
                            np_weights_folder,
                            total_input_len=N,
                            total_cache_len=M):
-    config = opt_model.get_opt_config(name, dtype=jnp.float32)
+    config = opt_model.get_config(name, dtype=jnp.float32)
     model_1d, params_1d = opt_model_1d.init_model_aval(config, total_input_len, total_cache_len)
     params_1d = opt_model_1d.load_params_np(params_1d, np_weights_folder, config)
     params_1d = jax.tree_map(jnp.array, params_1d)

@@ -213,8 +213,7 @@ def benchmark_gpt_bert_3d_internal(model_type,
     # Parallel configs
     (method, add_manual_remat, add_manual_layer_marker,
      num_manual_pipeline_stages) = get_pipeshard_parallel_method(
-         benchmark_case,
-         virtual_mesh.num_devices_per_host)
+         benchmark_case, virtual_mesh.num_devices_per_host)
 
     state, batch, rngkey = prepare_gpt_bert_input_and_model(
         model_type,

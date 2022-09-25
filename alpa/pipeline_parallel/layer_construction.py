@@ -28,7 +28,6 @@ from alpa.util import (clone_jaxpr, clone_jaxpr_eqn, slices_to_jaxpr,
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-
 LAYER_HEAVY_OP_LOWER_BOUND = 3
 DEFAULT_EPS = 0.5
 DEFAULT_COST_CRITERIA = "flops"
@@ -80,8 +79,10 @@ class AutoLayerOption(LayerOption):
     Args:
       layer_num: The number of layers to construct.
       remat_mode: Whether to use automatic tensor rematerialization.
-        Possible choices: {"none", "fine_grained_remat", "coarse_grained_remat"}.
-      fine_grained_remat_layer_num: Only used for remat_mode == "fine_grained_remat".
+        Possible choices:
+        {"none", "fine_grained_remat", "coarse_grained_remat"}.
+      fine_grained_remat_layer_num:
+        Only used for remat_mode == "fine_grained_remat".
         The number of layers for auto_remat.
       static_argnums: The indices of static arguments of the
         forward function.
@@ -103,8 +104,8 @@ class AutoLayerOption(LayerOption):
 
     def transform(self, func):
         if self.remat_mode == "fine_grained_remat":
-            func = automatic_remat(
-                func, layer_num=self.fine_grained_remat_layer_num)
+            func = automatic_remat(func,
+                                   layer_num=self.fine_grained_remat_layer_num)
             use_remat = False
         elif self.remat_mode == "coarse_grained_remat":
             use_remat = True

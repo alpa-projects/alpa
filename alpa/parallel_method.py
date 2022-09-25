@@ -238,13 +238,18 @@ class PipeshardParallel(ParallelMethod):
 
 
 class ThreeDParallel(PipeshardParallel):
+    """
+    Combine data parallelism, operator parallelism and pipeline parallelism
+    for regular models.
+    """
+
     def __init__(self,
-                devices: Optional[VirtualPhysicalMesh] = None,
-                num_micro_batches: int = 1,
-                data_parallel: int = -1,
-                operator_parallel: int = 1,
-                pipeline_parallel: int = 1,
-                auto_remat_num_layers: Optional[int] = None):
+                 devices: Optional[VirtualPhysicalMesh] = None,
+                 num_micro_batches: int = 1,
+                 data_parallel: int = -1,
+                 operator_parallel: int = 1,
+                 pipeline_parallel: int = 1,
+                 auto_remat_num_layers: Optional[int] = None):
         if devices is None:
             devices = get_global_virtual_physical_mesh()
             assert devices is not None, (
@@ -255,11 +260,13 @@ class ThreeDParallel(PipeshardParallel):
         num_devices = devices.num_devices
         num_devices_per_host = devices.num_devices_per_host
         if data_parallel == -1:
-            data_parallel = num_devices // operator_parallel // pipeline_parallel
+            data_parallel = (num_devices // operator_parallel //
+                             pipeline_parallel)
         assert num_devices % data_parallel == 0
         assert num_devices % operator_parallel == 0
         assert num_devices % pipeline_parallel == 0
-        assert num_devices == data_parallel * operator_parallel * pipeline_parallel
+        assert (num_devices == data_parallel * operator_parallel *
+                pipeline_parallel)
 
         # Decide logical and physical mesh shapes
         logical_mesh_shape = (data_parallel, operator_parallel)
@@ -283,18 +290,17 @@ class ThreeDParallel(PipeshardParallel):
             layer_option = AutoLayerOption(layer_num=pp, eps=0.1)
 
         # Set parallel method
-        super().__init__(
-            num_micro_batches=num_micro_batches,
-            default_auto_sharding_option=AutoShardingOption(
-                prefer_reduce_scatter=True,
-                force_batch_dim_to_mesh_dim=0,
-            ),
-            layer_option=layer_option,
-            stage_option=ManualStageOption(
-                forward_stage_layer_ids=[[i] for i in range(pp)],
-                submesh_physical_shapes=[physical_mesh_shape] * pp,
-                submesh_logical_shapes=[logical_mesh_shape] * pp,
-                submesh_autosharding_option_dicts=[{}] * pp))
+        super().__init__(num_micro_batches=num_micro_batches,
+                         default_auto_sharding_option=AutoShardingOption(
+                             prefer_reduce_scatter=True,
+                             force_batch_dim_to_mesh_dim=0,
+                         ),
+                         layer_option=layer_option,
+                         stage_option=ManualStageOption(
+                             forward_stage_layer_ids=[[i] for i in range(pp)],
+                             submesh_physical_shapes=[physical_mesh_shape] * pp,
+                             submesh_logical_shapes=[logical_mesh_shape] * pp,
+                             submesh_autosharding_option_dicts=[{}] * pp))
 
 
 class LocalPipelineParallel(ParallelMethod):

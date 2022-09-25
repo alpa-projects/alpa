@@ -3,9 +3,8 @@ from typing import List, Set
 
 from jax import lax
 from jax.lib import xla_client as xc, xla_bridge as xb
-from jax.core import JaxprEqn, Var, CallPrimitive, DropVar, Literal, Jaxpr, ClosedJaxpr
+from jax.core import JaxprEqn, Var, DropVar, Jaxpr, ClosedJaxpr
 from alpa.util import OrderedSet, jaxpr_to_hlo_module
-
 
 non_trivial_primitive = [lax.dot_general_p, lax.conv_general_dilated_p]
 

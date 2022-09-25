@@ -538,6 +538,7 @@ def _init_eqn_var_mesh(closed_jaxpr, var_mesh):
         eqn_mesh[eqn_idx] = OrderedSet(mesh_ids)
     return eqn_mesh, var_mesh
 
+
 def _propagate_with_donation(closed_jaxpr, donation_mapping, var_mesh):
     changed = False
     for invar in closed_jaxpr.jaxpr.invars:
@@ -700,12 +701,14 @@ class ApplyGradRewriter:
             at_mesh = OrderedSet()
             for invar in eqn.invars:
                 if isinstance(invar, Var):
-                    at_mesh.update(self.var_mesh.setdefault(invar, OrderedSet()))
+                    at_mesh.update(self.var_mesh.setdefault(
+                        invar, OrderedSet()))
                     self.var_use.setdefault(invar, OrderedSet()).add(eqn_idx)
             if len(at_mesh) == 1:
                 for invar in eqn.invars:
                     if isinstance(invar, Var):
-                        self.var_mesh.setdefault(invar, OrderedSet()).update(at_mesh)
+                        self.var_mesh.setdefault(invar,
+                                                 OrderedSet()).update(at_mesh)
             self.eqn_mesh[eqn_idx] = list(at_mesh)
             for outvar in eqn.outvars:
                 if not isinstance(outvar, DropVar):
@@ -794,8 +797,10 @@ class ApplyGradRewriter:
         # modify the end of reduce chain eqn into an all-reduce.
         # The allreduce will be immediately replaced by pipeline markers
         appended_eqns.append(
-            new_jaxpr_eqn(allreduce_vars, [outvar], cross_mesh_allreduce_p,
-                          {'type': primitive, 'group_meshes': mesh_ids}))
+            new_jaxpr_eqn(allreduce_vars, [outvar], cross_mesh_allreduce_p, {
+                'type': primitive,
+                'group_meshes': mesh_ids
+            }))
         return appended_eqns, mesh_ids
 
     def split_replicated_eqns(self, gensym_fn, num_mesh):
@@ -817,7 +822,7 @@ class ApplyGradRewriter:
                     continue
                 removed_eqns.update(removed)
                 appended_eqns, allreduce_group = self._rewrite_eqns(
-                     eqn.primitive, mesh_vars, gensym_fn, final_var, literals)
+                    eqn.primitive, mesh_vars, gensym_fn, final_var, literals)
                 new_eqns_before_var[final_var] = appended_eqns
                 allreduce_groups.add(tuple(allreduce_group))
         if len(allreduce_groups) > 1:
@@ -912,8 +917,9 @@ def slice_apply_gradient(closed_jaxpr: ClosedJaxpr, grad_mesh: Dict[Var, int],
     for var in outvar_mesh:
         var_mesh.setdefault(var, OrderedSet()).update(outvar_mesh[var])
     # TODO(yonghao): running the split multiple times until no new splits
-    closed_jaxpr, groups = ApplyGradRewriter(
-        closed_jaxpr, var_mesh).split_replicated_eqns(gensym_fn, num_mesh)
+    closed_jaxpr, groups = ApplyGradRewriter(closed_jaxpr,
+                                             var_mesh).split_replicated_eqns(
+                                                 gensym_fn, num_mesh)
     eqn_mesh, var_mesh = _init_eqn_var_mesh(closed_jaxpr, var_mesh)
     changed = True
     _propagate_with_donation(closed_jaxpr, donation_mapping, var_mesh)

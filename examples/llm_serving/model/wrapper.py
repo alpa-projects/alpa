@@ -494,10 +494,6 @@ def get_alpa_model(model_name: str,
     last_token = None
     step_ct = 0
 
-    def sync(device_id=0):
-        jax.devices()[device_id].synchronize_all_activity()
-        return
-
     def inference_func(input_ids,
                        past_key_values,
                        attention_mask,

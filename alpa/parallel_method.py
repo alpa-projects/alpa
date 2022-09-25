@@ -237,70 +237,63 @@ class PipeshardParallel(ParallelMethod):
             self.stage_input_shardings, *avals)
 
 
-class ThreeDParallel(PipeshardParallel):
+def get_3d_parallel_method(num_micro_batches: int,
+                           data_parallel: int,
+                           operator_parallel: int,
+                           pipeline_parallel: int,
+                           allow_degenerate_into_shard_parallel: bool = True):
     """
-    Combine data parallelism, operator parallelism and pipeline parallelism
-    for regular models.
+    Get a parallel method for 3D parallelism, which reguarlly combines
+    data parallelism, operator parallelism and pipeline parallelism.
     """
+    # Validity check
+    virtual_mesh = get_global_virtual_physical_mesh()
+    num_devices = virtual_mesh.num_devices
+    num_devices_per_host = virtual_mesh.num_devices_per_host
+    if data_parallel == -1:
+        data_parallel = (num_devices // operator_parallel // pipeline_parallel)
+    assert num_devices % data_parallel == 0
+    assert num_devices % operator_parallel == 0
+    assert num_devices % pipeline_parallel == 0
+    assert (num_devices == data_parallel * operator_parallel *
+            pipeline_parallel)
+    pp = pipeline_parallel
 
-    def __init__(self,
-                 devices: Optional[VirtualPhysicalMesh] = None,
-                 num_micro_batches: int = 1,
-                 data_parallel: int = -1,
-                 operator_parallel: int = 1,
-                 pipeline_parallel: int = 1,
-                 auto_remat_num_layers: Optional[int] = None):
-        if devices is None:
-            devices = get_global_virtual_physical_mesh()
-            assert devices is not None, (
-                "Please run `alpa.init()` to initialize alpa.")
-        self.devices = devices
+    # Decide logical and physical mesh shapes
+    logical_mesh_shape = (data_parallel, operator_parallel)
+    num_mesh_devices = np.prod(logical_mesh_shape)
+    if num_mesh_devices <= num_devices_per_host:
+        physical_mesh_shape = (1, num_mesh_devices)
+    else:
+        assert num_mesh_devices % num_devices_per_host == 0
+        physical_mesh_shape = (num_mesh_devices // num_devices_per_host,
+                               num_devices_per_host)
 
-        # Validity check
-        num_devices = devices.num_devices
-        num_devices_per_host = devices.num_devices_per_host
-        if data_parallel == -1:
-            data_parallel = (num_devices // operator_parallel //
-                             pipeline_parallel)
-        assert num_devices % data_parallel == 0
-        assert num_devices % operator_parallel == 0
-        assert num_devices % pipeline_parallel == 0
-        assert (num_devices == data_parallel * operator_parallel *
-                pipeline_parallel)
+    # If no pipeline parallel, degenerate into shard parallel
+    if pp == 1 and allow_degenerate_into_shard_parallel:
+        return ShardParallel(num_micro_batches=num_micro_batches,
+                             auto_sharding_option=AutoShardingOption(
+                                 prefer_reduce_scatter=True,
+                                 force_batch_dim_to_mesh_dim=0),
+                             devices=get_global_physical_mesh(
+                                 create_if_not_exist=True).get_logical_mesh(
+                                     [data_parallel, operator_parallel]))
 
-        # Decide logical and physical mesh shapes
-        logical_mesh_shape = (data_parallel, operator_parallel)
-        num_mesh_devices = np.prod(logical_mesh_shape)
-        if num_mesh_devices <= num_devices_per_host:
-            physical_mesh_shape = (1, num_mesh_devices)
-        else:
-            assert num_mesh_devices % num_devices_per_host == 0
-            physical_mesh_shape = (num_mesh_devices // num_devices_per_host,
-                                   num_devices_per_host)
-
-        # Layer option
-        pp = pipeline_parallel
-        if auto_remat_num_layers:
-            layer_option = AutoLayerOption(
-                layer_num=pp,
-                remat_mode="fine_grained_remat",
-                fine_grained_remat_layer_num=auto_remat_num_layers,
-                eps=0.1)
-        else:
-            layer_option = AutoLayerOption(layer_num=pp, eps=0.1)
-
-        # Set parallel method
-        super().__init__(num_micro_batches=num_micro_batches,
-                         default_auto_sharding_option=AutoShardingOption(
-                             prefer_reduce_scatter=True,
-                             force_batch_dim_to_mesh_dim=0,
-                         ),
-                         layer_option=layer_option,
-                         stage_option=ManualStageOption(
-                             forward_stage_layer_ids=[[i] for i in range(pp)],
-                             submesh_physical_shapes=[physical_mesh_shape] * pp,
-                             submesh_logical_shapes=[logical_mesh_shape] * pp,
-                             submesh_autosharding_option_dicts=[{}] * pp))
+    # Return pipeshard parallel
+    layer_option = AutoLayerOption(layer_num=pp, eps=0.1)
+    return PipeshardParallel(
+        devices=virtual_mesh,
+        num_micro_batches=num_micro_batches,
+        default_auto_sharding_option=AutoShardingOption(
+            prefer_reduce_scatter=True,
+            force_batch_dim_to_mesh_dim=0,
+        ),
+        layer_option=layer_option,
+        stage_option=ManualStageOption(
+            forward_stage_layer_ids=[[i] for i in range(pp)],
+            submesh_physical_shapes=[physical_mesh_shape] * pp,
+            submesh_logical_shapes=[logical_mesh_shape] * pp,
+            submesh_autosharding_option_dicts=[{}] * pp))
 
 
 class LocalPipelineParallel(ParallelMethod):

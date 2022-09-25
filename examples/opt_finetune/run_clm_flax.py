@@ -628,6 +628,18 @@ def main():
             max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
             eval_dataset = eval_dataset.select(range(max_eval_samples))
 
+    # Adjust batch size and num_micro_batches for small datasets
+    num_devices = alpa.get_global_num_devices()
+    train_min_batch_size = (num_devices // training_args.operator_parallel //
+                            training_args.pipeline_parallel * training_args.num_micro_batches)
+    eval_num_micro_batches = training_args.num_micro_batches
+    eval_min_batch_size = (num_devices // training_args.operator_parallel //
+                           training_args.pipeline_parallel * eval_num_micro_batches)
+    while len(eval_dataset) < eval_min_batch_size:
+        eval_num_micro_batches //= 2
+        eval_min_batch_size = (num_devices // training_args.operator_parallel //
+                               training_args.pipeline_parallel * eval_num_micro_batches)
+
     # Enable tensorboard only on the master node
     has_tensorboard = is_tensorboard_available()
     if has_tensorboard:
@@ -652,8 +664,8 @@ def main():
 
     # Store some constant
     num_epochs = int(training_args.num_train_epochs)
-    train_batch_size = int(training_args.per_device_train_batch_size) * alpa.get_global_num_devices()
-    eval_batch_size = int(training_args.per_device_eval_batch_size) * alpa.get_global_num_devices()
+    train_batch_size = int(training_args.per_device_train_batch_size) * num_devices
+    eval_batch_size = int(training_args.per_device_eval_batch_size) * num_devices
     steps_per_epoch = len(train_dataset) // train_batch_size
     total_train_steps = steps_per_epoch * num_epochs
 
@@ -766,7 +778,7 @@ def main():
         return metrics
 
     # Create parallel version of the train and eval step
-    method = alpa.ThreeDParallel(
+    method = alpa.get_3d_parallel_method(
             num_micro_batches=training_args.num_micro_batches,
             data_parallel=-1,
             operator_parallel=training_args.operator_parallel,
@@ -776,10 +788,9 @@ def main():
                                     method=method,
                                     donate_argnums=(0,))
     p_eval_step = alpa.parallelize(eval_step,
-                                   method=alpa.FollowParallel(p_train_step))
+                                   method=alpa.FollowParallel(
+                                       p_train_step, num_micro_batches=eval_num_micro_batches))
 
-    min_batch_size = (alpa.get_global_num_devices() // training_args.operator_parallel //
-                      training_args.pipeline_parallel * training_args.num_micro_batches)
     dump_debug_info_train_step = dump_debug_info_eval_step = True
 
     logger.info("***** Running training *****")
@@ -806,7 +817,8 @@ def main():
         rng, input_rng = jax.random.split(rng)
 
         # Generate an epoch by shuffling sampling indices from the train dataset
-        train_loader = data_loader(input_rng, train_dataset, train_batch_size, min_batch_size, shuffle=True)
+        train_loader = data_loader(input_rng, train_dataset, train_batch_size,
+                                   train_min_batch_size, shuffle=True)
         steps_per_epoch = len(train_dataset) // train_batch_size
         # train
         for step in tqdm(range(steps_per_epoch), desc="Training...", position=1, leave=False):
@@ -862,7 +874,8 @@ def main():
             if cur_step % training_args.eval_steps == 0 and cur_step > 0:
                 # ======================== Evaluating ==============================
                 eval_metrics = []
-                eval_loader = data_loader(input_rng, eval_dataset, eval_batch_size, min_batch_size)
+                eval_loader = data_loader(input_rng, eval_dataset, eval_batch_size,
+                                          eval_min_batch_size)
                 eval_steps = max(len(eval_dataset) // eval_batch_size, 1)
                 for _ in tqdm(range(eval_steps), desc="Evaluating...", position=2, leave=False):
                     # Model forward
@@ -910,7 +923,8 @@ def main():
     # Eval after training
     if training_args.do_eval:
         eval_metrics = []
-        eval_loader = data_loader(rng, eval_dataset, min_batch_size, eval_batch_size, min_batch_size)
+        eval_loader = data_loader(input_rng, eval_dataset, eval_batch_size,
+                                  eval_min_batch_size)
         eval_steps = max(len(eval_dataset) // eval_batch_size, 1)
         for _ in tqdm(range(eval_steps), desc="Evaluating...", position=2, leave=False):
             # Model forward

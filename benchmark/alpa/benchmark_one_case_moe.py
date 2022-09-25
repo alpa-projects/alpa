@@ -136,6 +136,7 @@ def benchmark_moe_3d_internal(benchmark_case,
      num_manual_pipeline_stages) = get_pipeshard_parallel_method(
          benchmark_case,
          virtual_mesh.num_devices_per_host,
+         use_fine_grained_remat=True,
          allow_mixed_mesh_shape=True)
 
     state, batch, rngkey = prepare_moe_input_and_model(

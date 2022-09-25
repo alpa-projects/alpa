@@ -44,6 +44,7 @@ LoadSolutionParallelArgs = namedtuple("LoadSolutionParallelArgs", [
 def get_pipeshard_parallel_method(benchmark_case: BenchmarkCase,
                                   num_devices_per_host: Optional[int] = None,
                                   allow_mixed_mesh_shape: bool = False,
+                                  use_fine_grained_remat: bool = False,
                                   pipeline_schedule: str = "1f1b"):
     """Create the parallel method of a benchmark case.
 
@@ -87,7 +88,11 @@ def get_pipeshard_parallel_method(benchmark_case: BenchmarkCase,
         add_manual_layer_marker = None
         num_manual_pipeline_stages = None
         add_manual_remat = None
-        remat_mode = "fine_grained_remat" if use_remat else "none"
+        if use_remat:
+            remat_mode = ("fine_grained_remat" if use_fine_grained_remat else
+                          "coarse_grained_remat")
+        else:
+            remat_mode = "none"
         model_num_layers = benchmark_case.model_config.num_layers
         method = PipeshardParallel(
             num_micro_batches=num_micro_batches,

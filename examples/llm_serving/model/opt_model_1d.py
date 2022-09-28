@@ -1,6 +1,11 @@
+import heapq
 import math
+import queue
+import time
+
+import warnings
 from dataclasses import dataclass
-from typing import Callable, Optional, Tuple, List
+from typing import Callable, Optional, Tuple, List, Union
 
 import cupy
 import cupyx.jit
@@ -11,6 +16,7 @@ import jax.numpy as jnp
 import jaxlib.xla_extension as jax_xla
 import numpy as np
 import os
+from enum import Enum
 from functools import partial
 from jax._src.lib import xla_client as xc
 
@@ -513,7 +519,7 @@ def build_position_ids(input_ids, padding_idx):
     return position_ids
 
 
-class TransformerInputPool:
+class BatchLevelInputPool:
     """This pool is for batch-level scheduling."""
     def __init__(self,
                  config,
@@ -604,16 +610,6 @@ class TransformerInputPool:
         ret = cupy.asnumpy(dst_logits)
         return ret
 
-    def unpad(self, inputs_np: np.ndarray):
-        inputs = inputs_np.tolist()
-        unpadded_inputs = []
-        for seq in inputs:
-            if self.pad in seq:
-                unpadded_inputs.append(seq[:seq.index(self.pad)])
-            else:
-                unpadded_inputs.append(seq)
-        return unpadded_inputs
-
     def _generate_1d_inputs(self, input_sequences: List[List[int]]):
         """Generate the three elements: input tokens, input token index, and position_ids"""
         input = sum(input_sequences, [])
@@ -674,10 +670,278 @@ class TransformerInputPool:
                                                   self.max_cache_per_seq + self.num_prev_tokens[sentence_id]
 
 
+class PromptStatus(Enum):
+    PROMPT = 1
+    DECODING = 2
+    FINISHED = 3
+
+
+class Prompt:
+    def __init__(self, input_ids, sentence_id):
+        self.input_ids = input_ids
+        self.sentence_id = sentence_id
+        self.status = PromptStatus.PROMPT
+        self.cache_start_index = None
+        # states to be filled during generation
+        self.generated_ids = []
+        self.last_generated_id = None
+
+        # latency information
+        self.start_time = None
+        self.finish_time = None
+
+    def finish(self, finish_token_id):
+        self.finish_time = time.time()
+        self.status = PromptStatus.FINISHED
+        self.generated_ids += finish_token_id
+        self.last_generated_id = finish_token_id
+
+    def init_cache(self, cache_index):
+        self.cache_start_index = cache_index
+
+    def add_token(self, token_id):
+        if self.status == PromptStatus.PROMPT:
+            self.status = PromptStatus.DECODING
+        else:
+            assert self.last_generated_id
+            self.generated_ids.append(self.last_generated_id)
+        self.last_generated_id = token_id
+
+    def start(self):
+        self.start_time = time.time()
+
+    @property
+    def prompt_length(self):
+        return len(self.input_ids)
+
+    @property
+    def generation_length(self):
+        return len(self.generated_ids)
+
+    @property
+    def num_prov_tokens(self):
+        if self.status == PromptStatus.PROMPT:
+            return 0
+        else:
+            return self.prompt_length + self.generation_length
+
+    @property
+    def cache_end_index(self):
+        if not self.cache_start_index:
+            raise RuntimeError("Unprocessed prompt.")
+        return self.cache_start_index + self.generation_length + self.prompt_length
+
+    @property
+    def latency(self):
+        if self.status != PromptStatus.FINISHED:
+            raise RuntimeError("unprocessed prompt.")
+        return self.finish_time - self.start_time
+
+class IterationLevelInputPool:
+    """This pool is for iteration-level scheduling."""
+    def __init__(self,
+                 config,
+                 batch_size=512,
+                 cache_size=512,
+                 max_cache_per_seq=128):
+        self.model_config = config
+        self.batch_size = batch_size
+        self.cache_size = cache_size
+        self.max_cache_per_seq=max_cache_per_seq
+
+        # caches, which is statically allocated
+        self.kv_caches = jax.tree_map(jnp.array, init_cache_np(config, self.cache_size))
+        self.kv_cache_ids = np.zeros((self.cache_size, ), dtype=np.int32)
+        self.kv_caches_cupy = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in self.kv_caches]
+
+        # track all prompts
+        self.unfinished_queue = queue.Queue()
+        self.wip_queue = set()
+        self.finished_queue = set()
+        self.vacant_cache_indices = list(range(0, self.cache_size, self.max_cache_per_seq))
+        heapq.heapify(self.vacant_cache_indices)
+
+        # current batch state
+        self._current_batch = None
+        self._current_batch_input_index = None
+
+        # other misc
+        self._sentence_id_counter = 1
+
+        # model config
+        self.pad = self.model_config.pad if "pad" in dir(self.model_config) else 1
+        self.eos = self.model_config.eos_token_id if "eos_token_id" in dir(self.model_config) else 2
+        self.hidden_dim = self.model_config.hidden_size
+
+    def is_finished(self):
+        if self.unfinished_queue.empty() and self.in_progress_queue.empty():
+            return True
+        return False
+
+    def enter_prompts(self, input_sequences: List[List[int]]):
+        sentence_ids = self.next_sentence_id(len(input_sequences))
+
+        for i, seq in enumerate(input_sequences):
+            p = Prompt(seq, sentence_ids)
+            self.unfinished_queue.put(p)
+
+    def next_iter_input(self):
+        if self.is_finished():
+            warnings.warn("All prompts have been finished, please enter more prompts.")
+            return None
+
+        decoding_input = []
+        # figure out WIP prompts and put their next token in a list
+        for p in self.wip_queue.queue:
+            assert p.status == PromptStatus.DECODING, \
+                "WIP queue must have all prompts in decoding status."
+            decoding_input.append(p)
+
+        # pop out new prompts, concat them into a list
+        prompt_input = []
+        for i in range(self.num_vacant_sequence_slot):
+            if self.unfinished_queue.empty():
+                break
+            p = self.unfinished_queue.get()
+            assert p.status == PromptStatus.PROMPT, \
+                "unfinished queue must have all prompts in PROMPT status. "
+            prompt_input.append(p)
+
+        # make input: prompts must go first
+        input = sum([p.input_ids for p in prompt_input] + [p.last_generated_id for p in decoding_input], [])
+        input = np.array(input + [self.pad] * (self.batch_size - len(input)), dtype=np.int32)
+
+        # make input index
+        input_index = []
+        for p in prompt_input:
+            input_index.extend([p.sentence_id] * p.prompt_length)
+        input_index = np.array(input_index + [0] * (self.batch_size - len(input_index)), dtype=np.int32)
+
+        # make position ids
+        position_ids = []
+        for p in prompt_input:
+            start_idx = 1 + self.pad + p.num_prev_tokens
+            position_ids.extend(list(range(start_idx, start_idx + p.prompt_length)))
+        for p in decoding_input:
+            start_idx = 1 + self.pad + p.num_prev_tokens
+            position_ids.extend(list(range(start_idx, start_idx + 1)))
+        position_ids = np.array(position_ids, dtype=np.int32)
+
+        self._current_batch = prompt_input + decoding_input
+        self._current_batch_input_index = input_index
+        # start prompts
+        for p in self._current_batch:
+            p.start()
+        # return inputs
+        return input, input_index, position_ids
+
+    def update_cache(self, kv, generated_ids):
+        if self._current_batch is None:
+            raise RuntimeError("There is no pending batch.")
+
+        # we need to copy cache using one custom kernel, so we record the src and dst indices
+        src_indices = []
+        dst_indices = []
+        src_sentence_ids = []
+
+        # check EOS, move finished sentences from wip_queue to finished queue
+        read_idx = 0
+        for prompt_idx, p in enumerate(self._current_batch):
+            generated_id = generated_ids[prompt_idx]
+
+            # if a sentence reaches EOS, put to finished queue, with latency information
+            if generated_id == self.eos:
+                if p.status == PromptStatus.DECODING:
+                    assert p in self.wip_queue
+                    self.wip_queue.pop(p)
+                self.finished_queue.add(p)
+                # For finished sentences, release cache slot, update cache index
+                heapq.heappush(self.vacant_cache_indices, p.cache_start_index)
+                p.finish(generated_id)
+
+            if p.status == PromptStatus.PROMPT:
+                # transition from PROMPT to DECODING
+
+                # figure out cache to write
+                p.init_cache(heapq.heappop(self.vacant_cache_indices))
+                dst_indices.extend(list(range(p.cache_start_index, p.cache_end_index)))
+                src_indices.extend(list(range(read_idx, read_idx + p.prompt_length)))
+                src_sentence_ids.extend([p.sentence_id] * p.prompt_length)
+                p.add_token(generated_id)
+                read_idx += p.prompt_length
+            else:
+                # transition from DECODING TO DECODING
+                # update the status of unended sentences, copy their cache, append the next token,
+                assert p.status == PromptStatus.DECODING
+                src_indices.append(read_idx)
+                dst_indices.append(p.cache_end_index)
+                src_sentence_ids.append(p.sentence_id)
+                # put their last token into prompt object.
+                p.add_token(generated_id)
+                read_idx += 1
+
+        # copy cache in one kernel and update cache indices
+        self._update_cache(kv, src_indices, dst_indices, src_sentence_ids)
+
+    def _update_cache(self, kv, src_indices, dst_indices, src_sentence_ids):
+        num_threads_per_block = 256
+        dst_indices_cupy = cupy.array(dst_indices)
+        src_indices_cupy = cupy.array(src_indices)
+        src_kv = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in kv]
+        for layer_idx, (src_k, src_v) in enumerate(src_kv):
+            dst_k, dst_v = self.kv_caches_cupy[layer_idx]
+            custom_memcpy_v2[len(src_indices), num_threads_per_block](dst_k.ravel(), dst_v.ravel(),
+                                                                      src_k.ravel(), src_v.ravel(),
+                                                                      dst_indices_cupy. src_indices_cupy,
+                                                                      self.hidden_dim)
+        self.kv_cache_ids[dst_indices] = src_sentence_ids
+
+    def get_results(self):
+        return
+
+    def next_sentence_id(self, number):
+        counter = self._sentence_id_counter
+        if number == 1:
+            ret = counter
+        else:
+            ret = list(range(counter, counter + number))
+        self._sentence_id_counter = (counter + number) % (1 << 60)
+        return ret
+
+    @property
+    def num_vacant_token_slot(self):
+        """Return the number of available sequence slots that can be put in batch."""
+        return self.batch_size - len(self.in_progress_queue)
+
+    @property
+    def num_vacant_cache_slot(self):
+        """Return the number of available sequence slots that can be put in cache."""
+        return len(self.vacant_cache_indices)
+
+    @property
+    def num_vacant_sequence_slot(self):
+        """Return the global vacancy."""
+        return min(self.num_vacant_token_slot, self.num_vacant_cache_slot)
+
+
+
 @cupyx.jit.rawkernel()
 def custom_memcpy(dst_k, dst_v, src_k, src_v, dst_indices, hidden_dim):
     thread_idx = cupyx.jit.threadIdx.x
     src_idx = cupyx.jit.blockIdx.x
+    dst_idx = dst_indices[src_idx]
+    num_elements_per_thread = (hidden_dim + 256 - 1) // 256
+    for i in range(num_elements_per_thread):
+        j = thread_idx + 256 * i
+        if j < hidden_dim:
+            dst_k[dst_idx * hidden_dim + j] = src_k[src_idx * hidden_dim + j]
+            dst_v[dst_idx * hidden_dim + j] = src_v[src_idx * hidden_dim + j]
+
+
+@cupyx.jit.rawkernel()
+def custom_memcpy_v2(dst_k, dst_v, src_k, src_v, dst_indices, src_indices, hidden_dim):
+    thread_idx = cupyx.jit.threadIdx.x
+    src_idx = src_indices[cupyx.jit.blockIdx.x]
     dst_idx = dst_indices[src_idx]
     num_elements_per_thread = (hidden_dim + 256 - 1) // 256
     for i in range(num_elements_per_thread):
@@ -700,9 +964,16 @@ def custom_reshape_logits(dst, src, indices):
             dst[dst_idx * vocab_size + j] = src[src_idx * vocab_size + j]
 
 
-def jax_to_cupy(jax_array):
-    return cupy.fromDlpack(
-        xc._xla.buffer_to_dlpack_managed_tensor(jax_array, take_ownership=False))
+def unpad(inputs: Union[np.ndarray, List[List[int]]], pad=1):
+    if isinstance(inputs, np.ndarray):
+        inputs = inputs.tolist()
+    unpadded_inputs = []
+    for seq in inputs:
+        if pad in seq:
+            unpadded_inputs.append(seq[:seq.index(pad)])
+        else:
+            unpadded_inputs.append(seq)
+    return unpadded_inputs
 
 
 def load_params_np(params, path, config, dummy=False):

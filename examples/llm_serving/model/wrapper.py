@@ -20,7 +20,7 @@ from tqdm import tqdm
 from llm_serving.model import opt_model, bloom_model, opt_model_1d
 from llm_serving.model.opt_utils import (TransformerModelConfig,
                                          jax_index_select, is_power_of_two)
-from llm_serving.model.opt_model_1d import TransformerInputPool
+from llm_serving.model.opt_model_1d import BatchLevelInputPool
 
 
 @dataclass
@@ -285,8 +285,8 @@ def get_model_1d(model_name: str,
     # TODO(Hao): use the same func with 2D
     params = opt_model_1d.load_params_np(params_aval, path, config, dummy)
     params = jax.tree_map(jnp.array, params)
-    input_pool = TransformerInputPool(config, batch_size=batch_size, cache_size=cache_size,
-                                      max_cache_per_seq=max_cache_per_seq)
+    input_pool = BatchLevelInputPool(config, batch_size=batch_size, cache_size=cache_size,
+                                     max_cache_per_seq=max_cache_per_seq)
 
     def sync(device_id=0):
         jax.devices()[device_id].synchronize_all_activity()

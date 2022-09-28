@@ -740,17 +740,19 @@ class Prompt:
 class IterationLevelInputPool:
     """This pool is for iteration-level scheduling."""
     def __init__(self,
-                 config,
-                 batch_size=512,
-                 cache_size=512,
-                 max_cache_per_seq=128):
-        self.model_config = config
-        self.batch_size = batch_size
-        self.cache_size = cache_size
-        self.max_cache_per_seq=max_cache_per_seq
+                 input_pool_config,
+                 model_config,
+                 max_generation_length=64):
+        self.model_config = model_config
+        self.batch_size = input_pool_config.batch_size
+        self.cache_size = input_pool_config.cache_size
+        self.max_cache_per_seq=input_pool_config.max_cache_per_seq
+        self.max_generation_length = max_generation_length
+        if self.max_generation_length > self.max_cache_per_seq:
+            warnings.warn("max generation length > max cache per seq...")
 
         # caches, which is statically allocated
-        self.kv_caches = jax.tree_map(jnp.array, init_cache_np(config, self.cache_size))
+        self.kv_caches = jax.tree_map(jnp.array, init_cache_np(model_config, self.cache_size))
         self.kv_cache_ids = np.zeros((self.cache_size, ), dtype=np.int32)
         self.kv_caches_cupy = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in self.kv_caches]
 
@@ -774,13 +776,12 @@ class IterationLevelInputPool:
         self.hidden_dim = self.model_config.hidden_size
 
     def is_finished(self):
-        if self.unfinished_queue.empty() and self.in_progress_queue.empty():
+        if self.unfinished_queue.empty() and self.wip_queue.empty():
             return True
         return False
 
     def enter_prompts(self, input_sequences: List[List[int]]):
         sentence_ids = self.next_sentence_id(len(input_sequences))
-
         for i, seq in enumerate(input_sequences):
             p = Prompt(seq, sentence_ids)
             self.unfinished_queue.put(p)
@@ -849,8 +850,8 @@ class IterationLevelInputPool:
         for prompt_idx, p in enumerate(self._current_batch):
             generated_id = generated_ids[prompt_idx]
 
-            # if a sentence reaches EOS, put to finished queue, with latency information
-            if generated_id == self.eos:
+            # check finish criteria: (1) hit EOS (2) reach max gen length
+            if generated_id == self.eos or p.generation_length + 1 == self.max_generation_length:
                 if p.status == PromptStatus.DECODING:
                     assert p in self.wip_queue
                     self.wip_queue.pop(p)
@@ -859,9 +860,8 @@ class IterationLevelInputPool:
                 heapq.heappush(self.vacant_cache_indices, p.cache_start_index)
                 p.finish(generated_id)
 
+            # transition from PROMPT to DECODING
             if p.status == PromptStatus.PROMPT:
-                # transition from PROMPT to DECODING
-
                 # figure out cache to write
                 p.init_cache(heapq.heappop(self.vacant_cache_indices))
                 dst_indices.extend(list(range(p.cache_start_index, p.cache_end_index)))
@@ -897,7 +897,9 @@ class IterationLevelInputPool:
         self.kv_cache_ids[dst_indices] = src_sentence_ids
 
     def get_results(self):
-        return
+        """Return results sorted by their sentence id."""
+        sorted_results = sorted(self.finished_queue, key=lambda x: x.sentence_id, reverse=True)
+        return [p.input_ids + p.generated_ids for p in sorted_results]
 
     def next_sentence_id(self, number):
         counter = self._sentence_id_counter
@@ -911,7 +913,7 @@ class IterationLevelInputPool:
     @property
     def num_vacant_token_slot(self):
         """Return the number of available sequence slots that can be put in batch."""
-        return self.batch_size - len(self.in_progress_queue)
+        return self.batch_size - len(self.wip_queue)
 
     @property
     def num_vacant_cache_slot(self):

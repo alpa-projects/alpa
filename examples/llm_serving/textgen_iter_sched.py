@@ -5,7 +5,7 @@ import time
 import numpy as np
 from transformers import AutoTokenizer
 
-from llm_serving.model.wrapper_1d import get_model_1d
+from llm_serving.model.wrapper_1d import get_model
 from alpa.timer import timers
 
 
@@ -17,13 +17,12 @@ def main(args):
 
     generate_params = {
         "do_sample": args.do_sample,
-        "num_beams": args.num_beams,
-        "num_return_sequences": args.num_return_sequences
+        "max_length": 64
     }
 
     # Load the model
-    model = get_model_1d(model_name=args.model,
-                         path="~/opt_weights")
+    model = get_model(model_name=args.model,
+                      path="~/opt_weights")
 
     prompts = [
         "Computer science is the study of computation and",
@@ -39,7 +38,7 @@ def main(args):
 
     timer_names = ["enter", "compute", "update", "reshape"]
 
-    input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
+    input_ids = tokenizer(prompts, return_tensors="np", padding="longest").input_ids
 
     n_warmup = 10
     for i in range(n_warmup):
@@ -48,12 +47,7 @@ def main(args):
                                     max_length=64,
                                     **generate_params)
         elapsed = time.time() - tic
-        for timer_name in timer_names:
-            timers(timer_name).stop()
         print(f"- It takes {elapsed}")
-        timers.log(timer_names)
-        for timer_name in timer_names:
-            timers(timer_name).reset()
 
         # Print results
         outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
@@ -68,8 +62,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="alpa/opt-1d-125m")
     parser.add_argument('--do-sample', action='store_true')
-    parser.add_argument('--num-beams', type=int, default=1)
-    parser.add_argument('--num-return-sequences', type=int, default=1)
     args = parser.parse_args()
 
     main(args)

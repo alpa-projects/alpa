@@ -13,7 +13,8 @@ from alpa.timer import timers
 from transformers import OPTForCausalLM, BloomForCausalLM
 from transformers.generation_utils import dataclass
 from examples.llm_serving.model.opt_utils import TransformerModelConfig
-from examples.llm_serving.model.wrapper import disable_torch_init, restore_torch_init
+from examples.llm_serving.model.wrapper import disable_torch_init, restore_torch_init, InferenceFuncOutput, \
+    InferenceFuncConfig, WrappedInferenceFunc
 from examples.llm_serving.model import opt_model
 from examples.llm_serving.model.opt_model_1d import IterationLevelInputPool, BatchLevelInputPool, unpad
 
@@ -27,14 +28,13 @@ class InputPoolConfig:
 
 
 class SequenceGenerator:
-    def __init__(self, executable, params, input_pool_config, inference_func_config):
+    def __init__(self, executable, params, input_pool_config, model_config):
         self.executable = executable
         self.params = params
         self.input_pool_config = input_pool_config
-        self.inference_func_config = inference_func_config
-
-        # some other attributes:
-        self.pad = self.inference_func_config.pad_token_id
+        self.model_config = model_config
+        # some other attributes
+        self.pad = self.model_config.pad
 
     def generate(self,
                  input: Union[IterationLevelInputPool, List[List[int]], np.ndarray],
@@ -56,17 +56,23 @@ class SequenceGenerator:
         else:
             raise RuntimeError()
 
-    def generate_by_batch(self, input_ids: List[List[int]]):
+    def generate_by_batch(self,
+                          input_ids: List[List[int]],
+                          max_length=64,
+                          do_sample=False,
+                          **kwargs):
         input_pool = IterationLevelInputPool(self.model_config,
-                                             self.input_pool_config.batch_size,
-                                             self.input_pool_config.cache_size,
-                                             self.input_pool_config.max_cache_per_seq)
+                                             self.input_pool_config,
+                                             max_generation_length=max_length)
         input_pool.enter_prompts(input_ids)
 
         while not input_pool.is_finished():
             input, input_index, position_ids = input_pool.get_next_iter_input()
 
-            input_pool.set_environments()
+            os.environ["FT_INPUT_INDEX_ADDR"] = str(input_index.ctypes.data)
+            os.environ["FT_CACHE_INDEX_ADDR"] = str(input_pool.kv_cache_ids.ctypes.data)
+            os.environ["FT_MAX_CACHE_LEN_PER_SEQ"] = str(input_pool.max_cache_per_seq)
+
             batch = {
                 "input_ids": input,
                 "position_ids": position_ids,
@@ -76,7 +82,10 @@ class SequenceGenerator:
             # compute
             logits, kv = self.executable(self.params, batch)
 
-            generated_ids = self._generate_greedy(logits, [len(seq) for seq in input_ids])
+            if not do_sample:
+                generated_ids = self._generate_greedy(logits, [len(seq) for seq in input_ids])
+            else:
+                raise NotImplementedError()
             # update cache
             input_pool.update_cache(kv, generated_ids)
 
@@ -95,7 +104,7 @@ class SequenceGenerator:
         return outputs
 
 
-def get_model_1d(model_name: str,
+def get_model(model_name: str,
                  path: str,
                  dummy: bool = False,
                  # batch size, this batch is #tokens
@@ -108,9 +117,9 @@ def get_model_1d(model_name: str,
                  torch_device: str = "cpu",
                  # Shared arguments with model.generate
                  do_sample: bool = False,
-                 num_beams: int = 1,
-                 num_return_sequences: int = 1,
-                 return_dict_in_generate: bool = True,
+                 # num_beams: int = 1,
+                 # num_return_sequences: int = 1,
+                 # return_dict_in_generate: bool = True,
                  output_attentions: bool = False,
                  output_hidden_states: bool = False):
     """Experimental 1D transformer implementation."""
@@ -136,74 +145,29 @@ def get_model_1d(model_name: str,
             embed_weight = os.path.join(path, "word_embeddings.weight")
         assert os.path.exists(embed_weight), f"No such file or directory: '{embed_weight}'"
     # TODO(Hao): figure out the actual input size
-    config = opt_model.get_config(name, dtype=dtype, max_seq_len=max_seq_len)
-    transformer_config = TransformerModelConfig(
-        H=config.hidden_size,
-        L=config.num_hidden_layers,
-        n_head=config.n_head,
-        seq_len=config.max_seq_len,
-        vocab_size=config.vocab_size)
+    model_config = opt_model.get_config(name, dtype=dtype, max_seq_len=max_seq_len)
+    # transformer_config = TransformerModelConfig(
+    #     H=config.hidden_size,
+    #     L=config.num_hidden_layers,
+    #     n_head=config.n_head,
+    #     seq_len=config.max_seq_len,
+    #     vocab_size=config.vocab_size)
     executable, params_aval = opt_model_1d.get_jax_executable(
-        config,
+        model_config,
         output_attentions=output_attentions,
         output_hidden_states=output_hidden_states)
 
     # load params
     # TODO(Hao): use the same func with 2D
-    params = opt_model_1d.load_params_np(params_aval, path, config, dummy)
+    params = opt_model_1d.load_params_np(params_aval, path, model_config, dummy)
     params = jax.tree_map(jnp.array, params)
-    input_pool = BatchLevelInputPool(config, batch_size=batch_size, cache_size=cache_size,
-                                     max_cache_per_seq=max_cache_per_seq)
 
-    def sync(device_id=0):
-        jax.devices()[device_id].synchronize_all_activity()
-        return
+    input_pool_config = InputPoolConfig(batch_size=batch_size,
+                                        cache_size=cache_size,
+                                        max_cache_per_seq=max_cache_per_seq)
 
-    def inference_func(input_ids,
-                       past_key_values,
-                       attention_mask,
-                       output_attentions,
-                       output_hidden_states):
-        timers("enter").start(sync)
-        if input_ids.shape[1] > 1:
-            unpadded_input = input_pool.unpad(input_ids)
-            input, input_index, position_ids = input_pool.enter_prompts(unpadded_input)
-        else:
-            unpadded_input = input_ids.tolist()
-            input, input_index, position_ids = input_pool.enter_decoding(unpadded_input)
-        timers("enter").suspend(sync)
+    return SequenceGenerator(executable, params, input_pool_config, model_config)
 
-        # set envvar
-        os.environ["FT_INPUT_INDEX_ADDR"] = str(input_index.ctypes.data)
-        os.environ["FT_CACHE_INDEX_ADDR"] = str(input_pool.kv_cache_ids.ctypes.data)
-        os.environ["FT_MAX_CACHE_LEN_PER_SEQ"] = str(input_pool.max_cache_per_seq)
-
-        batch = {
-            "input_ids": input,
-            "position_ids": position_ids,
-            "cache": input_pool.kv_caches
-        }
-        timers("compute").start(sync)
-        logits, kv = executable(params, batch)
-        timers("compute").suspend(sync)
-
-        timers("update").start(sync)
-        input_pool.update_cache(unpadded_input, kv)
-        input_pool.update_num_prev_tokens(unpadded_input)
-        timers("update").suspend(sync)
-
-        timers("reshape").start(sync)
-        logits = input_pool.reshape_logits(logits, unpadded_input, tuple(input_ids.shape))
-        # logits = input_pool.reshape_logits_legacy(logits, input_index, tuple(input_ids.shape))
-        logits_step = torch.from_numpy(logits).to(torch_device).float()
-        timers("reshape").suspend(sync)
-        return InferenceFuncOutput(logits_step, kv, None, None)
-
-    inference_func_config = InferenceFuncConfig()
-    return WrappedInferenceFunc(inference_func,
-                                inference_func_config,
-                                executable,
-                                transformer_config)
 
 def download_weights(model_name, path):
     """Download weights from huggingface."""

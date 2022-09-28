@@ -41,33 +41,26 @@ class SequenceGenerator:
                  max_length=64,
                  do_sample=False,
                  **kwargs):
-        generate_args = {
-            "max_length": max_length,
-            "do_sample": do_sample
-        }
-        for key, val in kwargs.items():
-            generate_args[key] = val
         if isinstance(input, IterationLevelInputPool):
             raise NotImplementedError()
             # return self.generate_by_stream(input, **generate_args)
         elif isinstance(input, (List, np.ndarray, torch.Tensor)):
             unpadded_input = unpad(input)
-            return self.generate_by_batch(unpadded_input, **generate_args)
+            return self.generate_by_batch(unpadded_input, max_length=max_length, do_sample=do_sample)
         else:
             raise RuntimeError()
 
     def generate_by_batch(self,
                           input_ids: List[List[int]],
                           max_length=64,
-                          do_sample=False,
-                          **kwargs):
-        input_pool = IterationLevelInputPool(self.model_config,
-                                             self.input_pool_config,
+                          do_sample=False):
+        input_pool = IterationLevelInputPool(self.input_pool_config,
+                                             self.model_config,
                                              max_generation_length=max_length)
         input_pool.enter_prompts(input_ids)
 
         while not input_pool.is_finished():
-            input, input_index, position_ids = input_pool.get_next_iter_input()
+            input, input_index, position_ids = input_pool.next()
 
             os.environ["FT_INPUT_INDEX_ADDR"] = str(input_index.ctypes.data)
             os.environ["FT_CACHE_INDEX_ADDR"] = str(input_pool.kv_cache_ids.ctypes.data)
@@ -105,23 +98,23 @@ class SequenceGenerator:
 
 
 def get_model(model_name: str,
-                 path: str,
-                 dummy: bool = False,
-                 # batch size, this batch is #tokens
-                 batch_size: int = 256,
-                 max_seq_len: int = 2048,
-                 cache_size: int = 4096,
-                 max_cache_per_seq: int = 128,
-                 # model parameters
-                 dtype=jnp.float16,
-                 torch_device: str = "cpu",
-                 # Shared arguments with model.generate
-                 do_sample: bool = False,
-                 # num_beams: int = 1,
-                 # num_return_sequences: int = 1,
-                 # return_dict_in_generate: bool = True,
-                 output_attentions: bool = False,
-                 output_hidden_states: bool = False):
+                path: str,
+                dummy: bool = False,
+                # batch size, this batch is #tokens
+                batch_size: int = 256,
+                max_seq_len: int = 2048,
+                cache_size: int = 4096,
+                max_cache_per_seq: int = 128,
+                # model parameters
+                dtype=jnp.float16,
+                torch_device: str = "cpu",
+                # Shared arguments with model.generate
+                do_sample: bool = False,
+                # num_beams: int = 1,
+                # num_return_sequences: int = 1,
+                # return_dict_in_generate: bool = True,
+                output_attentions: bool = False,
+                output_hidden_states: bool = False):
     """Experimental 1D transformer implementation."""
     assert "opt-1d" in model_name, "are you sure you want to use the experimental 1D version?"
     name = model_name.split("/")[1].lower()

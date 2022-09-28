@@ -765,9 +765,6 @@ class IterationLevelInputPool:
 
         # current batch state
         self._current_batch = None
-        self._current_batch_input_index = None
-
-        # other misc
         self._sentence_id_counter = 1
 
         # model config
@@ -776,24 +773,18 @@ class IterationLevelInputPool:
         self.hidden_dim = self.model_config.hidden_size
 
     def is_finished(self):
-        if self.unfinished_queue.empty() and self.wip_queue.empty():
-            return True
-        return False
+        return self.unfinished_queue.empty() and len(self.wip_queue) == 0
 
     def enter_prompts(self, input_sequences: List[List[int]]):
         sentence_ids = self.next_sentence_id(len(input_sequences))
         for i, seq in enumerate(input_sequences):
-            p = Prompt(seq, sentence_ids)
+            p = Prompt(seq, sentence_ids[i])
             self.unfinished_queue.put(p)
 
-    def next_iter_input(self):
-        if self.is_finished():
-            warnings.warn("All prompts have been finished, please enter more prompts.")
-            return None
-
+    def next(self):
         decoding_input = []
         # figure out WIP prompts and put their next token in a list
-        for p in self.wip_queue.queue:
+        for p in self.wip_queue:
             assert p.status == PromptStatus.DECODING, \
                 "WIP queue must have all prompts in decoding status."
             decoding_input.append(p)
@@ -829,7 +820,6 @@ class IterationLevelInputPool:
         position_ids = np.array(position_ids, dtype=np.int32)
 
         self._current_batch = prompt_input + decoding_input
-        self._current_batch_input_index = input_index
         # start prompts
         for p in self._current_batch:
             p.start()

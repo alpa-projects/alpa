@@ -36,15 +36,14 @@ def main(args):
         "GPT-3 is a large language model that is capable of"
     ]
 
-    timer_names = ["enter", "compute", "update", "reshape"]
+    # timer_names = ["enter", "compute", "update", "reshape"]
 
     input_ids = tokenizer(prompts, return_tensors="np", padding="longest").input_ids
 
     n_warmup = 10
     for i in range(n_warmup):
         tic = time.time()
-        output_ids = model.generate(input_ids=input_ids,
-                                    max_length=64,
+        output_ids = model.generate(input_ids,
                                     **generate_params)
         elapsed = time.time() - tic
         print(f"- It takes {elapsed}")

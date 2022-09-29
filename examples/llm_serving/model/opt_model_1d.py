@@ -21,7 +21,7 @@ from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 try:
     from ft_mha import fused_mmha
 except ImportError:
-    raise RuntimeError("Please install ft_mha to use 1D OPT model.")
+    pass
 
 ACT2FN = {
     "gelu": partial(nn.gelu, approximate=False),

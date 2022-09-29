@@ -1496,6 +1496,7 @@ def env_integer(key, default):
 
 def create_placement_group(num_hosts,
                            host_num_devices,
+                           name,
                            additional_resources_per_host=None):
     """Creates a placement group if it does not exist.
 
@@ -1537,7 +1538,9 @@ def create_placement_group(num_hosts,
         # Each bundle must be scheduled in a separate node.
         strategy = "SPREAD"
 
-        placement_group = ray.util.placement_group(bundles, strategy=strategy)
+        placement_group = ray.util.placement_group(bundles,
+                                                   strategy=strategy,
+                                                   name=name or "")
         logger.debug("Waiting for placement group to start.")
         timeout = env_integer(PLACEMENT_GROUP_TIMEOUT_S_ENV, 100)
         ready, _ = ray.wait([placement_group.ready()], timeout=timeout)

@@ -25,6 +25,7 @@ from alpa.serve.http_util import (
 
 logger = logging.getLogger(__file__)
 
+CONTROLLER_NAME = "controller"
 MAX_REPLICA_FAILURE_RETRIES = 10
 DISCONNECT_ERROR_CODE = "disconnection"
 SOCKET_REUSE_PORT_ENABLED = (os.environ.get("SERVE_SOCKET_REUSE_PORT_ENABLED",
@@ -48,9 +49,12 @@ class ModelInfo:
 class DeviceMeshGroupManager:
 
     def __init__(self, virtual_mesh_shape):
-        init(cluster="ray",
-             num_nodes=virtual_mesh_shape[0],
-             num_devices_per_node=virtual_mesh_shape[1])
+        if virtual_mesh_shape:
+            init(cluster="ray",
+                 num_nodes=virtual_mesh_shape[0],
+                 num_devices_per_node=virtual_mesh_shape[1])
+        else:
+            init(cluster="ray")
 
         # Dict[str, object]
         self.replicas = {}
@@ -86,8 +90,9 @@ class Controller:
         self.http_server_task = asyncio.get_event_loop().create_task(
             self.run_http_server())
 
-    def launch_mesh_group_manager(self, group_id: int,
-                                  virtual_mesh_shape: Tuple[int]):
+    def launch_mesh_group_manager(self,
+                                  group_id: int,
+                                  virtual_mesh_shape: Tuple[int] = None):
         self.mesh_group_managers[group_id] = (
             DeviceMeshGroupManager.remote(virtual_mesh_shape))
 
@@ -202,7 +207,7 @@ class Controller:
 
 
 def run_controller(host, port=None, root_path="/"):
-    controller = Controller.options(name="controller").remote(
+    controller = Controller.options(name=CONTROLLER_NAME).remote(
         host=host,
         port=port or new_port(),
         root_path=root_path,

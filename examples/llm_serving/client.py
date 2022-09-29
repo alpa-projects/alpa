@@ -8,11 +8,15 @@ DEFAULT_URL = "https://opt.alpa.ai/"
 
 class Client(object):
 
-    def __init__(self, url: Optional[str] = None, api_key: Optional[str] = None) -> None:
+    def __init__(self,
+                 url: Optional[str] = None,
+                 api_key: Optional[str] = None,
+                 default_model: str = "alpa/opt-175b") -> None:
         if url is None:
             url = DEFAULT_URL
 
         self.api_key = api_key
+        self.default_model = default_model
         self.completions_url = url + "/completions"
         self.logprobs_url = url + "/completions"
 
@@ -24,6 +28,7 @@ class Client(object):
         top_p: float = 1.0,
         temperature: float = 1.0,
         echo: bool = True,
+        model: Optional[str] = None,
     ) -> Dict:
         """
         Generation API.
@@ -39,6 +44,7 @@ class Client(object):
           echo: if true, returned text/tokens/scores includes the prompt.
         """
         pload = {
+            "model": model or self.default_model,
             "prompt": prompt,
             "min_tokens": min_tokens,
             "max_tokens": max_tokens,
@@ -57,6 +63,7 @@ class Client(object):
         cache_id: Optional = None) -> Dict:
         """Return the log probability of the next top-k tokens"""
         pload = {
+            "model": model or self.default_model,
             "prompt": prompt,
             "top_k": top_k,
             "redirect_logprobs": True,

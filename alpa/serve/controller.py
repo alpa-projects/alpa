@@ -48,7 +48,7 @@ class ModelInfo:
 @ray.remote(num_cpus=1)
 class DeviceMeshGroupManager:
 
-    def __init__(self, virtual_mesh_shape):
+    def __init__(self, virtual_mesh_shape: Optional[Tuple[int]] = None):
         if virtual_mesh_shape:
             init(cluster="ray",
                  num_nodes=virtual_mesh_shape[0],
@@ -60,11 +60,17 @@ class DeviceMeshGroupManager:
         self.replicas = {}
 
     def create_replica(self, name: str, create_info: CreateInfo):
+        assert name not in self.replicas
+
         model_def, args, kwargs = (create_info.model_def, create_info.init_args,
                                    create_info.init_kwargs)
         args = args or []
         kwargs = kwargs or {}
         self.replicas[name] = model_def(*args, **kwargs)
+
+    def delete_replica(self, name: str):
+        assert name in self.replicas
+        del self.replicas[name]
 
     async def handle_request(self, name: str, request_wrapper: bytes):
         request_wrapper = pickle.loads(request_wrapper)
@@ -82,6 +88,7 @@ class Controller:
         self.root_path = root_path
 
         # Dict[str -> ModelInfo]
+        self.manager_lock = asyncio.Lock()
         self.model_info = {}
         self.mesh_group_managers = {}
 
@@ -92,29 +99,39 @@ class Controller:
 
     def launch_mesh_group_manager(self,
                                   group_id: int,
-                                  virtual_mesh_shape: Tuple[int] = None):
+                                  virtual_mesh_shape: Optional[Tuple[int]] = None):
+        assert group_id not in self.mesh_group_managers, (
+           f"Mesh group {group_id} is already launched")
         self.mesh_group_managers[group_id] = (
             DeviceMeshGroupManager.remote(virtual_mesh_shape))
 
-    def register_model(self,
-                       name: str,
-                       model_def: Callable,
-                       init_args: Optional[List] = None,
-                       init_kwargs: Optional[Dict] = None):
-        assert name not in self.model_info, (
-            f"Model {name} is already registered")
-        self.model_info[name] = ModelInfo([],
-                                          CreateInfo(model_def, init_args,
-                                                     init_kwargs))
+    async def register_model(self,
+                             name: str,
+                             model_def: Callable,
+                             init_args: Optional[List] = None,
+                             init_kwargs: Optional[Dict] = None,
+                             override: bool = False):
+        async with self.manager_lock:
+            if name in self.model_info:
+                if override:
+                    for manager in self.model_info[name].managers:
+                        await manager.delete_replica.remote(name)
+                else:
+                    raise ValueError(f"Model {name} is already registered")
+
+            self.model_info[name] = ModelInfo(
+                [], CreateInfo(model_def, init_args, init_kwargs))
 
     async def create_replica(self, name: str, mesh_group_id: int):
-        assert mesh_group_id in self.mesh_group_managers
-        model_info = self.model_info[name]
-        manager = self.mesh_group_managers[mesh_group_id]
-        assert manager not in model_info.managers
+        async with self.manager_lock:
+            assert mesh_group_id in self.mesh_group_managers
+            model_info = self.model_info[name]
+            manager = self.mesh_group_managers[mesh_group_id]
+            assert manager not in model_info.managers
 
-        await manager.create_replica.remote(name, model_info.create_info)
-        model_info.managers.append(manager)
+            logger.info(f"Create replica of model={name} on mesh={mesh_group_id}")
+            await manager.create_replica.remote(name, model_info.create_info)
+            model_info.managers.append(manager)
 
     async def handle_asgi(self, scope, receive, send):
         assert scope["type"] == "http"

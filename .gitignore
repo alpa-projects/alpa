@@ -33,6 +33,7 @@ examples/llm_serving/dataset/*.so
 examples/llm_serving/dataset/*.c
 examples/llm_serving/dataset/*.cpp
 examples/llm_serving/weblogs
+examples/llm_serving/keys_file.json
 examples/llm_serving/benchmark/tmp*
 examples/llm_serving/tmp*
 examples/opt_finetune/output/

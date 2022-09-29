@@ -61,6 +61,8 @@ class LangaugeModel:
                                    torch_device=torch_device,
                                    num_beams=num_beams,
                                    num_return_sequences=num_return_sequences,
+                                   max_seq_len=self.max_seq_len,
+                                   max_batch_size=self.max_bs,
                                    do_sample=do_sample)
 
     async def batch_loop(self):
@@ -252,8 +254,6 @@ class LangaugeModel:
                              "contact alpa developers to get an API key.")
 
 
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="alpa/opt-125m")
@@ -269,10 +269,11 @@ if __name__ == "__main__":
     controller = ray.get_actor(CONTROLLER_NAME)
 
     group_id = 0
+    name = "default"
     controller.launch_mesh_group_manager.remote(group_id)
     t = controller.register_model.remote(
-        args.model, LangaugeModel,
+        name, LangaugeModel,
         (args.model, args.path, args.torch_device, NUM_BEAMS, NUM_RETURN_SEQ),
         override=True)
-    a = controller.create_replica.remote(args.model, group_id)
+    a = controller.create_replica.remote(name, group_id)
     ray.get(a)

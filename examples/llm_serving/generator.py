@@ -7,7 +7,6 @@ from transformers import AutoTokenizer
 
 from llm_serving.model.wrapper import get_model
 from llm_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
-from llm_serving.service.constants import MAX_SEQ_LEN, MAX_BS
 from llm_serving.service.utils import build_logger
 
 
@@ -26,6 +25,8 @@ class Generator:
                  torch_device="cpu",
                  tokenizer_name=None,
                  add_bos_token=False,
+                 max_seq_len=1024,
+                 max_batch_size=4,
                  do_sample=False,
                  num_beams=1,
                  num_return_sequences=1):
@@ -42,6 +43,8 @@ class Generator:
         self.add_bos_token = add_bos_token
 
         # Generation arguments
+        self.max_seq_len = max_seq_len
+        self.max_batch_size = max_batch_size
         self.do_sample = do_sample
         self.num_beams = num_beams
         self.num_return_sequences = num_return_sequences
@@ -60,9 +63,9 @@ class Generator:
         # Init model
         self.model_wrapper = get_model(self.model_name, self.path,
                                        torch_device=self.torch_device,
-                                       batch_size=MAX_BS,
+                                       batch_size=self.max_batch_size,
                                        encoder_chunk_sizes=[1, 64],
-                                       max_seq_len=MAX_SEQ_LEN,
+                                       max_seq_len=self.max_seq_len,
                                        num_beams=self.num_beams,
                                        num_return_sequences=self.num_return_sequences,
                                        do_sample=self.do_sample)
@@ -125,10 +128,11 @@ class Generator:
         else:
             do_sample = self.do_sample
         # Resolve the max sequence length allowed from multiple sources
-        max_seq_len = min(MAX_SEQ_LEN, self.model_wrapper.transformer_config.seq_len)
+        max_seq_len = min(self.max_seq_len,
+                          self.model_wrapper.transformer_config.seq_len)
 
         # Pad the batch to a maximum batch size
-        input_ids = pad_batch(inputs, self.tokenizer.pad_token_id, MAX_BS)
+        input_ids = pad_batch(inputs, self.tokenizer.pad_token_id, self.max_batch_size)
         input_ids = torch.IntTensor(input_ids).to(self.torch_device)
         input_lens = [len(x) for x in inputs]
         batch_size = len(input_ids)
@@ -201,7 +205,7 @@ class Generator:
         logger.info(f"Forward begin. cache_id: {cache_id}")
         time_start = time.time()
 
-        inputs = pad_batch(inputs, self.tokenizer.pad_token_id, MAX_BS)
+        inputs = pad_batch(inputs, self.tokenizer.pad_token_id, self.max_batch_size)
         input_ids = torch.IntTensor(inputs).to(self.torch_device)
 
         attention_mask = self.model_wrapper._prepare_attention_mask_for_generation(input_ids, pad_token_id=self.model_wrapper.config.pad_token_id, eos_token_id=self.model_wrapper.config.eos_token_id)
@@ -245,7 +249,7 @@ def pad_batch(inputs, pad_value, max_batch_size):
 
     # Pad to max_batch_size
     if bs < max_batch_size:
-        new_inputs.extend([[pad_value for _ in range(max_len)] for _ in range(MAX_BS - bs)])
+        new_inputs.extend([[pad_value for _ in range(max_len)] for _ in range(max_batch_size - bs)])
     return new_inputs
 
 

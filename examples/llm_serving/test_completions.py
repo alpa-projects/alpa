@@ -13,7 +13,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", type=str)
     parser.add_argument("--api-key", type=str)
-    parser.add_argument("--model", type=str, default="alpa/opt-175b")
+    parser.add_argument("--model", type=str, default="default")
     args = parser.parse_args()
 
     client = Client(args.url, api_key=args.api_key, default_model=args.model)

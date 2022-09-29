@@ -11,7 +11,7 @@ class Client(object):
     def __init__(self,
                  url: Optional[str] = None,
                  api_key: Optional[str] = None,
-                 default_model: str = "alpa/opt-175b") -> None:
+                 default_model: str = "default") -> None:
         if url is None:
             url = DEFAULT_URL
 

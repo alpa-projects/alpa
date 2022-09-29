@@ -3,11 +3,13 @@
 import asyncio
 import dataclasses
 import logging
+import json
 import os
 import pickle
 import socket
 from typing import Callable, List, Dict, Optional, Tuple, Any
 
+from fastapi.middleware.cors import CORSMiddleware
 import ray
 from ray.actor import ActorHandle
 import uvicorn
@@ -143,15 +145,21 @@ class Controller:
         request_wrapper = pickle.dumps(request_wrapper)
 
         # Route
-        obj = await request.json()
+        try:
+            obj = await request.json()
+        except json.decoder.JSONDecodeError as e:
+            await Response(f"Json parser error: {e}.",
+                           status_code=400).send(scope, receive, send)
+            return
+
         name = obj["model"]
         if name not in self.model_info:
-            await Response(f"Model {name} is not registered",
+            await Response(f"Model {name} is not registered.",
                            status_code=404).send(scope, receive, send)
             return
 
         if not self.model_info[name].managers:
-            await Response(f"No replica of model {name} is created",
+            await Response(f"No replica of model {name} is created.",
                            status_code=404).send(scope, receive, send)
             return
 
@@ -204,8 +212,17 @@ class Controller:
         # Note(simon): we have to use lower level uvicorn Config and Server
         # class because we want to run the server as a coroutine. The only
         # alternative is to call uvicorn.run which is blocking.
+        app = ASGIHandler(self)
+        app = CORSMiddleware(
+            app,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
         config = uvicorn.Config(
-            ASGIHandler(self),
+            app,
             host=self.host,
             port=self.port,
             root_path=self.root_path,

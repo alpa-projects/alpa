@@ -41,7 +41,6 @@ from alpa.util import (compile_allocate_zero_buffers,
 
 # The global executable and buffer counter.
 mesh_executable_counter = 0
-remote_buffer_counter = 0
 
 
 class MeshDriverExecutable(ABC):

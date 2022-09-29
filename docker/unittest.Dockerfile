@@ -4,7 +4,7 @@ WORKDIR /
 SHELL ["/bin/bash", "-c"]
 RUN rm -f /etc/apt/sources.list.d/jonathonf-ubuntu-python-3_6-xenial.list
 RUN apt-get update
-RUN apt-get install -y python3-virtualenv coinor-cbc glpk-utils
+RUN apt-get install -y python3-virtualenv
 RUN virtualenv --python=python3.7 python3.7-env
 RUN virtualenv --python=python3.8 python3.8-env
 RUN virtualenv --python=python3.9 python3.9-env
@@ -13,15 +13,15 @@ RUN virtualenv --python=python3.9 python3.9-env
 RUN source python3.7-env/bin/activate && pip install --upgrade pip \
   && pip install numpy==1.20 setuptools wheel six auditwheel \
   tqdm scipy numba pulp tensorstore prospector yapf coverage cmake \
-  pybind11 ray[default] matplotlib
+  pybind11 ray[default] matplotlib transformers uvicorn fastapi
 RUN source python3.8-env/bin/activate && pip install --upgrade pip \
   && pip install numpy==1.20 setuptools wheel six auditwheel \
   tqdm scipy numba pulp tensorstore prospector yapf coverage cmake  \
-    pybind11  ray[default] matplotlib
+  pybind11 ray[default] matplotlib transformers uvicorn fastapi
 RUN source python3.9-env/bin/activate && pip install --upgrade pip \
   && pip install numpy==1.20 setuptools wheel six auditwheel \
   tqdm scipy numba pulp tensorstore prospector yapf coverage cmake  \
-    pybind11 ray[default] matplotlib
+  pybind11 ray[default] matplotlib transformers uvicorn fastapi
 
 # Install PyTorch dependencies
 WORKDIR /

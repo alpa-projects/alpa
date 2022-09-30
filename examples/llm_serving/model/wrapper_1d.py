@@ -88,6 +88,7 @@ class SequenceGenerator:
 
     @staticmethod
     def _generate_greedy(logits, seq_lens):
+        """TODO(Hao): make this on GPU"""
         outputs = []
         next_token = np.array(jnp.argmax(logits, axis=-1))
         output_idx = -1

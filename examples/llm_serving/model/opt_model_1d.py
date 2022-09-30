@@ -23,6 +23,7 @@ from jax._src.lib import xla_client as xc
 from alpa.collective.worker_nccl_util_cupy import jax_tensor_to_cupy
 from alpa.model.model_util import ModelOutput
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
+from alpa.util import OrderedSet
 
 try:
     from ft_mha import fused_mmha
@@ -737,31 +738,104 @@ class Prompt:
             raise RuntimeError("unprocessed prompt.")
         return self.finish_time - self.start_time
 
+
+class Cache:
+    def __init__(self, cache_size, max_cache_per_seq, model_config):
+        self.cache_size = cache_size
+        self.max_cache_per_seq = max_cache_per_seq
+        self.model_config = model_config
+
+        # init the cache
+        self.kv_caches = jax.tree_map(jnp.array, init_cache_np(model_config, self.cache_size))
+        self.kv_cache_ids = np.zeros((self.cache_size, ), dtype=np.int32)
+        self.kv_caches_cupy = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in self.kv_caches]
+
+        self.vacant_indices = list(range(0, self.cache_size, self.max_cache_per_seq))
+        heapq.heapify(self.vacant_indices)
+
+        self.continuous_vacancy_start = 0
+
+    def release_slot(self, slot):
+        assert slot not in self.vacant_indices
+        heapq.heappush(self.vacant_indices, slot)
+        # reset the cache indices of this slot as there
+        self.kv_cache_ids[slot:slot + self.max_cache_per_seq] = 0
+        if self.continuous_vacancy_start - slot == self.max_cache_per_seq:
+            # meaning they are close
+            new_start = slot - self.max_cache_per_seq
+            while new_start in self.vacant_indices:
+                new_start = new_start - self.max_cache_per_seq
+            self.continuous_vacancy_start = new_start + self.max_cache_per_seq
+
+    def take_slot(self):
+        # find the next available slot
+        if len(self.vacant_indices) == 0:
+            raise RuntimeError("There is not vacancy in cache.")
+        slot = heapq.heappop(self.vacant_indices)
+        if slot == self.continuous_vacancy_start:
+            self.continuous_vacancy_start = slot + self.max_cache_per_seq
+        return slot
+
+    def is_continuous(self):
+        heap_top = self.vacant_indices[0]
+        return heap_top == self.continuous_vacancy_start
+
+    def continuize(self):
+        # find all vacancies that are before continuous_vacancy_start
+        vacancies_to_fill = OrderedSet(v for v in self.vacant_indices if v < self.continuous_vacancy_start)
+        start = self.continuous_vacancy_start - len(vacancies_to_fill) * self.max_cache_per_seq
+        proposals = OrderedSet(range(start, self.continuous_vacancy_start, self.max_cache_per_seq))
+        real_vacancies = OrderedSet(v for v in vacancies_to_fill if v not in proposals)
+        fake_vacancies = OrderedSet(v for v in vacancies_to_fill if v in proposals)
+        real_proposals = OrderedSet(v for v in proposals if v not in fake_vacancies)
+        assert len(real_proposals) == len(real_vacancies)
+        return real_vacancies, real_proposals
+
+    def update(self, kv, src_indices, dst_indices, src_sentence_ids, breakpoint):
+        """Copy the KV caches
+
+        For entries before `break`, copy from kv.
+        for entries after `break`, copy from self.kv_caches for re-arrangement
+        We put them together because we only want to launch a single kernel.
+        """
+        num_threads_per_block = 256
+        dst_indices_cupy = cupy.array(dst_indices)
+        src_indices_cupy = cupy.array(src_indices)
+        src_kv = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in kv]
+        for layer_idx, (src_k, src_v) in enumerate(src_kv):
+            dst_k, dst_v = self.kv_caches_cupy[layer_idx]
+            custom_memcpy_v3[len(src_indices), num_threads_per_block](dst_k.ravel(), dst_v.ravel(),
+                                                                      src_k.ravel(), src_v.ravel(),
+                                                                      dst_indices_cupy. src_indices_cupy,
+                                                                      self.hidden_dim, breakpoint)
+        self.kv_cache_ids[dst_indices] = src_sentence_ids
+        self.kv_cache_ids[src_indices[breakpoint:]] = 0
+
+    @property
+    def num_vacant_slot(self):
+        return len(self.vacant_indices)
+
+
 class IterationLevelInputPool:
     """This pool is for iteration-level scheduling."""
     def __init__(self,
                  input_pool_config,
                  model_config,
                  max_generation_length=64):
-        self.model_config = model_config
         self.batch_size = input_pool_config.batch_size
         self.cache_size = input_pool_config.cache_size
         self.max_cache_per_seq=input_pool_config.max_cache_per_seq
+        self.model_config = model_config
         self.max_generation_length = max_generation_length
         if self.max_generation_length > self.max_cache_per_seq:
             warnings.warn("max generation length > max cache per seq...")
 
-        # caches, which is statically allocated
-        self.kv_caches = jax.tree_map(jnp.array, init_cache_np(model_config, self.cache_size))
-        self.kv_cache_ids = np.zeros((self.cache_size, ), dtype=np.int32)
-        self.kv_caches_cupy = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in self.kv_caches]
+        self.cache = Cache(self.cache_size, self.max_cache_per_seq, self.model_config)
 
-        # track all prompts
+        # input pool states
         self.unfinished_queue = queue.Queue()
         self.wip_queue = set()
         self.finished_queue = set()
-        self.vacant_cache_indices = list(range(0, self.cache_size, self.max_cache_per_seq))
-        heapq.heapify(self.vacant_cache_indices)
 
         # current batch state
         self._current_batch = None
@@ -845,46 +919,52 @@ class IterationLevelInputPool:
                 if p.status == PromptStatus.DECODING:
                     assert p in self.wip_queue
                     self.wip_queue.pop(p)
+                p.finish(generated_id)
                 self.finished_queue.add(p)
                 # For finished sentences, release cache slot, update cache index
-                heapq.heappush(self.vacant_cache_indices, p.cache_start_index)
-                p.finish(generated_id)
+                self.cache.release_slot(p.cache_start_index)
 
             # transition from PROMPT to DECODING
-            if p.status == PromptStatus.PROMPT:
+            elif p.status == PromptStatus.PROMPT:
                 # figure out cache to write
-                p.init_cache(heapq.heappop(self.vacant_cache_indices))
+                p.init_cache(self.cache.take_slot())
                 dst_indices.extend(list(range(p.cache_start_index, p.cache_end_index)))
                 src_indices.extend(list(range(read_idx, read_idx + p.prompt_length)))
+                assert (p.cache_end_index - p.cache_start_index) == p.prompt_length
                 src_sentence_ids.extend([p.sentence_id] * p.prompt_length)
                 p.add_token(generated_id)
                 read_idx += p.prompt_length
-            else:
+            elif p.status == PromptStatus.DECODING:
                 # transition from DECODING TO DECODING
                 # update the status of unended sentences, copy their cache, append the next token,
-                assert p.status == PromptStatus.DECODING
                 src_indices.append(read_idx)
                 dst_indices.append(p.cache_end_index)
                 src_sentence_ids.append(p.sentence_id)
                 # put their last token into prompt object.
                 p.add_token(generated_id)
                 read_idx += 1
+            else:
+                raise RuntimeError(f"Prompt status: {p.status} should not appear here." )
 
+        # get the transport plan
+        reorg_dst_slots, reorg_src_slots = self.cache.continuize()
+        # update the prompt that has been influenced
+        reorg_dst_indices = []
+        reorg_src_indices = []
+        for dst_slot, src_slot in zip(reorg_dst_slots, reorg_src_slots):
+            for p in self.wip_queue:
+                if p.cache_start_index == src_slot:
+                    reorg_src_indices.extend(list(range(src_slot, p.cache_end_index)))
+                    src_sentence_ids.extend([p.sentence_id] * (p.prompt_length + p.generation_length))
+                    p.cache_start_index = dst_slot
+                    reorg_dst_indices.extend(list(range(dst_slot, p.cache_end_index)))
+                    break
+
+        breakpoint = len(src_indices)
+        src_indices.extend(reorg_src_indices)
+        dst_indices.extend(reorg_dst_indices)
         # copy cache in one kernel and update cache indices
-        self._update_cache(kv, src_indices, dst_indices, src_sentence_ids)
-
-    def _update_cache(self, kv, src_indices, dst_indices, src_sentence_ids):
-        num_threads_per_block = 256
-        dst_indices_cupy = cupy.array(dst_indices)
-        src_indices_cupy = cupy.array(src_indices)
-        src_kv = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in kv]
-        for layer_idx, (src_k, src_v) in enumerate(src_kv):
-            dst_k, dst_v = self.kv_caches_cupy[layer_idx]
-            custom_memcpy_v2[len(src_indices), num_threads_per_block](dst_k.ravel(), dst_v.ravel(),
-                                                                      src_k.ravel(), src_v.ravel(),
-                                                                      dst_indices_cupy. src_indices_cupy,
-                                                                      self.hidden_dim)
-        self.kv_cache_ids[dst_indices] = src_sentence_ids
+        self.cache.update(kv, src_indices, dst_indices, src_sentence_ids, breakpoint)
 
     def get_results(self):
         """Return results sorted by their sentence id."""
@@ -906,15 +986,9 @@ class IterationLevelInputPool:
         return self.batch_size - len(self.wip_queue)
 
     @property
-    def num_vacant_cache_slot(self):
-        """Return the number of available sequence slots that can be put in cache."""
-        return len(self.vacant_cache_indices)
-
-    @property
     def num_vacant_sequence_slot(self):
         """Return the global vacancy."""
-        return min(self.num_vacant_token_slot, self.num_vacant_cache_slot)
-
+        return min(self.num_vacant_token_slot, self.cache.num_vacant_slot)
 
 
 @cupyx.jit.rawkernel()
@@ -941,6 +1015,23 @@ def custom_memcpy_v2(dst_k, dst_v, src_k, src_v, dst_indices, src_indices, hidde
         if j < hidden_dim:
             dst_k[dst_idx * hidden_dim + j] = src_k[src_idx * hidden_dim + j]
             dst_v[dst_idx * hidden_dim + j] = src_v[src_idx * hidden_dim + j]
+
+
+@cupyx.jit.rawkernel()
+def custom_memcpy_v3(dst_k, dst_v, src_k, src_v, dst_indices, src_indices, hidden_dim, breakpoint):
+    thread_idx = cupyx.jit.threadIdx.x
+    src_idx = src_indices[cupyx.jit.blockIdx.x]
+    dst_idx = dst_indices[src_idx]
+    num_elements_per_thread = (hidden_dim + 256 - 1) // 256
+    for i in range(num_elements_per_thread):
+        j = thread_idx + 256 * i
+        if j < hidden_dim:
+            if cupyx.jit.blockIdx.x < breakpoint:
+                dst_k[dst_idx * hidden_dim + j] = src_k[src_idx * hidden_dim + j]
+                dst_v[dst_idx * hidden_dim + j] = src_v[src_idx * hidden_dim + j]
+            else:
+                src_k[dst_idx * hidden_dim + j] = src_k[src_idx * hidden_dim + j]
+                src_v[dst_idx * hidden_dim + j] = src_v[src_idx * hidden_dim + j]
 
 
 @cupyx.jit.rawkernel()

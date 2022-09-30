@@ -76,9 +76,9 @@ class Client(object):
 
     def result_or_error(self, result):
         result = result.json()
-        if "error" in result:
+        if result.get("type", "") == "error":
             raise RuntimeError(
-                "".join(result["error"]["stacktrace"]) +
-                f'RuntimeError("{result["error"]["message"]}")')
+                result["stacktrace"] +
+                f'RuntimeError("{result["message"]}")')
         else:
             return result

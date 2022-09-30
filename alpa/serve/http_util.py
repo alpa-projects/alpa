@@ -10,6 +10,7 @@ import inspect
 import json
 import random
 import socket
+import traceback
 from typing import Any, Dict, Type
 
 from fastapi.encoders import jsonable_encoder
@@ -358,3 +359,11 @@ class ASGIHandler:
             https://asgi.readthedocs.io/en/latest/specs/index.html.
         """
         await self.controller.handle_asgi(scope, receive, send)
+
+
+def make_error_response(e):
+    return {
+       "type": "error",
+       "message": str(e),
+       "stacktrace": "".join(traceback.format_tb(e.__traceback__)),
+    }

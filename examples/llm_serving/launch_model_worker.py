@@ -1,6 +1,7 @@
 import asyncio
 import argparse
 from collections import defaultdict, namedtuple
+import json
 import logging
 import time
 import uuid
@@ -10,7 +11,8 @@ from alpa.serve import run_controller, CONTROLLER_NAME
 import ray
 
 from llm_serving.generator import Generator
-from llm_serving.service.constants import NUM_BEAMS, NUM_RETURN_SEQ, ALPA_SERVE_PORT
+from llm_serving.service.constants import (
+    NUM_BEAMS, NUM_RETURN_SEQ, ALPA_SERVE_PORT, USE_RECAPTCHA, KEYS_FILENAME)
 from llm_serving.service.recaptcha import load_recaptcha
 from llm_serving.service.utils import build_logger
 
@@ -48,8 +50,11 @@ class LangaugeModel:
             model_name, path, torch_device, num_beams, num_return_sequences))
 
         # Authentication
-        self.recaptcha = load_recaptcha()
         self.allowed_api_keys = []
+        self.recaptcha = load_recaptcha()
+        if USE_RECAPTCHA:
+            keys = json.load(open(KEYS_FILENAME, "r"))
+            self.allowed_api_keys = keys["allowed_api_keys"]
 
     async def load_model(self, model_name, path, torch_device,
                          num_beams, num_return_sequences):
@@ -253,7 +258,7 @@ class LangaugeModel:
         if not self.recaptcha.verify(
                 args.get("g-recaptcha-response", ""),
                 request.client.host):
-            logger.error(f"Rejected a request with invalid captcha.")
+            self.logger.error(f"Rejected a request with invalid captcha.")
             raise ValueError("Invalid captcha. If you are using the website, please click the "
                              "\"I'm not a robot\" button. If you are using client APIs, please "
                              "contact alpa developers to get an API key.")

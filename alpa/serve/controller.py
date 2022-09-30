@@ -23,6 +23,7 @@ from alpa.serve.http_util import (
     ASGIHandler,
     build_starlette_request,
     new_port,
+    make_error_response
 )
 
 logger = logging.getLogger(__file__)
@@ -77,8 +78,11 @@ class DeviceMeshGroupManager:
     async def handle_request(self, name: str, request_wrapper: bytes):
         request_wrapper = pickle.loads(request_wrapper)
         request = build_starlette_request(request_wrapper)
-        response = await self.replicas[name].handle_request(request)
-        return response
+        try:
+            response = await self.replicas[name].handle_request(request)
+            return response
+        except Exception as e:
+            return make_error_response(e)
 
 
 @ray.remote(num_cpus=0)
@@ -147,26 +151,20 @@ class Controller:
         # Route
         try:
             obj = await request.json()
-        except json.decoder.JSONDecodeError as e:
-            await Response(f"Json parser error: {e}.",
-                           status_code=400).send(scope, receive, send)
-            return
 
-        name = obj["model"]
-        if name not in self.model_info:
-            await Response(f"Model {name} is not registered.",
-                           status_code=404).send(scope, receive, send)
-            return
+            assert "model" in obj, "Model name is not specified in the request"
+            name = obj["model"]
 
-        if not self.model_info[name].managers:
-            await Response(f"No replica of model {name} is created.",
-                           status_code=404).send(scope, receive, send)
-            return
+            assert name in self.model_info, (
+               f"Model {name} is not registered")
+            assert self.model_info[name].managers, (
+               f"No replica of model {name} is created")
+            manager = self.model_info[name].managers[0]
 
-        manager = self.model_info[name].managers[0]
+            response = await manager.handle_request.remote(name, request_wrapper)
+        except Exception as e:
+            response = make_error_response(e)
 
-        # Process request
-        response = await manager.handle_request.remote(name, request_wrapper)
         await Response(response).send(scope, receive, send)
 
     def get_info(self):

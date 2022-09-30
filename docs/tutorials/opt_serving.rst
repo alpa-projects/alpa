@@ -1,1 +1,1 @@
-../../examples/opt_serving/README.rst
+../../examples/llm_serving/README.rst

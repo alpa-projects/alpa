@@ -17,7 +17,6 @@ class PipelineMLPTest(unittest.TestCase):
 
     def setUp(self):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
-        init(cluster="ray")
 
     def train_2_layer_mlp(self, method):
 
@@ -26,6 +25,8 @@ class PipelineMLPTest(unittest.TestCase):
             @manual_layer_construction
             def loss_func(params, x, y):
                 out = state.apply_fn(params, x)
+                # test constant handling
+                out = out + jnp.array(range(batch_size)).reshape((-1, 1))
                 loss = jnp.mean((out - y)**2)
                 return loss
 
@@ -70,6 +71,7 @@ class PipelineMLPTest(unittest.TestCase):
         self.train_2_layer_mlp(LocalPipelineParallel())
 
     def test_2_layer_mlp_pipeshard_parallel(self):
+        init(cluster="ray")
         self.train_2_layer_mlp(PipeshardParallel(layer_option="manual"))
 
 

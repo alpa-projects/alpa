@@ -5,10 +5,10 @@ import numpy as np
 import torch
 from transformers import AutoTokenizer
 
-from opt_serving.model.wrapper import get_model
-from opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
-from opt_serving.service.constants import MAX_SEQ_LEN, MAX_BS
-from opt_serving.service.utils import build_logger
+from llm_serving.model.wrapper import get_model
+from llm_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
+from llm_serving.service.constants import MAX_SEQ_LEN, MAX_BS
+from llm_serving.service.utils import build_logger
 
 
 logger = build_logger()
@@ -60,10 +60,9 @@ class Generator:
         # Init model
         self.model_wrapper = get_model(self.model_name, self.path,
                                        torch_device=self.torch_device,
-                                       autoregressive=True,
                                        batch_size=MAX_BS,
                                        encoder_chunk_sizes=[1, 64],
-                                       max_target_positions=MAX_SEQ_LEN,
+                                       max_seq_len=MAX_SEQ_LEN,
                                        num_beams=self.num_beams,
                                        num_return_sequences=self.num_return_sequences,
                                        do_sample=self.do_sample)

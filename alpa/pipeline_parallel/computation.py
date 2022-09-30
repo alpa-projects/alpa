@@ -219,9 +219,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
         stage_plan = StagePlan(global_config.compile_random_seed,
                                logical_mesh_shape, 1, 1, AutoShardingOption(),
                                None, 0)
-        compiled = compile_dummy_zero_constant(xb.get_backend("gpu"),
-                                               np.prod(logical_mesh_shape))
-        sharding_annotated_module = compiled.hlo_modules()[0]
+        sharding_annotated_module = compile_dummy_zero_constant()
         outvar = gensym_func(ShapedArray((), np.dtype(np.int32)))
         return cls(
             name=name,
@@ -391,6 +389,10 @@ def slice_closed_jaxpr_by_full_pipeline_marks(
                     current_computation.consts_dir[var] = global_consts_dir[var]
                 else:
                     current_computation.invars.append(var)
+
+        for var in eqn.invars:
+            if not isinstance(var, Literal) and var in global_consts_dir:
+                current_computation.consts_dir[var] = global_consts_dir[var]
 
         assert current_computation is not None
         current_computation.eqns.append(eqn)

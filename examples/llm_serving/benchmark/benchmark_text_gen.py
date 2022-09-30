@@ -25,8 +25,8 @@ import time
 import torch
 from transformers import AutoTokenizer
 
-from opt_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
-from opt_serving.model.wrapper import get_model
+from llm_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
+from llm_serving.model.wrapper import get_model
 
 test_prompts = [
     "Computer science is the study of computation and",
@@ -90,6 +90,7 @@ if __name__ == "__main__":
     compute_tflopss = []
 
     if not autoregressive: # Forward mode
+        raise RuntimeError("This branch is deprecated")
         # Increase the frequency of deleting buffers to avoid OOM.
         global_config.delete_remote_arrays_threshold = 1
         seq_len = args.forward_encoder_length
@@ -186,7 +187,6 @@ if __name__ == "__main__":
                           args.path,
                           torch_device=torch_device,
                           dummy=args.dummy,
-                          autoregressive=autoregressive,
                           dtype=dtype,
                           encoder_chunk_sizes=encoder_chunk_sizes,
                           **generate_args)

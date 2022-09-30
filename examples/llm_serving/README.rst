@@ -40,7 +40,7 @@ The code below shows how to use huggingface/transformers interface and Alpa dist
 .. code:: python
 
   from transformers import AutoTokenizer
-  from opt_serving.model.wrapper import get_model
+  from llm_serving.model.wrapper import get_model
 
   # Load the tokenizer. We have to use the 30B version because
   # other versions have some issues. The 30B version works for all OPT models.
@@ -64,7 +64,7 @@ Requirements
 ============
 1. Install Alpa following the `installation guide <https://alpa-projects.github.io/install.html>`_. You can either install by python wheel or build from source.
 
-2. Install additional requirements for ``opt_serving``:
+2. Install additional requirements for ``llm_serving``:
 
   .. code:: shell
 
@@ -79,7 +79,7 @@ Requirements
 
     git clone git@github.com:alpa-projects/alpa.git
 
-4. Install ``opt_serving`` package. Go to the examples folder and install the package.
+4. Install ``llm_serving`` package. Go to the examples folder and install the package.
 
   .. code:: shell
 
@@ -108,7 +108,7 @@ We provide detailed instructions below on how to convert the original OPT-175B w
     First, download Metaseq's original OPT-175B weights in 992 shards, verify the `MD5 of each shard <https://github.com/facebookresearch/metaseq/blob/main/projects/OPT/assets/opt175b_md5sum_shards.csv>`_ , and put the shards under a folder, say, ``PATH_TO_992_SHARDS/``.
 
 2. Consolidate the weights from 992 shards into one single checkpoint
-    Use the script `step_2_consolidate_992_shards_to_singleton.py <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/scripts/step_2_consolidate_992_shards_to_singleton.py>`_ as:
+    Use the script `step_2_consolidate_992_shards_to_singleton.py <https://github.com/alpa-projects/alpa/tree/main/examples/llm_serving/scripts/step_2_consolidate_992_shards_to_singleton.py>`_ as:
 
   .. code:: shell
 
@@ -127,7 +127,7 @@ We provide detailed instructions below on how to convert the original OPT-175B w
     The above script will save the model weights as a single consolidated checkpoint at ``PATH_TO_SAVE_CHECKPOINT``, hence will require at least 350GB disk space available.
 
 3. Convert the single checkpoint into Alpa-compatible formats
-    Alpa ingests weights simply from numpy formats. Use the script `step_3_convert_to_numpy_weights.py <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving/scripts/step_3_convert_to_numpy_weights.py>`_ to convert the
+    Alpa ingests weights simply from numpy formats. Use the script `step_3_convert_to_numpy_weights.py <https://github.com/alpa-projects/alpa/tree/main/examples/llm_serving/scripts/step_3_convert_to_numpy_weights.py>`_ to convert the
     single checkpoint into numpy formats:
 
     .. code:: shell
@@ -160,7 +160,7 @@ If you want to run the model on multiple nodes, you can use one of the following
 Run Generation in the Command Line
 ==================================
 
-The code of this tutorial is under `examples/opt_serving <https://github.com/alpa-projects/alpa/tree/main/examples/opt_serving>`_.
+The code of this tutorial is under `examples/llm_serving <https://github.com/alpa-projects/alpa/tree/main/examples/llm_serving>`_.
 
 - Run generation using the 125M model with PyTorch/HuggingFace backend on a single GPU:
 
@@ -206,6 +206,9 @@ Launch the web server:
   python3 interactive_hosted.py --model alpa/opt-175b --port 20001
 
 Then open ``https://[IP-ADDRESS]:20001`` in your browser to try out the model!
+
+There is also a client library which can be used to query the web server
+via a python script. Please check ``test_completions.py`` for the usage.
 
 Improving Generation Speed
 ==========================

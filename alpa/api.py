@@ -15,6 +15,7 @@ from alpa.parallel_method import ParallelMethod, ShardParallel
 from alpa.pipeline_parallel.primitive_def import mark_gradient
 from alpa.util import (auto_donate_argnums, auto_static_argnums,
                        abstractify_with_aval, GradFuncTransformContext)
+from alpa.version import check_alpa_jaxlib_version
 
 traceback_util.register_exclusion(__file__)
 
@@ -22,8 +23,9 @@ is_initialized = False
 
 
 def init(cluster: str = "ray",
-         devices_per_node: int = None,
-         num_nodes: int = None):
+         num_nodes: Optional[int] = None,
+         num_devices_per_node: Optional[int] = None,
+         namespace: Optional[str] = None):
     """Initialize the global environment.
 
     `devices_per_node, num_nodes` are used to specify the number of devices.
@@ -38,8 +40,8 @@ def init(cluster: str = "ray",
         Possible choices: {"local", "ray"}.
         "local" means using all local devices on a single node.
         "ray" means using all devices in a ray cluster.
-      devices_per_node: The number of devices per node.
       num_nodes: The number of nodes.
+      num_devices_per_node: The number of devices per node.
     """
     global is_initialized
 
@@ -47,7 +49,7 @@ def init(cluster: str = "ray",
         return
     is_initialized = True
 
-    init_global_cluster(cluster, devices_per_node, num_nodes)
+    init_global_cluster(cluster, num_nodes, num_devices_per_node, namespace)
 
 
 def shutdown():
@@ -79,6 +81,7 @@ def parallelize(fun: Optional[Callable] = None,
           Alpa assumes the 0-th dimension of the tensor is the batch dimension.
         method: The parallelization method.
     """
+    check_alpa_jaxlib_version()
 
     def decorate_fun(fun):
         api._check_callable(fun)  # pylint: disable=protected-access

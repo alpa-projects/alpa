@@ -94,10 +94,7 @@ def create_train_state_aval(rngkey, model, batch, dtype):
     return state
 
 
-def get_train_step(parallel_method,
-                   use_fine_grained_remat=False,
-                   fine_grained_remat_num_layers=None,
-                   grad_func=None):
+def get_train_step(parallel_method, grad_func=None):
 
     if grad_func is None:
         grad_func = alpa.grad
@@ -120,10 +117,6 @@ def get_train_step(parallel_method,
                             axis=-1)
             loss = (label_mask * loss).sum() / label_mask.sum()
             return loss
-
-        if use_fine_grained_remat:
-            loss_func = automatic_remat(loss_func,
-                                        layer_num=fine_grained_remat_num_layers)
 
         grads = grad_func(loss_func)(state.params)
         new_state = state.apply_gradients(grads=grads)
@@ -218,17 +211,11 @@ def benchmark_gpt_bert_3d_internal(model_type,
     set_global_virtual_physical_mesh(virtual_mesh)
 
     # Parallel configs
-    if benchmark_case.parallel_mode == "load_solution":
-        use_fine_grained_remat = benchmark_case.parallel_args.use_remat
-        fine_grained_remat_num_layers = benchmark_case.model_config.num_layers
-    else:
-        use_fine_grained_remat = None
-        fine_grained_remat_num_layers = None
     (method, add_manual_remat, add_manual_layer_marker,
      num_manual_pipeline_stages) = get_pipeshard_parallel_method(
          benchmark_case,
          virtual_mesh.num_devices_per_host,
-         use_fine_grained_remat=use_fine_grained_remat)
+         use_fine_grained_remat=True)
 
     state, batch, rngkey = prepare_gpt_bert_input_and_model(
         model_type,
@@ -238,8 +225,7 @@ def benchmark_gpt_bert_3d_internal(model_type,
         num_manual_pipeline_stages=num_manual_pipeline_stages,
         aval_train_state=aval_train_state)
 
-    train_step = get_train_step(method, use_fine_grained_remat,
-                                fine_grained_remat_num_layers)
+    train_step = get_train_step(method)
 
     (latencies, max_mem_allocated, compilation_times,
      executable) = compile_and_benchmark_pipeshard_training_executable(

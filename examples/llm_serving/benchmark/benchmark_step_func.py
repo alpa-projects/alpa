@@ -13,16 +13,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from opt_serving.model.opt_model import (
-    get_opt_config, get_pipeshard_executable, load_params_dis_array,
-    init_cache_dis_array, load_params_np, init_cache_np, get_jax_executable,
-    build_position_ids, init_model_aval, init_cache_aval)
-from opt_serving.model.wrapper import set_skip_shard_args_check
+from llm_serving.model import opt_model, bloom_model
+from llm_serving.model.wrapper import set_skip_shard_args_check
 
 
 def run_benchmark(args):
-    name = args.model.split("-")[1].upper()
-    path = os.path.join(args.path, f"{name}_np")
+    name = args.model.split("/")[1].lower()
+    path = os.path.join(args.path, f"{name}-np")
 
     alpa.global_config.shard_parallel_sync_for_timer = True
     alpa.global_config.pipeline_check_alive = False
@@ -32,19 +29,29 @@ def run_benchmark(args):
     batch_size = args.batch_size
     seq_len = 10
     dummy = args.dummy
-
-    def inference_step_with_cache(params, batch):
-        output = model.apply(params,
-                             batch["input_ids"],
-                             batch["position_ids"],
-                             attention_cache=batch["cache"])
-        return output.logits, output.attention_cache
+    if "opt" in name:
+        m = opt_model
+        def inference_step_with_cache(params, batch):
+            output = model.apply(params,
+                                 batch["input_ids"],
+                                 batch["position_ids"],
+                                 attention_mask=batch["mask"],
+                                 attention_cache=batch["cache"])
+            return output.logits, output.attention_cache
+    else:
+        m = bloom_model
+        def inference_step_with_cache(params, batch):
+            output = model.apply(params,
+                                 batch["input_ids"],
+                                 attention_mask=batch["mask"],
+                                 attention_cache=batch["cache"])
+            return output.logits, output.attention_cache
 
     if args.parallel_method == "jit":
-        config = get_opt_config(name)
-        model, params_aval = init_model_aval(config)
-        params = load_params_np(params_aval, path, config, dummy)
-        cache = init_cache_np(config, batch_size)
+        config = m.get_config(name)
+        model, params_aval = m.init_model_aval(config)
+        params = m.load_params_np(params_aval, path, config, dummy)
+        cache = m.init_cache_np(config, batch_size)
         params, cache = jax.tree_map(jnp.array, (params, cache))
 
         infer_step = jax.jit(inference_step_with_cache)
@@ -55,8 +62,8 @@ def run_benchmark(args):
         if args.parallel_method in ["shard_local", "shard_ray"]:
             assert dummy == True, 'Only support dummy weights. Plasese add "--dummy".'
 
-            config = get_opt_config(name)
-            model, params_aval = init_model_aval(config)
+            config = m.get_config(name)
+            model, params_aval = m.init_model_aval(config)
             if args.parallel_method == "shard_local":
                 alpa.init(cluster="local")
             else:
@@ -72,8 +79,8 @@ def run_benchmark(args):
             alpa.init(cluster="ray")
             num_gpus = alpa.get_global_num_devices()
             num_pp_stages = max(2, alpa.get_global_cluster().num_hosts)
-            config = get_opt_config(name, num_pp_stages=num_pp_stages)
-            model, params_aval = init_model_aval(config)
+            config = m.get_config(name, num_pp_stages=num_pp_stages)
+            model, params_aval = m.init_model_aval(config)
 
             method = alpa.PipeshardParallel(
                 num_micro_batches=1,
@@ -96,13 +103,15 @@ def run_benchmark(args):
                 "position_ids":
                     jax.core.ShapedArray((batch_size, 1), jnp.int32),
                 "cache":
-                    init_cache_aval(config, batch_size),
+                    m.init_cache_aval(config, batch_size),
+                "mask":
+                    m.init_mask_aval(config, batch_size),
             })
         executable.dump_debug_info("tmp")
 
-        params = load_params_dis_array(path, executable, params_aval, config,
-                                       dummy)
-        cache = init_cache_dis_array(executable, config, batch_size, dummy)
+        params = m.load_params_dis_array(path, executable, params_aval, config,
+                                         dummy)
+        cache = m.init_cache_dis_array(executable, config, batch_size, dummy)
         set_skip_shard_args_check(cache)
         infer_step = executable
         if args.parallel_method == "local_shard":
@@ -115,7 +124,8 @@ def run_benchmark(args):
                                   10000,
                                   size=(batch_size, seq_len),
                                   dtype=np.int32)
-    position_ids = build_position_ids(input_ids, config.pad)
+    position_ids = opt_model.build_position_ids(input_ids, config.pad)
+    mask = np.ones((batch_size, 1, 1, config.max_seq_len), dtype=np.int8)
 
     step_latencies = []
     compute_latencies = []
@@ -130,6 +140,7 @@ def run_benchmark(args):
             params, {
                 "input_ids": input_ids_step,
                 "position_ids": position_ids_step,
+                "mask": mask,
                 "cache": cache,
             })
         sync_func()

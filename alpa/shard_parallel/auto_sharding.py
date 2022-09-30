@@ -571,8 +571,8 @@ def _hlo_sharding_to_sharding_spec_no_tuple(
 
 
 def hlo_sharding_to_sharding_spec(
-        hlo_sharding: xe.HloSharding, aval: Union[Sequence[ShapedArray],
-                                                  ShapedArray],
+        hlo_sharding: "xe.HloSharding", aval: Union[Sequence[ShapedArray],
+                                                    ShapedArray],
         logical_mesh_shape: Sequence[int]) -> pxla.ShardingSpec:
     """Convert hlo sharding to sharding spec."""
     logical_mesh = LogicalDeviceMesh(

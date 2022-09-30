@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from functools import partial, wraps
 import logging
-from typing import Callable, Union, Sequence
+from typing import Callable, Union, Sequence, Optional
 
 import numpy as np
 from jax import tree_flatten, lax
@@ -27,6 +27,10 @@ from alpa.util import (clone_jaxpr, clone_jaxpr_eqn, slices_to_jaxpr,
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+LAYER_HEAVY_OP_LOWER_BOUND = 3
+DEFAULT_EPS = 0.5
+DEFAULT_COST_CRITERIA = "flops"
 
 
 class LayerOption(ABC):
@@ -74,25 +78,45 @@ class AutoLayerOption(LayerOption):
 
     Args:
       layer_num: The number of layers to construct.
-      remat_layer: Whether to use gradient rematerialization for each layer.
+      remat_mode: Whether to use automatic tensor rematerialization.
+        Possible choices:
+        {"none", "fine_grained_remat", "coarse_grained_remat"}.
+      fine_grained_remat_layer_num:
+        Only used for remat_mode == "fine_grained_remat".
+        The number of layers for auto_remat.
       static_argnums: The indices of static arguments of the
         forward function.
+      eps: The tolerance of inbalance of the costs of different layers.
     """
 
     def __init__(self,
                  layer_num: int,
-                 remat_layer: bool = False,
-                 static_argnums: Sequence[int] = ()):
+                 remat_mode: str = "none",
+                 fine_grained_remat_layer_num: Optional[int] = None,
+                 static_argnums: Sequence[int] = (),
+                 eps: float = DEFAULT_EPS):
         super().__init__()
         self.layer_num = layer_num
-        self.remat_layer = remat_layer
+        self.remat_mode = remat_mode
+        self.fine_grained_remat_layer_num = fine_grained_remat_layer_num
         self.static_argnums = static_argnums
+        self.eps = eps
 
     def transform(self, func):
+        if self.remat_mode == "fine_grained_remat":
+            func = automatic_remat(func,
+                                   layer_num=self.fine_grained_remat_layer_num)
+            use_remat = False
+        elif self.remat_mode == "coarse_grained_remat":
+            use_remat = True
+        else:
+            use_remat = False
+
         return automatic_layer_construction(func,
                                             static_argnums=self.static_argnums,
                                             layer_num=self.layer_num,
-                                            remat_layer=self.remat_layer)
+                                            remat_layer=use_remat,
+                                            eps=self.eps)
 
 
 class FollowLayerOption(LayerOption):
@@ -116,11 +140,6 @@ class FollowLayerOption(LayerOption):
     def transform(self, func):
         return follow_layer_construction(func, self.static_argnums,
                                          self.placement_specs, self.num_meshes)
-
-
-LAYER_HEAVY_OP_LOWER_BOUND = 3
-DEFAULT_EPS = 0.6
-DEFAULT_COST_CRITERIA = "flops"
 
 
 def slice_eqns_by_layer_boundary(closed_jaxpr: ClosedJaxpr):
@@ -494,10 +513,11 @@ def layer_level_jaxpr_transformation(fn: Callable,
                                                    eps,
                                                    costs,
                                                    cost_criteria=cost_criteria)
-            if global_config.print_auto_layer_stats:
-                log_layer_slicing_stats(jaxpr, sliced_eqns)
         else:
             sliced_eqns = slice_eqns_by_layer_boundary(jaxpr)
+
+        if global_config.print_auto_layer_stats:
+            log_layer_slicing_stats(jaxpr, sliced_eqns)
 
         if remat:
             sliced_eqns = remat_sliced_eqns(jaxpr, sliced_eqns)
@@ -711,9 +731,7 @@ def slice_jaxpr_with_var_assignment(jaxpr, var2mesh, num_meshes):
     cur_mesh = 0
     for idx, eqn in enumerate(jaxpr.eqns):
         if eqn.primitive is pipeline_p:
-            raise ValueError("FollowParallel is not compatible with manual "
-                             "pipeline marker. Please do not insert manual "
-                             "pipeline marker in the function.")
+            continue
         for var in eqn.invars:
             if isinstance(var, Var) and var in var2mesh:
                 mesh_idx = var2mesh[var]

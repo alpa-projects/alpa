@@ -5,7 +5,7 @@ import argparse
 import os
 
 import numpy as np
-from opt_serving.scripts.utils import torch_load_cpu
+from llm_serving.scripts.utils import torch_load_cpu
 
 
 def save_numpy(weight_dict, to_folder):
@@ -20,7 +20,7 @@ def save_numpy(weight_dict, to_folder):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--ckpt-path", type=str, default="/home/ubuntu/consolidated")
-    parser.add_argument("--output-folder", type=str, default="/home/ubuntu/175B_np")
+    parser.add_argument("--output-folder", type=str, default="/home/ubuntu/opt-175b-np")
     args = parser.parse_args()
     start_time = time.time()
     print("- Reading the weight into memory")

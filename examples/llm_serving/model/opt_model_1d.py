@@ -674,7 +674,7 @@ class TransformerInputPool:
                                                   self.max_cache_per_seq + self.num_prev_tokens[sentence_id]
 
 
-@cupyx.jit.rawkernel()
+#@cupyx.jit.rawkernel()
 def custom_memcpy(dst_k, dst_v, src_k, src_v, dst_indices, hidden_dim):
     thread_idx = cupyx.jit.threadIdx.x
     src_idx = cupyx.jit.blockIdx.x
@@ -687,7 +687,7 @@ def custom_memcpy(dst_k, dst_v, src_k, src_v, dst_indices, hidden_dim):
             dst_v[dst_idx * hidden_dim + j] = src_v[src_idx * hidden_dim + j]
 
 
-@cupyx.jit.rawkernel()
+#@cupyx.jit.rawkernel()
 def custom_reshape_logits(dst, src, indices):
     thread_idx = cupyx.jit.threadIdx.x
     dst_idx = cupyx.jit.blockIdx.x

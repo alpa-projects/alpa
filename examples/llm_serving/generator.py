@@ -10,9 +10,6 @@ from llm_serving.model.opt_utils import compute_gpt_tflops_inference_with_paddin
 from llm_serving.service.utils import build_logger
 
 
-logger = build_logger()
-
-
 class Generator:
     """Alpa generator interface.
 
@@ -30,6 +27,7 @@ class Generator:
                  do_sample=False,
                  num_beams=1,
                  num_return_sequences=1):
+        self.logger = build_logger()
 
         # Model arguments
         self.model_name = model_name
@@ -80,7 +78,7 @@ class Generator:
             self.num_gpus = alpa.get_global_cluster().num_devices
         else:
             self.num_gpus = 1
-        logger.info(f"Loading model time: {load_time:.2f}")
+        self.logger.info(f"Loading model time: {load_time:.2f}")
 
     def encode(self, s: str):
         """Tokenize strings"""
@@ -118,7 +116,7 @@ class Generator:
         total_inference_time = 0
         batch_request_uuid = next_serve_batch_uuid()
         ori_bs = len(inputs)
-        logger.info(f"Batch {batch_request_uuid} begin. batch size: {ori_bs}")
+        self.logger.info(f"Batch {batch_request_uuid} begin. batch size: {ori_bs}")
 
         # Check arguments
         assert best_of == self.num_beams, "model must be instantiated and used with the same num_beams"
@@ -158,7 +156,7 @@ class Generator:
             "no_repeat_ngram_size": 8,
         }
 
-        logger.info(
+        self.logger.info(
             f"Generate begin. batch uuid: {batch_request_uuid}, "
             f"batch_size: {batch_size}, original bs: {ori_bs}, "
             f"generator_args: {generator_args}.")
@@ -171,7 +169,7 @@ class Generator:
         tflops, speed, token_32_latency = self.estimate_performance(
             output_ids, inference_time)
 
-        logger.info(f"Generate end. batch uuid: {batch_request_uuid}")
+        self.logger.info(f"Generate end. batch uuid: {batch_request_uuid}")
 
         # Decode results to strings
         ret = []
@@ -188,7 +186,7 @@ class Generator:
                 tmp_ret.append(result)
             ret.append(tmp_ret)
 
-        logger.info(f"Batch {batch_request_uuid} end. batch size: {ori_bs}, "
+        self.logger.info(f"Batch {batch_request_uuid} end. batch size: {ori_bs}, "
                     f"e2e latency: {time.time() - start_time:.2f} s, "
                     f"inference latency: {inference_time:.2f} s, "
                     f"speed: {speed:.2f} token/s, "
@@ -202,7 +200,7 @@ class Generator:
         cache_id,
         pasts=None,
     ):
-        logger.info(f"Forward begin. cache_id: {cache_id}")
+        self.logger.info(f"Forward begin. cache_id: {cache_id}")
         time_start = time.time()
 
         inputs = pad_batch(inputs, self.tokenizer.pad_token_id, self.max_batch_size)
@@ -212,7 +210,7 @@ class Generator:
         model_inputs = self.model_wrapper.prepare_inputs_for_generation(input_ids, past=pasts[cache_id][1] if pasts is not None else None, attention_mask=attention_mask)
         output = self.model_wrapper(**model_inputs)
 
-        logger.info(f"Forward end. e2e latency: {time.time() - time_start:.2f}")
+        self.logger.info(f"Forward end. e2e latency: {time.time() - time_start:.2f}")
         return output
 
     def estimate_performance(self, output_ids, latency):

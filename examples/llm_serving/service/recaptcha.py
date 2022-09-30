@@ -11,9 +11,13 @@ __license__ = "MIT"
 __author__ = "Mardix"
 __copyright__ = "(c) 2015 Mardix"
 
-from flask import request
+import json
+
+#from flask import request
 from jinja2 import Markup
 import requests
+
+from llm_serving.service.constants import USE_RECAPTCHA, KEYS_FILENAME
 
 
 class DEFAULTS(object):
@@ -30,7 +34,9 @@ class ReCaptcha(object):
     VERIFY_URL = "https://www.recaptcha.net/recaptcha/api/siteverify"
 
     def __init__(self, app=None, site_key=None, secret_key=None, is_enabled=True, **kwargs):
-        if site_key:
+        if app:
+            self.init_app(app=app)
+        else:
             self.site_key = site_key
             self.secret_key = secret_key
             self.is_enabled = is_enabled
@@ -39,9 +45,6 @@ class ReCaptcha(object):
             self.size = kwargs.get('size', DEFAULTS.SIZE)
             self.language = kwargs.get('language', DEFAULTS.LANGUAGE)
             self.tabindex = kwargs.get('tabindex', DEFAULTS.TABINDEX)
-
-        elif app:
-            self.init_app(app=app)
 
     def init_app(self, app=None):
         self.__init__(site_key=app.config.get("RECAPTCHA_SITE_KEY"),
@@ -73,10 +76,20 @@ class ReCaptcha(object):
         if self.is_enabled:
             data = {
                 "secret": self.secret_key,
-                "response": response or request.json.get('g-recaptcha-response', ""),
-                "remoteip": remote_ip or request.environ.get('REMOTE_ADDR')
+                "response": response,# or request.json.get('g-recaptcha-response', ""),
+                "remoteip": remote_ip,# or request.environ.get('REMOTE_ADDR')
             }
 
             r = requests.get(self.VERIFY_URL, params=data)
             return r.json()["success"] if r.status_code == 200 else False
         return True
+
+
+def load_recaptcha():
+    if USE_RECAPTCHA:
+        keys = json.load(open(KEYS_FILENAME, "r"))
+        recaptcha = ReCaptcha(site_key=keys["RECAPTCHA_SITE_KEY"],
+                              secret_key=keys["RECAPTCHA_SECRET_KEY"])
+    else:
+        recaptcha = ReCaptcha(enabled=False)
+    return recaptcha

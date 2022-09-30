@@ -2,13 +2,12 @@ import json
 from typing import Union
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from llm_serving.service.constants import (
-    NUM_BEAMS, NUM_RETURN_SEQ, USE_RECAPTCHA, KEYS_FILENAME, ALPA_SERVE_URL)
-from llm_serving.service.recaptcha import ReCaptcha
+    NUM_BEAMS, NUM_RETURN_SEQ, ALPA_SERVE_URL)
+from llm_serving.service.recaptcha import load_recaptcha
 
 app = FastAPI()
 
@@ -20,12 +19,9 @@ if NUM_BEAMS > 1: # beam search is on, disable sampling
 else:
     sampling_css = ""
 
-if USE_RECAPTCHA:
-    keys = json.load(open(KEYS_FILENAME, "r"))
-    recaptcha = ReCaptcha(site_key=keys["RECAPTCHA_SITE_KEY"],
-                          secret_key=keys["RECAPTCHA_SECRET_KEY"])
-else:
-    recaptcha = None
+
+recaptcha = load_recaptcha()
+
 
 @app.get("/")
 async def homepage(request: Request):
@@ -33,6 +29,6 @@ async def homepage(request: Request):
         "request": request,
         "num_return_sequences": NUM_RETURN_SEQ,
         "sampling_css": sampling_css,
-        "recaptcha": recaptcha.get_code() if recaptcha else "",
+        "recaptcha": recaptcha.get_code(),
         "alpa_serve_url": ALPA_SERVE_URL,
     })

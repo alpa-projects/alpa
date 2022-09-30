@@ -9,8 +9,8 @@ NUM_BEAMS = 1
 NUM_RETURN_SEQ = 1
 
 # Authentication params
-USE_RECAPTCHA = False
-KEYS_FILENAME = "keys_file.json"
+USE_RECAPTCHA = True
+KEYS_FILENAME = "/home/ubuntu/efs/alpa/examples/llm_serving/keys_file.json"
 
 # Logging params
 LOGDIR = "weblogs"

@@ -6,11 +6,13 @@ import time
 import uuid
 
 import alpa
-from alpa.serve import CONTROLLER_NAME
+from alpa.serve import run_controller, CONTROLLER_NAME
 import ray
 
-from llm_serving.service.constants import NUM_BEAMS, NUM_RETURN_SEQ
 from llm_serving.generator import Generator
+from llm_serving.service.constants import NUM_BEAMS, NUM_RETURN_SEQ, ALPA_SERVE_PORT
+from llm_serving.service.recaptcha import load_recaptcha
+from llm_serving.service.utils import build_logger
 
 
 GenerateItem = namedtuple("GenerateItem", ["uid", "return_queue", "data"])
@@ -28,7 +30,7 @@ class LangaugeModel:
                  max_batch_size: int = 4,
                  max_seq_len: int = 1024):
 
-        self.logger = logging.getLogger("LangaugeModel")
+        self.logger = build_logger()
         self.num_beams = num_beams
         self.num_return_sequences = num_return_sequences
         self.max_seq_len = max_seq_len
@@ -46,7 +48,7 @@ class LangaugeModel:
             model_name, path, torch_device, num_beams, num_return_sequences))
 
         # Authentication
-        self.recaptcha = None
+        self.recaptcha = load_recaptcha()
         self.allowed_api_keys = []
 
     async def load_model(self, model_name, path, torch_device,
@@ -119,6 +121,8 @@ class LangaugeModel:
 
     async def handle_request(self, request):
         args = await request.json()
+        self.check_authorization(args, request)
+
         if "completions" in request.url.path:
             return await self.completions(args)
         elif "logprobs" in request.url.path:
@@ -154,7 +158,6 @@ class LangaugeModel:
             return self.logprobs(args)
 
         self.check_model_loading()
-        self.check_authorization(args)
 
         # Normalize prompts
         prompts = args["prompt"]
@@ -243,11 +246,13 @@ class LangaugeModel:
                 "It is loading the model now, which can take several minutes. "
                 "Please come back later. ")
 
-    def check_authorization(self, args):
+    def check_authorization(self, args, request):
         if args.get("api_key", None) in self.allowed_api_keys:
             return
 
-        if self.recaptcha and not self.recaptcha.verify():
+        if not self.recaptcha.verify(
+                args.get("g-recaptcha-response", ""),
+                request.client.host):
             logger.error(f"Rejected a request with invalid captcha.")
             raise ValueError("Invalid captcha. If you are using the website, please click the "
                              "\"I'm not a robot\" button. If you are using client APIs, please "
@@ -258,7 +263,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="alpa/opt-125m")
     parser.add_argument("--path", type=str, default="~/opt_weights/")
-    parser.add_argument("--port", type=int, default=20001)
+    parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--torch-device", type=str, default="cpu")
     parser.add_argument("--use-recaptcha", action="store_true")
     parser.add_argument("--keys-file", type=str, default="keys.json")
@@ -266,7 +271,7 @@ if __name__ == "__main__":
 
     ray.init(address="auto", namespace="alpa_serve")
 
-    controller = ray.get_actor(CONTROLLER_NAME)
+    controller = run_controller(args.host, ALPA_SERVE_PORT, "/")
 
     group_id = 0
     name = "default"
@@ -277,3 +282,6 @@ if __name__ == "__main__":
         override=True)
     a = controller.create_replica.remote(name, group_id)
     ray.get(a)
+
+    while True:
+        pass

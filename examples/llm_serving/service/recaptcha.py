@@ -85,11 +85,11 @@ class ReCaptcha(object):
         return True
 
 
-def load_recaptcha():
-    if USE_RECAPTCHA:
+def load_recaptcha(use_recaptcha):
+    if use_recaptcha:
         keys = json.load(open(KEYS_FILENAME, "r"))
         recaptcha = ReCaptcha(site_key=keys["RECAPTCHA_SITE_KEY"],
                               secret_key=keys["RECAPTCHA_SECRET_KEY"])
     else:
-        recaptcha = ReCaptcha(enabled=False)
+        recaptcha = ReCaptcha(is_enabled=False)
     return recaptcha

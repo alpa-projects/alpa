@@ -202,10 +202,14 @@ Launch the web server:
 
 .. code:: shell
 
-  # Serve the OPT-175B model at port 20001
-  python3 interactive_hosted.py --model alpa/opt-175b --port 20001
+  # Launch the website
+  uvicorn launch_website:app --host 0.0.0.0
 
-Then open ``https://[IP-ADDRESS]:20001`` in your browser to try out the model!
+  # Launch the model worker (open a new terminal)
+  python3 launch_model_worker.py --model alpa/opt-175b
+
+
+Then open ``http://[IP-ADDRESS]`` in your browser to try out the model!
 
 There is also a client library which can be used to query the web server
 via a python script. Please check ``test_completions.py`` for the usage.

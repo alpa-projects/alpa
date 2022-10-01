@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from llm_serving.service.constants import (
-    NUM_BEAMS, NUM_RETURN_SEQ, ALPA_SERVE_URL)
+    NUM_BEAMS, NUM_RETURN_SEQ, ALPA_SERVE_URL, USE_RECAPTCHA)
 from llm_serving.service.recaptcha import load_recaptcha
 
 app = FastAPI()
@@ -20,7 +20,7 @@ else:
     sampling_css = ""
 
 
-recaptcha = load_recaptcha()
+recaptcha = load_recaptcha(USE_RECAPTCHA)
 
 
 @app.get("/")

@@ -9,7 +9,7 @@ NUM_BEAMS = 1
 NUM_RETURN_SEQ = 1
 
 # Authentication params
-USE_RECAPTCHA = True
+USE_RECAPTCHA = False
 KEYS_FILENAME = "/home/ubuntu/efs/alpa/examples/llm_serving/keys_file.json"
 
 # Logging params

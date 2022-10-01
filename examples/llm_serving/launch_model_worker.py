@@ -3,7 +3,6 @@ import argparse
 from collections import defaultdict, namedtuple
 from dataclasses import dataclass, field
 import json
-import logging
 import time
 from typing import Any
 import uuid
@@ -11,6 +10,7 @@ import uuid
 import alpa
 from alpa.serve import run_controller, CONTROLLER_NAME
 import ray
+import torch
 
 from llm_serving.generator import Generator
 from llm_serving.service.constants import (
@@ -29,15 +29,17 @@ GenerateItem = namedtuple("GenerateItem", ["uid", "return_queue", "data"])
 LogprobsItem = namedtuple("LogprobsItem", ["uid", "return_queue", "data"])
 
 
-class LangaugeModel:
+class LangaugeModelWorker:
     def __init__(self,
                  model_name: str,
                  path: str,
                  torch_device: str,
                  num_beams: int,
                  num_return_sequences: int,
+                 use_recaptcha: bool,
                  max_seq_len: int = 1024,
                  max_batch_size: int = 4,
+                 logprobs_past_cache_size_limit: int = 4,
                  batch_timeout: float = 1.0):
 
         self.logger = build_logger()
@@ -50,6 +52,7 @@ class LangaugeModel:
         self.batch_timeout = batch_timeout
         self.request_queue = asyncio.PriorityQueue()
         self.logprobs_past_cache = defaultdict(lambda: (0, None))
+        self.logprobs_past_cache_size_limit = logprobs_past_cache_size_limit
         asyncio.get_event_loop().create_task(self.batch_loop())
 
         # Load model
@@ -69,8 +72,8 @@ class LangaugeModel:
 
         # Authentication
         self.allowed_api_keys = []
-        self.recaptcha = load_recaptcha()
-        if USE_RECAPTCHA:
+        self.recaptcha = load_recaptcha(use_recaptcha)
+        if use_recaptcha:
             keys = json.load(open(KEYS_FILENAME, "r"))
             self.allowed_api_keys = keys["allowed_api_keys"]
 
@@ -123,8 +126,33 @@ class LangaugeModel:
                 results = self.generator.generate(**args)
                 for item, res in zip(generate_batch, results):
                     item.return_queue.put_nowait((item.uid, res))
-            elif logprobs_item:
-                pass
+
+            if logprobs_item:
+                logprobs_past_cache = self.logprobs_past_cache
+                arg = logprobs_item.data
+                inputs = arg["input"]
+                num_inputs = len(inputs)
+                cache_id = arg["cache_id"]
+                # do the actual generations
+                output = self.generator.forward(inputs, cache_id, pasts=logprobs_past_cache)
+                # add to or update the cache with newly computed values
+                logprobs_past_cache[cache_id] = (time.time(), output.past_key_values)
+                # delete oldest key in cache if cache too big
+                if len(logprobs_past_cache) > self.logprobs_past_cache_size_limit:
+                    oldest_key = min(list(logprobs_past_cache.keys()), key=lambda k: logprobs_past_cache[k][0])
+                    del logprobs_past_cache[oldest_key]
+
+                logits = output.logits[:num_inputs, -1]
+                logprobs = torch.log_softmax(logits, dim=-1)
+                top_logprobs, top_indices = logprobs.topk(arg["top_k"], dim=1)
+
+                # return at most top_k tokens, e.g. if network limited
+                return_dict = {
+                    'logprobs': top_logprobs.cpu().tolist(),
+                    'indices': top_indices.cpu().tolist()
+                }
+                # broadcast them back
+                logprobs_item.return_queue.put_nowait((logprobs_item.uid, return_dict))
 
     async def handle_request(self, request):
         args = await request.json()
@@ -234,7 +262,50 @@ class LangaugeModel:
         }
 
     async def logprobs(self, args, request):
-        raise NotImplementedError
+        logger = self.logger
+
+        # Normalize prompts
+        prompts = args["prompt"]
+        prompts = self.normalize_prompts(prompts)
+
+        # we're going to cache the keys for all the prompts in the request all together, so limit batch size
+        assert len(prompts) <= self.max_bs, "Please submit a smaller batch"
+        prompt_length = len(prompts[0])
+        for prompt in prompts:
+            assert len(prompt) == prompt_length, "All prompts must be the same length to work with current caching implementation"
+
+        # Generation arguments
+        args["min_tokens"] = int(args.get("min_tokens", 0))
+        args["max_tokens"] = int(args.get("max_tokens", self.max_seq_len))
+
+        args["top_k"] = int(args.get("top_k", 100000))
+
+        args['top_p'] = -1
+        args["temperature"] = -1
+        args["n"] = int(args.get("n", self.num_return_sequences))
+
+        logger.info(f"Received new logprobs request: "
+                    f"prompt length {[len(p) for p in prompts]}, "
+                    f"top_k: {args['top_k']}, "
+                    f"api_key: {args.get('api_key', None)}, "
+                    f"ip: {request.client.host}, "
+                    f"tstamp: {request.tstamp}")
+
+        cur_len = max(len(p) for p in prompts)
+        self.check_max_length_limit(cur_len, self.max_seq_len)
+
+        # Push the request to the batch queue
+        cache_id = args["cache_id"] if "cache_id" in args else str(uuid.uuid4())
+        ret_queue = asyncio.Queue()
+        data = {"input": prompts, "cache_id": cache_id, **args}
+        self.request_queue.put_nowait(PrioritizedItem(
+            50, LogprobsItem(0, ret_queue, data)))
+        results = await ret_queue.get()
+        return {
+            "cache_id": cache_id,
+            "logprobs": results[1]['logprobs'],
+            "indices": results[1]['indices']
+        }
 
     def check_max_length_limit(self, cur_len, max_len):
         if cur_len > max_len:
@@ -264,22 +335,26 @@ if __name__ == "__main__":
     parser.add_argument("--path", type=str, default="~/opt_weights/")
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--torch-device", type=str, default="cpu")
-    parser.add_argument("--use-recaptcha", action="store_true")
+    parser.add_argument("--no-recaptcha", action="store_true")
     parser.add_argument("--keys-file", type=str, default="keys.json")
+    parser.add_argument("--register-name", type=str, default="default")
     args = parser.parse_args()
 
     ray.init(address="auto", namespace="alpa_serve")
 
-    controller = run_controller(args.host, ALPA_SERVE_PORT, "/")
+    try:
+        controller = ray.get_actor(CONTROLLER_NAME)
+    except ValueError:
+        controller = run_controller(args.host, ALPA_SERVE_PORT, "/")
 
     group_id = 0
-    name = "default"
     controller.launch_mesh_group_manager.remote(group_id)
     t = controller.register_model.remote(
-        name, LangaugeModel,
-        (args.model, args.path, args.torch_device, NUM_BEAMS, NUM_RETURN_SEQ),
+        args.register_name, LangaugeModelWorker,
+        (args.model, args.path, args.torch_device, NUM_BEAMS, NUM_RETURN_SEQ,
+         False if args.no_recaptcha else USE_RECAPTCHA),
         override=True)
-    a = controller.create_replica.remote(name, group_id)
+    a = controller.create_replica.remote(args.register_name, group_id)
     ray.get(a)
 
     while True:

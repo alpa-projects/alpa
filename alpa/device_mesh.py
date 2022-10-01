@@ -18,6 +18,7 @@ manipulate meshes flexibly without allocating real resources during compilation
 time.
 """
 from abc import ABC, abstractmethod
+import asyncio
 from collections import defaultdict, namedtuple
 from collections.abc import Iterable
 import logging
@@ -1104,7 +1105,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             ary_refs: Union[List["RemoteArrayRef"], "RemoteArrayRef"],
             host_local_ids: Sequence[Sequence[Tuple[int, int]]] = None,
             batching=False,
-            asynchronize=False):
+            return_ray_ref=False):
         """
         Get values of remote buffers.
 
@@ -1163,7 +1164,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                         self.workers[host_id].get_buffers.remote(
                             ary_ref.uuid, local_id))
                 obj_refs.append(ary_obj_refs)
-            if asynchronize:
+            if return_ray_ref:
                 ret = obj_refs
             else:
                 ret = [ray.get(refs) for refs in obj_refs]
@@ -1459,7 +1460,7 @@ class DistributedArray:
     def size(self):
         return np.prod(self.shape)
 
-    def get_remote_buffers_async(self):
+    def prefetch(self):
         # TODO (yinmin): Move this function out of DistributedArray
         #  and batch different requests. Also need to add another
         #  function to `ray.wait` for the remote references.
@@ -1477,6 +1478,21 @@ class DistributedArray:
 
     def flush(self):
         self._npy_value = None
+
+    async def to_np_async(self):
+        if self._npy_value is None:
+            npy_value = np.empty(self.aval.shape, self.aval.dtype)
+            if not self._fetched_np_buffers:
+                if not self._fetched_np_buffers_ref:
+                    self.prefetch()
+                fetched_np_buffers = await asyncio.gather(
+                    *self._fetched_np_buffers_ref)
+            else:
+                fetched_np_buffers = self._fetched_np_buffers
+            for ct, i in enumerate(self.one_replica_buffer_ids):
+                npy_value[self.indices[i]] = fetched_np_buffers[ct]
+            self._npy_value = npy_value
+        return self._npy_value
 
     ##### distributed save/load #####
     def save(self, ckpt_dir: str, local_cache_dir: Union[str, None] = None):

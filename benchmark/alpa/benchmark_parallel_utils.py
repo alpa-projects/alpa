@@ -89,8 +89,8 @@ def get_pipeshard_parallel_method(benchmark_case: BenchmarkCase,
         num_manual_pipeline_stages = None
         add_manual_remat = None
         if use_remat:
-            remat_mode = ("fine_grained_remat" if use_fine_grained_remat else
-                          "coarse_grained_remat")
+            remat_mode = ("fine_grained_remat"
+                          if use_fine_grained_remat else "coarse_grained_remat")
         else:
             remat_mode = "none"
         model_num_layers = benchmark_case.model_config.num_layers
@@ -280,7 +280,7 @@ def benchmark_inference_executable(niter,
         for i in range(niter):
             print(f"Iteration {i} ...")
             loss = infer_step(params, *other_infer_step_inputs)
-            loss.get_remote_buffers_async()
+            loss.prefetch()
             losses.append(loss)
         for i, loss in enumerate(losses):
             _ = loss._value

@@ -30,7 +30,7 @@ class AddOneModel:
         obj = await request.json()
         x = np.array(obj["x"])
         y = self.add_one(x)
-        return np.array(y)
+        return await y.to_np_async()
 
 
 class TokenizerModel:

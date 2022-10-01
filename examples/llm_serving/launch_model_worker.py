@@ -162,7 +162,7 @@ class LangaugeModel:
 
         if "redirect_logprobs" in args:
             # A redirection to workaround some security settings.
-            return self.logprobs(args)
+            return await self.logprobs(args, request)
 
         # Normalize prompts
         prompts = args["prompt"]

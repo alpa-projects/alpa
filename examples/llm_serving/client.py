@@ -60,7 +60,8 @@ class Client(object):
         self,
         prompt: Union[str, Sequence[str], Sequence[int], Sequence[Sequence[int]]],
         top_k: int = 50,
-        cache_id: Optional = None) -> Dict:
+        cache_id: Optional = None,
+        model: Optional[str] = None) -> Dict:
         """Return the log probability of the next top-k tokens"""
         pload = {
             "model": model or self.default_model,

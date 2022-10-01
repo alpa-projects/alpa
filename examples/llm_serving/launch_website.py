@@ -11,8 +11,8 @@ from llm_serving.service.recaptcha import load_recaptcha
 
 app = FastAPI()
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="static")
+app.mount("/static", StaticFiles(directory="service/static"), name="static")
+templates = Jinja2Templates(directory="service/static")
 
 if NUM_BEAMS > 1: # beam search is on, disable sampling
     sampling_css = "display:none"

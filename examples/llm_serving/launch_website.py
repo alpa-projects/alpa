@@ -93,7 +93,10 @@ async def logprobs(request: Request):
 
 @app.get("/")
 async def homepage(request: Request):
-    log_scope(request)
+    for x in request.scope['headers']:
+        if x[0] == b"user-agent":
+            log_scope(request)
+            break
     return templates.TemplateResponse("index.html", {
         "request": request,
         "num_return_sequences": NUM_RETURN_SEQ,

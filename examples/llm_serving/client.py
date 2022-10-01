@@ -5,6 +5,8 @@ import requests
 
 DEFAULT_URL = "https://opt.alpa.ai"
 
+headers = {"User-Agent": "Alpa Client"}
+
 
 class Client(object):
 
@@ -18,7 +20,7 @@ class Client(object):
         self.api_key = api_key
         self.default_model = default_model
         self.completions_url = url + "/completions"
-        self.logprobs_url = url + "/completions"
+        self.logprobs_url = url + "/logprobs"
 
     def completions(
         self,
@@ -53,7 +55,7 @@ class Client(object):
             "echo": echo,
             "api_key": self.api_key
         }
-        result = requests.post(self.completions_url, json=pload)
+        result = requests.post(self.completions_url, json=pload, headers=headers)
         return self.result_or_error(result)
 
     def logprobs(
@@ -67,12 +69,11 @@ class Client(object):
             "model": model or self.default_model,
             "prompt": prompt,
             "top_k": top_k,
-            "redirect_logprobs": True,
             "api_key": self.api_key
         }
         if cache_id:
             pload["cache_id"] = cache_id
-        result = requests.post(self.logprobs_url, json=pload)
+        result = requests.post(self.logprobs_url, json=pload, headers=headers)
         return self.result_or_error(result)
 
     def result_or_error(self, result):

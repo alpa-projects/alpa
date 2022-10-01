@@ -7,7 +7,7 @@ import os
 import pickle
 import socket
 import time
-from typing import Callable, List, Dict, Optional, Tuple, Any
+from typing import Callable, List, Dict, Optional, Tuple, Any, Union
 
 from fastapi.middleware.cors import CORSMiddleware
 import ray
@@ -83,10 +83,17 @@ class DeviceMeshGroupManager:
 @ray.remote(num_cpus=0)
 class Controller:
 
-    def __init__(self, host: str, port: int, root_path: str):
+    def __init__(self,
+                 host: str,
+                 port: int,
+                 root_path: str,
+                 ssl_keyfile: Optional[str] = None,
+                 ssl_certfile: Optional[Union[str, os.PathLike]] = None):
         self.host = host
         self.port = port
         self.root_path = root_path
+        self.ssl_keyfile = ssl_keyfile
+        self.ssl_certfile = ssl_certfile
 
         # Dict[str -> ModelInfo]
         self.manager_lock = asyncio.Lock()
@@ -221,7 +228,6 @@ class Controller:
         app = CORSMiddleware(
             app,
             allow_origins=["*"],
-            allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
         )
@@ -233,6 +239,8 @@ class Controller:
             root_path=self.root_path,
             lifespan="off",
             access_log=False,
+            ssl_keyfile=self.ssl_keyfile,
+            ssl_certfile=self.ssl_certfile,
         )
         server = uvicorn.Server(config=config)
 
@@ -245,11 +253,17 @@ class Controller:
         await server.serve(sockets=[sock])
 
 
-def run_controller(host, port=None, root_path="/"):
+def run_controller(host,
+                   port=None,
+                   root_path="/",
+                   ssl_keyfile: Optional[str] = None,
+                   ssl_certfile: Optional[Union[str, os.PathLike]] = None):
     controller = Controller.options(name=CONTROLLER_NAME).remote(
         host=host,
         port=port or new_port(),
         root_path=root_path,
+        ssl_keyfile=ssl_keyfile,
+        ssl_certfile=ssl_certfile,
     )
     ray.get(controller.ready.remote())
     return controller

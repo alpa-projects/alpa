@@ -338,6 +338,8 @@ if __name__ == "__main__":
     parser.add_argument("--no-recaptcha", action="store_true")
     parser.add_argument("--keys-file", type=str, default="keys.json")
     parser.add_argument("--register-name", type=str, default="default")
+    parser.add_argument("--ssl-keyfile", type=str)
+    parser.add_argument("--ssl-certfile", type=str)
     args = parser.parse_args()
 
     ray.init(address="auto", namespace="alpa_serve")
@@ -345,7 +347,8 @@ if __name__ == "__main__":
     try:
         controller = ray.get_actor(CONTROLLER_NAME)
     except ValueError:
-        controller = run_controller(args.host, ALPA_SERVE_PORT, "/")
+        controller = run_controller(args.host, ALPA_SERVE_PORT, "/",
+                                    args.ssl_keyfile, args.ssl_certfile)
 
     group_id = 0
     controller.launch_mesh_group_manager.remote(group_id)

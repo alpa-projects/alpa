@@ -78,6 +78,7 @@
         $.map(unindexed_array, function(n, i){
             indexed_array[n['name']] = n['value'].replace("\r\n", "\n");
         });
+        indexed_array['model'] = "default"
         return indexed_array;
     }
 
@@ -145,14 +146,16 @@
         $("#loader_holder").css("visibility", "visible");
         $("#generate-form-button").prop("disabled", true);
         $("#error").text("");
-        var submitData = getFormData($("form"));
-        console.log(JSON.stringify(submitData));
+        var formData = getFormData($("form"));
+        var submitData = JSON.stringify(formData)
+        console.log("submitData:");
+        console.log(submitData);
         $.ajax({
-            url: "completions",
+            url: {{alpa_serve_url | safe}},
             type: "POST",
             processData: true,
             contentType: "application/json",
-            data: JSON.stringify(getFormData($("form"))),
+            data: submitData,
             complete: function () {
                 $("#loader_holder").css("visibility", "hidden");
                 $("#generate-form-button").prop("disabled", false);
@@ -162,8 +165,7 @@
                 console.log("Response:");
                 console.log(data);
                 for (let i = 0; i < data["choices"].length; ++i) {
-                  console.log(data["choices"][i]["text"]);
-                  $("#promptDisplay", "#result" + i + "-content").text(submitData["prompt"]);
+                  $("#promptDisplay", "#result" + i + "-content").text(formData["prompt"]);
                   $("#response", "#result" + i + "-content").text(data["choices"][i]["text"]);
                   $("#error", "#result" + i + "-content").text("");
                 }
@@ -173,8 +175,20 @@
                 console.log(xhr);
                 $("#promptDisplay").text("");
                 $("#response").text("");
-                $("#error").text(xhr.responseJSON.error.message + "\n\n" +
-                                 xhr.responseJSON.error.stacktrace.join())
+                if ("responseJSON" in xhr) {
+                  msg = "Error: " + xhr.responseJSON.message;
+                  if (msg.includes("No replica of model") ||
+                      msg.includes("is not registered")) {
+                    msg += "\nThe server is probably under maintenance. " +
+                           "Please come back later.";
+                  }
+                  $("#error").text(msg);
+                } else {
+                  $("#error").text(
+                      "Cannot connect to the server due to unknown error. " +
+                      "\nThe server is probably under maintenance. " +
+                      "Please come back later.");
+                }
             }
         });
       });

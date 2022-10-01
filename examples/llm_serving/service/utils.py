@@ -23,7 +23,6 @@ def build_logger():
     if not logging.getLogger().handlers:
         logging.basicConfig(level=logging.INFO)
     logging.getLogger().handlers[0].setFormatter(formatter)
-    logging.getLogger("werkzeug").setLevel("WARNING")
 
     # Redirect stdout and stderr to loggers
     stdout_logger = logging.getLogger("stdout")

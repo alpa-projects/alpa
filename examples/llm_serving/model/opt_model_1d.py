@@ -542,6 +542,10 @@ class TransformerInputPool:
         self.num_prev_tokens = {}
         self.next_cache_index = {}
 
+        # cuda kernels
+        self.custom_memcpy = cupyx.jit.rawkernel()(custom_memcpy)
+        self.custom_reshape_logits = cupyx.jit.rawkernel()(custom_reshape_logits)
+
     def enter_prompts(self, input_sequences: List[List[int]]):
         # reset cache, sentence_ids, etc.
         self.reset()
@@ -600,7 +604,7 @@ class TransformerInputPool:
             start = end
         src_indices = cupy.array(src_indices)
         dst_logits = cupy.zeros(dst_shape, dtype=logits.dtype)
-        custom_reshape_logits[num_blocks, 1024](dst_logits.ravel(), src_logits.ravel(), src_indices)
+        self.custom_reshape_logits[num_blocks, 1024](dst_logits.ravel(), src_logits.ravel(), src_indices)
         ret = cupy.asnumpy(dst_logits)
         return ret
 
@@ -659,9 +663,9 @@ class TransformerInputPool:
         src_kv = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in kv]
         for layer_idx, (src_k, src_v) in enumerate(src_kv):
             dst_k, dst_v = self.kv_caches_cupy[layer_idx]
-            custom_memcpy[sum_src_len, num_threads_per_block](dst_k.ravel(), dst_v.ravel(),
-                                                              src_k.ravel(), src_v.ravel(),
-                                                              dst_indices, self.hidden_dim)
+            self.custom_memcpy[sum_src_len, num_threads_per_block](dst_k.ravel(), dst_v.ravel(),
+                                                                   src_k.ravel(), src_v.ravel(),
+                                                                   dst_indices, self.hidden_dim)
         for i, sentence_id in enumerate(self.input_sequence_ids):
             start = self.next_cache_index[sentence_id]
             self.kv_cache_ids[start:start+len(input_sequences[i])] = sentence_id
@@ -674,7 +678,6 @@ class TransformerInputPool:
                                                   self.max_cache_per_seq + self.num_prev_tokens[sentence_id]
 
 
-@cupyx.jit.rawkernel()
 def custom_memcpy(dst_k, dst_v, src_k, src_v, dst_indices, hidden_dim):
     thread_idx = cupyx.jit.threadIdx.x
     src_idx = cupyx.jit.blockIdx.x
@@ -687,7 +690,6 @@ def custom_memcpy(dst_k, dst_v, src_k, src_v, dst_indices, hidden_dim):
             dst_v[dst_idx * hidden_dim + j] = src_v[src_idx * hidden_dim + j]
 
 
-@cupyx.jit.rawkernel()
 def custom_reshape_logits(dst, src, indices):
     thread_idx = cupyx.jit.threadIdx.x
     dst_idx = cupyx.jit.blockIdx.x

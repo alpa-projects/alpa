@@ -44,11 +44,11 @@ def build_logger():
         os.makedirs(LOGDIR, exist_ok=True)
         logfile_path = os.path.join(
             LOGDIR,
-            f"alpa.llm_serving.log.{datetime.datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}"
+            f"llm_serving.worker.{datetime.datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}.log"
         )
         handler = logging.handlers.RotatingFileHandler(logfile_path,
-                                                       maxBytes=1024 * 1024,
-                                                       backupCount=100000)
+                                                       maxBytes=4000000,
+                                                       backupCount=1000000)
         handler.setFormatter(formatter)
 
         for name, item in logging.root.manager.loggerDict.items():

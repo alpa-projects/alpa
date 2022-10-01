@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Union
 
 from fastapi import FastAPI, Request
@@ -56,6 +57,7 @@ async def redirect(request):
     del scope["endpoint"]
     del scope["route"]
     scope["tstamp"] = time.time()
+    logging.info(scope)
     request = pickle.dumps(HTTPRequestWrapper(scope, body))
     try:
         ret = await manager.handle_request.remote("default", request)

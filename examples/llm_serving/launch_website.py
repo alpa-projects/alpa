@@ -22,6 +22,19 @@ else:
 
 recaptcha = load_recaptcha(USE_RECAPTCHA)
 
+
+def log_scope(request):
+    scope = request.scope
+    del scope["app"]
+    del scope["fastapi_astack"]
+    del scope["router"]
+    del scope["endpoint"]
+    del scope["route"]
+    scope["tstamp"] = time.time()
+    logging.info(scope)
+    return scope
+
+
 ##### Redirect Begin #####
 import asyncio
 import pickle
@@ -50,14 +63,7 @@ async def redirect(request):
     global manager
 
     body = await request.body()
-    scope = request.scope
-    del scope["app"]
-    del scope["fastapi_astack"]
-    del scope["router"]
-    del scope["endpoint"]
-    del scope["route"]
-    scope["tstamp"] = time.time()
-    logging.info(scope)
+    scope = log_scope(request)
     request = pickle.dumps(HTTPRequestWrapper(scope, body))
     try:
         ret = await manager.handle_request.remote("default", request)
@@ -87,6 +93,7 @@ async def logprobs(request: Request):
 
 @app.get("/")
 async def homepage(request: Request):
+    log_scope(request)
     return templates.TemplateResponse("index.html", {
         "request": request,
         "num_return_sequences": NUM_RETURN_SEQ,

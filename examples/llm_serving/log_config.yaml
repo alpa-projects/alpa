@@ -10,12 +10,12 @@ handlers:
     level   : INFO
     stream  : ext://sys.stdout
   file:
-    class : logging.handlers.RotatingFileHandler
-    filename: llm_serving.website.log
+    class : logging.handlers.TimedRotatingFileHandler
+    filename: weblogs/llm_serving.website.log
+    when: "D"
+    utc: True
     formatter: simple
     level   : INFO
-    maxBytes: 4000000
-    backupCount: 1000000
 root:
   level: INFO
   handlers: [console, file]

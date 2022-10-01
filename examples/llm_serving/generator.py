@@ -11,7 +11,7 @@ from llm_serving.service.utils import build_logger
 
 
 class Generator:
-    """Alpa generator interface.
+    """The generator interface.
 
     This class wraps tokenizer and the langauge model.
     """
@@ -114,9 +114,9 @@ class Generator:
         """
         start_time = time.time()
         total_inference_time = 0
-        batch_request_uuid = next_serve_batch_uuid()
+        batch_id = next_serve_batch_uuid()
         ori_bs = len(inputs)
-        self.logger.info(f"Batch {batch_request_uuid} begin. batch size: {ori_bs}")
+        self.logger.info(f"Generate begin. batch id: {batch_id}, batch size: {ori_bs}")
 
         # Check arguments
         assert best_of == self.num_beams, "model must be instantiated and used with the same num_beams"
@@ -157,8 +157,8 @@ class Generator:
         }
 
         self.logger.info(
-            f"Generate begin. batch uuid: {batch_request_uuid}, "
-            f"batch_size: {batch_size}, original bs: {ori_bs}, "
+            f"Call generate. batch id: {batch_id}, "
+            f"padded bs: {batch_size}, original bs: {ori_bs}, "
             f"generator_args: {generator_args}.")
 
         inference_start_time = time.time()
@@ -168,8 +168,6 @@ class Generator:
 
         tflops, speed, token_32_latency = self.estimate_performance(
             output_ids, inference_time)
-
-        self.logger.info(f"Generate end. batch uuid: {batch_request_uuid}")
 
         # Decode results to strings
         ret = []
@@ -186,12 +184,13 @@ class Generator:
                 tmp_ret.append(result)
             ret.append(tmp_ret)
 
-        self.logger.info(f"Batch {batch_request_uuid} end. batch size: {ori_bs}, "
-                    f"e2e latency: {time.time() - start_time:.2f} s, "
-                    f"inference latency: {inference_time:.2f} s, "
-                    f"speed: {speed:.2f} token/s, "
-                    f"32 token latency: {token_32_latency:.2f} s, "
-                    f"tflops: {tflops:.2f} TFLOPS")
+        self.logger.info(
+            f"Generate end. batch id: {batch_id}. batch size: {ori_bs}, "
+            f"e2e latency: {time.time() - start_time:.2f} s, "
+            f"inference latency: {inference_time:.2f} s, "
+            f"speed: {speed:.2f} token/s, "
+            f"32 token latency: {token_32_latency:.2f} s, "
+            f"tflops: {tflops:.2f} TFLOPS")
         return ret
 
     def forward(

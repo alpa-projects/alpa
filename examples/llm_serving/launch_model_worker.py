@@ -1,9 +1,11 @@
 import asyncio
 import argparse
 from collections import defaultdict, namedtuple
+from dataclasses import dataclass, field
 import json
 import logging
 import time
+from typing import Any
 import uuid
 
 import alpa
@@ -15,6 +17,12 @@ from llm_serving.service.constants import (
     NUM_BEAMS, NUM_RETURN_SEQ, ALPA_SERVE_PORT, USE_RECAPTCHA, KEYS_FILENAME)
 from llm_serving.service.recaptcha import load_recaptcha
 from llm_serving.service.utils import build_logger
+
+
+@dataclass(order=True)
+class PrioritizedItem:
+    priority: int
+    item: Any=field(compare=False)
 
 
 GenerateItem = namedtuple("GenerateItem", ["uid", "return_queue", "data"])
@@ -68,33 +76,33 @@ class LangaugeModel:
 
     async def batch_loop(self):
         while True:
-            _, item = await self.request_queue.get()
+            pri_item = await self.request_queue.get()
 
             # Get the next batch
             generate_batch = []
             logprobs_item = None
             non_batch = []
-            if isinstance(item, GenerateItem):
+            if isinstance(pri_item.item, GenerateItem):
                 # Wait for batch opportunity
-                await asyncio.sleep(self.batch_timeout / 1e3)
-                generate_batch.append(item)
+                await asyncio.sleep(self.batch_timeout)
+                generate_batch.append(pri_item.item)
 
                 while (not self.request_queue.empty() and
                        len(generate_batch) < self.max_bs):
-                    item = self.request_queue.get_nowait()
-                    if isinstance(item, GenerateItem):
-                        generate_batch.append(item)
+                    pri_item = self.request_queue.get_nowait()
+                    if isinstance(pri_item.item, GenerateItem):
+                        generate_batch.append(pri_item.item)
                     else:
-                        non_batch.append(item)
+                        non_batch.append(pri_item)
                         break
 
                 # Put non-batch items back to request queue
-                for item in non_batch:
-                    self.request_queue.put_nowait(item)
-            elif isinstance(item, LogprobsItem):
-                logprobs_item = item
+                for x in non_batch:
+                    self.request_queue.put_nowait(x)
+            elif isinstance(pri_item.item, LogprobsItem):
+                logprobs_item = pri_item.item
             else:
-                raise RuntimeError(f"Invalid item: {item}")
+                raise RuntimeError(f"Invalid item: {pri_item.item}")
 
             # Process this batch
             if generate_batch:
@@ -123,9 +131,9 @@ class LangaugeModel:
         self.check_authorization(args, request)
 
         if "completions" in request.url.path:
-            return await self.completions(args)
+            return await self.completions(args, request)
         elif "logprobs" in request.url.path:
-            return await self.logprobs(args)
+            return await self.logprobs(args, request)
         else:
             raise ValueError("Invalid url: {request.url}")
 
@@ -149,7 +157,7 @@ class LangaugeModel:
             raise ValueError("The prompt must be nonempty.")
         return prompts
 
-    async def completions(self, args):
+    async def completions(self, args, request):
         logger = self.logger
 
         if "redirect_logprobs" in args:
@@ -187,7 +195,9 @@ class LangaugeModel:
                     f"max_len: {args.get('max_tokens', 0)}, "
                     f"temperature: {args['temperature']}, "
                     f"top_p: {args['top_p']}, "
-                    f"api_key: {args.get('api_key', None)}, ")
+                    f"api_key: {args.get('api_key', None)}, "
+                    f"ip: {request.client.host}, "
+                    f"tstamp: {request.tstamp}")
 
         cur_len = max(len(p) for p in prompts)
         self.check_max_length_limit(cur_len, self.max_seq_len)
@@ -197,8 +207,8 @@ class LangaugeModel:
         for i, prompt in enumerate(prompts):
             data = {"input": prompt, **args}
             priority = 0
-            self.request_queue.put_nowait(
-                (priority, GenerateItem(i, return_queue, data)))
+            self.request_queue.put_nowait(PrioritizedItem(
+                priority, GenerateItem(i, return_queue, data)))
 
         unordered_results = []
         for i in range(len(prompts)):
@@ -223,7 +233,7 @@ class LangaugeModel:
             ],
         }
 
-    async def logprobs(self, parameters):
+    async def logprobs(self, args, request):
         raise NotImplementedError
 
     def check_max_length_limit(self, cur_len, max_len):

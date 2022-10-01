@@ -7,6 +7,7 @@ import json
 import os
 import pickle
 import socket
+import time
 from typing import Callable, List, Dict, Optional, Tuple, Any
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -79,6 +80,7 @@ class DeviceMeshGroupManager:
     async def handle_request(self, name: str, request_wrapper: bytes):
         request_wrapper = pickle.loads(request_wrapper)
         request = build_starlette_request(request_wrapper)
+        request.tstamp = request_wrapper.scope["tstamp"]
         try:
             response = await self.replicas[name].handle_request(request)
             return response
@@ -142,6 +144,7 @@ class Controller:
 
     async def handle_asgi(self, scope, receive, send):
         assert scope["type"] == "http"
+        scope["tstamp"] = time.time()
 
         # Receive request
         http_body_bytes = await receive_http_body(scope, receive, send)

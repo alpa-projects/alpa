@@ -203,12 +203,11 @@ They will use two ports. The port of the website is defined in the command line 
 
 .. code:: shell
 
-  # Launch the website
-  uvicorn launch_website:app --host 0.0.0.0 --port 8001
-
-  # Launch the model worker (in a new terminal)
+  # Launch the model worker
   python3 launch_model_worker.py --model alpa/opt-175b
 
+  # Launch the website (in a new terminal)
+  uvicorn launch_website:app --host 0.0.0.0 --port 8001
 
 Then open ``http://[IP-ADDRESS]:8001`` in your browser to try out the model!
 

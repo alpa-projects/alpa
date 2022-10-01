@@ -28,9 +28,9 @@ class LangaugeModel:
                  torch_device: str,
                  num_beams: int,
                  num_return_sequences: int,
-                 batch_timeout: float = 1.0,
+                 max_seq_len: int = 1024,
                  max_batch_size: int = 4,
-                 max_seq_len: int = 1024):
+                 batch_timeout: float = 1.0):
 
         self.logger = build_logger()
         self.num_beams = num_beams
@@ -38,26 +38,13 @@ class LangaugeModel:
         self.max_seq_len = max_seq_len
 
         # Batch queues
-        self.request_queue = asyncio.PriorityQueue()
         self.max_bs = max_batch_size
         self.batch_timeout = batch_timeout
+        self.request_queue = asyncio.PriorityQueue()
         self.logprobs_past_cache = defaultdict(lambda: (0, None))
         asyncio.get_event_loop().create_task(self.batch_loop())
 
         # Load model
-        self.generator = None
-        asyncio.get_event_loop().create_task(self.load_model(
-            model_name, path, torch_device, num_beams, num_return_sequences))
-
-        # Authentication
-        self.allowed_api_keys = []
-        self.recaptcha = load_recaptcha()
-        if USE_RECAPTCHA:
-            keys = json.load(open(KEYS_FILENAME, "r"))
-            self.allowed_api_keys = keys["allowed_api_keys"]
-
-    async def load_model(self, model_name, path, torch_device,
-                         num_beams, num_return_sequences):
         if num_beams > 1: # beam search is on, disable sampling
             do_sample = False
         else:
@@ -71,6 +58,13 @@ class LangaugeModel:
                                    max_seq_len=self.max_seq_len,
                                    max_batch_size=self.max_bs,
                                    do_sample=do_sample)
+
+        # Authentication
+        self.allowed_api_keys = []
+        self.recaptcha = load_recaptcha()
+        if USE_RECAPTCHA:
+            keys = json.load(open(KEYS_FILENAME, "r"))
+            self.allowed_api_keys = keys["allowed_api_keys"]
 
     async def batch_loop(self):
         while True:
@@ -152,7 +146,7 @@ class LangaugeModel:
             assert isinstance(prompts[0], list)
             assert isinstance(prompts[0][0], int)
         if len(prompts[0]) <= 0:
-            raise Exception("The prompt must be nonempty.")
+            raise ValueError("The prompt must be nonempty.")
         return prompts
 
     async def completions(self, args):
@@ -161,8 +155,6 @@ class LangaugeModel:
         if "redirect_logprobs" in args:
             # A redirection to workaround some security settings.
             return self.logprobs(args)
-
-        self.check_model_loading()
 
         # Normalize prompts
         prompts = args["prompt"]
@@ -242,14 +234,6 @@ class LangaugeModel:
                              f"Since this is a public service, we have limited the max length supported. "
                              f"If you want to try longer sequence length, "
                              f"please consider hosting your own service using Alpa.")
-
-    def check_model_loading(self):
-        if self.generator is None:
-            self.logger.error(f"Rejected a request during model loading.")
-            raise RuntimeError(
-                "The server just restarted after regular maintenance. "
-                "It is loading the model now, which can take several minutes. "
-                "Please come back later. ")
 
     def check_authorization(self, args, request):
         if args.get("api_key", None) in self.allowed_api_keys:

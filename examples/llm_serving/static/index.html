@@ -176,11 +176,13 @@
                 $("#promptDisplay").text("");
                 $("#response").text("");
                 if ("responseJSON" in xhr) {
-                  $("#error").text(xhr.responseJSON.error.message);
-                } else if ("responseText" in xhr) {
-                  $("#error").text(xhr.responseText +
-                      "\nThe server is probably under maintenance. " +
-                      "Please come back later.");
+                  msg = "Error: " + xhr.responseJSON.message;
+                  if (msg.includes("No replica of model") ||
+                      msg.includes("is not registered")) {
+                    msg += "\nThe server is probably under maintenance. " +
+                           "Please come back later.";
+                  }
+                  $("#error").text(msg);
                 } else {
                   $("#error").text(
                       "Cannot connect to the server due to unknown error. " +

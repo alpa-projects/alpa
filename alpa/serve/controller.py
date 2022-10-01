@@ -23,6 +23,7 @@ from alpa.serve.http_util import (
     ASGIHandler,
     build_starlette_request,
     new_port,
+    RelayException,
     make_error_response
 )
 
@@ -82,7 +83,7 @@ class DeviceMeshGroupManager:
             response = await self.replicas[name].handle_request(request)
             return response
         except Exception as e:
-            return make_error_response(e)
+            return RelayException(e)
 
 
 @ray.remote(num_cpus=0)
@@ -152,20 +153,26 @@ class Controller:
         try:
             obj = await request.json()
 
-            assert "model" in obj, "Model name is not specified in the request"
+            assert "model" in obj, "Model name is not specified in the request."
             name = obj["model"]
 
             assert name in self.model_info, (
-               f"Model {name} is not registered")
+               f"Model '{name}' is not registered.")
             assert self.model_info[name].managers, (
-               f"No replica of model {name} is created")
+               f"No replica of model '{name}' is created.")
             manager = self.model_info[name].managers[0]
 
             response = await manager.handle_request.remote(name, request_wrapper)
+            if isinstance(response, Exception):
+                raise response
+
+            status_code = 200
         except Exception as e:
             response = make_error_response(e)
+            status_code = 400
 
-        await Response(response).send(scope, receive, send)
+        await Response(response, status_code=status_code).send(
+            scope, receive, send)
 
     def get_info(self):
         return {

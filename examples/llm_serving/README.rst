@@ -198,20 +198,21 @@ The code of this tutorial is under `examples/llm_serving <https://github.com/alp
 Launch a Web Server to Serve the OPT Models
 ===========================================
 
-Launch the web server:
+We need to run two scripts: one for web server and another for the model serving worker.
+They will use two ports. The port of the website is defined in the command line and the port of the worker is defined in ``service/constants.py``
 
 .. code:: shell
 
   # Launch the website
-  uvicorn launch_website:app --host 0.0.0.0
+  uvicorn launch_website:app --host 0.0.0.0 --port 8001
 
-  # Launch the model worker (open a new terminal)
+  # Launch the model worker (in a new terminal)
   python3 launch_model_worker.py --model alpa/opt-175b
 
 
-Then open ``http://[IP-ADDRESS]`` in your browser to try out the model!
+Then open ``http://[IP-ADDRESS]:8001`` in your browser to try out the model!
 
-There is also a client library which can be used to query the web server
+There is also a client library which can be used to query the model worker
 via a python script. Please check ``test_completions.py`` for the usage.
 
 Improving Generation Speed

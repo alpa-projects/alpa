@@ -336,7 +336,6 @@ if __name__ == "__main__":
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--torch-device", type=str, default="cpu")
     parser.add_argument("--no-recaptcha", action="store_true")
-    parser.add_argument("--keys-file", type=str, default="keys.json")
     parser.add_argument("--register-name", type=str, default="default")
     parser.add_argument("--ssl-keyfile", type=str)
     parser.add_argument("--ssl-certfile", type=str)

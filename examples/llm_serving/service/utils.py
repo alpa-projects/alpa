@@ -42,13 +42,9 @@ def build_logger():
     # Add a file handler for all loggers
     if handler is None:
         os.makedirs(LOGDIR, exist_ok=True)
-        logfile_path = os.path.join(
-            LOGDIR,
-            f"alpa.llm_serving.log.{datetime.datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}"
-        )
-        handler = logging.handlers.RotatingFileHandler(logfile_path,
-                                                       maxBytes=1024 * 1024,
-                                                       backupCount=100000)
+        filename = os.path.join(LOGDIR, f"llm_serving.worker.log")
+        handler = logging.handlers.TimedRotatingFileHandler(
+            filename, when='D', utc=True)
         handler.setFormatter(formatter)
 
         for name, item in logging.root.manager.loggerDict.items():

@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Union
 
 from fastapi import FastAPI, Request
@@ -19,12 +20,80 @@ if NUM_BEAMS > 1: # beam search is on, disable sampling
 else:
     sampling_css = ""
 
-
 recaptcha = load_recaptcha(USE_RECAPTCHA)
 
 
+def log_scope(request):
+    scope = request.scope
+    del scope["app"]
+    del scope["fastapi_astack"]
+    del scope["router"]
+    del scope["endpoint"]
+    del scope["route"]
+    scope["tstamp"] = time.time()
+    logging.info(scope)
+    return scope
+
+
+##### Redirect Begin #####
+import asyncio
+import pickle
+import time
+
+from alpa.serve.http_util import HTTPRequestWrapper, make_error_response
+import ray
+from starlette.responses import JSONResponse
+ray.init(address="auto", namespace="alpa_serve")
+
+manager = None
+
+async def connect_manager():
+    global manager
+    while True:
+        if manager is None:
+            try:
+                manager = ray.get_actor("mesh_group_manager_0")
+            except ValueError:
+                manager = None
+        await asyncio.sleep(1)
+
+asyncio.get_event_loop().create_task(connect_manager())
+
+async def redirect(request):
+    global manager
+
+    body = await request.body()
+    scope = log_scope(request)
+    request = pickle.dumps(HTTPRequestWrapper(scope, body))
+    try:
+        ret = await manager.handle_request.remote("default", request)
+    except ray.exceptions.RayActorError:
+        manager = None
+    if isinstance(ret, Exception):
+        ret = make_error_response(ret)
+        ret = JSONResponse(ret, status_code=400)
+    return ret
+
+
+@app.post("/completions")
+async def completions(request: Request):
+    return await redirect(request)
+
+
+@app.post("/logprobs")
+async def logprobs(request: Request):
+    return await redirect(request)
+
+
+@app.post("/call")
+async def logprobs(request: Request):
+    return await redirect(request)
+
+##### Redirect End #####
+
 @app.get("/")
 async def homepage(request: Request):
+    log_scope(request)
     return templates.TemplateResponse("index.html", {
         "request": request,
         "num_return_sequences": NUM_RETURN_SEQ,

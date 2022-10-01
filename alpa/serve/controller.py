@@ -3,7 +3,6 @@
 import asyncio
 import dataclasses
 import logging
-import json
 import os
 import pickle
 import socket
@@ -16,17 +15,10 @@ from ray.actor import ActorHandle
 import uvicorn
 
 from alpa.api import init
-from alpa.serve.http_util import (
-    HTTPRequestWrapper,
-    receive_http_body,
-    Response,
-    set_socket_reuse_port,
-    ASGIHandler,
-    build_starlette_request,
-    new_port,
-    RelayException,
-    make_error_response
-)
+from alpa.serve.http_util import (HTTPRequestWrapper, receive_http_body,
+                                  Response, set_socket_reuse_port, ASGIHandler,
+                                  build_starlette_request, new_port,
+                                  RelayException, make_error_response)
 
 logger = logging.getLogger(__file__)
 
@@ -84,7 +76,7 @@ class DeviceMeshGroupManager:
         try:
             response = await self.replicas[name].handle_request(request)
             return response
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             return RelayException(e)
 
 
@@ -106,11 +98,12 @@ class Controller:
         self.http_server_task = asyncio.get_event_loop().create_task(
             self.run_http_server())
 
-    def launch_mesh_group_manager(self,
-                                  group_id: int,
-                                  virtual_mesh_shape: Optional[Tuple[int]] = None):
+    def launch_mesh_group_manager(
+            self,
+            group_id: int,
+            virtual_mesh_shape: Optional[Tuple[int]] = None):
         assert group_id not in self.mesh_group_managers, (
-           f"Mesh group {group_id} is already launched")
+            f"Mesh group {group_id} is already launched")
         self.mesh_group_managers[group_id] = (
             DeviceMeshGroupManager.remote(virtual_mesh_shape))
 
@@ -128,8 +121,10 @@ class Controller:
                 else:
                     raise ValueError(f"Model {name} is already registered")
 
-            self.model_info[name] = ModelInfo(
-                [], CreateInfo(model_def, init_args, init_kwargs))
+            self.model_info[name] = ModelInfo([],
+                                              CreateInfo(
+                                                  model_def, init_args,
+                                                  init_kwargs))
 
     async def create_replica(self, name: str, mesh_group_id: int):
         async with self.manager_lock:
@@ -138,7 +133,8 @@ class Controller:
             manager = self.mesh_group_managers[mesh_group_id]
             assert manager not in model_info.managers
 
-            logger.info(f"Create replica of model={name} on mesh={mesh_group_id}")
+            logger.info(
+                f"Create replica of model={name} on mesh={mesh_group_id}")
             await manager.create_replica.remote(name, model_info.create_info)
             model_info.managers.append(manager)
 
@@ -160,22 +156,23 @@ class Controller:
             name = obj["model"]
 
             assert name in self.model_info, (
-               f"Model '{name}' is not registered.")
+                f"Model '{name}' is not registered.")
             assert self.model_info[name].managers, (
-               f"No replica of model '{name}' is created.")
+                f"No replica of model '{name}' is created.")
             manager = self.model_info[name].managers[0]
 
-            response = await manager.handle_request.remote(name, request_wrapper)
+            response = await manager.handle_request.remote(
+                name, request_wrapper)
             if isinstance(response, Exception):
                 raise response
 
             status_code = 200
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             response = make_error_response(e)
             status_code = 400
 
-        await Response(response, status_code=status_code).send(
-            scope, receive, send)
+        await Response(response,
+                       status_code=status_code).send(scope, receive, send)
 
     def get_info(self):
         return {

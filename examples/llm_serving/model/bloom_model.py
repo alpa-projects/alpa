@@ -31,7 +31,7 @@ import numpy as np
 from tqdm import tqdm
 
 from llm_serving.model.opt_model import (init_cache_aval, init_mask_aval,
-    init_cache_np, init_multi_executable_cache_dis_array)
+    init_cache_np, init_cache_dis_array, init_multi_executable_cache_dis_array)
 
 
 @dataclass(frozen=True)
@@ -103,7 +103,8 @@ def build_alibi_tensor_flax(attention_mask, n_head, dtype):
     # shape of attention_mask: [B, 1, 1, S_max]
     batch_size = attention_mask.shape[0]
     key_length = attention_mask.shape[-1]
-    attention_mask = attention_mask.reshape((batch_size, key_length))
+    # attention_mask = attention_mask.reshape((batch_size, key_length))
+    # attention_mask = jnp.ones((batch_size, key_length))
     num_heads = n_head
     query_length = 1
 
@@ -114,6 +115,7 @@ def build_alibi_tensor_flax(attention_mask, n_head, dtype):
     arange_broadcast = jnp.broadcast_to(arange_tensor, (batch_size, num_heads, query_length, key_length))
 
     alibi = slopes_broadcast * arange_broadcast
+
     return alibi
 
 
@@ -125,6 +127,7 @@ class FlaxBloomAttention(nn.Module):
         self.hidden_size = self.config.hidden_size
         self.num_heads = self.config.n_head
         self.head_dim = self.hidden_size // self.num_heads
+        # self.attention_softmax_in_fp32 = self.dtype is not jnp.float32
 
         if self.head_dim * self.num_heads != self.hidden_size:
             raise ValueError(
@@ -219,6 +222,7 @@ class FlaxBloomAttention(nn.Module):
         )
 
         attention_bias = attention_bias + alibi
+        # print(attention_bias)
 
         attn_weights = dot_product_attention_weights(
             query,
@@ -231,11 +235,16 @@ class FlaxBloomAttention(nn.Module):
             precision=None,
         )
 
+        # # Cast back in the original dtype if the native dtype is not fp32
+        # if self.attention_softmax_in_fp32:
+        #     attn_weights = attn_weights.astype(self.dtype)
+
         attn_output = jnp.einsum("...hqk,...khd->...qhd", attn_weights, value)
         attn_output = attn_output.reshape(hidden_states.shape[:2] + (self.hidden_size,))
         attn_output = self.dense(attn_output)
         attn_output = self.resid_dropout(attn_output, deterministic=deterministic)
         attn_output = attn_output + residual
+        # print(attn_output)
 
         outputs = (attn_output, attention_cache,
                    attn_weights) if output_attentions else (attn_output,
@@ -253,7 +262,7 @@ class BloomGELU(nn.Module):
 
 class FlaxBloomMLP(nn.Module):
     config: BloomConfig
-    dtype: jnp.dtype = jnp.float16
+    dtype: jnp.dtype = jnp.float32
 
     def setup(self):
         hidden_size = self.config.hidden_size
@@ -274,8 +283,8 @@ class FlaxBloomMLP(nn.Module):
 
         intermediate_output = self.dense_4h_to_h(hidden_states)
 
-        intermediate_output = intermediate_output + residual
         hidden_states = self.hidden_dropout(intermediate_output, deterministic=deterministic)
+        hidden_states += residual
 
         return hidden_states
 
@@ -306,7 +315,9 @@ class FlaxBloomBlock(nn.Module):
         init_cache: bool = False,
         output_attentions: bool = False,
     ):
+        # print(hidden_states)
         layernorm_output = self.input_layernorm(hidden_states)
+        # print(layernorm_output)
         # layer norm before saving residual if config calls for it
         if self.apply_residual_connection_post_layernorm:
             residual = layernorm_output
@@ -396,6 +407,7 @@ class FlaxBloomBlockCollection(nn.Module):
                 layer_number=layer_number,
             )
             hidden_states = layer_outputs[0]
+            # print(hidden_states)
             if attention_cache is not None:
                 new_attention_cache += (layer_outputs[1],)
 
@@ -452,14 +464,17 @@ class FlaxBloomModule(nn.Module):
         output_hidden_states: bool = False,
         return_dict: bool = True,
     ):
-        inputs_embeds = self.word_embeddings(input_ids.astype("i4"))
+        inputs_embeds = self.word_embeddings(input_ids)
         # do post-embedding layernorm
         hidden_states = self.word_embeddings_layernorm(inputs_embeds)
 
         batch_size, curr_seq_len, _ = hidden_states.shape
 
         # build alibi depending on `attention_mask`
-        alibi = build_alibi_tensor_flax(attention_mask, self.config.n_head, hidden_states.dtype)
+        # alibi = build_alibi_tensor_flax(attention_mask, self.config.n_head, hidden_states.dtype)
+        # print(attention_mask.shape)
+        alibi = build_alibi_tensor_flax(jnp.ones((batch_size, attention_mask.shape[-1])), self.config.n_head, jnp.float32)
+        # print(alibi)
 
         outputs = self.h(
             hidden_states,
@@ -474,6 +489,7 @@ class FlaxBloomModule(nn.Module):
         )
 
         hidden_states = outputs[0]
+        # print(hidden_states)
         hidden_states = self.ln_f(hidden_states)
 
         if output_hidden_states:
@@ -497,7 +513,7 @@ class FlaxBloomForCausalLMModule(nn.Module):
         self.lm_head = nn.Dense(
             self.config.vocab_size,
             use_bias=False,
-            dtype=self.dtype,
+            dtype=jnp.float32,
             kernel_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
         )
 
@@ -524,12 +540,14 @@ class FlaxBloomForCausalLMModule(nn.Module):
         )
 
         hidden_states = outputs[0]
+        # print(hidden_states)
 
         if self.config.tie_word_embeddings:
             shared_kernel = self.transformer.variables["params"]["word_embeddings"]["embedding"].T
             lm_logits = self.lm_head.apply({"params": {"kernel": shared_kernel}}, hidden_states)
         else:
             lm_logits = self.lm_head(hidden_states)
+        # print(lm_logits)
 
         if not return_dict:
             return (lm_logits,) + outputs[1:]
@@ -565,6 +583,11 @@ def get_config(name, **kwargs):
     elif name == "bloom-176b":
         config = BloomConfig(
             hidden_size=14336, n_head=112, num_hidden_layers=70,
+            pretraining_tp=4, use_cache=True
+        )
+    elif name == "bloom-debug":
+        config = BloomConfig(
+            hidden_size=1024, n_head=16, num_hidden_layers=8,
             pretraining_tp=4, use_cache=True
         )
     else:
@@ -666,7 +689,7 @@ def get_jax_executable(config: BloomConfig,
     """Get a single-gpu executable."""
     model, params = init_model_aval(config)
 
-    @jax.jit
+    # @jax.jit
     def inference_step(params, batch):
         output = model.apply(params,
                              batch["input_ids"],

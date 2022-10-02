@@ -675,7 +675,7 @@ def get_jax_executable(config: BloomConfig,
     """Get a single-gpu executable."""
     model, params = init_model_aval(config)
 
-    # @jax.jit
+    @jax.jit
     def inference_step(params, batch):
         output = model.apply(params,
                              batch["input_ids"],

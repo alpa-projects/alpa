@@ -72,7 +72,6 @@ class DeviceMeshGroupManager:
     async def handle_request(self, name: str, request_wrapper: bytes):
         request_wrapper = pickle.loads(request_wrapper)
         request = build_starlette_request(request_wrapper)
-        request.tstamp = request_wrapper.scope["tstamp"]
         try:
             response = await self.replicas[name].handle_request(request)
             return response

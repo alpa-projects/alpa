@@ -188,6 +188,10 @@ class LangaugeModelWorker:
     async def completions(self, args, request):
         logger = self.logger
 
+        if "redirect_logprobs" in args:
+            # A redirection to workaround some security settings.
+            return await self.logprobs(args, request)
+
         # Normalize prompts
         prompts = args["prompt"]
         prompts = self.normalize_prompts(prompts)
@@ -220,8 +224,8 @@ class LangaugeModelWorker:
                     f"temperature: {args['temperature']}, "
                     f"top_p: {args['top_p']}, "
                     f"api_key: {args.get('api_key', None)}, "
-                    f"ip: {request.client.host}, "
-                    f"tstamp: {request.tstamp}")
+                    f"ip: {self.get_remote_ip(request)}, "
+                    f"tstamp: {request.scope['tstamp']}")
 
         cur_len = max(len(p) for p in prompts)
         self.check_max_length_limit(cur_len, self.max_seq_len)
@@ -284,8 +288,8 @@ class LangaugeModelWorker:
                     f"prompt length {[len(p) for p in prompts]}, "
                     f"top_k: {args['top_k']}, "
                     f"api_key: {args.get('api_key', None)}, "
-                    f"ip: {request.client.host}, "
-                    f"tstamp: {request.tstamp}")
+                    f"ip: {self.get_remote_ip(request)}, "
+                    f"tstamp: {request.scope['tstamp']}")
 
         cur_len = max(len(p) for p in prompts)
         self.check_max_length_limit(cur_len, self.max_seq_len)
@@ -323,6 +327,13 @@ class LangaugeModelWorker:
             raise ValueError("Invalid captcha. If you are using the website, please click the "
                              "\"I'm not a robot\" button. If you are using client APIs, please "
                              "contact alpa developers to get an API key.")
+
+    def get_remote_ip(self, request):
+        for x in request.scope['headers']:
+            if x[0] == b"x-forwarded-for":
+                v = x[1].decode()
+                return v[:v.index(':')]
+        return request.client.host
 
 
 if __name__ == "__main__":

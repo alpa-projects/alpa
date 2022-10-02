@@ -14,7 +14,11 @@ __copyright__ = "(c) 2015 Mardix"
 import json
 
 #from flask import request
-from jinja2 import Markup
+try:
+    from jinja2 import Markup
+except ImportError:
+    from jinja2.utils import markupsafe
+    Markup = markupsafe.Markup
 import requests
 
 from llm_serving.service.constants import USE_RECAPTCHA, KEYS_FILENAME

@@ -94,7 +94,7 @@ async def logprobs(request: Request):
 @app.get("/")
 async def homepage(request: Request):
     for x in request.scope['headers']:
-        if x[0] == b"user-agent":
+        if x[0] == b"user-agent" and b"UptimeRobot" not in x[1]:
             log_scope(request)
             break
     return templates.TemplateResponse("index.html", {

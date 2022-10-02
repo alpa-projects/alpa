@@ -69,7 +69,7 @@ Requirements
 
   .. code:: shell
 
-    pip3 install transformers fastapi uvicorn omegaconf
+    pip3 install transformers fastapi uvicorn omegaconf jinja2
 
     # Install torch corresponding to your CUDA version, e.g., for CUDA 11.3:
     pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu113

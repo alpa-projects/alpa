@@ -3,6 +3,7 @@ import math
 import queue
 import time
 
+import torch
 import warnings
 from dataclasses import dataclass
 from typing import Callable, Optional, Tuple, List, Union
@@ -694,7 +695,7 @@ class Prompt:
     def finish(self, finish_token_id):
         self.finish_time = time.time()
         self.status = PromptStatus.FINISHED
-        self.generated_ids += finish_token_id
+        self.generated_ids.append(finish_token_id)
         self.last_generated_id = finish_token_id
 
     def init_cache(self, cache_index):
@@ -720,7 +721,7 @@ class Prompt:
         return len(self.generated_ids)
 
     @property
-    def num_prov_tokens(self):
+    def num_prev_tokens(self):
         if self.status == PromptStatus.PROMPT:
             return 0
         else:
@@ -728,8 +729,8 @@ class Prompt:
 
     @property
     def cache_end_index(self):
-        if not self.cache_start_index:
-            raise RuntimeError("Unprocessed prompt.")
+        if self.cache_start_index == None:
+            raise RuntimeError("The prompt has not been assigned a cache slot.")
         return self.cache_start_index + self.generation_length + self.prompt_length
 
     @property
@@ -750,41 +751,46 @@ class Cache:
         self.kv_cache_ids = np.zeros((self.cache_size, ), dtype=np.int32)
         self.kv_caches_cupy = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in self.kv_caches]
 
-        self.vacant_indices = list(range(0, self.cache_size, self.max_cache_per_seq))
+        # Stores the starting indices of all vacant cache slot: [start_index, start_index + self.max_cache_per_seq]
+        self.vacant_indices = list(range(0, (self.cache_size // self.max_cache_per_seq) * self.max_cache_per_seq,
+                                         self.max_cache_per_seq))
         heapq.heapify(self.vacant_indices)
 
-        self.continuous_vacancy_start = 0
+        # Track the index of the first
+        self.continuity_tracker = 0
+        self.hidden_dim = self.model_config.hidden_size
 
-    def release_slot(self, slot):
+    def release_slot(self, slot: int):
+        """Release a cache slot given its starting index."""
         assert slot not in self.vacant_indices
         heapq.heappush(self.vacant_indices, slot)
         # reset the cache indices of this slot as there
         self.kv_cache_ids[slot:slot + self.max_cache_per_seq] = 0
-        if self.continuous_vacancy_start - slot == self.max_cache_per_seq:
+        if self.continuity_tracker - slot == self.max_cache_per_seq:
             # meaning they are close
             new_start = slot - self.max_cache_per_seq
             while new_start in self.vacant_indices:
                 new_start = new_start - self.max_cache_per_seq
-            self.continuous_vacancy_start = new_start + self.max_cache_per_seq
+            self.continuity_tracker = new_start + self.max_cache_per_seq
 
     def take_slot(self):
         # find the next available slot
         if len(self.vacant_indices) == 0:
             raise RuntimeError("There is not vacancy in cache.")
         slot = heapq.heappop(self.vacant_indices)
-        if slot == self.continuous_vacancy_start:
-            self.continuous_vacancy_start = slot + self.max_cache_per_seq
+        if slot == self.continuity_tracker:
+            self.continuity_tracker = slot + self.max_cache_per_seq
         return slot
 
     def is_continuous(self):
         heap_top = self.vacant_indices[0]
-        return heap_top == self.continuous_vacancy_start
+        return heap_top == self.continuity_tracker
 
     def continuize(self):
-        # find all vacancies that are before continuous_vacancy_start
-        vacancies_to_fill = OrderedSet(v for v in self.vacant_indices if v < self.continuous_vacancy_start)
-        start = self.continuous_vacancy_start - len(vacancies_to_fill) * self.max_cache_per_seq
-        proposals = OrderedSet(range(start, self.continuous_vacancy_start, self.max_cache_per_seq))
+        # find all vacancies that are before continuity_tracker
+        vacancies_to_fill = OrderedSet(v for v in self.vacant_indices if v < self.continuity_tracker)
+        start = self.continuity_tracker - len(vacancies_to_fill) * self.max_cache_per_seq
+        proposals = OrderedSet(range(start, self.continuity_tracker, self.max_cache_per_seq))
         real_vacancies = OrderedSet(v for v in vacancies_to_fill if v not in proposals)
         fake_vacancies = OrderedSet(v for v in vacancies_to_fill if v in proposals)
         real_proposals = OrderedSet(v for v in proposals if v not in fake_vacancies)
@@ -806,8 +812,9 @@ class Cache:
             dst_k, dst_v = self.kv_caches_cupy[layer_idx]
             custom_memcpy_v3[len(src_indices), num_threads_per_block](dst_k.ravel(), dst_v.ravel(),
                                                                       src_k.ravel(), src_v.ravel(),
-                                                                      dst_indices_cupy. src_indices_cupy,
+                                                                      dst_indices_cupy, src_indices_cupy,
                                                                       self.hidden_dim, breakpoint)
+        # update cache indices
         self.kv_cache_ids[dst_indices] = src_sentence_ids
         self.kv_cache_ids[src_indices[breakpoint:]] = 0
 
@@ -833,9 +840,9 @@ class IterationLevelInputPool:
         self.cache = Cache(self.cache_size, self.max_cache_per_seq, self.model_config)
 
         # input pool states
-        self.unfinished_queue = queue.Queue()
-        self.wip_queue = set()
-        self.finished_queue = set()
+        self.todo = queue.Queue()
+        self.wip = OrderedSet()
+        self.done = OrderedSet()
 
         # current batch state
         self._current_batch = None
@@ -844,21 +851,20 @@ class IterationLevelInputPool:
         # model config
         self.pad = self.model_config.pad if "pad" in dir(self.model_config) else 1
         self.eos = self.model_config.eos_token_id if "eos_token_id" in dir(self.model_config) else 2
-        self.hidden_dim = self.model_config.hidden_size
 
     def is_finished(self):
-        return self.unfinished_queue.empty() and len(self.wip_queue) == 0
+        return self.todo.empty() and len(self.wip) == 0
 
     def enter_prompts(self, input_sequences: List[List[int]]):
         sentence_ids = self.next_sentence_id(len(input_sequences))
         for i, seq in enumerate(input_sequences):
             p = Prompt(seq, sentence_ids[i])
-            self.unfinished_queue.put(p)
+            self.todo.put(p)
 
     def next(self):
         decoding_input = []
         # figure out WIP prompts and put their next token in a list
-        for p in self.wip_queue:
+        for p in self.wip:
             assert p.status == PromptStatus.DECODING, \
                 "WIP queue must have all prompts in decoding status."
             decoding_input.append(p)
@@ -866,21 +872,23 @@ class IterationLevelInputPool:
         # pop out new prompts, concat them into a list
         prompt_input = []
         for i in range(self.num_vacant_sequence_slot):
-            if self.unfinished_queue.empty():
+            if self.todo.empty():
                 break
-            p = self.unfinished_queue.get()
+            p = self.todo.get()
             assert p.status == PromptStatus.PROMPT, \
                 "unfinished queue must have all prompts in PROMPT status. "
             prompt_input.append(p)
 
         # make input: prompts must go first
-        input = sum([p.input_ids for p in prompt_input] + [p.last_generated_id for p in decoding_input], [])
+        input = sum([p.input_ids for p in prompt_input], []) + [p.last_generated_id for p in decoding_input]
         input = np.array(input + [self.pad] * (self.batch_size - len(input)), dtype=np.int32)
 
         # make input index
         input_index = []
         for p in prompt_input:
             input_index.extend([p.sentence_id] * p.prompt_length)
+        for p in decoding_input:
+            input_index.append(p.sentence_id)
         input_index = np.array(input_index + [0] * (self.batch_size - len(input_index)), dtype=np.int32)
 
         # make position ids
@@ -891,14 +899,25 @@ class IterationLevelInputPool:
         for p in decoding_input:
             start_idx = 1 + self.pad + p.num_prev_tokens
             position_ids.extend(list(range(start_idx, start_idx + 1)))
-        position_ids = np.array(position_ids, dtype=np.int32)
+        position_ids = np.array(position_ids +  [0] * (self.batch_size - len(position_ids)), dtype=np.int32)
+
+        # start prompts
+        for p in prompt_input:
+            p.start()
 
         self._current_batch = prompt_input + decoding_input
-        # start prompts
-        for p in self._current_batch:
-            p.start()
+
+        logit_positions = []
+        i = -1
+        for p in prompt_input:
+            i = i + p.prompt_length
+            logit_positions.append(i)
+        for p in decoding_input:
+            i += 1
+            logit_positions.append(i)
+
         # return inputs
-        return input, input_index, position_ids
+        return input, input_index, position_ids, logit_positions
 
     def update_cache(self, kv, generated_ids):
         if self._current_batch is None:
@@ -909,7 +928,7 @@ class IterationLevelInputPool:
         dst_indices = []
         src_sentence_ids = []
 
-        # check EOS, move finished sentences from wip_queue to finished queue
+        # check EOS, move finished sentences from wip to finished queue
         read_idx = 0
         for prompt_idx, p in enumerate(self._current_batch):
             generated_id = generated_ids[prompt_idx]
@@ -917,13 +936,13 @@ class IterationLevelInputPool:
             # check finish criteria: (1) hit EOS (2) reach max gen length
             if generated_id == self.eos or p.generation_length + 1 == self.max_generation_length:
                 if p.status == PromptStatus.DECODING:
-                    assert p in self.wip_queue
-                    self.wip_queue.pop(p)
+                    assert p in self.wip
+                    self.wip.remove(p)
+                print(f"Prompt {p.input_ids} finished" )
                 p.finish(generated_id)
-                self.finished_queue.add(p)
+                self.done.add(p)
                 # For finished sentences, release cache slot, update cache index
                 self.cache.release_slot(p.cache_start_index)
-
             # transition from PROMPT to DECODING
             elif p.status == PromptStatus.PROMPT:
                 # figure out cache to write
@@ -933,6 +952,7 @@ class IterationLevelInputPool:
                 assert (p.cache_end_index - p.cache_start_index) == p.prompt_length
                 src_sentence_ids.extend([p.sentence_id] * p.prompt_length)
                 p.add_token(generated_id)
+                self.wip.add(p)
                 read_idx += p.prompt_length
             elif p.status == PromptStatus.DECODING:
                 # transition from DECODING TO DECODING
@@ -946,13 +966,15 @@ class IterationLevelInputPool:
             else:
                 raise RuntimeError(f"Prompt status: {p.status} should not appear here." )
 
+        if len(src_indices) == 0:
+            return
         # get the transport plan
         reorg_dst_slots, reorg_src_slots = self.cache.continuize()
         # update the prompt that has been influenced
         reorg_dst_indices = []
         reorg_src_indices = []
         for dst_slot, src_slot in zip(reorg_dst_slots, reorg_src_slots):
-            for p in self.wip_queue:
+            for p in self.wip:
                 if p.cache_start_index == src_slot:
                     reorg_src_indices.extend(list(range(src_slot, p.cache_end_index)))
                     src_sentence_ids.extend([p.sentence_id] * (p.prompt_length + p.generation_length))
@@ -968,7 +990,7 @@ class IterationLevelInputPool:
 
     def get_results(self):
         """Return results sorted by their sentence id."""
-        sorted_results = sorted(self.finished_queue, key=lambda x: x.sentence_id, reverse=True)
+        sorted_results = sorted(self.done, key=lambda x: x.sentence_id, reverse=True)
         return [p.input_ids + p.generated_ids for p in sorted_results]
 
     def next_sentence_id(self, number):
@@ -983,7 +1005,7 @@ class IterationLevelInputPool:
     @property
     def num_vacant_token_slot(self):
         """Return the number of available sequence slots that can be put in batch."""
-        return self.batch_size - len(self.wip_queue)
+        return self.batch_size - len(self.wip)
 
     @property
     def num_vacant_sequence_slot(self):
@@ -1021,7 +1043,7 @@ def custom_memcpy_v2(dst_k, dst_v, src_k, src_v, dst_indices, src_indices, hidde
 def custom_memcpy_v3(dst_k, dst_v, src_k, src_v, dst_indices, src_indices, hidden_dim, breakpoint):
     thread_idx = cupyx.jit.threadIdx.x
     src_idx = src_indices[cupyx.jit.blockIdx.x]
-    dst_idx = dst_indices[src_idx]
+    dst_idx = dst_indices[cupyx.jit.blockIdx.x]
     num_elements_per_thread = (hidden_dim + 256 - 1) // 256
     for i in range(num_elements_per_thread):
         j = thread_idx + 256 * i
@@ -1047,8 +1069,8 @@ def custom_reshape_logits(dst, src, indices):
             dst[dst_idx * vocab_size + j] = src[src_idx * vocab_size + j]
 
 
-def unpad(inputs: Union[np.ndarray, List[List[int]]], pad=1):
-    if isinstance(inputs, np.ndarray):
+def unpad(inputs: Union[np.ndarray, torch.Tensor, List[List[int]]], pad=1):
+    if isinstance(inputs, np.ndarray) or isinstance(inputs, torch.Tensor):
         inputs = inputs.tolist()
     unpadded_inputs = []
     for seq in inputs:
@@ -1057,6 +1079,19 @@ def unpad(inputs: Union[np.ndarray, List[List[int]]], pad=1):
         else:
             unpadded_inputs.append(seq)
     return unpadded_inputs
+
+
+def pad(inputs: Union[np.ndarray, torch.Tensor, List[List[int]]], pad=1):
+    if isinstance(inputs, np.ndarray) or isinstance(inputs, torch.Tensor):
+        inputs = inputs.tolist()
+    padded_inputs = []
+    target_len = max(len(seq) for seq in inputs)
+    for seq in inputs:
+        if len(seq) < target_len:
+            padded_inputs.append(seq + [pad] * (target_len - len(seq)))
+        else:
+            padded_inputs.append(seq)
+    return padded_inputs
 
 
 def load_params_np(params, path, config, dummy=False):

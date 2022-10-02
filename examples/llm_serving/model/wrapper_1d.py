@@ -16,7 +16,10 @@ from examples.llm_serving.model.opt_utils import TransformerModelConfig
 from examples.llm_serving.model.wrapper import disable_torch_init, restore_torch_init, InferenceFuncOutput, \
     InferenceFuncConfig, WrappedInferenceFunc
 from examples.llm_serving.model import opt_model
-from examples.llm_serving.model.opt_model_1d import IterationLevelInputPool, BatchLevelInputPool, unpad
+from examples.llm_serving.model.opt_model_1d import IterationLevelInputPool, BatchLevelInputPool, unpad, pad
+
+
+VERBOSE = True
 
 
 @dataclass
@@ -43,7 +46,6 @@ class SequenceGenerator:
                  **kwargs):
         if isinstance(input, IterationLevelInputPool):
             raise NotImplementedError()
-            # return self.generate_by_stream(input, **generate_args)
         elif isinstance(input, (List, np.ndarray, torch.Tensor)):
             unpadded_input = unpad(input)
             return self.generate_by_batch(unpadded_input, max_length=max_length, do_sample=do_sample)
@@ -58,43 +60,41 @@ class SequenceGenerator:
                                              self.model_config,
                                              max_generation_length=max_length)
         input_pool.enter_prompts(input_ids)
-
+        iteration = 0
         while not input_pool.is_finished():
-            input, input_index, position_ids = input_pool.next()
-
+            input, input_index, position_ids, logit_positions = input_pool.next()
+            # print(f"iteration {iteration}: input: {input}, positions: {logit_positions}")
             os.environ["FT_INPUT_INDEX_ADDR"] = str(input_index.ctypes.data)
-            os.environ["FT_CACHE_INDEX_ADDR"] = str(input_pool.kv_cache_ids.ctypes.data)
+            os.environ["FT_CACHE_INDEX_ADDR"] = str(input_pool.cache.kv_cache_ids.ctypes.data)
             os.environ["FT_MAX_CACHE_LEN_PER_SEQ"] = str(input_pool.max_cache_per_seq)
-
             batch = {
                 "input_ids": input,
                 "position_ids": position_ids,
-                "cache": input_pool.kv_caches
+                "cache": input_pool.cache.kv_caches
             }
-
             # compute
             logits, kv = self.executable(self.params, batch)
 
             if not do_sample:
-                generated_ids = self._generate_greedy(logits, [len(seq) for seq in input_ids])
+                generated_ids = self._generate_greedy(logits, logit_positions)
             else:
                 raise NotImplementedError()
+            print(f"iteration {iteration}: generated ids: {generated_ids}")
             # update cache
             input_pool.update_cache(kv, generated_ids)
+            iteration += 1
 
         ret = input_pool.get_results()
-        # post-process generation results
-        return ret
+        padded_input = np.array(pad(ret))
+        return padded_input
 
     @staticmethod
-    def _generate_greedy(logits, seq_lens):
+    def _generate_greedy(logits, positions):
         """TODO(Hao): make this on GPU"""
         outputs = []
         next_token = np.array(jnp.argmax(logits, axis=-1))
-        output_idx = -1
-        for seq_len in seq_lens:
-            output_idx += seq_len
-            outputs.append([int(next_token[output_idx])])
+        for pos in positions:
+            outputs.append(int(next_token[pos]))
         return outputs
 
 

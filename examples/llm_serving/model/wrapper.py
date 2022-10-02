@@ -299,7 +299,7 @@ def get_model_1d(model_name: str,
                        output_hidden_states):
         timers("enter").start(sync)
         if input_ids.shape[1] > 1:
-            unpadded_input = input_pool.unpad(input_ids)
+            unpadded_input = opt_model_1d.unpad(input_ids)
             input, input_index, position_ids = input_pool.enter_prompts(unpadded_input)
         else:
             unpadded_input = input_ids.tolist()

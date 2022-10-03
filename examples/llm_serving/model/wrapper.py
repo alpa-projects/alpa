@@ -45,6 +45,7 @@ class InferenceFuncConfig:
     num_return_sequences: int = 1
     pad_token_id: int = 1
     eos_token_id: int = 2
+    unk_token_id: int = 0
     output_scores: bool = False
     output_attentions: bool = False
     output_hidden_states: bool = False
@@ -591,7 +592,10 @@ def get_alpa_model(model_name: str,
 
     inference_func_config = InferenceFuncConfig()
     if "bloom" in model_name:
+        inference_func_config.bos_token_id = 1
+        inference_func_config.eos_token_id = 2
         inference_func_config.pad_token_id = 3
+        inference_func_config.unk_token_id = 0
     return WrappedInferenceFunc(inference_func,
                                 inference_func_config,
                                 executables[1],

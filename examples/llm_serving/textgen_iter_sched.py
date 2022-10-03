@@ -17,12 +17,14 @@ def main(args):
 
     generate_params = {
         "do_sample": args.do_sample,
-        "max_length": 64
+        "max_length": 128
     }
 
     # Load the model
     model = get_model(model_name=args.model,
-                      path="~/opt_weights")
+                      path="~/opt_weights",
+                      cache_size=256*4,
+                      max_cache_per_seq=256)
 
     prompts = [
         "Computer science is the study of computation and",
@@ -35,12 +37,12 @@ def main(args):
         "Donald Trump is the president of",
         "GPT-3 is a large language model that is capable of"
     ]
-
+    # prompts = prompts * 10
     # timer_names = ["enter", "compute", "update", "reshape"]
 
     input_ids = tokenizer(prompts, return_tensors="np", padding="longest").input_ids
 
-    n_warmup = 10
+    n_warmup = 1
     for i in range(n_warmup):
         tic = time.time()
         output_ids = model.generate(input_ids,
@@ -50,7 +52,7 @@ def main(args):
 
         # Print results
         outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
-        if False:
+        if True:
             print("Outputs:\n" + 100 * '-')
             for i, output in enumerate(outputs):
                 print(f"{i}: {output}")

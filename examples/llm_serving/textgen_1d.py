@@ -49,7 +49,7 @@ def main(args):
 
     input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
 
-    n_warmup = 10
+    n_warmup = 1
     for i in range(n_warmup):
         tic = time.time()
         output_ids = model.generate(input_ids=input_ids,
@@ -65,7 +65,7 @@ def main(args):
 
         # Print results
         outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
-        if False:
+        if True:
             print("Outputs:\n" + 100 * '-')
             for i, output in enumerate(outputs):
                 print(f"{i}: {output}")

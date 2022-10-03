@@ -790,6 +790,8 @@ class Cache:
             self.continuity_tracker = slot + self.max_cache_per_seq
         return slot
 
+
+
     def erase(self):
         self.vacancies = list(range(0, self.num_slot * self.max_cache_per_seq, self.max_cache_per_seq))
         heapq.heapify(self.vacancies)
@@ -854,6 +856,7 @@ class IterationLevelInputPool:
             warnings.warn("max generation length > max cache per seq...")
 
         self.cache = Cache(self.cache_size, self.max_cache_per_seq, self.model_config)
+        logger.debug(f"cache initialized, num slot: {self.cache.num_slot}")
 
         # input pool states
         self.todo = queue.Queue()
@@ -923,6 +926,10 @@ class IterationLevelInputPool:
             p.start()
 
         self._current_batch = prompt_input + decoding_input
+        logger.debug(f"This batch has {len(prompt_input)} new prompts {[p.sentence_id for p in prompt_input]} "
+                     f"and {len(decoding_input)} in decoding {[p.sentence_id for p in decoding_input]}. "
+                     f"Todo size: {self.todo.qsize()}, cache vacancies: {[v // self.cache.max_cache_per_seq for v in self.cache.vacancies]}, "
+                     f"continuity from: {self.cache.continuity_tracker // self.cache.max_cache_per_seq}")
 
         logit_positions = []
         i = -1
@@ -954,7 +961,9 @@ class IterationLevelInputPool:
                 if p.status == PromptStatus.DECODING:
                     assert p in self.wip
                     self.wip.remove(p)
-                logger.debug(f"Prompt {p.input_ids} finished" )
+                exit_reason = "EOS" if generated_id == self.eos else "reaching max length"
+                logger.debug(f"Prompt {p.sentence_id} exits because of {exit_reason}. "
+                             f"Release cache {p.cache_start_index // self.max_cache_per_seq}" )
                 p.finish(generated_id)
                 self.done.add(p)
                 # For finished sentences, release cache slot, update cache index
@@ -987,27 +996,41 @@ class IterationLevelInputPool:
 
         # Now check continuity and get the copy plan if non-continuous
         reorg_dst_slots, reorg_src_slots = self.cache.get_continuation_plan()
+
         # update the prompt that has been influenced
         reorg_dst_indices = []
         reorg_src_indices = []
+        reorg_sentence_ids = []
         for dst_slot, src_slot in zip(reorg_dst_slots, reorg_src_slots):
             for p in self.wip:
                 if p.cache_start_index == src_slot:
-                    reorg_src_indices.extend(list(range(src_slot, p.cache_end_index)))
-                    src_sentence_ids.extend([p.sentence_id] * (p.prompt_length + p.generation_length))
+                    reorg_src_indices.extend(list(range(src_slot, src_slot + self.max_cache_per_seq)))
+                    reorg_sentence_ids.extend(self.cache.kv_cache_ids[src_slot:src_slot+self.max_cache_per_seq].tolist())
                     p.cache_start_index = dst_slot
-                    reorg_dst_indices.extend(list(range(dst_slot, p.cache_end_index)))
+                    reorg_dst_indices.extend(list(range(dst_slot, dst_slot + self.max_cache_per_seq)))
                     break
+
 
         breakpoint = len(src_indices)
         src_indices.extend(reorg_src_indices)
         dst_indices.extend(reorg_dst_indices)
+        src_sentence_ids.extend(reorg_sentence_ids)
         # copy cache in one kernel and update cache indices
         self.cache.update_fused(kv, src_indices, dst_indices, src_sentence_ids, breakpoint)
 
+        if len(reorg_dst_slots) > 0:
+            logger.debug(f"cache reorg is required: move from {[s//self.max_cache_per_seq for s in reorg_src_slots]} "
+                         f"to {[s//self.max_cache_per_seq for s in reorg_dst_slots]}. "
+                         f"Move plan: src {src_indices}, dst: {dst_indices}, src_sen: {src_sentence_ids}")
+
+        for slot in reorg_src_slots:
+            heapq.heappush(self.cache.vacancies, slot)
+        for slot in reorg_dst_slots:
+            self.cache.vacancies.remove(slot)
+
     def get_results(self):
         """Return results sorted by their sentence id."""
-        sorted_results = sorted(self.done, key=lambda x: x.sentence_id, reverse=True)
+        sorted_results = sorted(self.done, key=lambda x: x.sentence_id, reverse=False)
         return [p.input_ids + p.generated_ids for p in sorted_results]
 
     def next_sentence_id(self, number):

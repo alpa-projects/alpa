@@ -21,7 +21,7 @@ from examples.llm_serving.model.opt_model_1d import IterationLevelInputPool, unp
 
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 
 def sync(device_id=0):
@@ -90,7 +90,7 @@ class SequenceGenerator:
                 generated_ids = self._generate_greedy(logits, logit_positions)
             else:
                 raise NotImplementedError()
-            timers("generate").supsned(sync)
+            timers("generate").suspend(sync)
             logger.debug(f"iteration {iteration}: generated ids: {generated_ids}")
 
             timers("update cache").start(sync)

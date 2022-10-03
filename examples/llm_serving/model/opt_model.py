@@ -710,7 +710,7 @@ def load_params_np(params, path, config, dummy=False):
 def get_jax_executable(config: OPTConfig,
                        encoder_chunk_sizes: Sequence[int],
                        output_attentions: bool = False,
-                       output_hidden_states:bool = False):
+                       output_hidden_states: bool = False):
     """Get a single-gpu executable."""
     model, params = init_model_aval(config)
 

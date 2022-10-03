@@ -30,7 +30,7 @@ import numpy as np
 from tqdm import tqdm
 
 from llm_serving.model.opt_model import (init_cache_aval, init_mask_aval,
-    init_cache_np, init_multi_executable_cache_dis_array)
+    init_cache_np, init_cache_dis_array, init_multi_executable_cache_dis_array)
 
 
 @dataclass(frozen=True)

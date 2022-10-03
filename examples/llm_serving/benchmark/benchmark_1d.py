@@ -161,7 +161,7 @@ if __name__ == "__main__":
     num_seq = len(input_id_list)
     benchmark_prompt(input_id_list, "1d", batch_size_1d, cache_size=(max_seq_len + 2) * num_seq * 2)
     benchmark_prompt(input_id_list, "1d", batch_size_1d, cache_size=(max_seq_len + 2) * num_seq * 10)
-    benchmark_prompt(input_id_list, "1d", batch_size_1d, cache_size=(max_seq_len + 2) * num_seq * 100)
+    benchmark_prompt(input_id_list, "1d", batch_size_1d, cache_size=(max_seq_len + 2) * num_seq * 50)
 
 
     print(f"Benchmark prompt-only on long sequences.")
@@ -174,8 +174,8 @@ if __name__ == "__main__":
     batch_size_1d = sum(len(seq) for seq in extended_input_id_list) + 50
     max_seq_len = max(len(seq) for seq in extended_input_id_list)
     benchmark_prompt(extended_input_id_list, "1d", batch_size_1d, cache_size=(max_seq_len + 2) * len(extended_input_id_list))
-    benchmark_prompt(extended_input_id_list, "1d", batch_size_1d, cache_size=(max_seq_len + 2) * len(extended_input_id_list) * 2)
-    benchmark_prompt(extended_input_id_list, "1d", batch_size_1d, cache_size=(max_seq_len + 2) * len(extended_input_id_list) * 3)
+    benchmark_prompt(extended_input_id_list, "1d", batch_size_1d, cache_size=(max_seq_len + 2) * int(len(extended_input_id_list) * 1.5))
+    benchmark_prompt(extended_input_id_list, "1d", batch_size_1d, cache_size=(max_seq_len + 2) * int(len(extended_input_id_list) * 2))
 
 
     print(f"Benchmark mixed prompts + decoding on short sequences.")
@@ -191,7 +191,7 @@ if __name__ == "__main__":
     benchmark_mixed(input_id_list, "1d", batch_size=batch_size_1d,
                     cache_size=(max_seq_len + 2) * len(input_id_list) * 10)
     benchmark_mixed(input_id_list, "1d", batch_size=batch_size_1d,
-                    cache_size=(max_seq_len + 2) * len(input_id_list) * 100)
+                    cache_size=(max_seq_len + 2) * len(input_id_list) * 50)
 
     print(f"Benchmark mixed prompts + decoding on long sequences.")
     # 1D, long seq
@@ -202,6 +202,6 @@ if __name__ == "__main__":
     benchmark_mixed(extended_input_id_list, "1d", batch_size=batch_size_1d,
                     cache_size=(max_seq_len + 2) * len(extended_input_id_list))
     benchmark_mixed(extended_input_id_list, "1d", batch_size=batch_size_1d,
-                    cache_size=(max_seq_len + 2) * len(extended_input_id_list) * 2)
+                    cache_size=(max_seq_len + 2) * int(len(extended_input_id_list) * 1.5))
     benchmark_mixed(extended_input_id_list, "1d", batch_size=batch_size_1d,
-                    cache_size=(max_seq_len + 2) * len(extended_input_id_list) * 3)
+                    cache_size=(max_seq_len + 2) * len(extended_input_id_list) * 2)

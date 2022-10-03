@@ -18,7 +18,6 @@ class PipelineBERTTest(unittest.TestCase):
 
     def setUp(self):
         os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
-        init(cluster="ray")
 
     def train_2_layer_bert(self, method):
 
@@ -74,6 +73,7 @@ class PipelineBERTTest(unittest.TestCase):
         self.train_2_layer_bert(LocalPipelineParallel())
 
     def test_2_layer_bert_pipeshard_parallel(self):
+        init(cluster="ray")
         self.train_2_layer_bert(PipeshardParallel())
 
 

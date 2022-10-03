@@ -3,7 +3,8 @@ Serving OPT-175B using Alpa
 ===========================
 
 This tutorial shows how to setup a serving system to serve the largest available pretrained language model `OPT-175B <https://github.com/facebookresearch/metaseq/tree/main/projects/OPT>`_.
-You can also try a live demo at `Alpa-OPT Demo <https://opt.alpa.ai>`_.
+
+👉 Try a live demo at `Alpa-OPT Demo <https://opt.alpa.ai>`_ 👈
 
 Overview
 ========
@@ -68,7 +69,7 @@ Requirements
 
   .. code:: shell
 
-    pip3 install transformers flask omegaconf
+    pip3 install transformers fastapi uvicorn omegaconf jinja2
 
     # Install torch corresponding to your CUDA version, e.g., for CUDA 11.3:
     pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu113
@@ -198,16 +199,20 @@ The code of this tutorial is under `examples/llm_serving <https://github.com/alp
 Launch a Web Server to Serve the OPT Models
 ===========================================
 
-Launch the web server:
+We need to run two scripts: one for web server and another for the model serving worker.
+They will use two ports. The port of the website is defined in the command line and the port of the worker is defined in ``service/constants.py``
 
 .. code:: shell
 
-  # Serve the OPT-175B model at port 20001
-  python3 interactive_hosted.py --model alpa/opt-175b --port 20001
+  # Launch the model worker
+  python3 launch_model_worker.py --model alpa/opt-175b
 
-Then open ``https://[IP-ADDRESS]:20001`` in your browser to try out the model!
+  # Launch the website (in a new terminal)
+  uvicorn launch_website:app --host 0.0.0.0 --port 8001
 
-There is also a client library which can be used to query the web server
+Then open ``http://[IP-ADDRESS]:8001`` in your browser to try out the model!
+
+There is also a client library which can be used to query the model worker
 via a python script. Please check ``test_completions.py`` for the usage.
 
 Improving Generation Speed

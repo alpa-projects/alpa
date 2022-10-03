@@ -49,13 +49,13 @@ Alpa provides wheels for the following CUDA (cuDNN) and Python versions:
 
 If you need to use other CUDA, cuDNN, or Python versions, please follow the next section to :ref:`install from source<install-from-source>`.
 
-1. To install from wheels, first install Alpa:
+1. Install Alpa python package.
 
   .. code:: bash
 
     pip3 install alpa
 
-2. Then install the Alpa-modified Jaxlib and make sure that the jaxlib version corresponds to the version of
+2. Install Alpa-modified Jaxlib. Make sure that the jaxlib version corresponds to the version of
    the existing CUDA and cuDNN installation you want to use.
    You can specify a particular CUDA and cuDNN version for jaxlib explicitly via:
 
@@ -74,7 +74,6 @@ If you need to use other CUDA, cuDNN, or Python versions, please follow the next
 .. note::
 
   As of now, Alpa modified the original jaxlib at the version ``jaxlib==0.3.15``. Alpa regularly rebases the official jaxlib repository to catch up with the upstream.
-  If you need features from newer versions of jaxlib, please open an issue at the `Alpa GitHub Issue Page <https://github.com/alpa-projects/alpa/issues>`_.
 
 
 .. _install-from-source:
@@ -82,20 +81,20 @@ If you need to use other CUDA, cuDNN, or Python versions, please follow the next
 Method 2: Install from Source
 #############################
 
-1.  Clone repos
+1. Clone repos
 
   .. code:: bash
 
     git clone --recursive https://github.com/alpa-projects/alpa.git
 
-2. Install Alpa
+2. Install Alpa python package.
 
   .. code:: bash
 
     cd alpa
     pip3 install -e ".[dev]"  # Note that the suffix `[dev]` is required to build custom modules.
 
-3. Build and install jaxlib
+3. Build and install Alpa-modified Jaxlib. The Jaxlib contains c++ code of Alpa.
 
   .. code:: bash
 
@@ -120,6 +119,11 @@ Method 2: Install from Source
   To modify c++ code in tensorflow, you only need to run the command below from step 3 to recompile jaxlib::
 
     python3 build/build.py --enable_cuda --dev_install --bazel_options=--override_repository=org_tensorflow=$(pwd)/../third_party/tensorflow-alpa
+
+.. note::
+
+   Alpa python package and Alpa-modified Jaxlib are two separate libraries. If you only want to develop the python source code, you can install
+   Alpa python package from source and install Alpa-modified Jaxlib from wheels.
 
 Check Installation
 ------------------

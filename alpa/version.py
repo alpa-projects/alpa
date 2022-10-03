@@ -1,30 +1,33 @@
-# pylint: disable=pointless-string-statement
+# pylint: disable=pointless-string-statement, line-too-long
 """Version information."""
 from jax._src.lib import xla_extension as xe
 
 __version__ = "1.0.0.dev0"
 
-# Check the minimal requirement of alpa's jaxlib.
 minimal_alpa_jaxlib_version = (0, 1, 1)
 
-try:
-    alpa_jaxlib_version_str = xe.get_alpa_jaxlib_version()
-    alpa_jaxlib_version = tuple(
-        int(x) for x in alpa_jaxlib_version_str.split("."))
-except AttributeError:
-    alpa_jaxlib_version = (0, 0, 0)
 
-if alpa_jaxlib_version < minimal_alpa_jaxlib_version:
-    minimal_alpa_jaxlib_version_str = ".".join(
-        str(x) for x in minimal_alpa_jaxlib_version)
-    alpa_jaxlib_version_str = ".".join(str(x) for x in alpa_jaxlib_version)
-    raise RuntimeError(
-        f"The alpa-jaxlib's internal version is v{alpa_jaxlib_version_str}, "
-        f"but the minimal requirement is v{minimal_alpa_jaxlib_version_str}. "
-        f"Please install the latest alpa-jaxlib. If you build alpa from source,"
-        f" please update your tensorflow-alpa submodule and re-compile jaxlib ("
-        f"help : https://alpa-projects.github.io/developer/developer_guide.html"
-        f"#updating-submodule-tensorflow-alpa)")
+def check_alpa_jaxlib_version():
+    """Check the minimal requirement of alpa's jaxlib."""
+    try:
+        alpa_jaxlib_version_str = xe.get_alpa_jaxlib_version()
+        alpa_jaxlib_version = tuple(
+            int(x) for x in alpa_jaxlib_version_str.split("."))
+    except AttributeError:
+        alpa_jaxlib_version = (0, 0, 0)
+
+    if alpa_jaxlib_version < minimal_alpa_jaxlib_version:
+        minimal_alpa_jaxlib_version_str = ".".join(
+            str(x) for x in minimal_alpa_jaxlib_version)
+        alpa_jaxlib_version_str = ".".join(str(x) for x in alpa_jaxlib_version)
+        raise RuntimeError(
+            f"The alpa-jaxlib's internal version is v{alpa_jaxlib_version_str}, "
+            f"but the minimal requirement is v{minimal_alpa_jaxlib_version_str}. "
+            f"Please install the latest alpa-jaxlib. If you build alpa from source,"
+            f" please update your tensorflow-alpa submodule and re-compile jaxlib ("
+            f"help : https://alpa-projects.github.io/developer/developer_guide.html"
+            f"#updating-submodule-tensorflow-alpa)")
+
 
 ##### Attach all licenses of used open-source code below #####
 
@@ -462,4 +465,13 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+"""
+
+# For ray serve
+"""
+Copyright 2022- The Ray team. All rights reserved.
+
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
 """

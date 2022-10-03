@@ -6,7 +6,7 @@ Alpa Quickstart
 
 Alpa is built on top of a tensor computation framework `Jax <https://jax.readthedocs.io/en/latest/index.html>`_ .
 Alpa can automatically parallelize jax functions and runs them on a distributed cluster.
-Alpa analyses the computational graph and generates a distributed execution plan 
+Alpa analyses the computational graph and generates a distributed execution plan
 tailored for the computational graph and target cluster.
 The generated execution plan can combine state-of-the-art distributed training techniques
 including data parallelism, operator parallelism, and pipeline parallelism.
@@ -119,7 +119,7 @@ expected_state = train_step(state, batch)
 @alpa.parallelize
 def alpa_train_step(state, batch):
     def loss_func(params):
-        out = model.apply(params, batch["x"])
+        out = state.apply_fn(params, batch["x"])
         loss = jnp.mean((out - batch["y"])**2)
         return loss
 

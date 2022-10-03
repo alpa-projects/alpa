@@ -10,7 +10,7 @@ from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.util import print_used_time
 import optax
 
-from benchmark_one_case_gpt_bert import (get_train_step)
+from benchmark_one_case_gpt_bert import get_train_step
 from util import compute_moe_parameter_count, compute_moe_tflops
 from benchmark_parallel_utils import (
     get_pipeshard_parallel_method, get_shard_parallel_method,
@@ -132,18 +132,12 @@ def benchmark_moe_3d_internal(benchmark_case,
     set_global_virtual_physical_mesh(virtual_mesh)
 
     # Parallel configs
-    if benchmark_case.parallel_mode == "load_solution":
-        use_fine_grained_remat = benchmark_case.parallel_args.use_remat
-        fine_grained_remat_num_layers = benchmark_case.model_config.num_layers
-    else:
-        use_fine_grained_remat = None
-        fine_grained_remat_num_layers = None
     (method, add_manual_remat, add_manual_layer_marker,
      num_manual_pipeline_stages) = get_pipeshard_parallel_method(
          benchmark_case,
          virtual_mesh.num_devices_per_host,
-         allow_mixed_mesh_shape=True,
-         use_fine_grained_remat=use_fine_grained_remat)
+         use_fine_grained_remat=True,
+         allow_mixed_mesh_shape=True)
 
     state, batch, rngkey = prepare_moe_input_and_model(
         benchmark_case,
@@ -151,8 +145,7 @@ def benchmark_moe_3d_internal(benchmark_case,
         add_manual_layer_marker=add_manual_layer_marker,
         num_manual_pipeline_stages=num_manual_pipeline_stages)
 
-    train_step = get_train_step(method, use_fine_grained_remat,
-                                fine_grained_remat_num_layers)
+    train_step = get_train_step(method)
 
     (latencies, max_mem_allocated, compilation_times,
      executable) = compile_and_benchmark_pipeshard_training_executable(

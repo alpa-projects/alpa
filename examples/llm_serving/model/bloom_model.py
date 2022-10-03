@@ -9,7 +9,7 @@ import itertools
 from functools import partial
 import math
 import os
-from typing import Callable, Optional, Tuple, Dict, Sequence
+from typing import Optional, Tuple, Sequence
 
 import alpa
 from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
@@ -18,14 +18,13 @@ from alpa.model.model_util import ModelOutput
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 import flax
 import flax.linen as nn
-from flax.core.frozen_dict import FrozenDict, freeze, unfreeze
 from flax.linen import combine_masks, dot_product_attention_weights, make_causal_mask
 from flax.linen.activation import tanh
 import jax
 from jax import lax
 from jax.interpreters import pxla
 import jax.numpy as jnp
-from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves
+from jax.tree_util import tree_flatten, tree_leaves
 import jaxlib.xla_extension as jax_xla
 import numpy as np
 from tqdm import tqdm
@@ -114,6 +113,7 @@ def build_alibi_tensor_flax(attention_mask, n_head, dtype):
     arange_broadcast = jnp.broadcast_to(arange_tensor, (batch_size, num_heads, query_length, key_length))
 
     alibi = slopes_broadcast * arange_broadcast
+
     return alibi
 
 
@@ -136,7 +136,7 @@ class FlaxBloomAttention(nn.Module):
             nn.Dense,
             dtype=self.dtype,
             kernel_init=jax.nn.initializers.normal(
-                self.config.initializer_range),
+                self.config.initializer_range)
         )
 
         self.query_key_value = dense(self.hidden_size * 3)
@@ -150,13 +150,10 @@ class FlaxBloomAttention(nn.Module):
         hidden_states,
         residual,
         alibi,
-        layer_past=None,
         attention_mask=None,
         attention_cache=None,
         deterministic: bool = True,
-        init_cache: bool = False,
-        output_attentions: bool = False,
-        layer_number: int = None,
+        output_attentions: bool = False
     ):
         # This chunk verified to be working
         batch_size = hidden_states.shape[0]
@@ -179,7 +176,7 @@ class FlaxBloomAttention(nn.Module):
             causal_attention_mask = jax.lax.dynamic_slice(
                 causal_attention_mask,
                 (0, 0, causal_attention_mask_shift, 0),
-                (1, 1, seq_length, max_decoder_length),
+                (1, 1, seq_length, max_decoder_length)
             )
 
         attention_mask = combine_masks(attention_mask, causal_attention_mask)
@@ -228,7 +225,7 @@ class FlaxBloomAttention(nn.Module):
             dropout_rate=self.config.attention_dropout,
             deterministic=deterministic,
             dtype=self.dtype,
-            precision=None,
+            precision=None
         )
 
         attn_output = jnp.einsum("...hqk,...khd->...qhd", attn_weights, value)
@@ -274,8 +271,8 @@ class FlaxBloomMLP(nn.Module):
 
         intermediate_output = self.dense_4h_to_h(hidden_states)
 
-        intermediate_output = intermediate_output + residual
         hidden_states = self.hidden_dropout(intermediate_output, deterministic=deterministic)
+        hidden_states += residual
 
         return hidden_states
 
@@ -300,11 +297,8 @@ class FlaxBloomBlock(nn.Module):
         alibi,
         attention_mask=None,
         attention_cache=None,
-        layer_number: int = None,
-        layer_past=None,
         deterministic: bool = True,
-        init_cache: bool = False,
-        output_attentions: bool = False,
+        output_attentions: bool = False
     ):
         layernorm_output = self.input_layernorm(hidden_states)
         # layer norm before saving residual if config calls for it
@@ -318,13 +312,10 @@ class FlaxBloomBlock(nn.Module):
             layernorm_output,
             residual=residual,
             alibi=alibi,
-            layer_past=layer_past,
             attention_mask=attention_mask,
             attention_cache=attention_cache,
             deterministic=deterministic,
-            init_cache=init_cache,
-            output_attentions=output_attentions,
-            layer_number=layer_number,
+            output_attentions=output_attentions
         )
         attention_output = attn_outputs[0]
         attention_cache = attn_outputs[1]
@@ -362,10 +353,9 @@ class FlaxBloomBlockCollection(nn.Module):
         attention_mask=None,
         attention_cache=None,
         deterministic: bool = True,
-        init_cache: bool = False,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
-        return_dict: bool = True,
+        return_dict: bool = True
     ):
         all_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
@@ -391,11 +381,10 @@ class FlaxBloomBlockCollection(nn.Module):
                 attention_mask=attention_mask,
                 attention_cache=layer_attention_cache,
                 deterministic=deterministic,
-                init_cache=init_cache,
-                output_attentions=output_attentions,
-                layer_number=layer_number,
+                output_attentions=output_attentions
             )
             hidden_states = layer_outputs[0]
+
             if attention_cache is not None:
                 new_attention_cache += (layer_outputs[1],)
 
@@ -429,7 +418,7 @@ class FlaxBloomModule(nn.Module):
             self.config.vocab_size,
             self.embed_dim,
             embedding_init=embedding_init,
-            dtype=self.dtype,
+            dtype=self.dtype
         )
 
         # post-embedding layernorm
@@ -447,16 +436,13 @@ class FlaxBloomModule(nn.Module):
         attention_mask=None,
         attention_cache=None,
         deterministic=True,
-        init_cache: bool = False,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
-        return_dict: bool = True,
+        return_dict: bool = True
     ):
-        inputs_embeds = self.word_embeddings(input_ids.astype("i4"))
+        inputs_embeds = self.word_embeddings(input_ids)
         # do post-embedding layernorm
         hidden_states = self.word_embeddings_layernorm(inputs_embeds)
-
-        batch_size, curr_seq_len, _ = hidden_states.shape
 
         # build alibi depending on `attention_mask`
         alibi = build_alibi_tensor_flax(attention_mask, self.config.n_head, hidden_states.dtype)
@@ -467,13 +453,13 @@ class FlaxBloomModule(nn.Module):
             attention_mask=attention_mask,
             attention_cache=attention_cache,
             deterministic=deterministic,
-            init_cache=init_cache,
             output_hidden_states=output_hidden_states,
             output_attentions=output_attentions,
             return_dict=return_dict
         )
 
         hidden_states = outputs[0]
+
         hidden_states = self.ln_f(hidden_states)
 
         if output_hidden_states:
@@ -497,7 +483,7 @@ class FlaxBloomForCausalLMModule(nn.Module):
         self.lm_head = nn.Dense(
             self.config.vocab_size,
             use_bias=False,
-            dtype=self.dtype,
+            dtype=jnp.float32,
             kernel_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
         )
 
@@ -507,20 +493,18 @@ class FlaxBloomForCausalLMModule(nn.Module):
         attention_mask=None,
         attention_cache=None,
         deterministic: bool = True,
-        init_cache: bool = False,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
-        return_dict: bool = True,
+        return_dict: bool = True
     ):
         outputs = self.transformer(
             input_ids,
             attention_mask=attention_mask,
             attention_cache=attention_cache,
             deterministic=deterministic,
-            init_cache=init_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
+            return_dict=return_dict
         )
 
         hidden_states = outputs[0]

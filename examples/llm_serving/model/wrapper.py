@@ -34,7 +34,6 @@ class InferenceFuncOutput(ModelOutput):
 @dataclass
 class InferenceFuncConfig:
     """Implements a minimal config class for using huggingface's generator.
-
     Note: these parameters might be overwritten by model.generate(**kwargs).
     """
     bos_token_id: int = 0
@@ -591,6 +590,8 @@ def get_alpa_model(model_name: str,
                                    output.hidden_states, output.attentions)
 
     inference_func_config = InferenceFuncConfig()
+    if "bloom" in model_name:
+        inference_func_config.pad_token_id = 3
     return WrappedInferenceFunc(inference_func,
                                 inference_func_config,
                                 executables[1],
@@ -618,7 +619,6 @@ def get_model(model_name: str,
               output_attentions: bool = False,
               output_hidden_states: bool = False):
     """Get a model that is compatible with HuggingFace's generation API.
-
     Args:
         model_name: "facebook/opt-", or "alpa/opt-".
         path: The path to opt weights.

@@ -1,3 +1,4 @@
+import logging
 from typing import Union, List
 
 import numpy as np
@@ -16,10 +17,16 @@ from examples.llm_serving.model.opt_utils import TransformerModelConfig
 from examples.llm_serving.model.wrapper import disable_torch_init, restore_torch_init, InferenceFuncOutput, \
     InferenceFuncConfig, WrappedInferenceFunc
 from examples.llm_serving.model import opt_model
-from examples.llm_serving.model.opt_model_1d import IterationLevelInputPool, BatchLevelInputPool, unpad, pad
+from examples.llm_serving.model.opt_model_1d import IterationLevelInputPool, unpad, pad
 
 
-VERBOSE = True
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+
+def sync(device_id=0):
+    jax.devices()[device_id].synchronize_all_activity()
+    return
 
 
 @dataclass
@@ -62,8 +69,9 @@ class SequenceGenerator:
         input_pool.enter_prompts(input_ids)
         iteration = 0
         while not input_pool.is_finished():
+            timers("enter").start(sync)
             input, input_index, position_ids, logit_positions = input_pool.next()
-            # print(f"iteration {iteration}: input: {input}, positions: {logit_positions}")
+            timers("enter").suspend(sync)
             os.environ["FT_INPUT_INDEX_ADDR"] = str(input_index.ctypes.data)
             os.environ["FT_CACHE_INDEX_ADDR"] = str(input_pool.cache.kv_cache_ids.ctypes.data)
             os.environ["FT_MAX_CACHE_LEN_PER_SEQ"] = str(input_pool.max_cache_per_seq)
@@ -73,15 +81,21 @@ class SequenceGenerator:
                 "cache": input_pool.cache.kv_caches
             }
             # compute
+            timers("compute").start(sync)
             logits, kv = self.executable(self.params, batch)
+            timers("compute").suspend(sync)
 
+            timers("generate").start(sync)
             if not do_sample:
                 generated_ids = self._generate_greedy(logits, logit_positions)
             else:
                 raise NotImplementedError()
-            print(f"iteration {iteration}: generated ids: {generated_ids}")
-            # update cache
+            timers("generate").supsned(sync)
+            logger.debug(f"iteration {iteration}: generated ids: {generated_ids}")
+
+            timers("update cache").start(sync)
             input_pool.update_cache(kv, generated_ids)
+            timers("update cache").suspend(sync)
             iteration += 1
 
         ret = input_pool.get_results()

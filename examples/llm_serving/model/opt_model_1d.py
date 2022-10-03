@@ -2,6 +2,7 @@ import heapq
 import math
 import queue
 import time
+import logging
 
 import torch
 import warnings
@@ -30,6 +31,11 @@ try:
     from ft_mha import fused_mmha
 except ImportError:
     raise RuntimeError("Please install ft_mha to use 1D OPT model.")
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
 
 ACT2FN = {
     "gelu": partial(nn.gelu, approximate=False),
@@ -705,7 +711,7 @@ class Prompt:
         if self.status == PromptStatus.PROMPT:
             self.status = PromptStatus.DECODING
         else:
-            assert self.last_generated_id
+            assert self.last_generated_id is not None and self.status == PromptStatus.DECODING
             self.generated_ids.append(self.last_generated_id)
         self.last_generated_id = token_id
 
@@ -736,7 +742,7 @@ class Prompt:
     @property
     def latency(self):
         if self.status != PromptStatus.FINISHED:
-            raise RuntimeError("unprocessed prompt.")
+            raise RuntimeError("Unfinished prompt.")
         return self.finish_time - self.start_time
 
 
@@ -751,10 +757,12 @@ class Cache:
         self.kv_cache_ids = np.zeros((self.cache_size, ), dtype=np.int32)
         self.kv_caches_cupy = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in self.kv_caches]
 
-        # Stores the starting indices of all vacant cache slot: [start_index, start_index + self.max_cache_per_seq]
-        self.vacant_indices = list(range(0, (self.cache_size // self.max_cache_per_seq) * self.max_cache_per_seq,
+        self.num_slot = self.cache_size // self.max_cache_per_seq
+        # Stores the starting indices of all vacant cache slots
+        # A slot can be indexed as [start_index, start_index + self.max_cache_per_seq]
+        self.vacancies: List[int] = list(range(0, self.num_slot * self.max_cache_per_seq,
                                          self.max_cache_per_seq))
-        heapq.heapify(self.vacant_indices)
+        heapq.heapify(self.vacancies)
 
         # Track the index of the first
         self.continuity_tracker = 0
@@ -762,47 +770,59 @@ class Cache:
 
     def release_slot(self, slot: int):
         """Release a cache slot given its starting index."""
-        assert slot not in self.vacant_indices
-        heapq.heappush(self.vacant_indices, slot)
+        assert slot not in self.vacancies
+        heapq.heappush(self.vacancies, slot)
         # reset the cache indices of this slot as there
         self.kv_cache_ids[slot:slot + self.max_cache_per_seq] = 0
         if self.continuity_tracker - slot == self.max_cache_per_seq:
-            # meaning they are close
+            # meaning the released slot is next to the tracker
             new_start = slot - self.max_cache_per_seq
-            while new_start in self.vacant_indices:
+            while new_start in self.vacancies:
                 new_start = new_start - self.max_cache_per_seq
             self.continuity_tracker = new_start + self.max_cache_per_seq
 
     def take_slot(self):
-        # find the next available slot
-        if len(self.vacant_indices) == 0:
-            raise RuntimeError("There is not vacancy in cache.")
-        slot = heapq.heappop(self.vacant_indices)
+        """Allocate the first available slot and return the slot index."""
+        if len(self.vacancies) == 0:
+            raise RuntimeError("There is no vacancy in cache.")
+        slot = heapq.heappop(self.vacancies)
         if slot == self.continuity_tracker:
             self.continuity_tracker = slot + self.max_cache_per_seq
         return slot
 
+    def erase(self):
+        self.vacancies = list(range(0, self.num_slot * self.max_cache_per_seq, self.max_cache_per_seq))
+        heapq.heapify(self.vacancies)
+        self.continuity_tracker = 0
+        self.kv_cache_ids.fill(0)
+
     def is_continuous(self):
-        heap_top = self.vacant_indices[0]
+        """If all the vacant slots in cache are continous."""
+        heap_top = self.vacancies[0]
         return heap_top == self.continuity_tracker
 
-    def continuize(self):
+    def get_continuation_plan(self):
+        """Find a movement plan to continuzie the cache.
+
+        Returns:
+            dst_slots (OrderedSet): the starting indices of the destination slots
+            src_slots (OrderedSet): the starting indices of the source slots
+        """
         # find all vacancies that are before continuity_tracker
-        vacancies_to_fill = OrderedSet(v for v in self.vacant_indices if v < self.continuity_tracker)
+        vacancies_to_fill = OrderedSet(v for v in self.vacancies if v < self.continuity_tracker)
         start = self.continuity_tracker - len(vacancies_to_fill) * self.max_cache_per_seq
         proposals = OrderedSet(range(start, self.continuity_tracker, self.max_cache_per_seq))
-        real_vacancies = OrderedSet(v for v in vacancies_to_fill if v not in proposals)
-        fake_vacancies = OrderedSet(v for v in vacancies_to_fill if v in proposals)
-        real_proposals = OrderedSet(v for v in proposals if v not in fake_vacancies)
-        assert len(real_proposals) == len(real_vacancies)
-        return real_vacancies, real_proposals
+        dst_slots = OrderedSet(v for v in vacancies_to_fill if v not in proposals)
+        fake_vacancies = vacancies_to_fill.difference(dst_slots)
+        src_slots = proposals.difference(fake_vacancies)
+        assert len(dst_slots) == len(src_slots)
+        return dst_slots, src_slots
 
-    def update(self, kv, src_indices, dst_indices, src_sentence_ids, breakpoint):
-        """Copy the KV caches
+    def update_fused(self, kv, src_indices, dst_indices, src_sentence_ids, breakpoint):
+        """Copy the KV caches from src_indices and write to dst_indices.
 
-        For entries before `break`, copy from kv.
-        for entries after `break`, copy from self.kv_caches for re-arrangement
-        We put them together because we only want to launch a single kernel.
+        For entries before `breakpoint`, copy from kv and write to self.kv_caches;
+        for entries after `breakpoint`, copy from self.kv_caches and write to self.kv_caches.
         """
         num_threads_per_block = 256
         dst_indices_cupy = cupy.array(dst_indices)
@@ -810,17 +830,13 @@ class Cache:
         src_kv = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in kv]
         for layer_idx, (src_k, src_v) in enumerate(src_kv):
             dst_k, dst_v = self.kv_caches_cupy[layer_idx]
-            custom_memcpy_v3[len(src_indices), num_threads_per_block](dst_k.ravel(), dst_v.ravel(),
-                                                                      src_k.ravel(), src_v.ravel(),
-                                                                      dst_indices_cupy, src_indices_cupy,
-                                                                      self.hidden_dim, breakpoint)
+            custom_memcpy_fused[len(src_indices), num_threads_per_block](dst_k.ravel(), dst_v.ravel(),
+                                                                         src_k.ravel(), src_v.ravel(),
+                                                                         dst_indices_cupy, src_indices_cupy,
+                                                                         self.hidden_dim, breakpoint)
         # update cache indices
         self.kv_cache_ids[dst_indices] = src_sentence_ids
         self.kv_cache_ids[src_indices[breakpoint:]] = 0
-
-    @property
-    def num_vacant_slot(self):
-        return len(self.vacant_indices)
 
 
 class IterationLevelInputPool:
@@ -856,6 +872,7 @@ class IterationLevelInputPool:
         return self.todo.empty() and len(self.wip) == 0
 
     def enter_prompts(self, input_sequences: List[List[int]]):
+        """Enter a new batch of prompts into self.todo."""
         sentence_ids = self.next_sentence_id(len(input_sequences))
         for i, seq in enumerate(input_sequences):
             p = Prompt(seq, sentence_ids[i])
@@ -910,9 +927,9 @@ class IterationLevelInputPool:
         logit_positions = []
         i = -1
         for p in prompt_input:
-            i = i + p.prompt_length
+            i += p.prompt_length
             logit_positions.append(i)
-        for p in decoding_input:
+        for _ in decoding_input:
             i += 1
             logit_positions.append(i)
 
@@ -921,7 +938,7 @@ class IterationLevelInputPool:
 
     def update_cache(self, kv, generated_ids):
         if self._current_batch is None:
-            raise RuntimeError("There is no pending batch.")
+            raise RuntimeError("There is no pending batch so update_cache should not be called.")
 
         # we need to copy cache using one custom kernel, so we record the src and dst indices
         src_indices = []
@@ -930,22 +947,20 @@ class IterationLevelInputPool:
 
         # check EOS, move finished sentences from wip to finished queue
         read_idx = 0
-        for prompt_idx, p in enumerate(self._current_batch):
-            generated_id = generated_ids[prompt_idx]
-
-            # check finish criteria: (1) hit EOS (2) reach max gen length
+        for generated_id, p in zip(generated_ids, self._current_batch):
+            # check finish criteria: it generates EOS or it is about to reach max_length.
             if generated_id == self.eos or p.generation_length + 1 == self.max_generation_length:
+                # ANY -> FINISHED
                 if p.status == PromptStatus.DECODING:
                     assert p in self.wip
                     self.wip.remove(p)
-                print(f"Prompt {p.input_ids} finished" )
+                logger.debug(f"Prompt {p.input_ids} finished" )
                 p.finish(generated_id)
                 self.done.add(p)
                 # For finished sentences, release cache slot, update cache index
                 self.cache.release_slot(p.cache_start_index)
-            # transition from PROMPT to DECODING
             elif p.status == PromptStatus.PROMPT:
-                # figure out cache to write
+                # PROMPT -> DECODING
                 p.init_cache(self.cache.take_slot())
                 dst_indices.extend(list(range(p.cache_start_index, p.cache_end_index)))
                 src_indices.extend(list(range(read_idx, read_idx + p.prompt_length)))
@@ -955,21 +970,23 @@ class IterationLevelInputPool:
                 self.wip.add(p)
                 read_idx += p.prompt_length
             elif p.status == PromptStatus.DECODING:
-                # transition from DECODING TO DECODING
-                # update the status of unended sentences, copy their cache, append the next token,
+                # DECODING -> DECODING
                 src_indices.append(read_idx)
                 dst_indices.append(p.cache_end_index)
                 src_sentence_ids.append(p.sentence_id)
-                # put their last token into prompt object.
                 p.add_token(generated_id)
                 read_idx += 1
             else:
                 raise RuntimeError(f"Prompt status: {p.status} should not appear here." )
 
+        # no cache writing task
         if len(src_indices) == 0:
+            logger.debug("All prompts have finished. Cache will be erased.")
+            self.cache.erase()
             return
-        # get the transport plan
-        reorg_dst_slots, reorg_src_slots = self.cache.continuize()
+
+        # Now check continuity and get the copy plan if non-continuous
+        reorg_dst_slots, reorg_src_slots = self.cache.get_continuation_plan()
         # update the prompt that has been influenced
         reorg_dst_indices = []
         reorg_src_indices = []
@@ -986,7 +1003,7 @@ class IterationLevelInputPool:
         src_indices.extend(reorg_src_indices)
         dst_indices.extend(reorg_dst_indices)
         # copy cache in one kernel and update cache indices
-        self.cache.update(kv, src_indices, dst_indices, src_sentence_ids, breakpoint)
+        self.cache.update_fused(kv, src_indices, dst_indices, src_sentence_ids, breakpoint)
 
     def get_results(self):
         """Return results sorted by their sentence id."""
@@ -1003,14 +1020,9 @@ class IterationLevelInputPool:
         return ret
 
     @property
-    def num_vacant_token_slot(self):
-        """Return the number of available sequence slots that can be put in batch."""
-        return self.batch_size - len(self.wip)
-
-    @property
     def num_vacant_sequence_slot(self):
         """Return the global vacancy."""
-        return min(self.num_vacant_token_slot, self.cache.num_vacant_slot)
+        return min(self.batch_size - len(self.wip), len(self.cache.vacancies))
 
 
 @cupyx.jit.rawkernel()
@@ -1027,20 +1039,7 @@ def custom_memcpy(dst_k, dst_v, src_k, src_v, dst_indices, hidden_dim):
 
 
 @cupyx.jit.rawkernel()
-def custom_memcpy_v2(dst_k, dst_v, src_k, src_v, dst_indices, src_indices, hidden_dim):
-    thread_idx = cupyx.jit.threadIdx.x
-    src_idx = src_indices[cupyx.jit.blockIdx.x]
-    dst_idx = dst_indices[src_idx]
-    num_elements_per_thread = (hidden_dim + 256 - 1) // 256
-    for i in range(num_elements_per_thread):
-        j = thread_idx + 256 * i
-        if j < hidden_dim:
-            dst_k[dst_idx * hidden_dim + j] = src_k[src_idx * hidden_dim + j]
-            dst_v[dst_idx * hidden_dim + j] = src_v[src_idx * hidden_dim + j]
-
-
-@cupyx.jit.rawkernel()
-def custom_memcpy_v3(dst_k, dst_v, src_k, src_v, dst_indices, src_indices, hidden_dim, breakpoint):
+def custom_memcpy_fused(dst_k, dst_v, src_k, src_v, dst_indices, src_indices, hidden_dim, breakpoint):
     thread_idx = cupyx.jit.threadIdx.x
     src_idx = src_indices[cupyx.jit.blockIdx.x]
     dst_idx = dst_indices[cupyx.jit.blockIdx.x]

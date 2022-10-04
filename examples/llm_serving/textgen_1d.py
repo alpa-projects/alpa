@@ -23,7 +23,9 @@ def main(args):
 
     # Load the model
     model = get_model_1d(model_name=args.model,
-                         path="~/opt_weights")
+                         path="~/opt_weights",
+                         max_cache_per_seq=256,
+                         cache_size=256*4)
 
     # Generate
     prompts = [
@@ -34,15 +36,17 @@ def main(args):
     ]
 
     prompts = [
-        "Computer science is the study of computation and",
-        "Ion Stoica is a Romanian-American computer scientist specializing in",
-        "The University of California, Berkeley is a public",
-        "Today is a good day and I want to", "What is the valuation of Databricks?",
-        "Paris is the capital city of", "Which country has the most population?",
-        "What do you think about the future of Cryptocurrency?",
-        "What do you think about the meaning of life?",
-        "Donald Trump is the president of",
-        "GPT-3 is a large language model that is capable of"
+        # "Computer science is the study of computation and",
+        # "Ion Stoica is a Romanian-American computer scientist specializing in",
+        # "The University of California, Berkeley is a public",
+        # "Today is a good day and I want to",
+        "What is the valuation of Databricks?",
+        "Paris is the capital city of",
+        # "Which country has the most population?",
+        # "What do you think about the future of Cryptocurrency?",
+        # "What do you think about the meaning of life?",
+        # "Donald Trump is the president of",
+        # "GPT-3 is a large language model that is capable of"
     ]
 
     timer_names = ["enter", "compute", "update", "reshape"]
@@ -53,7 +57,7 @@ def main(args):
     for i in range(n_warmup):
         tic = time.time()
         output_ids = model.generate(input_ids=input_ids,
-                                    max_length=64,
+                                    max_length=128,
                                     **generate_params)
         elapsed = time.time() - tic
         for timer_name in timer_names:

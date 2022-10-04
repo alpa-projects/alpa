@@ -23,19 +23,22 @@ def main(args):
     # Load the model
     model = get_model(model_name=args.model,
                       path="~/opt_weights",
-                      cache_size=256*4,
+                      cache_size=256*2,
                       max_cache_per_seq=256)
 
     prompts = [
+        # "Computer science is the study of computation and",
+        # "Ion Stoica is a Romanian-American computer scientist specializing in",
+        # "The University of California, Berkeley is a public",
+        # "Today is a good day and I want to",
+        "What is the valuation of Databricks?",
         "Computer science is the study of computation and",
-        "Ion Stoica is a Romanian-American computer scientist specializing in",
-        "The University of California, Berkeley is a public",
-        "Today is a good day and I want to", "What is the valuation of Databricks?",
-        "Paris is the capital city of", "Which country has the most population?",
-        "What do you think about the future of Cryptocurrency?",
-        "What do you think about the meaning of life?",
-        "Donald Trump is the president of",
-        "GPT-3 is a large language model that is capable of"
+        # "Paris is the capital city of",
+        # "Which country has the most population?",
+        # "What do you think about the future of Cryptocurrency?",
+        # "What do you think about the meaning of life?",
+        # "Donald Trump is the president of",
+        # "GPT-3 is a large language model that is capable of"
     ]
     # prompts = prompts * 10
     # timer_names = ["enter", "compute", "update", "reshape"]

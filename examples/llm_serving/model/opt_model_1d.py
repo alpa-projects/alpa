@@ -745,6 +745,9 @@ class Prompt:
             raise RuntimeError("Unfinished prompt.")
         return self.finish_time - self.start_time
 
+    def print(self):
+        print(self.input_ids + ":" + self.generated_ids)
+
 
 class Cache:
     def __init__(self, cache_size, max_cache_per_seq, model_config):
@@ -774,6 +777,12 @@ class Cache:
         heapq.heappush(self.vacancies, slot)
         # reset the cache indices of this slot as there
         self.kv_cache_ids[slot:slot + self.max_cache_per_seq] = 0
+
+        # also set the cache values
+        for layer_idx, (k, v) in enumerate(self.kv_caches_cupy):
+            k[slot:slot+self.max_cache_per_seq,:,:] = 0.0
+            v[slot:slot+self.max_cache_per_seq,:,:] = 0.0
+
         if self.continuity_tracker - slot == self.max_cache_per_seq:
             # meaning the released slot is next to the tracker
             new_start = slot - self.max_cache_per_seq
@@ -789,8 +798,6 @@ class Cache:
         if slot == self.continuity_tracker:
             self.continuity_tracker = slot + self.max_cache_per_seq
         return slot
-
-
 
     def erase(self):
         self.vacancies = list(range(0, self.num_slot * self.max_cache_per_seq, self.max_cache_per_seq))
@@ -819,6 +826,21 @@ class Cache:
         src_slots = proposals.difference(fake_vacancies)
         assert len(dst_slots) == len(src_slots)
         return dst_slots, src_slots
+
+    def update_cache(self, kv, src_indices, dst_indices, src_sentence_ids):
+        num_threads_per_block = 256
+        dst_indices_cupy = cupy.array(dst_indices)
+        src_indices_cupy = cupy.array(src_indices)
+        src_kv = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in kv]
+        for layer_idx, (src_k, src_v) in enumerate(src_kv):
+            dst_k, dst_v = self.kv_caches_cupy[layer_idx]
+            custom_memcpy_v2[len(src_indices), num_threads_per_block](dst_k.ravel(), dst_v.ravel(),
+                                                                   src_k.ravel(), src_v.ravel(),
+                                                                   dst_indices_cupy, src_indices_cupy,
+                                                                   self.hidden_dim)
+
+        # update cache ids
+        self.kv_cache_ids[dst_indices] = src_sentence_ids
 
     def update_fused(self, kv, src_indices, dst_indices, src_sentence_ids, breakpoint):
         """Copy the KV caches from src_indices and write to dst_indices.
@@ -926,10 +948,12 @@ class IterationLevelInputPool:
             p.start()
 
         self._current_batch = prompt_input + decoding_input
-        logger.debug(f"This batch has {len(prompt_input)} new prompts {[p.sentence_id for p in prompt_input]} "
+        logger.debug(f"This batch has {len(prompt_input)} new prompts {[p.sentence_id for p in prompt_input]}. "
                      f"and {len(decoding_input)} in decoding {[p.sentence_id for p in decoding_input]}. "
                      f"Todo size: {self.todo.qsize()}, cache vacancies: {[v // self.cache.max_cache_per_seq for v in self.cache.vacancies]}, "
                      f"continuity from: {self.cache.continuity_tracker // self.cache.max_cache_per_seq}")
+
+        # logger.debug(f"Input: {input}, input_index: {input_index}, position_ids: {position_ids} ")
 
         logit_positions = []
         i = -1
@@ -994,39 +1018,58 @@ class IterationLevelInputPool:
             self.cache.erase()
             return
 
-        # Now check continuity and get the copy plan if non-continuous
+        # update cache
+        logger.debug(f"Update cache: src {src_indices}, dst {dst_indices}, sen ids: {src_sentence_ids}")
+        self.cache.update_cache(kv, src_indices, dst_indices, src_sentence_ids)
+
+        # # Now check continuity and get the copy plan if non-continuous
         reorg_dst_slots, reorg_src_slots = self.cache.get_continuation_plan()
-
-        # update the prompt that has been influenced
-        reorg_dst_indices = []
-        reorg_src_indices = []
-        reorg_sentence_ids = []
-        for dst_slot, src_slot in zip(reorg_dst_slots, reorg_src_slots):
-            for p in self.wip:
-                if p.cache_start_index == src_slot:
-                    reorg_src_indices.extend(list(range(src_slot, src_slot + self.max_cache_per_seq)))
-                    reorg_sentence_ids.extend(self.cache.kv_cache_ids[src_slot:src_slot+self.max_cache_per_seq].tolist())
-                    p.cache_start_index = dst_slot
-                    reorg_dst_indices.extend(list(range(dst_slot, dst_slot + self.max_cache_per_seq)))
-                    break
-
-
-        breakpoint = len(src_indices)
-        src_indices.extend(reorg_src_indices)
-        dst_indices.extend(reorg_dst_indices)
-        src_sentence_ids.extend(reorg_sentence_ids)
-        # copy cache in one kernel and update cache indices
-        self.cache.update_fused(kv, src_indices, dst_indices, src_sentence_ids, breakpoint)
-
+        logger.debug(f"Reorg plan: move slot from {reorg_src_slots} to {reorg_dst_slots}")
         if len(reorg_dst_slots) > 0:
-            logger.debug(f"cache reorg is required: move from {[s//self.max_cache_per_seq for s in reorg_src_slots]} "
-                         f"to {[s//self.max_cache_per_seq for s in reorg_dst_slots]}. "
-                         f"Move plan: src {src_indices}, dst: {dst_indices}, src_sen: {src_sentence_ids}")
+            for k, v in self.cache.kv_caches_cupy:
+                for src_slot, dst_slot in zip(reorg_src_slots, reorg_dst_slots):
+                    k[dst_slot:dst_slot+self.max_cache_per_seq, :, :] = \
+                        k[src_slot:src_slot+self.max_cache_per_seq, :, :]
+                    k[src_slot:src_slot + self.max_cache_per_seq, :, :] = 0.0
+                    v[dst_slot:dst_slot+self.max_cache_per_seq, :, :] = \
+                        v[src_slot:src_slot+self.max_cache_per_seq, :, :]
+                    v[src_slot:src_slot + self.max_cache_per_seq, :, :] = 0.0
+            for src_slot, dst_slot in zip(reorg_src_slots, reorg_dst_slots):
+                self.cache.kv_cache_ids[dst_slot:dst_slot+self.max_cache_per_seq] = \
+                    self.cache.kv_cache_ids[src_slot:src_slot+self.max_cache_per_seq]
+                self.cache.kv_cache_ids[src_slot:src_slot+self.max_cache_per_seq] = 0
 
-        for slot in reorg_src_slots:
-            heapq.heappush(self.cache.vacancies, slot)
-        for slot in reorg_dst_slots:
-            self.cache.vacancies.remove(slot)
+            # # update the prompt that has been influenced
+            # reorg_dst_indices = []
+            # reorg_src_indices = []
+            # reorg_sentence_ids = []
+            for dst_slot, src_slot in zip(reorg_dst_slots, reorg_src_slots):
+                for p in self.wip:
+                    if p.cache_start_index == src_slot:
+                        # reorg_src_indices.extend(list(range(src_slot, src_slot + self.max_cache_per_seq)))
+                        # reorg_sentence_ids.extend(self.cache.kv_cache_ids[src_slot:src_slot+self.max_cache_per_seq].tolist())
+                        p.cache_start_index = dst_slot
+                        # reorg_dst_indices.extend(list(range(dst_slot, dst_slot + self.max_cache_per_seq)))
+                        break
+
+
+            # breakpoint = len(src_indices)
+            # src_indices.extend(reorg_src_indices)
+            # dst_indices.extend(reorg_dst_indices)
+            # src_sentence_ids.extend(reorg_sentence_ids)
+            # copy cache in one kernel and update cache indices
+            # self.cache.update_fused(kv, src_indices, dst_indices, src_sentence_ids, breakpoint)
+            # logger.debug(f"cache update plan: move from {[s for s in src_indices]} "
+            #              f"to {[s for s in dst_indices]}")
+            # if len(reorg_dst_slots) > 0:
+            #     logger.debug(f"cache reorg is required: move from {[s//self.max_cache_per_seq for s in reorg_src_slots]} "
+            #                  f"to {[s//self.max_cache_per_seq for s in reorg_dst_slots]}. "
+            #                  f"Move plan: src {src_indices}, dst: {dst_indices}, src_sen: {src_sentence_ids}")
+            #
+            for slot in reorg_src_slots:
+                self.cache.release_slot(slot)
+            for slot in reorg_dst_slots:
+                self.cache.vacancies.remove(slot)
 
     def get_results(self):
         """Return results sorted by their sentence id."""
@@ -1060,6 +1103,18 @@ def custom_memcpy(dst_k, dst_v, src_k, src_v, dst_indices, hidden_dim):
             dst_k[dst_idx * hidden_dim + j] = src_k[src_idx * hidden_dim + j]
             dst_v[dst_idx * hidden_dim + j] = src_v[src_idx * hidden_dim + j]
 
+@cupyx.jit.rawkernel()
+def custom_memcpy_v2(dst_k, dst_v, src_k, src_v, dst_indices, src_indices, hidden_dim):
+    thread_idx = cupyx.jit.threadIdx.x
+    src_idx = src_indices[cupyx.jit.blockIdx.x]
+    # src_idx = cupyx.jit.blockIdx.x
+    dst_idx = dst_indices[cupyx.jit.blockIdx.x]
+    num_elements_per_thread = (hidden_dim + 256 - 1) // 256
+    for i in range(num_elements_per_thread):
+        j = thread_idx + 256 * i
+        if j < hidden_dim:
+            dst_k[dst_idx * hidden_dim + j] = src_k[src_idx * hidden_dim + j]
+            dst_v[dst_idx * hidden_dim + j] = src_v[src_idx * hidden_dim + j]
 
 @cupyx.jit.rawkernel()
 def custom_memcpy_fused(dst_k, dst_v, src_k, src_v, dst_indices, src_indices, hidden_dim, breakpoint):

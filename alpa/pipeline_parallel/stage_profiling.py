@@ -78,18 +78,23 @@ StageConfig = namedtuple(
 class ProfileResult(
         namedtuple(typename="ProfileResult",
                    field_names=[
-                       "compute_cost", "peak_memory", "temp_buffer_size",
-                       "intermediate_size", "initial_size", "available_memory",
+                       "compute_cost",
+                       "peak_memory",
+                       "temp_buffer_size",
+                       "intermediate_size",
+                       "initial_size",
+                       "available_memory",
                    ])):
     """Profile result of a stage."""
 
     def __str__(self):
-        return (f"ProfileResult(compute_cost={self.compute_cost}, "
-                f"peak_memory={self.peak_memory/GB}GB, "
-                f"temp_buffer_size={self.temp_buffer_size/GB}GB, "
-                f"intermediate_size={self.intermediate_size/GB}GB, "
-                f"initial_size={self.initial_size/GB}, "
-                f"available_memory={self.available_memory/GB}GB)")
+        return (f"ProfileResult(compute_cost={self.compute_cost:.3f}, "
+                f"peak_memory={self.peak_memory / GB:.3f}GB, "
+                f"temp_buffer_size={self.temp_buffer_size / GB:.3f}GB, "
+                f"intermediate_size={self.intermediate_size / GB:.3f}GB, "
+                f"initial_size={self.initial_size / GB:.3f}, "
+                f"available_memory={self.available_memory / GB:.3f}GB)")
+
 
 class BaseWorkerPoolWrapper(ABC):
     """Basic wrapper of ray's ActorPool."""
@@ -633,9 +638,8 @@ def interpret_profile_result_2d(profile_results):
         available_memory = result.available_memory
         intermediate_size = result.intermediate_size
         initial_size = result.initial_size
-        max_n_succ_stages = (
-            (available_memory - peak_memory - initial_size) //
-             max(intermediate_size, 1e-8) - 1)
+        max_n_succ_stages = ((available_memory - peak_memory - initial_size) //
+                             max(intermediate_size, 1e-8) - 1)
         max_n_succ_stages = np.clip(max_n_succ_stages, -1, INFINITY_N_STAGES)
         if np.isinf(compute_cost):
             max_n_succ_stages = -1
@@ -678,12 +682,13 @@ def interpret_profile_result_1d(profile_results):
     for start in range(num_layers):
         for end in range(start, num_layers):
             for config_idx in range(num_auto_sharding_configs):
-                results = profile_results[start: end, config_idx]
+                results = profile_results[start:end, config_idx]
                 if any(result is None for result in results):
                     continue
                 compute_cost = sum(result.compute_cost for result in results)
                 all_compute_cost[start, end, config_idx] = compute_cost
-                all_max_n_succ_stages[start, end, config_idx] = INFINITY_N_STAGES
+                all_max_n_succ_stages[start, end,
+                                      config_idx] = INFINITY_N_STAGES
             # TODO(zhuohan): Calculate max_n_succ_stages
     raise NotImplementedError("1D is not implemented yet")
 
@@ -1130,8 +1135,14 @@ def get_sharded_size_by_proto(serialized_proto,
     else:
         if tuple_proto:
             hlo_sharding = xe.HloSharding(serialized_proto[0])
-            sharding_specs = hlo_sharding_to_sharding_spec(
-                hlo_sharding, avals, logical_mesh_shape)
+            if len(avals) == 1:
+                sharding_specs = [
+                    hlo_sharding_to_sharding_spec(hlo_sharding, avals[0],
+                                                  logical_mesh_shape)
+                ]
+            else:
+                sharding_specs = hlo_sharding_to_sharding_spec(
+                    hlo_sharding, avals, logical_mesh_shape)
         else:
             sharding_specs = [
                 hlo_sharding_to_sharding_spec(xe.HloSharding(proto), aval,

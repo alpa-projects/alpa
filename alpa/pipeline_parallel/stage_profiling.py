@@ -76,54 +76,20 @@ StageConfig = namedtuple(
 
 
 class ProfileResult(
-        namedtuple("ProfileResult", [
-            "compute_cost", "peak_memory", "intermediate_size", "initial_size",
-            "available_memory", "is_profiled"
-        ])):
-    """Profile result of a candidate pipeline stage."""
+        namedtuple(typename="ProfileResult",
+                   field_names=[
+                       "compute_cost", "peak_memory", "temp_buffer_size",
+                       "intermediate_size", "initial_size", "available_memory",
+                   ])):
+    """Profile result of a stage."""
 
-    @classmethod
-    def init_profile_result_meshes(cls, num_layers: int,
-                                   num_submesh_choices: int,
-                                   num_auto_sharding_configs: int):
-        return cls(
-            compute_cost=np.full((num_layers, num_layers, num_submesh_choices,
-                                  num_auto_sharding_configs), np.inf),
-            peak_memory=np.full((num_layers, num_layers, num_submesh_choices,
-                                 num_auto_sharding_configs), np.inf),
-            intermediate_size=np.full(
-                (num_layers, num_layers, num_submesh_choices,
-                 num_auto_sharding_configs), np.inf),
-            initial_size=np.full((num_layers, num_layers, num_submesh_choices,
-                                  num_auto_sharding_configs), np.inf),
-            available_memory=np.full(
-                (num_layers, num_layers, num_submesh_choices,
-                 num_auto_sharding_configs), 0),
-            is_profiled=np.full((num_layers, num_layers, num_submesh_choices,
-                                 num_auto_sharding_configs), False),
-        )
-
-    def get_submesh_results(self, submesh_idx: int):
-        return ProfileResult(
-            compute_cost=self.compute_cost[:, :, submesh_idx, :],
-            peak_memory=self.peak_memory[:, :, submesh_idx, :],
-            intermediate_size=self.intermediate_size[:, :, submesh_idx, :],
-            initial_size=self.initial_size[:, :, submesh_idx, :],
-            available_memory=self.available_memory[:, :, submesh_idx, :],
-            is_profiled=self.is_profiled[:, :, submesh_idx, :],
-        )
-
-    def set_submesh_results(self, submesh_idx: int,
-                            submesh_results: "ProfileResult"):
-        self.compute_cost[:, :, submesh_idx, :] = submesh_results.compute_cost
-        self.peak_memory[:, :, submesh_idx, :] = submesh_results.peak_memory
-        self.intermediate_size[:, :, submesh_idx, :] = (
-            submesh_results.intermediate_size)
-        self.initial_size[:, :, submesh_idx, :] = submesh_results.initial_size
-        self.available_memory[:, :, submesh_idx, :] = (
-            submesh_results.available_memory)
-        self.is_profiled[:, :, submesh_idx, :] = submesh_results.is_profiled
-
+    def __str__(self):
+        return (f"ProfileResult(compute_cost={self.compute_cost}, "
+                f"peak_memory={self.peak_memory/GB}GB, "
+                f"temp_buffer_size={self.temp_buffer_size/GB}GB, "
+                f"intermediate_size={self.intermediate_size/GB}GB, "
+                f"initial_size={self.initial_size/GB}, "
+                f"available_memory={self.available_memory/GB}GB)")
 
 class BaseWorkerPoolWrapper(ABC):
     """Basic wrapper of ray's ActorPool."""
@@ -183,9 +149,6 @@ class CompileWorker:
     To activate the worker, a gpu resource is required.
     """
 
-    def __init__(self):
-        self.cnt = 0
-
     def compile_stage_for_profiling(self, stage_id, config: CompileConfig,
                                     logical_mesh, autosharding_option,
                                     num_micro_batches):
@@ -204,7 +167,6 @@ class CompileWorker:
             proto: The proto of compiled executable
             stage_plan: The sharding strategy from auto sharding
         """
-        self.cnt += 1
 
         # Compile with search to get sharding annotations.
         other_kwargs = {
@@ -473,7 +435,8 @@ class HloCostModelProfileWorkerPool(BaseWorkerPoolWrapper):
         self.pool = ActorPool(self.actors)
 
 
-def compile_all(stages, num_micro_batches, default_as_option, is_profiled):
+def compile_all(stages, num_micro_batches, default_as_option,
+                mesh_cached_result):
     """
     Compile all input stages.
     """
@@ -483,7 +446,7 @@ def compile_all(stages, num_micro_batches, default_as_option, is_profiled):
     compile_workers = CompileWorkerPool(num_cpus)
     for stage_id, ((start, end, config_idx), stage_config, auto_sharding_config,
                    _) in enumerate(stages):
-        if is_profiled[start, end, config_idx]:
+        if mesh_cached_result[start, end, config_idx] is not None:
             continue
         logical_mesh, autosharding_option_dict = auto_sharding_config
         compile_workers.submit(
@@ -510,15 +473,12 @@ def compile_all(stages, num_micro_batches, default_as_option, is_profiled):
 
 def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
                 num_micro_batches, auto_stage_option,
-                mesh_cached_result: ProfileResult):
+                mesh_cached_result: np.array):
     """Profile all compiled outputs on given meshes.
 
     This function launches a profile worker pool and submits given tasks.
     """
     mesh_profile_result = mesh_cached_result
-    (compute_cost, peak_memory, intermediate_size, initial_size,
-     available_memory, is_profiled) = mesh_profile_result
-
     placement_group = retrieve_placement_group()
 
     if auto_stage_option.use_hlo_cost_model:
@@ -543,7 +503,7 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
             continue
         (start, end, config_idx), stage_config, _, _ = stage
 
-        if is_profiled[start, end, config_idx]:
+        if mesh_profile_result[start, end, config_idx] is not None:
             continue
         profile_workers.submit(
             lambda w, v: w.profile.remote(*v),
@@ -553,8 +513,8 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
     pbar = tqdm.tqdm(range(succ_compile_ct))
     for _ in pbar:
         try:
-            (stage_id, stage_compute_costs, stage_peak_memory,
-             stage_available_memory) = profile_workers.get_next_unordered()
+            (stage_id, compute_costs, peak_memory,
+             available_memory) = profile_workers.get_next_unordered()
         except TimeoutError:
             profile_workers.shutdown(force=True)
             logger.warning("After waiting for too long, "
@@ -567,32 +527,44 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
             return mesh_profile_result
         ((start, end, config_idx), stage_config, auto_sharding_config,
          intermediate_vars) = stages[stage_id]
+        # Get memory stats
         compiled_output = compiled_outputs[stage_id]
         config = compiled_output.stage_plan
         hooked_proto = compiled_output.intermediate_proto
         apply_in_shardings = compiled_output.apply_grad_input_sharding_protos
-
-        stage_intermediate_size = compute_intermediate_size(
-            hooked_proto, intermediate_vars, config.logical_mesh_shape)
-        stage_initial_size = compute_apply_grad_invar_size(
+        profile_config = stage_config.profile_config
+        invar_sizes = get_sharded_size_by_proto(
+            compiled_output.input_sharding_protos, profile_config.input_avals,
+            config.logical_mesh_shape, False)
+        outvar_sizes = get_sharded_size_by_proto(
+            [compiled_output.output_sharding_proto],
+            profile_config.output_avals, config.logical_mesh_shape)
+        donate_invar_sizes = [
+            size
+            for donated, size in zip(profile_config.donate_invars, invar_sizes)
+            if donated
+        ]
+        intermediate_avals = tuple(v.aval for v in intermediate_vars)
+        intermediate_size = sum(
+            get_sharded_size_by_proto(hooked_proto, intermediate_avals,
+                                      config.logical_mesh_shape))
+        temp_buffer_size = (peak_memory - sum(invar_sizes) - sum(outvar_sizes) +
+                            sum(donate_invar_sizes))
+        initial_size = compute_apply_grad_invar_size(
             apply_in_shardings, stage_config.apply_grad_config,
             config.logical_mesh_shape)
 
-        logical_mesh, auto_sharding_dict = auto_sharding_config
-        compute_cost[start, end, config_idx] = np.mean(stage_compute_costs)
-        peak_memory[start, end, config_idx] = stage_peak_memory
-        intermediate_size[start, end, config_idx] = stage_intermediate_size
-        initial_size[start, end, config_idx] = stage_initial_size
-        available_memory[start, end, config_idx] = stage_available_memory
-        is_profiled[start, end, config_idx] = True
+        profile_result = ProfileResult(
+            compute_cost=np.mean(compute_costs),
+            peak_memory=peak_memory,
+            temp_buffer_size=temp_buffer_size,
+            intermediate_size=intermediate_size,
+            available_memory=available_memory,
+            initial_size=initial_size,
+        )
 
-        pbar.write(f"cost[{start}, {end}, {config_idx}]"
-                   f"={compute_cost[start, end, config_idx]:.3f},"
-                   f" Mem: avail={available_memory / GB:.3f}GB,"
-                   f" peak={peak_memory / GB:.3f}GB,"
-                   f" intermediate={intermediate_size / GB:.3f}GB,"
-                   f" init={initial_size / GB:.3f}GB,"
-                   f" as_config={(logical_mesh.shape, auto_sharding_dict)}")
+        mesh_profile_result[start, end, config_idx] = profile_result
+        pbar.write(f"result[{start}, {end}, {config_idx}] = {profile_result}")
     profile_workers.shutdown()
     return mesh_profile_result
 
@@ -651,15 +623,26 @@ def generate_training_stages_2d(layers,
 
 
 def interpret_profile_result_2d(profile_results):
-    (compute_cost, peak_memory, available_memory, intermediate_size,
-     initial_size, _) = profile_results
-    max_n_succ_stages = ((available_memory - peak_memory - initial_size) //
-                         np.maximum(intermediate_size, 1e-8) - 1).astype(np.int)
-    max_n_succ_stages = np.minimum(np.maximum(-1, max_n_succ_stages),
-                                   INFINITY_N_STAGES)
-    is_inf = np.isinf(compute_cost)
-    max_n_succ_stages = np.where(is_inf, -1, max_n_succ_stages)
-    return compute_cost, max_n_succ_stages
+    all_compute_cost = np.full_like(profile_results, np.inf, dtype=np.float64)
+    all_max_n_succ_stages = np.full_like(profile_results, -1, dtype=np.int64)
+    for index, result in np.ndenumerate(profile_results):
+        if result is None:
+            continue
+        compute_cost = result.compute_cost
+        peak_memory = result.peak_memory
+        available_memory = result.available_memory
+        intermediate_size = result.intermediate_size
+        initial_size = result.initial_size
+        max_n_succ_stages = (
+            (available_memory - peak_memory - initial_size) //
+             max(intermediate_size, 1e-8) - 1)
+        max_n_succ_stages = np.clip(max_n_succ_stages, -1, INFINITY_N_STAGES)
+        if np.isinf(compute_cost):
+            max_n_succ_stages = -1
+        all_compute_cost[index] = compute_cost
+        all_max_n_succ_stages[index] = max_n_succ_stages
+
+    return all_compute_cost, all_max_n_succ_stages
 
 
 def generate_training_stages_1d(layers, donation_mapping, global_outvars,
@@ -686,8 +669,23 @@ def generate_training_stages_1d(layers, donation_mapping, global_outvars,
 
 
 def interpret_profile_result_1d(profile_results):
-    # TODO: implement this
-    return compute_cost, max_n_succ_stages
+    num_layers = profile_results.shape[0]
+    num_auto_sharding_configs = profile_results.shape[2]
+    profile_results = profile_results.diagonal()
+    all_compute_cost = np.full_like(profile_results, np.inf, dtype=np.float64)
+    all_max_n_succ_stages = np.full_like(profile_results, -1, dtype=np.int64)
+
+    for start in range(num_layers):
+        for end in range(start, num_layers):
+            for config_idx in range(num_auto_sharding_configs):
+                results = profile_results[start: end, config_idx]
+                if any(result is None for result in results):
+                    continue
+                compute_cost = sum(result.compute_cost for result in results)
+                all_compute_cost[start, end, config_idx] = compute_cost
+                all_max_n_succ_stages[start, end, config_idx] = INFINITY_N_STAGES
+            # TODO(zhuohan): Calculate max_n_succ_stages
+    raise NotImplementedError("1D is not implemented yet")
 
 
 def distributed_profile_on_mesh(stages, meshes: Sequence[VirtualPhysicalMesh],
@@ -705,8 +703,7 @@ def distributed_profile_on_mesh(stages, meshes: Sequence[VirtualPhysicalMesh],
     print("- Compile all stages")
     try:
         compiled_outputs = compile_all(stages, num_micro_batches,
-                                       default_as_option,
-                                       mesh_cached_result.is_profiled)
+                                       default_as_option, mesh_cached_result)
     except RayActorError as e:
         logger.warning(f"Compilation fatal error: {e}")
         timers("stage-construction-compilation").suspend()
@@ -788,10 +785,11 @@ def get_compute_cost(
     if auto_stage_option.cached_profile_result is not None:
         profile_results = np.load(auto_stage_option.cached_profile_result,
                                   allow_pickle=True)
-        assert isinstance(profile_results, ProfileResult)
     else:
-        profile_results = ProfileResult.init_profile_result_meshes(
-            num_layers, num_submesh_choices, num_autosharding_configs)
+        profile_results = np.full((num_layers, num_layers, num_submesh_choices,
+                                   num_autosharding_configs),
+                                  None,
+                                  dtype=object)
     print("-" * 20 + " Automatic stage clustering " + "-" * 20)
     print(f"submesh_choices: {submesh_choices}")
 
@@ -810,7 +808,7 @@ def get_compute_cost(
             sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
                 num_hosts, num_devices_per_host)
 
-        mesh_cached_result = profile_results.get_submesh_results(mesh_id)
+        mesh_cached_result = profile_results[:, :, mesh_id]
 
         if auto_stage_option.layer_profile_mode == "composition":
             stages = generate_training_stages_2d(
@@ -832,8 +830,7 @@ def get_compute_cost(
             stages, sliced_virtual_meshes, num_micro_batches, default_as_option,
             auto_stage_option, mesh_cached_result)
 
-        profile_results.set_submesh_results(mesh_id, mesh_profile_result)
-
+        profile_results[:, :, mesh_id] = mesh_profile_result
         toc = time()
         print(f"Profiling for submesh {mesh_id} {submesh} takes {toc - tic:.2f}"
               f" seconds")
@@ -895,11 +892,10 @@ def split_global_use_and_donate(layers: Sequence[JaxPipelineComputation],
     for idx in reversed(range(num_layers)):
         layer = layers[idx]
         if idx in layer_indices:
-            global_used = OrderedSet()
             local_donation, new_layer = get_donation_mapping_and_modify(
                 layer, reversed_donation_mapping, gensym_fn)
             for invar in local_donation:
-                assert invar not in global_used and invar not in local_used
+                assert invar not in used and invar not in local_used
 
             global_used = [var for var in new_layer.outvars if var in used]
             out_donation_mapping.update(local_donation)
@@ -991,6 +987,8 @@ def generate_stage_info(all_layers, selected_indices, donation_mapping,
                                                       names, all_outvars,
                                                       donation_map)
     else:
+        # Call merge_unmarked_with_call to add pipeline markers to the
+        # merged jaxpr.
         merged, is_donated = merge_unmarked_with_call([merged], ["merged"],
                                                       new_outvars,
                                                       selected_donation_mapping)
@@ -1096,37 +1094,37 @@ def profile_layer_communication_cost(
     return tot_cost
 
 
-def _compute_vars_size(sharding_specs, selected_vars, logical_mesh_shape):
-    """Compute bytes of selected_vars with given sharding proto and logical
+def _get_sharded_sizes(sharding_specs, avals, logical_mesh_shape):
+    """Compute bytes of avals with given sharding proto and logical
     mesh."""
 
     def get_byte(shape, dtype):
         return np.prod(shape) * np.dtype(dtype).itemsize
 
-    if len(selected_vars) == 0:
-        return 0
+    if len(avals) == 0:
+        return ()
 
-    avals = [v.aval for v in selected_vars]
     if np.prod(logical_mesh_shape) == 1:
-        return sum(get_byte(aval.shape, aval.dtype) for aval in avals)
+        return (get_byte(aval.shape, aval.dtype) for aval in avals)
 
     sharded_shapes = [
         get_shard_shape(aval, spec)
         for aval, spec in zip(avals, sharding_specs)
     ]
 
-    return sum(
-        get_byte(shape, aval.dtype)
-        for shape, aval in zip(sharded_shapes, avals))
+    return (get_byte(shape, aval.dtype)
+            for shape, aval in zip(sharded_shapes, avals))
 
 
-def compute_intermediate_size(serialized_proto, intermediate_vars,
-                              logical_mesh_shape):
+def get_sharded_size_by_proto(serialized_proto,
+                              avals,
+                              logical_mesh_shape,
+                              tuple_proto=True):
     """Compute bytes of serialized proto."""
-    if len(intermediate_vars) == 0:
-        return 0
 
-    avals = [v.aval for v in intermediate_vars]
+    if len(avals) == 0:
+        return ()
+
     if np.prod(logical_mesh_shape) == 1:
         sharding_specs = None
     else:
@@ -1139,8 +1137,7 @@ def compute_intermediate_size(serialized_proto, intermediate_vars,
         else:
             sharding_specs = hlo_sharding_to_sharding_spec(
                 hlo_sharding, avals, logical_mesh_shape)
-    return _compute_vars_size(sharding_specs, intermediate_vars,
-                              logical_mesh_shape)
+    return _get_sharded_sizes(sharding_specs, avals, logical_mesh_shape)
 
 
 def compute_apply_grad_invar_size(input_sharding_protos,
@@ -1170,5 +1167,7 @@ def compute_apply_grad_invar_size(input_sharding_protos,
             if var in config.apply_grad_only_invars:
                 ordered_selected_vars.append(var)
                 selected_sharding_specs.append(spec)
-    return _compute_vars_size(selected_sharding_specs, ordered_selected_vars,
-                              logical_mesh_shape)
+    ordered_selected_avals = [v.aval for v in ordered_selected_vars]
+    return sum(
+        _get_sharded_sizes(selected_sharding_specs, ordered_selected_avals,
+                           logical_mesh_shape))

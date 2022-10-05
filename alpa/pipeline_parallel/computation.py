@@ -775,7 +775,12 @@ def generate_sharded_xla_computations(
 
 
 def rewrite_hook(eqns, gensym_fn):
-    """TODO(zhuohan)."""
+    """Rewrite the hook marker to include the intermediate variables.
+
+    Assume there is a special "hook" marker eqn in eqns that devide the
+    eqns into two parts. This function rewrites the hook to capture all the
+    variables that are passed between the two parts.
+    """
     for idx, eqn in enumerate(eqns):
         eqn: JaxprEqn
         if ("mark_type" in eqn.params and eqn.params["mark_type"] == "hook"):
@@ -980,9 +985,9 @@ def get_donation_mapping_and_modify(computation, reversed_donation_mapping,
                                     gensym_fn):
     """Get donation mapping of selected computation and add some input.
 
-    If an outvar is donated from an invar not in the corrent computation, the
-    function add the invar and create a new computation and corresponding donate
-    mapping.
+    If an outvar is donated from an invar not in the current computation, the
+    function add the invar and create a new computation and corresponding to
+    the donation mapping.
     """
     invars = OrderedSet(computation.invars)
     donation_mapping = {}

@@ -14,7 +14,6 @@ import numpy as np
 from alpa.pipeline_parallel.computation import JaxPipelineComputation
 from alpa.pipeline_parallel.primitive_def import (pipeline_p,
                                                   mark_pipeline_jaxpreqn)
-from alpa.pipeline_parallel.schedules import gen_dependency_with_stages
 from alpa.util import (clone_jaxpr, clone_jaxpr_eqn, slices_to_jaxpr,
                        OrderedSet, get_var_mapping, new_jaxpr_eqn)
 
@@ -422,7 +421,7 @@ def process_apply_gradient(apply_grad_jaxpr, microbatch_bound, pipeline_stages,
         apply_in_to_acc_out,
         gensym_func,
         computation=True)
-    global_outvars = list(map(get_var_mapping(out_map), global_outvars))
+    global_outvars = [get_var_mapping(out_map, var) for var in global_outvars]
 
     return (sliced_apply_grad_stages, apply_grad_placement, global_outvars,
             allreduce_groups)
@@ -431,7 +430,9 @@ def process_apply_gradient(apply_grad_jaxpr, microbatch_bound, pipeline_stages,
 def replace_all_with(closed_jaxpr: ClosedJaxpr, mapping):
     """Replace all variables in a jaxpr given the mapping."""
 
-    map_var = get_var_mapping(mapping)
+    def map_var(var):
+        return get_var_mapping(mapping, var)
+
     new_glob_invars = [map_var(var) for var in closed_jaxpr.jaxpr.invars]
     new_glob_outvars = [map_var(var) for var in closed_jaxpr.jaxpr.outvars]
     new_eqns = []
@@ -480,7 +481,7 @@ def apply_grad_get_mean(apply_grad_jaxpr, global_outvars, gradients, gensym_fn,
     new_eqns.extend(replaced.jaxpr.eqns)
     new_jaxpr = clone_jaxpr(apply_grad_jaxpr, final_invars, final_outvars,
                             new_eqns)
-    global_outvars = list(map(get_var_mapping(mapping), global_outvars))
+    global_outvars = [get_var_mapping(mapping, var) for var in global_outvars]
     return new_jaxpr, global_outvars
 
 
@@ -988,10 +989,13 @@ def apply_grad_add_marker(jaxprs: Sequence[ClosedJaxpr],
                 continue
             new_map[outvar] = gensym_fn(outvar.aval)
         replaced = replace_all_with(jaxpr, new_map).jaxpr
-        new_invars = list(
-            map(get_var_mapping(apply_in_to_acc_out), jaxpr.jaxpr.invars))
-        new_outvars = list(map(get_var_mapping(outvar_map),
-                               jaxpr.jaxpr.outvars))
+        new_invars = [
+            get_var_mapping(apply_in_to_acc_out, var)
+            for var in jaxpr.jaxpr.invars
+        ]
+        new_outvars = [
+            get_var_mapping(outvar_map, var) for var in jaxpr.jaxpr.outvars
+        ]
         name = f'{i}_{APPLY_GRAD_MARKER_SUFFIX}'
         start_marker = mark_pipeline_jaxpreqn(new_invars,
                                               replaced.invars,

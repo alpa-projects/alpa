@@ -32,8 +32,17 @@ SOCKET_REUSE_PORT_ENABLED = (os.environ.get("SERVE_SOCKET_REUSE_PORT_ENABLED",
 @dataclasses.dataclass
 class CreateInfo:
     model_def: Any
-    init_args: List
-    init_kwargs: Dict
+    init_args: Optional[List]
+    init_kwargs: Optional[Dict]
+
+    def append_init_args(self,
+                         init_args: Optional[List] = None,
+                         init_kwargs: Optional[Dict] = None):
+        return CreateInfo(
+            self.model_def,
+            self.init_args + init_args if init_args else self.init_args,
+            dict(self.init_kwargs).update(init_kwargs) if init_kwargs else self.init_kwargs,
+        )
 
 
 @dataclasses.dataclass
@@ -63,6 +72,7 @@ class DeviceMeshGroupManager:
                                    create_info.init_kwargs)
         args = args or []
         kwargs = kwargs or {}
+        #print(f"create replica {name}", flush=True)
         self.replicas[name] = model_def(*args, **kwargs)
 
     def delete_replica(self, name: str):
@@ -107,11 +117,13 @@ class Controller:
     def launch_mesh_group_manager(
             self,
             group_id: int,
-            virtual_mesh_shape: Optional[Tuple[int]] = None):
+            virtual_mesh_shape: Optional[Tuple[int]] = None,
+	    num_gpus: int = 0):
         assert group_id not in self.mesh_group_managers, (
             f"Mesh group {group_id} is already launched")
         self.mesh_group_managers[group_id] = (DeviceMeshGroupManager.options(
-            name=f"mesh_group_manager_{group_id}").remote(virtual_mesh_shape))
+	    name=f"mesh_group_manager_{group_id}",
+	    num_gpus=num_gpus).remote(virtual_mesh_shape))
 
     async def register_model(self,
                              name: str,
@@ -132,16 +144,21 @@ class Controller:
                                                   model_def, init_args,
                                                   init_kwargs))
 
-    async def create_replica(self, name: str, mesh_group_id: int):
+    async def create_replica(self, name: str, mesh_group_id: int,
+                             append_init_args: Optional[List] = None,
+                             append_init_kwargs: Optional[Dict] = None):
         async with self.manager_lock:
-            assert mesh_group_id in self.mesh_group_managers
+            assert mesh_group_id in self.mesh_group_managers, (
+                f"Group {mesh_group_id} does not exist")
             model_info = self.model_info[name]
             manager = self.mesh_group_managers[mesh_group_id]
             assert manager not in model_info.managers
+            create_info = model_info.create_info.append_init_args(
+                append_init_args, append_init_kwargs)
 
             logger.info(
                 f"Create replica of model={name} on mesh={mesh_group_id}")
-            await manager.create_replica.remote(name, model_info.create_info)
+            await manager.create_replica.remote(name, create_info)
             model_info.managers.append(manager)
 
     async def handle_asgi(self, scope, receive, send):

@@ -23,11 +23,11 @@ from alpa.pipeline_parallel.computation import (
     mark_missing_vars_in_backward_computation_pipeline_marks, pipeline_dce,
     slice_closed_jaxpr_by_full_pipeline_marks, split_donate_invars,
     XlaShardedPipelineComputation)
-from alpa.pipeline_parallel.apply_grad import (compute_grad_to_accumulate_grad,
-                                               process_apply_gradient,
-                                               split_compute_grad_and_apply_grad
-                                              )
+from alpa.pipeline_parallel.apply_grad import (
+    apply_grad_get_mean, compute_grad_to_accumulate_grad,
+    process_apply_gradient, split_compute_grad_and_apply_grad)
 from alpa.pipeline_parallel.layer_construction import LayerOption
+from alpa.pipeline_parallel.schedules import gen_dependency_with_stages
 from alpa.pipeline_parallel.stage_construction import (
     cluster_layers_and_slice_mesh, StageOption)
 from alpa.pipeline_parallel.stage_profiling import CompileWorkerPool
@@ -165,11 +165,18 @@ def compile_pipeshard_executable_internal(
     # compute grad to accumulate grad
     jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
 
+    # Add compute mean and slice apply-grad stages
+    # FIXME (zhuohan): get_mean only works when we use jax.mean to
+    #                  calculate loss. It will fail if we use sum.
+    apply_grad_jaxpr, global_outvars = apply_grad_get_mean(
+        apply_grad_jaxpr, global_outvars, microbatch_bound.outvars, gensym_func,
+        num_microbatch, reduction_vector)
+
     (jax_apply_layers,
      apply_grad_global_info) = _slice_apply_grad_for_stage_construction(
          jax_pipeline_layers, apply_grad_jaxpr, microbatch_bound, global_invars,
-         global_outvars, donated_invars, donation_mapping, reduction_vector,
-         num_microbatch, gensym_func, inference_mode)
+         global_outvars, donated_invars, donation_mapping, gensym_func,
+         inference_mode)
     debug_compilation_time("jaxpr operations")
 
     # Construct pipeline stages by merging layers
@@ -184,11 +191,11 @@ def compile_pipeshard_executable_internal(
 
     # Process apply_gradient and donation
     num_devices = [vmesh.num_devices for vmesh in sliced_virtual_meshes]
-    (sliced_apply_grad_stages, n_stages, dependency, apply_grad_placement,
-     global_outvars, donated_invars, allreduce_groups) = process_apply_gradient(
+    (sliced_apply_grad_stages, apply_grad_placement,
+     global_outvars, allreduce_groups) = process_apply_gradient(
          apply_grad_jaxpr, microbatch_bound, jax_pipeline_stages, stage_to_mesh,
-         gensym_func, num_microbatch, num_meshes, global_invars, global_outvars,
-         donated_invars, reduction_vector, False, num_devices)
+         gensym_func, num_meshes, global_invars, global_outvars, donated_invars,
+         False, num_devices)
     jax_all_stages = jax_pipeline_stages + sliced_apply_grad_stages
 
     donation_mapping = create_donation_mapping(donation_mapping, donated_invars,
@@ -201,6 +208,8 @@ def compile_pipeshard_executable_internal(
     debug_compilation_time("apply grad")
 
     # Generate pipeline schedule and placement
+    dependency = gen_dependency_with_stages(jax_pipeline_stages,
+                                            sliced_apply_grad_stages)
     if pipeline_schedule == "gpipe":
         schedule = GpipeSchedule(dependency=dependency,
                                  meshes=sliced_virtual_meshes,
@@ -234,7 +243,7 @@ def compile_pipeshard_executable_internal(
 
     # Call auto-sharding pass to shard each stage
     xla_stages, total_flops = shard_each_stage(
-        jax_all_stages, sliced_virtual_meshes, schedule, n_stages, num_meshes,
+        jax_all_stages, sliced_virtual_meshes, schedule, num_meshes,
         grad_in_to_out, global_invars, acc_grad_outvars, donate_invars_dict,
         num_microbatch, manual_stage_option.submesh_logical_shapes,
         manual_stage_option.submesh_autosharding_option_dicts,
@@ -269,13 +278,12 @@ def compile_pipeshard_executable_internal(
     return pipeshard_config
 
 
-def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
-                     num_meshes, grad_in_to_out, global_invars,
-                     acc_grad_outvars, donate_invars_dict, num_microbatch,
-                     logical_mesh_shapes, autosharding_option_dicts,
-                     default_as_option, input_sharding_dict,
-                     output_sharding_dict, stage_input_shardings, name_base,
-                     gensym_func):
+def shard_each_stage(jax_all_stages, virtual_meshes, schedule, num_meshes,
+                     grad_in_to_out, global_invars, acc_grad_outvars,
+                     donate_invars_dict, num_microbatch, logical_mesh_shapes,
+                     autosharding_option_dicts, default_as_option,
+                     input_sharding_dict, output_sharding_dict,
+                     stage_input_shardings, name_base, gensym_func):
     """Run intra-op parallelism compilation for a stage."""
     # Initialize donation mapping
     stage_dict = [[] for _ in range(num_meshes)]
@@ -305,7 +313,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
 
     # Call auto-sharding pass on each stage
     distributed_compile = global_config.pipeline_distributed_compile
-    xla_stages = [None] * n_stages
+    xla_stages = [None] * len(jax_all_stages)
     if distributed_compile:
         compile_workers = CompileWorkerPool(num_meshes)
         compile_fn = lambda w, v: w.run_auto_sharding_pass.remote(*v)  # pylint: disable=unnecessary-lambda-assignment
@@ -380,8 +388,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
 def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
                                              microbatch_bound, global_invars,
                                              global_outvars, donated_invars,
-                                             donation_mapping, reduction_vector,
-                                             num_microbatch, gensym_func,
+                                             donation_mapping, gensym_func,
                                              inference_mode):
     if inference_mode:
         num_layers = len(pipeline_layers)
@@ -393,12 +400,11 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
         num_mesh = num_layers // 2
         layer_to_mesh = (list(range(num_mesh)) +
                          list(reversed(range(num_mesh))))
-    (layers, _, _, apply_grad_placement, _, donated_invars,
+    (layers, apply_grad_placement, _,
      _) = process_apply_gradient(apply_grad_jaxpr, microbatch_bound,
                                  pipeline_layers, layer_to_mesh, gensym_func,
-                                 num_microbatch, num_mesh, global_invars,
-                                 global_outvars, donated_invars,
-                                 reduction_vector, True, None)
+                                 num_mesh, global_invars, global_outvars,
+                                 donated_invars, True, None)
     apply_grad_donation = create_donation_mapping(donation_mapping,
                                                   donated_invars, global_invars,
                                                   global_outvars)

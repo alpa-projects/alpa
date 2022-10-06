@@ -605,17 +605,19 @@ def generate_training_stages_2d(layers,
                     computation_source_ratio < flops_ratio /
                 (1 + stage_imbalance_tolerance)):
                 continue
-            layer_indices = (
-                indices[start:end + 1] +
-                indices[2 * num_layers - end - 1:2 * num_layers - start])
-            selected_apply_grad_layers = filter(
-                lambda x: x is not None,
-                [apply_grad_layers[idx] for idx in indices[start:end + 1]])
+            forward_layer_indices = indices[start:end + 1]
+            backward_layer_indices = indices[2 * num_layers - end -
+                                             1:2 * num_layers - start]
+            selected_apply_grad_layers = [
+                apply_grad_layers[idx]
+                for idx in forward_layer_indices
+                if apply_grad_layers[idx] is not None
+            ]
             stage_name = f"stage_{start}_{end}"
             (intermediate_vars, stage_config) = generate_stage_info(
-                layers, layer_indices, donation_mapping,
-                global_outvars, stage_name, end - start,
-                list(selected_apply_grad_layers), apply_grad_global_info)
+                layers, forward_layer_indices + backward_layer_indices,
+                donation_mapping, global_outvars, stage_name, end - start,
+                selected_apply_grad_layers, apply_grad_global_info)
             if is_full_mesh:
                 intermediate_vars = []
             for config_idx, autosharding_config in enumerate(

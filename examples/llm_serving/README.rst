@@ -43,9 +43,8 @@ The code below shows how to use huggingface/transformers interface and Alpa dist
   from transformers import AutoTokenizer
   from llm_serving.model.wrapper import get_model
 
-  # Load the tokenizer. We have to use the 30B version because
-  # other versions have some issues. The 30B version works for all OPT models.
-  tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", use_fast=False)
+  # Load the tokenizer. All OPT models with different sizes share the same tokenizer
+  tokenizer = AutoTokenizer.from_pretrained("facebook/opt-2.7b")
   tokenizer.add_bos_token = False
 
   # Load the model. Alpa automatically downloads the weights to the specificed path
@@ -59,7 +58,6 @@ The code below shows how to use huggingface/transformers interface and Alpa dist
   generated_string = tokenizer.batch_decode(output, skip_special_tokens=True)
 
   print(generated_string)
-
 
 Requirements
 ============
@@ -226,6 +224,24 @@ Here are some tips for improving the generation speed.
 3. Tune parallelization strategy. If you are familiar with alpa, you can tune the ``method`` argument of ``alpa.parallelize`` and try different parallelization methods.
 
 If you find the generation speed too slow and want to accelerate it, please join `Alpa slack <https://forms.gle/YEZTCrtZD6EAVNBQ7>`_ and tell us your use cases. We are acitvely working on improving the performance.
+
+
+Other Models
+============
+Alpa also supports `BLOOM <https://huggingface.co/bigscience/bloom>`_.
+You can use commands similar to OPT but with a different model name.
+
+  .. code:: shell
+
+    # Huggingface/pytorch backend
+    python3 textgen.py --model bigscience/bloom-560m
+
+    # Jax backend
+    python3 textgen.py --model jax/bloom-560m
+
+    # Alpa backend
+    python3 textgen.py --model alpa/bloom-560m
+
 
 License
 =======

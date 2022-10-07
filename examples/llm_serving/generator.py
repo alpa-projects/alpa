@@ -36,7 +36,7 @@ class Generator:
         self.torch_device = torch_device
 
         # Tokenizer arguments
-        self.tokenizer_name = "facebook/opt-30b" if not tokenizer_name else tokenizer_name
+        self.tokenizer_name = tokenizer_name
         self.tokenizer = None
         self.add_bos_token = add_bos_token
 
@@ -70,8 +70,18 @@ class Generator:
         load_time = time.time() - tic
 
         # Init tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
-        self.tokenizer.add_bos_token = False
+        if self.tokenizer_name:
+            self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
+        else:
+            if "opt" in self.model_name:
+                self.tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b")
+                self.tokenizer.add_bos_token = False
+            elif "bloom" in self.model_name:
+                tokenizer_name = self.model_name.replace("alpa", "bigscience")\
+                                                .replace("jax", "bigscience")
+                self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+            else:
+                self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
 
         if "alpa" in self.model_name:
             import alpa

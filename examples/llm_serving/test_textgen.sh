@@ -1,4 +1,5 @@
 # Test the correctness of textgen.py
+set +x
 
 python3 textgen.py --model bigscience/bloom-560m
 python3 textgen.py --model jax/bloom-560m

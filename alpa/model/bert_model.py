@@ -14,7 +14,8 @@ import jax.numpy as jnp
 from alpa.model.model_util import (FlaxBaseModelOutput,
                                    FlaxBaseModelOutputWithPooling,
                                    FlaxBertForPreTrainingOutput,
-                                   FlaxMaskedLMOutput, TrainState)
+                                   FlaxMaskedLMOutput,
+                                   FlaxSequenceClassifierOutput, TrainState)
 from alpa.model.model_util import TrainState
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 
@@ -37,6 +38,8 @@ class BertConfig:
                  gradient_checkpointing=False,
                  position_embedding_type="absolute",
                  use_cache=True,
+                 classifier_dropout=None,
+                 num_labels=None,
                  tie_word_embeddings=True,
                  add_manual_pipeline_markers=False,
                  pipeline_mp_size=0,
@@ -56,6 +59,8 @@ class BertConfig:
         self.gradient_checkpointing = gradient_checkpointing
         self.position_embedding_type = position_embedding_type
         self.use_cache = use_cache
+        self.classifier_dropout = classifier_dropout
+        self.num_labels = num_labels
         self.tie_word_embeddings = tie_word_embeddings
         self.add_manual_pipeline_markers = add_manual_pipeline_markers
         self.pipeline_mp_size = pipeline_mp_size
@@ -106,9 +111,9 @@ class FlaxBertEmbeddings(nn.Module):
                     stddev=self.config.initializer_range),
                 dtype=self.dtype,
             )
-        self.dropout = nn.Dropout(rate=self.config.hidden_dropout_prob)
         self.LayerNorm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
                                       dtype=self.dtype)
+        self.dropout = nn.Dropout(rate=self.config.hidden_dropout_prob)
 
     def __call__(self,
                  input_ids,
@@ -128,8 +133,8 @@ class FlaxBertEmbeddings(nn.Module):
 
         # Sum all embeddings
         hidden_states = inputs_embeds + position_embeds + token_type_embeddings
-        hidden_states = self.dropout(hidden_states, deterministic=deterministic)
         hidden_states = self.LayerNorm(hidden_states)
+        hidden_states = self.dropout(hidden_states, deterministic=deterministic)
         return hidden_states
 
 
@@ -223,9 +228,9 @@ class FlaxBertSelfOutput(nn.Module):
                 self.config.initializer_range),
             dtype=self.dtype,
         )
-        self.dropout = nn.Dropout(rate=self.config.hidden_dropout_prob)
         self.LayerNorm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
                                       dtype=self.dtype)
+        self.dropout = nn.Dropout(rate=self.config.hidden_dropout_prob)
 
     def __call__(self, hidden_states, input_tensor, deterministic: bool = True):
         hidden_states = self.dense(hidden_states)
@@ -714,6 +719,62 @@ class FlaxBertForMaskedLMModule(nn.Module):
             return (logits,) + outputs[1:]
 
         return FlaxMaskedLMOutput(
+            logits=logits,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
+
+
+class FlaxBertForSequenceClassificationModule(nn.Module):
+    config: BertConfig
+    dtype: jnp.dtype = jnp.float32
+
+    def setup(self):
+        self.bert = FlaxBertModule(
+            config=self.config,
+            dtype=self.dtype,
+        )
+        classifier_dropout = (self.config.classifier_dropout
+                              if self.config.classifier_dropout is not None else
+                              self.config.hidden_dropout_prob)
+        self.dropout = nn.Dropout(rate=classifier_dropout)
+        self.classifier = nn.Dense(
+            self.config.num_labels,
+            dtype=self.dtype,
+        )
+
+    def __call__(
+        self,
+        input_ids,
+        attention_mask,
+        token_type_ids,
+        position_ids,
+        head_mask=None,
+        deterministic: bool = True,
+        output_attentions: bool = False,
+        output_hidden_states: bool = False,
+        return_dict: bool = True,
+    ):
+        # Model
+        outputs = self.bert(
+            input_ids,
+            attention_mask,
+            token_type_ids,
+            position_ids,
+            deterministic=deterministic,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+
+        pooled_output = outputs[1]
+        pooled_output = self.dropout(pooled_output, deterministic=deterministic)
+        logits = self.classifier(pooled_output)
+
+        if not return_dict:
+            return (logits,) + outputs[2:]
+
+        return FlaxSequenceClassifierOutput(
             logits=logits,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,

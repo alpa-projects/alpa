@@ -363,8 +363,9 @@ if __name__ == "__main__":
         (args.model, args.path, args.torch_device, NUM_BEAMS, NUM_RETURN_SEQ,
          False if args.no_recaptcha else USE_RECAPTCHA),
         override=True)
-    a = controller.create_replica.remote(args.register_name, group_id)
-    ray.get(a)
+    ray.get(t)
+    t = controller.create_replica.remote(args.register_name, group_id)
+    ray.get(t)
 
     while True:
         pass

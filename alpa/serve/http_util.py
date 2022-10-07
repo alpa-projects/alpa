@@ -361,10 +361,10 @@ class ASGIHandler:
         await self.controller.handle_asgi(scope, receive, send)
 
 
-class RelayException(Exception):
+class RelayException:
 
     def __init__(self, e):
-        self.e = e
+        self.e = str(e)
         self.stacktrace = "".join(traceback.format_tb(e.__traceback__))
 
 

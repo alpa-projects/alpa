@@ -15,8 +15,7 @@ from alpa.model.model_util import (FlaxBaseModelOutput,
                                    FlaxBaseModelOutputWithPooling,
                                    FlaxBertForPreTrainingOutput,
                                    FlaxMaskedLMOutput,
-                                   FlaxSequenceClassifierOutput,
-                                   TrainState)
+                                   FlaxSequenceClassifierOutput, TrainState)
 from alpa.model.model_util import TrainState
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 
@@ -735,11 +734,9 @@ class FlaxBertForSequenceClassificationModule(nn.Module):
             config=self.config,
             dtype=self.dtype,
         )
-        classifier_dropout = (
-            self.config.classifier_dropout
-            if self.config.classifier_dropout is not None
-            else self.config.hidden_dropout_prob
-        )
+        classifier_dropout = (self.config.classifier_dropout
+                              if self.config.classifier_dropout is not None else
+                              self.config.hidden_dropout_prob)
         self.dropout = nn.Dropout(rate=classifier_dropout)
         self.classifier = nn.Dense(
             self.config.num_labels,
@@ -752,7 +749,7 @@ class FlaxBertForSequenceClassificationModule(nn.Module):
         attention_mask,
         token_type_ids,
         position_ids,
-        head_mask = None,
+        head_mask=None,
         deterministic: bool = True,
         output_attentions: bool = False,
         output_hidden_states: bool = False,

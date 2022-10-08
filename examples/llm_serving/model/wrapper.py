@@ -406,10 +406,6 @@ def get_alpa_model(model_name: str,
             m = opt_model
         elif "bloom" in model_name:
             m = bloom_model
-            if any(x > 1 for x in encoder_chunk_sizes):
-                # TODO: support chunk size > 1
-                warnings.warn("encoder_chunk_size > 1 is not supported. Ignored.")
-                encoder_chunk_sizes = [1]
         config = m.get_config(name,
                               num_pp_stages=None,
                               mark_boundary=False,
@@ -436,10 +432,6 @@ def get_alpa_model(model_name: str,
             m = opt_model
         elif "bloom" in model_name:
             m = bloom_model
-            if any(x > 1 for x in encoder_chunk_sizes):
-                # TODO: support chunk size > 1
-                warnings.warn("encoder_chunk_size > 1 is not supported. Ignored.")
-                encoder_chunk_sizes = [1]
 
         alpa.init()
 

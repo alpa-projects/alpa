@@ -183,17 +183,14 @@ class FlaxBloomAttention(nn.Module):
                 (0, 0, causal_attention_mask_shift, 0),
                 (1, 1, seq_length, max_decoder_length)
             )
-            if attention_mask is not None:
-                # Handle a special kind of internal padding added by alpa.
-                # Note that this kind of internal padding is different from
-                # the padding added by the tokenizer. This internal padding
-                # should not update cache and step_ct
-                # shape: [B, 1, 1, S_max]
-                is_internal_padding = (attention_mask == 2)
-                num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
-                attention_mask = (attention_mask == 1)
-            else:
-                num_internal_pad = 0
+            # Handle a special kind of internal padding added by alpa.
+            # Note that this kind of internal padding is different from
+            # the padding added by the tokenizer. This internal padding
+            # should not update cache and step_ct
+            # shape: [B, 1, 1, S_max]
+            is_internal_padding = (attention_mask == 2)
+            num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
+            attention_mask = (attention_mask == 1)
 
         attention_mask = combine_masks(attention_mask, causal_attention_mask)
 

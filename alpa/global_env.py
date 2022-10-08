@@ -43,7 +43,7 @@ class GlobalConfig:
         self.always_donate_micro_batch_vars = True
 
         ########## Options of pipeline runtime ##########
-        self.pipeline_check_alive = True
+        self.pipeline_check_alive = False
         # Whether to sync before and after the executable for accurate internal
         # timer
         self.pipeline_sync_for_timer = False

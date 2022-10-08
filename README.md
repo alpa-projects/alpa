@@ -33,7 +33,7 @@ from transformers import AutoTokenizer
 from llm_serving.model.wrapper import get_model
 
 # Load the tokenizer
-tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", use_fast=False)
+tokenizer = AutoTokenizer.from_pretrained("facebook/opt-2.7b")
 tokenizer.add_bos_token = False
 
 # Load the model. Alpa automatically downloads the weights to the specificed path

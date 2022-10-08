@@ -34,6 +34,7 @@ class LangaugeModelWorker:
                  model_name: str,
                  path: str,
                  torch_device: str,
+                 tokenizer_name: str,
                  num_beams: int,
                  num_return_sequences: int,
                  use_recaptcha: bool,
@@ -64,6 +65,7 @@ class LangaugeModelWorker:
         self.generator = Generator(model_name,
                                    path,
                                    torch_device=torch_device,
+                                   tokenizer_name=tokenizer_name,
                                    num_beams=num_beams,
                                    num_return_sequences=num_return_sequences,
                                    max_seq_len=self.max_seq_len,
@@ -342,6 +344,7 @@ if __name__ == "__main__":
     parser.add_argument("--path", type=str, default="~/opt_weights/")
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--torch-device", type=str, default="cpu")
+    parser.add_argument("--tokenizer", type=str)
     parser.add_argument("--no-recaptcha", action="store_true")
     parser.add_argument("--register-name", type=str, default="default")
     parser.add_argument("--ssl-keyfile", type=str)
@@ -360,7 +363,7 @@ if __name__ == "__main__":
     controller.launch_mesh_group_manager.remote(group_id)
     t = controller.register_model.remote(
         args.register_name, LangaugeModelWorker,
-        (args.model, args.path, args.torch_device, NUM_BEAMS, NUM_RETURN_SEQ,
+        (args.model, args.path, args.torch_device, args.tokenizer, NUM_BEAMS, NUM_RETURN_SEQ,
          False if args.no_recaptcha else USE_RECAPTCHA),
         override=True)
     ray.get(t)

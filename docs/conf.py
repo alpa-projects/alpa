@@ -108,7 +108,7 @@ html_context = {
 }
 
 html_theme_options = {
-    'analytics_id': 'G-QYVLD2W3PB',
+    'analytics_id': 'G-587CCSSRL2',
     'analytics_anonymize_ip': False,
 }
 

@@ -11,12 +11,12 @@ def main(args):
     if "opt" in args.model:
         # We have to use the 30B version because other versions have some issues.
         # The 30B version works for all OPT models.
-        tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", use_fast=False)
+        tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b")
         tokenizer.add_bos_token = False
     elif "bloom" in args.model:
         name = args.model.replace("alpa", "bigscience")\
                          .replace("jax", "bigscience")
-        tokenizer = AutoTokenizer.from_pretrained(name, use_fast=False)
+        tokenizer = AutoTokenizer.from_pretrained(name)
 
     generate_params = {
         "do_sample": args.do_sample,

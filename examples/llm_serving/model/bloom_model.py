@@ -546,7 +546,7 @@ def get_config(name, **kwargs):
             hidden_size=4096, n_head=32, num_hidden_layers=30,
             pretraining_tp=4, use_cache=True
         )
-    elif name == "bloom-176b":
+    elif name == "bloom":
         config = BloomConfig(
             hidden_size=14336, n_head=112, num_hidden_layers=70,
             pretraining_tp=4, use_cache=True

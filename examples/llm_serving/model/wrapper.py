@@ -211,11 +211,12 @@ def get_hf_model(model_name, device):
 
     inference_func_config = InferenceFuncConfig()
     for key in inference_func_config.__dataclass_fields__.keys():
-        setattr(inference_func_config, key, getattr(model.config, key))
-    if hasattr(model.config, "seq_length"):
-        seq_len = model.config.seq_length
-    else:
+        if hasattr(model.config, key):
+            setattr(inference_func_config, key, getattr(model.config, key))
+    if hasattr(model.config, "max_position_embeddings"):
         seq_len = model.config.max_position_embeddings
+    else:
+        seq_len = 2048
 
     transformer_config = TransformerModelConfig(
         H=model.config.hidden_size,

@@ -102,6 +102,11 @@ def build_alibi_tensor_flax(attention_mask, n_head, dtype):
     # shape of attention_mask: [B, 1, 1, S_max]
     batch_size = attention_mask.shape[0]
     key_length = attention_mask.shape[-1]
+
+    # Handle a special kind of internal padding added by alpa.
+    # Where internal padding of 2 is used for encoder chunck size that can't divide input length.
+    attention_mask = (attention_mask == 1)
+
     attention_mask = attention_mask.reshape((batch_size, key_length))
     num_heads = n_head
     query_length = 1
@@ -178,6 +183,14 @@ class FlaxBloomAttention(nn.Module):
                 (0, 0, causal_attention_mask_shift, 0),
                 (1, 1, seq_length, max_decoder_length)
             )
+            # Handle a special kind of internal padding added by alpa.
+            # Note that this kind of internal padding is different from
+            # the padding added by the tokenizer. This internal padding
+            # should not update cache and step_ct
+            # shape: [B, 1, 1, S_max]
+            is_internal_padding = (attention_mask == 2)
+            num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
+            attention_mask = (attention_mask == 1)
 
         attention_mask = combine_masks(attention_mask, causal_attention_mask)
 
@@ -195,7 +208,7 @@ class FlaxBloomAttention(nn.Module):
             cache_value = value
             num_updated_cache_vectors = query.shape[1]
             # A line added from bloom_model
-            attention_cache = key, value, cache_index + num_updated_cache_vectors
+            attention_cache = key, value, cache_index + num_updated_cache_vectors - num_internal_pad
             # causal mask for cached decoder self-attention: our single query position should only attend to those key positions that have already been generated and cached, not the remaining zero elements.
             pad_mask = jnp.broadcast_to(
                 jnp.arange(max_length) < cur_index + num_updated_cache_vectors,

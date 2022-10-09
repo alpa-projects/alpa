@@ -149,8 +149,8 @@ class DistSaveLoadTest(unittest.TestCase):
             serial_state = serial_train_step(jax_state, batch)[0]
             load_state = parallel_train_step(load_state, batch)[0]
 
-        # Check results
-        assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)
+            # Check results
+            assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)
 
     def test_distributed_mlp_uncached_save_load(self):
         save_prefix = self._get_save_prefix()
@@ -188,8 +188,8 @@ class DistSaveLoadTest(unittest.TestCase):
             serial_state = serial_train_step(serial_state, batch)[0]
             load_state = parallel_train_step(load_state, batch)[0]
 
-        # Check results
-        assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)
+            # Check results
+            assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)
 
     def test_distributed_bert_cached_save_load(self):
         save_prefix = self._get_save_prefix()
@@ -234,8 +234,10 @@ class DistSaveLoadTest(unittest.TestCase):
                 # Run after load
                 serial_state = serial_train_step(serial_state, batch)[0]
                 load_state = parallel_train_step(load_state, batch)[0]
-        # Check results
-        assert_allclose(serial_state.params, load_state.params, 1e-3, 1e-3)
+
+                # Check results
+                assert_allclose(serial_state.params, load_state.params, 1e-3,
+                                1e-3)
 
 
 def suite():

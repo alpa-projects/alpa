@@ -28,7 +28,6 @@ def main(args):
     model = get_model(model_name=args.model,
                       path="~/opt_weights",
                       batch_size=args.n_prompts,
-                      encoder_chunk_sizes=(1,64),
                       **generate_params)
 
     # Generate

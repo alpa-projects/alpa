@@ -1,4 +1,12 @@
 """Alpa is a system for training large-scale neural networks."""
+from . import global_env
+
+from alpa.global_env import global_config
+try:
+    import cupy
+    global_config.has_cuda = True
+except ImportError:
+    global_config.has_cuda = False
 
 # Import all public packages
 from . import api

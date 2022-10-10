@@ -424,7 +424,7 @@ def run_backend_compilation(backend: xe.Client,
         num_replicas=1,
         num_partitions=num_devices,
         device_assignment=np.arange(num_devices).reshape((1, -1)),
-        use_spmd_partitioning=False,
+        use_spmd_partitioning=True,
         parameter_is_tupled_arguments=False,
         build_random_seed=stage_plan.build_random_seed)
 

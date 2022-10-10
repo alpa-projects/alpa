@@ -1254,7 +1254,7 @@ def run_cmd(cmd: str):
 
 
 def list_gpu_info():
-    """List all gpu information by calling nvidia-sim."""
+    """List all gpu information by calling nvidia-smi."""
     ret = subprocess.getoutput("nvidia-smi -L")
     visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", None)
     if visible_devices:

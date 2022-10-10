@@ -7,7 +7,9 @@ class GlobalConfig:
 
     def __init__(self):
         ########## Options of device mesh ##########
+        self.backend = "tpu"
         # See https://jax.readthedocs.io/en/latest/gpu_memory_allocation.html
+        self.has_cuda = False
         self.xla_client_mem_fraction = float(
             os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", 0.9))
         self.xla_gpu_autotune_level = 4

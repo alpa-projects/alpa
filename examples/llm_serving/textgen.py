@@ -28,6 +28,7 @@ def main(args):
     model = get_model(model_name=args.model,
                       path="~/opt_weights",
                       batch_size=args.n_prompts,
+                      encoder_chunk_sizes=(1,64),
                       **generate_params)
 
     # Generate
@@ -37,15 +38,10 @@ def main(args):
         "Computer Science studies the area of",
         "University of California Berkeley is a public university"
     ]
-    prompts = [
-        "What is the valuation of Databricks?",
-        "Paris is the capital city of",
-        "Which country has the most population?",
-    ]
-    # prompts = prompts[:a]
+    prompts = prompts[:args.n_prompts]
     input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
     output_ids = model.generate(input_ids=input_ids,
-                                max_length=128,
+                                max_length=64,
                                 **generate_params)
     outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
     
@@ -58,7 +54,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="alpa/opt-125m")
+    parser.add_argument("--model", type=str, default="alpa/opt-1.3b")
     parser.add_argument('--do-sample', action='store_true')
     parser.add_argument('--num-beams', type=int, default=1)
     parser.add_argument('--num-return-sequences', type=int, default=1)

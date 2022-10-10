@@ -58,7 +58,7 @@ if __name__ == "__main__":
     parser.add_argument('--do-sample', action='store_true')
     parser.add_argument('--num-beams', type=int, default=1)
     parser.add_argument('--num-return-sequences', type=int, default=1)
-    parser.add_argument('--n-prompts', type=int, default=3)
+    parser.add_argument('--n-prompts', type=int, default=4)
     args = parser.parse_args()
 
     main(args)

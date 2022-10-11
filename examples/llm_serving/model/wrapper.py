@@ -2,7 +2,7 @@
 from collections import defaultdict
 import os
 import time
-from typing import Sequence, Any, Optional
+from typing import Sequence, Any, Optional, List
 import warnings
 
 import alpa
@@ -65,6 +65,9 @@ class InferenceFuncConfig:
     top_p: int = 1.0
     typical_p: int = 1.0
     temperature: float = 1.0
+    suppress_tokens: Optional[List[int]] = None
+    begin_suppress_tokens: Optional[List[int]] = None
+    forced_decoder_ids: Optional[List[int]] = None
 
 
 class WrappedInferenceFunc(GenerationMixin):

@@ -576,8 +576,8 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
 
 def generate_training_stages_2d(layers,
                                 layer_flops_prefix_sum,
-                                donation_mapping,
-                                global_outvars,
+                                accumulator_mapping,
+                                acc_grad_outvars,
                                 apply_grad_layers,
                                 apply_grad_global_info,
                                 autosharding_configs,
@@ -616,7 +616,7 @@ def generate_training_stages_2d(layers,
             stage_name = f"stage_{start}_{end}"
             (intermediate_vars, stage_config) = generate_stage_info(
                 layers, forward_layer_indices + backward_layer_indices,
-                donation_mapping, global_outvars, stage_name, end - start,
+                accumulator_mapping, acc_grad_outvars, stage_name, end - start,
                 selected_apply_grad_layers, apply_grad_global_info)
             if is_full_mesh:
                 intermediate_vars = []
@@ -742,7 +742,7 @@ def get_compute_cost(
         autosharding_configs: Sequence[Sequence[Tuple[LogicalDeviceMesh,
                                                       dict]]],
         layers: Sequence[JaxPipelineComputation],
-        donation_mapping: Dict[Var, Var], global_outvars: Sequence[Var],
+        accumulator_mapping: Dict[Var, Var], acc_grad_outvars: Sequence[Var],
         apply_grad_layers: Sequence[JaxPipelineComputation],
         apply_grad_global_info: Tuple, num_micro_batches: int,
         default_as_option: AutoShardingOption,
@@ -762,8 +762,9 @@ def get_compute_cost(
         autosharding_configs: All auto sharding configs for each submesh.
         layers: Layers for computing and accumulating gradients (forward +
             backward).
-        donation_mapping: Donation mapping for all layers.
-        global_outvars: Global output variables for all layers.
+        accumulator_mapping: Donation mapping from accumulator to
+            accumulated results for all layers.
+        acc_grad_outvars: Global output variables for all layers.
         apply_grad_layers: Apply gradient computations corresponding to each
             forward layers.
         apply_grad_global_info: Donation mapping and outvars for apply gradient
@@ -819,14 +820,14 @@ def get_compute_cost(
 
         if auto_stage_option.layer_profile_mode == "composition":
             stages = generate_training_stages_2d(
-                layers, layer_flops_prefix_sum, donation_mapping,
-                global_outvars, apply_grad_layers, apply_grad_global_info,
+                layers, layer_flops_prefix_sum, accumulator_mapping,
+                acc_grad_outvars, apply_grad_layers, apply_grad_global_info,
                 autosharding_configs[mesh_id],
                 sliced_virtual_meshes[0].num_devices, cluster_size,
                 auto_stage_option.stage_imbalance_tolerance)
         elif auto_stage_option.layer_profile_mode == "individual":
-            stages = generate_training_stages_1d(layers, donation_mapping,
-                                                 global_outvars,
+            stages = generate_training_stages_1d(layers, accumulator_mapping,
+                                                 acc_grad_outvars,
                                                  apply_grad_layers,
                                                  apply_grad_global_info,
                                                  autosharding_configs[mesh_id])
@@ -866,8 +867,8 @@ def get_compute_cost(
 
 def split_global_use_and_donate(layers: Sequence[JaxPipelineComputation],
                                 layer_indices: OrderedSet[int],
-                                donation_mapping: Dict[Var, Var],
-                                global_outvars: Sequence[Var]):
+                                accumulator_mapping: Dict[Var, Var],
+                                acc_grad_outvars: Sequence[Var]):
     """
     Obtains donation_mapping and global_use of each selected layer.
 
@@ -879,28 +880,30 @@ def split_global_use_and_donate(layers: Sequence[JaxPipelineComputation],
         layers: all layers
         layer_indices: indices of selected layers, they are assumed to be in
             the same mesh
-        donation_mapping: known global donation mapping
-        global_outvars: global outvars
+        accumulator_mapping: known global donation mapping
+        acc_grad_outvars: global outvars
 
     Returns:
         donation_mapping: donation mapping of all picked layers
         global_used: an OrderedSet of outvars used not only in selected layers
         layers: layers rearranged for donate invar
     """
-    reversed_donation_mapping = {v: k for k, v in donation_mapping.items()}
+    reversed_accumulator_mapping = {
+        v: k for k, v in accumulator_mapping.items()
+    }
     layer_indices = OrderedSet(layer_indices)
     gensym_fn = gensym([layer.closed_jaxpr().jaxpr for layer in layers])
     num_layers = len(layers)
     out_donation_mapping = {}
     out_global_used = OrderedSet()
-    used = OrderedSet(global_outvars)
+    used = OrderedSet(acc_grad_outvars)
     local_used = OrderedSet()  # limit donation
     new_layers = []
     for idx in reversed(range(num_layers)):
         layer = layers[idx]
         if idx in layer_indices:
             local_donation, new_layer = get_donation_mapping_and_modify(
-                layer, reversed_donation_mapping, gensym_fn)
+                layer, reversed_accumulator_mapping, gensym_fn)
             for invar in local_donation:
                 assert invar not in used and invar not in local_used
 
@@ -936,14 +939,15 @@ def split_sharding_specs(layers: Sequence[JaxPipelineComputation],
     return layer_in_sharding_specs, layer_out_sharding_specs
 
 
-def generate_stage_info(all_layers, selected_indices, donation_mapping,
-                        global_outvars, name, insert_hook_after,
+def generate_stage_info(all_layers, selected_indices, accumulator_mapping,
+                        acc_grad_outvars, name, insert_hook_after,
                         apply_grad_layers, apply_grad_info):
     """Combine selected layers together for profiling."""
     # TODO(yonghao): clean up code here
     (selected_donation_mapping, used_outside,
      layers) = split_global_use_and_donate(all_layers, selected_indices,
-                                           donation_mapping, global_outvars)
+                                           accumulator_mapping,
+                                           acc_grad_outvars)
 
     jaxprs = [layer.closed_jaxpr() for layer in layers]
 
@@ -966,10 +970,10 @@ def generate_stage_info(all_layers, selected_indices, donation_mapping,
     merged = clone_jaxpr(merged, new_invars, new_outvars)
     compute_avals = [var.aval for var in merged.jaxpr.invars]
     compute_out_avals = [var.aval for var in merged.jaxpr.outvars]
-    acc_grad_outvars = set(global_outvars)
+    acc_grad_outvars_set = set(acc_grad_outvars)
     output_acc_grad_indices = [
         i for i, var in enumerate(merged.jaxpr.outvars)
-        if var in acc_grad_outvars
+        if var in acc_grad_outvars_set
     ]
     profile_config = ProfileConfig(compute_avals, compute_out_avals,
                                    list(is_donated), output_acc_grad_indices)

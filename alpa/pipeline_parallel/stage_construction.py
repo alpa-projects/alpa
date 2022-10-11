@@ -467,9 +467,9 @@ def get_sliced_virtual_submeshes(virtual_mesh, submesh_shapes):
 
 def cluster_layers_and_slice_mesh(
         layers: Sequence[JaxPipelineComputation],
-        virtual_mesh: VirtualPhysicalMesh, donation_mapping: Dict[Var, Var],
-        final_outvars: Sequence[Var], num_micro_batches: int, batch_size: int,
-        jax_apply_layers: Sequence[JaxPipelineComputation],
+        virtual_mesh: VirtualPhysicalMesh, accumulator_mapping: Dict[Var, Var],
+        acc_grad_outvars: Sequence[Var], num_micro_batches: int,
+        batch_size: int, jax_apply_layers: Sequence[JaxPipelineComputation],
         apply_grad_global_info: Tuple, pipeline_schedule: str,
         default_as_option: AutoShardingOption, stage_option: StageOption):
     """
@@ -483,8 +483,8 @@ def cluster_layers_and_slice_mesh(
     Args:
         layers: All the layers.
         virtual_mesh: The virtual device mesh.
-        donation_mapping: The donation_mapping for the layers.
-        final_outvars: Global outvars of the layers.
+        accumulator_mapping: The donation_mapping for the layers.
+        acc_grad_outvars: outvars of the gradient accumulation layers.
         num_micro_batches: The number of microbatches.
         batch_size: The micro batch size.
         jax_apply_layers: The apply gradient computations corresponding
@@ -529,7 +529,7 @@ def cluster_layers_and_slice_mesh(
         # Use DP to find the optimal solution.
         compute_cost, max_n_succ_stages = get_compute_cost(
             virtual_mesh, submesh_choices, autosharding_configs, layers,
-            donation_mapping, final_outvars, jax_apply_layers,
+            accumulator_mapping, acc_grad_outvars, jax_apply_layers,
             apply_grad_global_info, num_micro_batches, default_as_option,
             stage_option)
         _, solution = dp(num_layers, virtual_mesh.num_devices,
@@ -638,7 +638,7 @@ def cluster_layers_and_slice_mesh(
         stage_to_mesh = list(range(num_forward_stages)) + list(
             reversed(range(num_forward_stages)))
 
-    stage_outvars = get_stage_outvars(layers, stage_layer_ids, final_outvars)
+    stage_outvars = get_stage_outvars(layers, stage_layer_ids, acc_grad_outvars)
     merged_stages = []
     for stage_id, layer_ids in enumerate(stage_layer_ids):
         if len(layer_ids) == 1:
@@ -650,7 +650,7 @@ def cluster_layers_and_slice_mesh(
         merged_stage_jaxpr = merge_marked_jaxprs_with_named_call(
             stage_layer_jaxprs,
             stage_outvars[stage_id],
-            donation_mapping,
+            accumulator_mapping,
             stage_name,
             wrap_with_marker=True)
         merged_stage = JaxPipelineComputation.from_closed_jaxpr(

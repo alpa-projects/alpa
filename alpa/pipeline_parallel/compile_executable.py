@@ -143,12 +143,9 @@ def compile_pipeshard_executable_internal(
      _) = _get_full_batch_apply_grad(full_batch_closed_jaxpr, microbatch_bound,
                                      num_microbatch, inference_mode)
     (acc_grad_jaxpr, microbatch_bound,
-     grad_in_to_out) = compute_grad_to_accumulate_grad(compute_grad_jaxpr,
-                                                       microbatch_bound,
-                                                       reduction_vector,
-                                                       gensym_func,
-                                                       num_microbatch)
-    donation_mapping = dict(grad_in_to_out)
+     accumulator_mapping) = compute_grad_to_accumulate_grad(
+         compute_grad_jaxpr, microbatch_bound, reduction_vector, gensym_func,
+         num_microbatch)
 
     # Slice the jaxpr into layers
     acc_grad_invars = acc_grad_jaxpr.jaxpr.invars
@@ -175,15 +172,15 @@ def compile_pipeshard_executable_internal(
     (jax_apply_layers,
      apply_grad_global_info) = _slice_apply_grad_for_stage_construction(
          jax_pipeline_layers, apply_grad_jaxpr, microbatch_bound, global_invars,
-         global_outvars, donated_invars, donation_mapping, gensym_func,
+         global_outvars, donated_invars, accumulator_mapping, gensym_func,
          inference_mode)
     debug_compilation_time("jaxpr operations")
 
     # Construct pipeline stages by merging layers
     (jax_pipeline_stages, stage_to_mesh, sliced_virtual_meshes,
      manual_stage_option) = cluster_layers_and_slice_mesh(
-         jax_pipeline_layers, virtual_mesh, donation_mapping, acc_grad_outvars,
-         num_microbatch, micro_batch_size, jax_apply_layers,
+         jax_pipeline_layers, virtual_mesh, accumulator_mapping,
+         acc_grad_outvars, num_microbatch, micro_batch_size, jax_apply_layers,
          apply_grad_global_info, pipeline_schedule, default_as_option,
          stage_option)
     num_meshes = len(sliced_virtual_meshes)
@@ -198,8 +195,9 @@ def compile_pipeshard_executable_internal(
          False, num_devices)
     jax_all_stages = jax_pipeline_stages + sliced_apply_grad_stages
 
-    donation_mapping = create_donation_mapping(donation_mapping, donated_invars,
-                                               global_invars, global_outvars)
+    donation_mapping = create_donation_mapping(accumulator_mapping,
+                                               donated_invars, global_invars,
+                                               global_outvars)
     donate_invars_dict, jax_all_stages = split_donate_invars(
         donation_mapping, jax_all_stages, gensym_func)
     global_outvars, concat_vars_mapping = _rewrite_global_outvars_post_concate(
@@ -244,8 +242,9 @@ def compile_pipeshard_executable_internal(
     # Call auto-sharding pass to shard each stage
     xla_stages, total_flops = shard_each_stage(
         jax_all_stages, sliced_virtual_meshes, schedule, num_meshes,
-        grad_in_to_out, global_invars, acc_grad_outvars, donate_invars_dict,
-        num_microbatch, manual_stage_option.submesh_logical_shapes,
+        accumulator_mapping, global_invars, acc_grad_outvars,
+        donate_invars_dict, num_microbatch,
+        manual_stage_option.submesh_logical_shapes,
         manual_stage_option.submesh_autosharding_option_dicts,
         default_as_option, input_sharding_dict, output_sharding_dict,
         stage_input_shardings, name_base, gensym_func)
@@ -262,7 +261,7 @@ def compile_pipeshard_executable_internal(
     pipeshard_config = PipelineInstEmitter(
         stages=xla_stages,
         global_invars=global_invars,
-        grad_dummy_invars=grad_in_to_out,
+        grad_dummy_invars=accumulator_mapping,
         global_outvars=global_outvars,
         concat_vars_mapping=concat_vars_mapping,
         mesh_group=virtual_mesh.launched_physical_mesh_group,
@@ -279,7 +278,7 @@ def compile_pipeshard_executable_internal(
 
 
 def shard_each_stage(jax_all_stages, virtual_meshes, schedule, num_meshes,
-                     grad_in_to_out, global_invars, acc_grad_outvars,
+                     accumulator_mapping, global_invars, acc_grad_outvars,
                      donate_invars_dict, num_microbatch, logical_mesh_shapes,
                      autosharding_option_dicts, default_as_option,
                      input_sharding_dict, output_sharding_dict,
@@ -293,7 +292,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, num_meshes,
     mesh_stage_mapping = schedule.mesh_stage_mapping
     donatable_list = get_donatable_intermediate(
         jax_all_stages, mesh_stage_mapping,
-        OrderedSet(global_invars).union(grad_in_to_out.keys()))
+        OrderedSet(global_invars).union(accumulator_mapping.keys()))
 
     if stage_input_shardings is None:
         stage_input_shardings = [None for _ in range(num_meshes)]
@@ -388,7 +387,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, num_meshes,
 def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
                                              microbatch_bound, global_invars,
                                              global_outvars, donated_invars,
-                                             donation_mapping, gensym_func,
+                                             accumulator_mapping, gensym_func,
                                              inference_mode):
     if inference_mode:
         num_layers = len(pipeline_layers)
@@ -400,12 +399,12 @@ def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
         num_mesh = num_layers // 2
         layer_to_mesh = (list(range(num_mesh)) +
                          list(reversed(range(num_mesh))))
-    (layers, apply_grad_placement, _,
+    (layers, apply_grad_placement, global_outvars,
      _) = process_apply_gradient(apply_grad_jaxpr, microbatch_bound,
                                  pipeline_layers, layer_to_mesh, gensym_func,
                                  num_mesh, global_invars, global_outvars,
                                  donated_invars, True, None)
-    apply_grad_donation = create_donation_mapping(donation_mapping,
+    apply_grad_donation = create_donation_mapping(accumulator_mapping,
                                                   donated_invars, global_invars,
                                                   global_outvars)
     wrap_layers = [None] * num_mesh

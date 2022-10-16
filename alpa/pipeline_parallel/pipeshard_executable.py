@@ -256,9 +256,9 @@ class PipeshardDriverExecutable:
     ##### Profiling and Debugging Related Functions #####
     def get_stage_execution_info(self):
         """Get the execution information of each request's each stage.
-            return a list, each element corresponds to a single stage, and is 
-            a list of (start, stop, node_ids, devices) tuple, each corresponds to 
-            a single request. 
+            return a list, each element corresponds to a single stage,
+            and is a list of (start, stop, node_ids, devices) tuple, 
+            each corresponds to a single request.
         """
         all_stages_info_list = []
         for mesh in self.mesh_group:

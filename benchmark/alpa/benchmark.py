@@ -73,17 +73,18 @@ def benchmark_suite(suite_name,
 
         # Run one case
         print("Working on case: {}".format(str(benchmark_case)))
-        result = benchmark_one_case(model_type,
-                                    benchmark_case,
-                                    niter,
-                                    num_hosts,
-                                    num_devices_per_host,
-                                    shard_only=shard_only,
-                                    local=local,
-                                    profile_driver_time=profile_driver_time,
-                                    profile_stage_execution_time=profile_stage_execution_time,
-                                    disable_tqdm=disable_tqdm,
-                                    use_separate_process=use_separate_process)
+        result = benchmark_one_case(
+            model_type,
+            benchmark_case,
+            niter,
+            num_hosts,
+            num_devices_per_host,
+            shard_only=shard_only,
+            local=local,
+            profile_driver_time=profile_driver_time,
+            profile_stage_execution_time=profile_stage_execution_time,
+            disable_tqdm=disable_tqdm,
+            use_separate_process=use_separate_process)
 
         (parameter_count, peak_mem, latencies, tflops, metadata) = result
 
@@ -127,10 +128,11 @@ if __name__ == "__main__":
                         action="store_true",
                         help="Profile the execution time on the driver instead "
                         "of the workers.")
-    parser.add_argument("--profile-stage-execution-time",
-                        action="store_true",
-                        help="Profile the execution timestamps of each pipeline "
-                        "stage")
+    parser.add_argument(
+        "--profile-stage-execution-time",
+        action="store_true",
+        help="Profile the execution timestamps of each pipeline "
+        "stage")
     parser.add_argument("--no-separate-process",
                         action="store_false",
                         help="Do not launch separate processes for benchmark. "
@@ -145,7 +147,5 @@ if __name__ == "__main__":
 
     benchmark_suite(args.suite, num_hosts, num_devices_per_host, args.exp_name,
                     args.niter, args.shard_only, args.local,
-                    args.profile_driver_time,
-                    args.profile_stage_execution_time,
-                    args.disable_tqdm,
-                    args.use_separate_process)
+                    args.profile_driver_time, args.profile_stage_execution_time,
+                    args.disable_tqdm, args.use_separate_process)

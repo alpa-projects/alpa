@@ -170,7 +170,10 @@ def benchmark_gpt_inference_internal(model_type,
 
     if profile_stage_execution_time:
         exec_info = executable.get_stage_execution_info()
-        dump_chrome_tracing(zip(*exec_info), f"./chrome_trace/bs={benchmark_case.batch_size},pp={num_manual_pipeline_stages}.json")
+        dump_chrome_tracing(
+            zip(*exec_info),
+            f"./chrome_trace/bs={benchmark_case.batch_size},pp={num_manual_pipeline_stages}.json"
+        )
 
     # Compute statistics
     tflops, parameter_count = compute_gpt_inference_statistics(

@@ -423,6 +423,7 @@ def compile_and_benchmark_pipeshard_inference_executable(
 
 
 def dump_chrome_tracing(timelines: List[tuple], dumpfile: str):
+
     def get_color(i):
         color_list = [
             "thread_state_uninterruptible",
@@ -456,7 +457,7 @@ def dump_chrome_tracing(timelines: List[tuple], dumpfile: str):
             "cq_build_attempt_failed",
         ]
         return color_list[i % len(color_list)]
-    
+
     slot_list = []
     for request_id, request_timeline in enumerate(timelines):
         sorted_timeline = sorted(request_timeline, key=lambda x: x[0])
@@ -464,19 +465,22 @@ def dump_chrome_tracing(timelines: List[tuple], dumpfile: str):
         for stage_num, (s, e, node_ids, devices) in enumerate(sorted_timeline):
             for node_id, devices_per_node in zip(node_ids, devices):
                 for device_id in devices_per_node:
-                    slot = {"name": f"r{request_id}s{stage_num}",
-                            "cat": f"request {request_id}, stage {stage_num}",
-                            "ph": "X",
-                            "pid": node_id,
-                            "tid": device_id,
-                            "ts": float(s) * 1e6,
-                            "dur": float(e - s) * 1e6,
-                            "cname": get_color(request_id)}
+                    slot = {
+                        "name": f"r{request_id}s{stage_num}",
+                        "cat": f"request {request_id}, stage {stage_num}",
+                        "ph": "X",
+                        "pid": node_id,
+                        "tid": device_id,
+                        "ts": float(s) * 1e6,
+                        "dur": float(e - s) * 1e6,
+                        "cname": get_color(request_id)
+                    }
                     slot_list.append(slot)
 
     os.makedirs(os.path.dirname(dumpfile), exist_ok=True)
     with open(dumpfile, "w") as fout:
-        fout.write(json.dumps({
-            "traceEvents": slot_list,
-            "displayTimeUnit": "ms",
-        }))
+        fout.write(
+            json.dumps({
+                "traceEvents": slot_list,
+                "displayTimeUnit": "ms",
+            }))

@@ -21,7 +21,7 @@ class LocalPipelineRunner:
         self.env = {}
         self.global_invals = global_invals
 
-    def run_stage(self, stage: PipelineComputation, invals: Dict[Var, Any]):
+    def run_stage(self, stage: PipelineComputation, invals: Dict[Var, Any], swap: bool):
         """
         Run a pipeline stage.
 
@@ -30,11 +30,25 @@ class LocalPipelineRunner:
             invals (Dict[Var, Any], optional): Input value dict.
         """
         runnable = stage.get_runnable()
-        invals_list = []
-        for var in stage.invars:
-            invals_list.append(invals[var])
-        outvals_list = runnable(*invals_list)
-        outvals = dict(zip(stage.outvars, outvals_list))
+        if swap:
+            cpu = jax.devices(backend="cpu")[0]
+            gpu = jax.devices(backend="gpu")[0]
+            invals_list = []
+            for var in stage.invars:
+                cpu_val = invals[var]
+                gpu_val = jax.device_put(cpu_val, device=gpu)
+                invals_list.append(gpu_val)
+            outvals_list = runnable(*invals_list)
+            gpu_outvals = dict(zip(stage.outvars, outvals_list))
+            outvals = {}
+            for var, val in gpu_outvals.items():
+                outvals[var] = jax.device_put(val, device=cpu)
+        else:
+            invals_list = []
+            for var in stage.invars:
+                invals_list.append(invals[var])
+            outvals_list = runnable(*invals_list)
+            outvals = dict(zip(stage.outvars, outvals_list))
         self.env.update(outvals)
 
     def get_val(self, var):
@@ -57,14 +71,28 @@ class LocalPipelineExecutable:
     """
 
     def __init__(self, *, stages: Sequence[PipelineComputation],
-                 global_invars: Sequence[Var], global_outvars: Sequence[Var]):
+                 global_invars: Sequence[Var], global_outvars: Sequence[Var],
+                 swap: bool):
         self.stages = stages
         self.global_invars = global_invars
         self.global_outvars = global_outvars
+        self.swap = swap
 
     def launch_on_driver(self, *args):
         """Run function."""
-        global_invals = dict(zip(self.global_invars, args))
+        if self.swap:
+            # Move all tensors to CPU memory.
+            cpu = jax.devices(backend="cpu")[0]
+            cpu_args = []
+            for a in args:
+                if isinstance(a, jax.numpy.DeviceArray) and a.device_buffer.device() != cpu:
+                    cpu_args.append(a)
+                else:
+                    cpu_args.append(jax.device_put(a, device=cpu))
+            del args
+            global_invals = dict(zip(self.global_invars, cpu_args))
+        else:
+            global_invals = dict(zip(self.global_invars, args))
         runners = {}
 
         var_stage_mapping = {}
@@ -104,7 +132,7 @@ class LocalPipelineExecutable:
             if stage.name not in runners:
                 runners[stage.name] = LocalPipelineRunner(
                     stage.name, global_invals)
-            runners[stage.name].run_stage(stage, stage_invals)
+            runners[stage.name].run_stage(stage, stage_invals, self.swap)
 
         global_outvals_list = []
         for var in self.global_outvars:
@@ -118,11 +146,19 @@ class LocalPipelineExecutable:
                 var_reference_count[var] -= 1
                 if var_reference_count[var] == 0:
                     sender_runner.del_var(var)
+        
+        # mesh = get_global_physical_mesh(create_if_not_exist=True)
+        # print(mesh.get_memory_allocated())
+        # print(mesh.get_max_memory_allocated())
+        # print(mesh.get_available_memory())
+
+        # jax.profiler.save_device_memory_profile(
+        #     f"/home/dlzou/projects/alpa-experiments/swap_{self.swap}.prof")
         return global_outvals_list
 
 
-def compile_local_pipeline_executable(fun: lu.WrappedFun, *avals):
-    """Compile a local pipeline executable that only runs on a singel device."""
+def compile_local_pipeline_executable(fun: lu.WrappedFun, swap: bool, *avals):
+    """Compile a local pipeline executable that only runs on a single device."""
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
@@ -141,4 +177,5 @@ def compile_local_pipeline_executable(fun: lu.WrappedFun, *avals):
 
     return LocalPipelineExecutable(stages=xla_pipeline_stages,
                                    global_invars=global_invars,
-                                   global_outvars=global_outvars)
+                                   global_outvars=global_outvars,
+                                   swap=swap)

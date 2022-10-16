@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import optax
 import ray
 
-from alpa import init, parallelize, PipeshardParallel
+from alpa import init, parallelize, PipeshardParallel, get_global_physical_mesh
 from alpa.model.model_util import TrainState
 from alpa.parallel_method import LocalPipelineParallel
 from alpa.pipeline_parallel.layer_construction import manual_layer_construction
@@ -58,6 +58,15 @@ class PipelineMLPTest(unittest.TestCase):
         gradients = train_step(state, batch)
         p_train_step = parallelize(train_step, donate_argnums=(), method=method)
         gradients_with_pipeline = p_train_step(state, batch)
+        
+        # mesh = get_global_physical_mesh(create_if_not_exist=True)
+        # print(mesh.get_memory_allocated())
+        # print(mesh.get_max_memory_allocated())
+        # print(mesh.get_available_memory())
+
+        # if isinstance(method, LocalPipelineParallel):
+            # jax.profiler.save_device_memory_profile(
+                # f"/home/dlzou/projects/alpa-experiments/swap_{method.swap}.prof")
 
         # Check results
         assert_allclose(gradients, gradients_with_pipeline)
@@ -68,7 +77,8 @@ class PipelineMLPTest(unittest.TestCase):
             executable.dump_debug_info("tmp")
 
     def test_2_layer_mlp_local_pipeline_parallel(self):
-        self.train_2_layer_mlp(LocalPipelineParallel())
+        init(cluster="local")
+        self.train_2_layer_mlp(LocalPipelineParallel(swap=True))
 
     def test_2_layer_mlp_pipeshard_parallel(self):
         init(cluster="ray")

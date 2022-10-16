@@ -301,6 +301,9 @@ class LocalPipelineParallel(ParallelMethod):
     Run pipeline parallel on a single device.
     This is only used for debugging.
     """
+    
+    def __init__(self, swap: bool = False):
+        self.swap = swap
 
     def compile_executable(
         self,
@@ -312,7 +315,7 @@ class LocalPipelineParallel(ParallelMethod):
         batch_invars: Sequence[bool],
         *avals: Sequence[AbstractValue],
     ):
-        return compile_local_pipeline_executable(fun, *avals)
+        return compile_local_pipeline_executable(fun, self.swap, *avals)
 
 
 class CreateStateParallel(ParallelMethod):

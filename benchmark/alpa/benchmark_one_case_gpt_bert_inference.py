@@ -11,7 +11,7 @@ from alpa.util import print_used_time
 
 from util import compute_gpt_parameter_count, compute_gpt_tflops
 from benchmark_parallel_utils import (
-    get_pipeshard_parallel_method,
+    get_pipeshard_parallel_method, dump_chrome_tracing,
     compile_and_benchmark_pipeshard_inference_executable)
 
 
@@ -140,7 +140,8 @@ def benchmark_gpt_inference_internal(model_type,
                                      niter,
                                      num_hosts,
                                      num_devices_per_host,
-                                     profile_driver_time=False):
+                                     profile_driver_time=False,
+                                     profile_stage_execution_time=False):
     # Connect to the cluster
     virtual_mesh = get_global_cluster().get_virtual_physical_mesh(
         host_ids=list(range(num_hosts)),
@@ -166,6 +167,13 @@ def benchmark_gpt_inference_internal(model_type,
          infer_step,
          params, (batch, rngkey),
          profile_driver_time=profile_driver_time)
+
+    if profile_stage_execution_time:
+        exec_info = executable.get_stage_execution_info()
+        dump_chrome_tracing(
+            zip(*exec_info),
+            f"./chrome_trace/bs={benchmark_case.batch_size},pp={num_manual_pipeline_stages}.json"
+        )
 
     # Compute statistics
     tflops, parameter_count = compute_gpt_inference_statistics(

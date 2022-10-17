@@ -254,6 +254,21 @@ class PipeshardDriverExecutable:
         return tree_unflatten(self.out_tree, out)
 
     ##### Profiling and Debugging Related Functions #####
+    def get_stage_execution_info(self):
+        """Get the execution information of each request's each stage.
+           Return a list, where each element corresponds to a single stage.
+           Each element is a list of (start, stop, node_ids, devices) tuple,
+           where each tuple corresponds to a single request.
+        """
+        all_stages_info_list = []
+        for mesh in self.mesh_group:
+            timer = mesh.get_remote_timer("stage_timestamps")
+            per_stage_info_list = []
+            for s, e in zip(timer.start_times, timer.stop_times):
+                per_stage_info_list.append((s, e, mesh.host_ids, mesh.devices))
+            all_stages_info_list.append(per_stage_info_list)
+        return all_stages_info_list
+
     def get_execution_time_costs(self,
                                  timer_name="overall",
                                  return_all_costs=False):
@@ -498,11 +513,15 @@ class PipeshardMeshWorkerExecuable:
             #self.worker.sync()
 
             if instruction.opcode == PipelineInstType.RUN:
+                if "stage" in instruction.info:
+                    timers("stage_timestamps").start(sync_func=sync_func)
                 timers("compute").start()
                 self.worker.run_executable(instruction.task_uuid,
                                            instruction.input_uuids,
                                            instruction.output_uuids,
                                            **instruction.opaques["kwargs"])
+                if "stage" in instruction.info:
+                    timers("stage_timestamps").stop(sync_func=sync_func)
                 timers("compute").suspend()
             elif instruction.opcode == PipelineInstType.SEND:
                 timers("resharding_send").start()

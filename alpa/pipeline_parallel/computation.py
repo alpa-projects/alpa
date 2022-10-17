@@ -355,7 +355,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
         out_avals = [var.aval for var in self.outvars]
         mesh_executable = PartialGradAccMeshDriverExecutable(
             mesh, hlo_module, self.stage_plan, avals, out_avals,
-            self.donated_invars, self.output_acc_grad_indices)
+            self.donated_invars)
         return mesh_executable.get_driver_callable()
 
     def get_hlo_text(self):
@@ -775,7 +775,8 @@ def generate_sharded_xla_computations(
 
 
 def rewrite_hook(eqns, gensym_fn):
-    """Rewrite the hook marker to include the intermediate variables.
+    """ (Deprecated because we now profile forward and backward separately)
+    Rewrite the hook marker to include the intermediate variables.
 
     Assume there is a special "hook" marker eqn in eqns that devide the
     eqns into two parts. This function rewrites the hook to capture all the
@@ -883,7 +884,6 @@ def merge_marked_jaxprs_with_named_call(jaxprs: Sequence[ClosedJaxpr],
                                         may_outvars: OrderedSet[Var],
                                         donation_map=None,
                                         prefix=None,
-                                        insert_hook_after=None,
                                         wrap_with_marker=False,
                                         gensym_fn=None) -> ClosedJaxpr:
     """
@@ -937,13 +937,9 @@ def merge_marked_jaxprs_with_named_call(jaxprs: Sequence[ClosedJaxpr],
             new_eqns.append(call_eqn)
             invars.extend(OrderedSet(call_eqn.invars).difference(env))
             env.update(call_eqn.invars + call_eqn.outvars)
-        if insert_hook_after == i:
-            new_eqns.append(mark_hook_jaxpreqn([], []))
         outvars.update(jaxpr.jaxpr.outvars)
     outvars.intersection_update(may_outvars)
-    # handle hook
-    if insert_hook_after is not None:
-        new_hook = rewrite_hook(new_eqns, gensym_fn)
+
     # handle donation
     if donation_map:
         invars, outvars, _ = _rearrange_in_out_for_donation(
@@ -953,9 +949,7 @@ def merge_marked_jaxprs_with_named_call(jaxprs: Sequence[ClosedJaxpr],
     if wrap_with_marker:
         jaxpr = _wrap_by_marker(jaxpr, prefix, gensym_fn)
     closed_jaxpr = ClosedJaxpr(jaxpr, const_dir.values())
-    # handle wrap with marker
-    if insert_hook_after is not None:
-        return closed_jaxpr, new_hook.invars
+
     return closed_jaxpr
 
 
@@ -981,9 +975,11 @@ def create_donation_mapping(initial_mapping, donated_invars, invars, outvars):
     return donation_mapping
 
 
-def get_donation_mapping_and_modify(computation, reversed_donation_mapping,
-                                    gensym_fn):
-    """Get donation mapping of selected computation and add some input.
+def get_local_donation_mapping_and_add_missing_invars(computation,
+                                                      reversed_donation_mapping,
+                                                      gensym_fn):
+    """Get the local donation mapping of selected computation and add missing
+    input variables of the donated output variables.
 
     If an outvar is donated from an invar not in the current computation, the
     function add the invar and create a new computation and corresponding to
@@ -1057,8 +1053,9 @@ def split_donate_invars(donation_mapping,
 
     for stage_idx, stage in enumerate(stages):
         # find donation mapping of the stage
-        donation_mapping, new_stage = get_donation_mapping_and_modify(
-            stage, reversed_donation_mapping, gensym_fn)
+        donation_mapping, new_stage = (
+            get_local_donation_mapping_and_add_missing_invars(
+                stage, reversed_donation_mapping, gensym_fn))
         donated_num = len(donation_mapping)
         ans[stage_idx] = (True,) * donated_num + (False,) * (
             len(new_stage.invars) - donated_num)

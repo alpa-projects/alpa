@@ -6,6 +6,7 @@ from time import time
 from datetime import datetime
 import gc
 import logging
+import pickle
 from typing import Dict, Sequence, Tuple
 
 import jax.numpy as jnp
@@ -28,9 +29,8 @@ from alpa.mesh_profiling import (ProfilingResultDatabase,
                                  estimate_hlo_module_cost)
 from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from alpa.pipeline_parallel.computation import (
-    JaxPipelineComputation, get_donation_mapping_and_modify,
-    merge_marked_jaxprs_with_named_call, merge_unmarked_with_call,
-    rearrange_vars)
+    JaxPipelineComputation, get_local_donation_mapping_and_add_missing_invars,
+    merge_marked_jaxprs_with_named_call, merge_unmarked_with_call)
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     CrossMeshCommunicator, SymbolicReshardingTask, CollectiveGroup,
     ReshardingTaskSpec, SymbolicBroadcastReshardingTask)
@@ -43,57 +43,75 @@ from alpa.shard_parallel.auto_sharding import (AutoShardingOption,
                                                run_backend_compilation,
                                                hlo_sharding_to_sharding_spec)
 from alpa.timer import timers
-from alpa.util import (clone_jaxpr, get_shard_shape, jaxpr_to_hlo_module,
-                       OrderedSet, retrieve_placement_group,
-                       get_num_available_gpus)
+from alpa.util import (get_shard_shape, jaxpr_to_hlo_module, OrderedSet,
+                       retrieve_placement_group, get_num_available_gpus)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 last_compute_cost_file_name = None
 
-INFINITY_N_STAGES = 4096
+INFINITY_N_STAGES = 2**20
 GB = 1024**3
 
-CompileOutput = namedtuple("CompileOutput", [
-    "model_proto", "stage_plan", "input_sharding_protos",
-    "output_sharding_proto", "intermediate_proto",
-    "apply_grad_input_sharding_protos"
-])
+ModuleCompileOutput = namedtuple(
+    "ModuleCompileOutput",
+    ["module_proto", "input_sharding_protos", "output_sharding_proto"])
+
+CompileOutput = namedtuple(
+    "CompileOutput",
+    ["acc_grad_modules", "stage_plan", "apply_grad_input_sharding_protos"])
 
 CompileConfig = namedtuple("CompileConfig",
-                           ["model_proto", "output_acc_grad_indices"])
+                           ["model_proto", "names", "required_outvars_indices"])
 
 ProfileConfig = namedtuple(
     "ProfileConfig",
-    ["input_avals", "output_avals", "donate_invars", "output_acc_grad_indices"])
+    ["invars", "outvars", "donate_invars", "required_outvars_indices"])
 
 ApplyGradConfig = namedtuple("ApplyGradConfig",
                              ["invars", "apply_grad_only_invars"])
 
-StageConfig = namedtuple(
-    "StageConfig", ["compile_config", "profile_config", "apply_grad_config"])
+StageConfig = namedtuple("StageConfig", [
+    "n_modules", "compile_config", "module_profile_configs", "apply_grad_config"
+])
+
+ModuleProfileResult = namedtuple("ModuleProfileResult", [
+    "compute_cost", "peak_memory", "temp_buffer_size", "invar_names",
+    "outvar_names", "invar_sizes", "outvar_sizes", "donate_invars",
+    "required_outvars_indices", "available_memory"
+])
 
 
-class ProfileResult(
-        namedtuple(typename="ProfileResult",
-                   field_names=[
-                       "compute_cost",
-                       "peak_memory",
-                       "temp_buffer_size",
-                       "intermediate_size",
-                       "initial_size",
-                       "available_memory",
-                   ])):
+class ProfileResult:
     """Profile result of a stage."""
 
-    def __str__(self):
-        return (f"ProfileResult(compute_cost={self.compute_cost:.3f}, "
-                f"peak_memory={self.peak_memory / GB:.3f}GB, "
-                f"temp_buffer_size={self.temp_buffer_size / GB:.3f}GB, "
-                f"intermediate_size={self.intermediate_size / GB:.3f}GB, "
-                f"initial_size={self.initial_size / GB:.3f}, "
-                f"available_memory={self.available_memory / GB:.3f}GB)")
+    def __init__(self, n_modules, initial_size):
+        self.n_modules = n_modules
+        self.module_profile_results = [None] * n_modules
+        self.available_memory = None
+        self.initial_size = initial_size
+
+    def fully_profiled(self):
+        return all(r is not None for r in self.module_profile_results)
+
+    def add_module_profile_result(self, module_idx, result):
+        self.module_profile_results[module_idx] = result
+        if self.available_memory is None:
+            self.available_memory = result.available_memory
+        else:
+            assert self.available_memory == result.available_memory, (
+                f"available_memory is not consistent: {self.available_memory} "
+                f"vs {result.available_memory}. This may be caused by "
+                f"mismatch of loaded profile results and newly profiled "
+                f"results.")
+
+    # def __str__(self):
+    #     return (f"ProfileResult(compute_cost={self.compute_cost:.3f}, "
+    #             f"peak_memory={self.peak_memory / GB:.3f}GB, "
+    #             f"temp_buffer_size={self.temp_buffer_size / GB:.3f}GB, "
+    #             f"initial_size={self.initial_size / GB:.3f}, "
+    #             f"available_memory={self.available_memory / GB:.3f}GB)")
 
 
 class BaseWorkerPoolWrapper(ABC):
@@ -176,7 +194,7 @@ class CompileWorker:
         # Compile with search to get sharding annotations.
         other_kwargs = {
             "logical_mesh": logical_mesh,
-            "return_mode": "stages_and_hook",
+            "return_mode": "stages",
             "as_option": autosharding_option,
             "num_micro_batches": num_micro_batches,
             "memory_budget_per_device": None,
@@ -185,54 +203,55 @@ class CompileWorker:
             hlo_module = xe.HloModule.from_serialized_hlo_module_proto(
                 config.model_proto)
             # pylint: disable=unbalanced-tuple-unpacking
-            module_names, modules, hooked_proto, stage_plan = (
-                run_auto_sharding_pass(hlo_module, **other_kwargs))
+            module_names, modules, stage_plan = (run_auto_sharding_pass(
+                hlo_module, **other_kwargs))
         except RuntimeError as e:
             logger.warning(f"Compilation error (auto-sharding pass) "
                            f"for stage {stage_id} : {e}")
             return stage_id, None
 
-        assert (len(modules) <=
-                2), "Can only compile no more than two stages (compute+(apply))"
-
         # Read input/output shardings
+        modules_dict = dict(zip(module_names, modules))
 
-        if len(modules) > 1:
-            if module_names[0].endswith(APPLY_GRAD_MARKER_SUFFIX):
-                module_names[0], module_names[1] = module_names[
-                    1], module_names[0]
-                modules[0], modules[1] = modules[1], modules[0]
-            assert module_names[1].endswith(APPLY_GRAD_MARKER_SUFFIX)
+        assert (sum([name.endswiwtwh(APPLY_GRAD_MARKER_SUFFIX)]
+                    for name in config.names) <=
+                1), ("Only one apply grad module is allowed in a single stage.")
 
-        acc_grad_module = modules[0]
-        (input_sharding_protos,
-         output_sharding_proto) = get_input_output_sharding_proto(
-             acc_grad_module, logical_mesh.num_devices)
+        acc_grad_modules = []
+        apply_grad_input_sharding_protos = None
 
-        if len(modules) > 1:
-            apply_grad_input_sharding_protos, _ = (
-                get_input_output_sharding_proto(modules[1],
-                                                logical_mesh.num_devices))
-        else:
-            apply_grad_input_sharding_protos = None
+        for module_id, module_name in enumerate(config.names):
+            module = modules_dict[module_name]
+            if module_name.endswith(APPLY_GRAD_MARKER_SUFFIX):
+                apply_grad_input_sharding_protos, _ = (
+                    get_input_output_sharding_proto(module,
+                                                    logical_mesh.num_devices))
+            else:
+                required_outvars_indices = (
+                    config.required_outvars_indices[module_id])
+                rewrite_for_grad_acc = len(required_outvars_indices) > 0
+                acc_grad_modules.append(module)
+                (input_sharding_protos,
+                 output_sharding_proto) = get_input_output_sharding_proto(
+                     module, logical_mesh.num_devices)
 
-        # Compile accumulate_grad part to fully optimized
-        rewrite_for_grad_acc = len(config.output_acc_grad_indices) > 0
-        try:
-            hlo_module = run_spmd_partitioner_pass(
-                acc_grad_module,
-                logical_mesh.num_devices,
-                rewrite_for_grad_acc=rewrite_for_grad_acc,
-                rewrite_grad_acc_indices=config.output_acc_grad_indices)
-        except IndexError as e:
-            logger.warning(f"Compilation error (spmd partitioner pass) "
-                           f"for stage {stage_id} : {e}")
-            return stage_id, None
+                # Compile accumulate_grad part to fully optimized
+                try:
+                    hlo_module = run_spmd_partitioner_pass(
+                        module,
+                        logical_mesh.num_devices,
+                        rewrite_for_grad_acc=rewrite_for_grad_acc,
+                        rewrite_grad_acc_indices=required_outvars_indices)
+                except IndexError as e:
+                    logger.warning(f"Compilation error (spmd partitioner pass) "
+                                   f"for stage {stage_id} : {e}")
+                    return stage_id, None
+                optimized_proto = hlo_module.as_serialized_hlo_module_proto()
+                acc_grad_modules.append(
+                    ModuleCompileOutput(optimized_proto, input_sharding_protos,
+                                        output_sharding_proto))
 
-        optimized_proto = hlo_module.as_serialized_hlo_module_proto()
-        return stage_id, CompileOutput(optimized_proto, stage_plan,
-                                       input_sharding_protos,
-                                       output_sharding_proto, hooked_proto,
+        return stage_id, CompileOutput(acc_grad_modules, stage_plan,
                                        apply_grad_input_sharding_protos)
 
     @staticmethod
@@ -277,7 +296,8 @@ class ProfileWorker:
         self.mesh = virtual_mesh.get_physical_mesh()
         self.virtual_mesh = virtual_mesh
 
-    def _profile_impl(self, stage_id, compiled_output, profile_info):
+    def _profile_impl(self, stage_id, compiled_module_output, stage_plan,
+                      profile_info):
         """Implementation of profile function.
 
         The profiler first compile the HLO Proto into Mesh Executable, then
@@ -286,13 +306,11 @@ class ProfileWorker:
 
         Args:
             stage_id: the stage id of the proto.
-            compiled_output: Compiled HLO Proto, strategy config, input sharding
+            compiled_module_output: Compiled HLO Proto, input sharding,
                 spec and output sharding spec.
-            profile_info: input avals, output avals, donation mapping and
-                indices in outputs for accumulated gradients.
-            intermediate_size: Bytes of intermediates for a microbatch.
-            initial_size: Bytes of parameters initially stored, but will
-                be not used in the profiled computation, e.g. optimizer states.
+            stage_plan: The compiled sharding strategy from the auto sharding
+                pass.
+            profile_info: input avals, output avals, donation mapping.
 
         Returns:
             stage_id: the input stage id.
@@ -302,20 +320,23 @@ class ProfileWorker:
                 peak memory during the computation, the total available memory,
                 the input intermediate size and input initial size.
         """
-        avals, out_avals, tot_donation, output_acc_grad_indices = profile_info
-        input_shardings = compiled_output.input_sharding_protos
-        output_sharding = compiled_output.output_sharding_proto
+        (invars, outvars, tot_donation) = profile_info
+        input_avals = [x.aval for x in invars]
+        output_avals = [x.aval for x in outvars]
+        input_shardings = compiled_module_output.input_sharding_protos
+        output_sharding = compiled_module_output.output_sharding_proto
         donated_invars = (True,) * len(tot_donation) + (False,) * (
-            len(avals) - len(tot_donation))
+            len(input_avals) - len(tot_donation))
         hlo_module = xc.XlaComputation(
-            compiled_output.model_proto).as_hlo_module()
+            compiled_module_output.module_proto).as_hlo_module()
         if input_shardings is not None:
             hlo_module.set_spmd_parameters_shardings(
                 [xe.HloSharding(x) for x in input_shardings])
             hlo_module.set_spmd_output_sharding(xe.HloSharding(output_sharding))
-        executable = PartialGradAccMeshDriverExecutable(
-            self.mesh, hlo_module, compiled_output.stage_plan, avals, out_avals,
-            donated_invars, output_acc_grad_indices)
+        executable = PartialGradAccMeshDriverExecutable(self.mesh, hlo_module,
+                                                        stage_plan, input_avals,
+                                                        output_avals,
+                                                        donated_invars)
 
         # Run profiling
         self.mesh.reset_memory_stats()
@@ -326,7 +347,7 @@ class ProfileWorker:
 
         return stage_id, cost, peak_memory, available_memory
 
-    def profile(self, stage_id, compiled_output, profile_info):
+    def profile(self, stage_id, compiled_output, stage_plan, profile_info):
         """Run profiling on this profile worker.
 
         If the RayActorError is catched, it retries until profile_maximum_retry
@@ -335,7 +356,7 @@ class ProfileWorker:
         """
         for _ in range(global_config.profile_maximum_retry):
             try:
-                return self._profile_impl(stage_id, compiled_output,
+                return self._profile_impl(stage_id, compiled_output, stage_plan,
                                           profile_info)
             except RayActorError as e:
                 logger.warning(f"Meet ray actor error in profiling: {e}")
@@ -379,14 +400,15 @@ class HloCostModelProfileWorker:
         self.num_devices = num_devices
         self.num_micro_batches = num_micro_batches
 
-    def profile(self, stage_id, compiled_output, profile_info):
+    def profile(self, stage_id, compiled_module_output, stage_plan,
+                profile_info):
         """Use cost model to estimate cost on this profile worker."""
         _, _, _, acc_grad_indices = profile_info
         try:
             compiled = run_backend_compilation(
                 self.backend,
-                compiled_output.model_proto,
-                compiled_output.stage_plan,
+                compiled_module_output.module_proto,
+                stage_plan,
                 self.num_devices,
                 bypass_device_assignment_check=True)
         except RuntimeError as e:
@@ -440,8 +462,7 @@ class HloCostModelProfileWorkerPool(BaseWorkerPoolWrapper):
         self.pool = ActorPool(self.actors)
 
 
-def compile_all(stages, num_micro_batches, default_as_option,
-                mesh_cached_result):
+def compile_all(stages, num_micro_batches, default_as_option, profile_results):
     """
     Compile all input stages.
     """
@@ -449,41 +470,89 @@ def compile_all(stages, num_micro_batches, default_as_option,
         min(max(ray.available_resources()["CPU"] // 2, 1), len(stages)))
 
     compile_workers = CompileWorkerPool(num_cpus)
-    for stage_id, ((start, end, config_idx), stage_config, auto_sharding_config,
-                   _) in enumerate(stages):
-        if mesh_cached_result[start, end, config_idx] is not None:
+    num_compiled_stages = 0
+    for i, (stage_idx, stage_config, auto_sharding_config) in enumerate(stages):
+        if (stage_idx in profile_results and
+                profile_results[stage_idx].fully_profiled()):
             continue
         logical_mesh, autosharding_option_dict = auto_sharding_config
         compile_workers.submit(
             lambda w, v: w.compile_stage_for_profiling.remote(*v),
-            (stage_id, stage_config.compile_config, logical_mesh,
+            (i, stage_config.compile_config, logical_mesh,
              dataclasses.replace(default_as_option, **
                                  autosharding_option_dict), num_micro_batches))
+        num_compiled_stages += 1
 
     compiled_outputs = [None] * len(stages)
-    for _ in tqdm.tqdm(stages):
+    for _ in tqdm.tqdm(range(num_compiled_stages)):
         try:
-            stage_id, compiled_output = compile_workers.get_next_unordered()
+            i, compiled_output = compile_workers.get_next_unordered()
         except TimeoutError:
             logger.warning("Compile worker timeout")
             continue
         except RayActorError as e:
             logger.warning(f"A Compile worker died unexpectedly: {e}")
             continue
-        compiled_outputs[stage_id] = compiled_output
+        compiled_outputs[i] = compiled_output
+        stage_idx, stage_config, auto_sharding_config = stages[i]
+        logical_mesh_shape = compiled_output.stage_plan.logical_mesh_shape
+        apply_in_shardings = compiled_output.apply_grad_input_sharding_protos
+        initial_size = compute_apply_grad_invar_size(
+            apply_in_shardings, stage_config.apply_grad_config,
+            logical_mesh_shape)
+        if stage_idx not in profile_results:
+            profile_results[stage_idx] = ProfileResult(stage_config.n_modules,
+                                                       initial_size)
+        else:
+            assert profile_results[stage_idx].initial_size == initial_size, (
+                f"Initial size mismatch between loaded result and newly "
+                f"compiled result: {profile_results[stage_idx].initial_size} "
+                f"vs {initial_size}.")
 
     compile_workers.shutdown()
     return compiled_outputs
 
 
+def generate_module_profile_result(raw_result: Tuple,
+                                   profile_config: ProfileConfig,
+                                   compile_output: ModuleCompileOutput,
+                                   logical_mesh_shape: Tuple[int, ...]):
+    compute_costs, peak_memory, available_memory = raw_result
+    input_avals = [x.aval for x in profile_config.invars]
+    output_avals = [x.aval for x in profile_config.outvars]
+    invar_sizes = get_sharded_size_by_proto(
+        compile_output.input_sharding_protos, input_avals, logical_mesh_shape,
+        False)
+    outvar_sizes = get_sharded_size_by_proto(
+        [compile_output.output_sharding_proto], output_avals,
+        logical_mesh_shape)
+    donate_invar_sizes = [
+        size for donated, size in zip(profile_config.donate_invars, invar_sizes)
+        if donated
+    ]
+    temp_buffer_size = (peak_memory - sum(invar_sizes) - sum(outvar_sizes) +
+                        sum(donate_invar_sizes))
+
+    return ModuleProfileResult(
+        compute_cost=np.mean(compute_costs),
+        peak_memory=peak_memory,
+        temp_buffer_size=temp_buffer_size,
+        invar_names=(x.name for x in profile_config.invars),
+        outvar_names=(x.name for x in profile_config.outvars),
+        invar_sizes=invar_sizes,
+        outvar_sizes=outvar_sizes,
+        donate_invars=tuple(profile_config.donate_invars),
+        required_outvars_indices=tuple(profile_config.required_outvars_indices),
+        available_memory=available_memory,
+    )
+
+
 def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
-                num_micro_batches, auto_stage_option,
-                mesh_cached_result: np.array):
+                num_micro_batches, auto_stage_option, profile_results):
     """Profile all compiled outputs on given meshes.
 
     This function launches a profile worker pool and submits given tasks.
     """
-    mesh_profile_result = mesh_cached_result
     placement_group = retrieve_placement_group()
 
     if auto_stage_option.use_hlo_cost_model:
@@ -501,77 +570,47 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
     else:
         profile_workers = ProfileWorkerPool(meshes, placement_group)
 
-    succ_compile_ct = 0
-    for stage_id, (compiled_output,
-                   stage) in enumerate(zip(compiled_outputs, stages)):
+    successful_compile_ct = 0
+    for i, (compiled_output, stage) in enumerate(zip(compiled_outputs, stages)):
         if compiled_output is None:
             continue
-        (start, end, config_idx), stage_config, _, _ = stage
-
-        if mesh_profile_result[start, end, config_idx] is not None:
+        stage_idx, stage_config, _ = stage
+        if stage_idx in profile_results:
             continue
-        profile_workers.submit(
-            lambda w, v: w.profile.remote(*v),
-            (stage_id, compiled_output, stage_config.profile_config))
-        succ_compile_ct += 1
 
-    pbar = tqdm.tqdm(range(succ_compile_ct))
+        for module_id, (acc_grad_module, profile_config) in enumerate(
+                zip(compiled_output.acc_grad_modules,
+                    stage_config.module_profile_configs)):
+            profile_workers.submit(lambda w, v: w.profile.remote(*v),
+                                   ((i, module_id), acc_grad_module,
+                                    compiled_output.stage_plan, profile_config))
+            successful_compile_ct += 1
+
+    pbar = tqdm.tqdm(range(successful_compile_ct))
     for _ in pbar:
         try:
-            (stage_id, compute_costs, peak_memory,
-             available_memory) = profile_workers.get_next_unordered()
+            ((i, module_id),
+             *module_raw_result) = profile_workers.get_next_unordered()
         except TimeoutError:
             profile_workers.shutdown(force=True)
             logger.warning("After waiting for too long, "
                            "all profile workers are forcely killed")
-            return mesh_profile_result
+            return profile_results
         except (RuntimeError, RayActorError):
             profile_workers.shutdown(force=True)
             logger.warning("Meet unexpected error, "
                            "all profile workers are forcely killed")
-            return mesh_profile_result
-        ((start, end, config_idx), stage_config, auto_sharding_config,
-         intermediate_vars) = stages[stage_id]
-        # Get memory stats
-        compiled_output = compiled_outputs[stage_id]
-        config = compiled_output.stage_plan
-        hooked_proto = compiled_output.intermediate_proto
-        apply_in_shardings = compiled_output.apply_grad_input_sharding_protos
-        profile_config = stage_config.profile_config
-        invar_sizes = get_sharded_size_by_proto(
-            compiled_output.input_sharding_protos, profile_config.input_avals,
-            config.logical_mesh_shape, False)
-        outvar_sizes = get_sharded_size_by_proto(
-            [compiled_output.output_sharding_proto],
-            profile_config.output_avals, config.logical_mesh_shape)
-        donate_invar_sizes = [
-            size
-            for donated, size in zip(profile_config.donate_invars, invar_sizes)
-            if donated
-        ]
-        intermediate_avals = tuple(v.aval for v in intermediate_vars)
-        intermediate_size = sum(
-            get_sharded_size_by_proto(hooked_proto, intermediate_avals,
-                                      config.logical_mesh_shape))
-        temp_buffer_size = (peak_memory - sum(invar_sizes) - sum(outvar_sizes) +
-                            sum(donate_invar_sizes))
-        initial_size = compute_apply_grad_invar_size(
-            apply_in_shardings, stage_config.apply_grad_config,
-            config.logical_mesh_shape)
-
-        profile_result = ProfileResult(
-            compute_cost=np.mean(compute_costs),
-            peak_memory=peak_memory,
-            temp_buffer_size=temp_buffer_size,
-            intermediate_size=intermediate_size,
-            available_memory=available_memory,
-            initial_size=initial_size,
-        )
-
-        mesh_profile_result[start, end, config_idx] = profile_result
-        pbar.write(f"result[{start}, {end}, {config_idx}] = {profile_result}")
+            return profile_results
+        stage_idx, stage_config, _ = stages[i]
+        stage_compile_output = compiled_outputs[i]
+        module_profile_result = generate_module_profile_result(
+            module_raw_result, stage_config.module_profile_configs[module_id],
+            stage_compile_output.acc_grad_modules[module_id],
+            stage_compile_output.stage_plan.logical_mesh_shape)
+        profile_results[stage_idx].add_module_profile_result(
+            module_id, module_profile_result)
     profile_workers.shutdown()
-    return mesh_profile_result
+    return profile_results
 
 
 def generate_training_stages_2d(layers,
@@ -580,6 +619,7 @@ def generate_training_stages_2d(layers,
                                 acc_grad_outvars,
                                 apply_grad_layers,
                                 apply_grad_global_info,
+                                mesh_id,
                                 autosharding_configs,
                                 mesh_num_devices,
                                 cluster_size,
@@ -614,90 +654,185 @@ def generate_training_stages_2d(layers,
                 if apply_grad_layers[idx] is not None
             ]
             stage_name = f"stage_{start}_{end}"
-            (intermediate_vars, stage_config) = generate_stage_info(
-                layers, forward_layer_indices + backward_layer_indices,
-                accumulator_mapping, acc_grad_outvars, stage_name, end - start,
+            stage_config = generate_stage_info(
+                layers, [forward_layer_indices, backward_layer_indices],
+                accumulator_mapping, acc_grad_outvars, stage_name,
                 selected_apply_grad_layers, apply_grad_global_info)
-            if is_full_mesh:
-                intermediate_vars = []
             for config_idx, autosharding_config in enumerate(
                     autosharding_configs):
                 if autosharding_config is not None:
-                    stage_indices = (start, end, config_idx)
-                    stages.append((stage_indices, stage_config,
-                                   autosharding_config, intermediate_vars))
+                    stage_indices = (start, end, mesh_id, config_idx)
+                    stages.append(
+                        (stage_indices, stage_config, autosharding_config))
     return stages
 
 
-def interpret_profile_result_2d(profile_results):
-    all_compute_cost = np.full_like(profile_results, np.inf, dtype=np.float64)
-    all_max_n_succ_stages = np.full_like(profile_results, -1, dtype=np.int64)
-    for index, result in np.ndenumerate(profile_results):
-        if result is None:
+def get_max_n_succ_stages(profile_results: Sequence[ProfileResult]):
+    env = {}
+    initial_size = sum(result.initial_size for result in profile_results)
+    peak_memory = 0
+    available_memory = profile_results[0].available_memory
+    assert all(result.available_memory == available_memory
+               for result in profile_results)
+    n_modules = profile_results[0].n_modules
+    assert n_modules == 2, "Only support forward and backward module"
+    assert all(result.n_modules == n_modules for result in profile_results)
+
+    stage_no = n_modules * len(profile_results)
+    # eliminate_time[var] = k means that the variable can be eliminated after
+    # stage k.
+    eliminate_time = {}
+    required_outvars = set()
+    for i in reversed(range(n_modules)):
+        for stage_result in reversed(profile_results):
+            stage_no -= 1
+            module_result = stage_result.module_profile_results[i]
+            for invar in module_result.invar_names:
+                if invar not in eliminate_time:
+                    eliminate_time[invar] = stage_no
+            for required_idx in module_result.required_outvar_indices:
+                required_outvars.add(module_result.outvar_names[required_idx])
+
+    stage_no = 0
+    intermediate_size = None
+    for i in range(n_modules):
+        for stage_result in profile_results:
+            module_result = stage_result.module_profile_results[i]
+            for invar, size, donated in zip(module_result.invar_names,
+                                            module_result.invar_sizes,
+                                            module_result.donate_invars):
+                if invar not in env:
+                    env[invar] = size
+                else:
+                    assert env[invar] == size
+                if donated:
+                    del env[invar]
+            for outvar, size in zip(module_result.outvar_names,
+                                    module_result.outvar_sizes):
+                if outvar not in env:
+                    env[outvar] = size
+                else:
+                    assert env[outvar] == size
+            total_env_size = sum(env.values())
+            peak_memory = max(peak_memory,
+                              total_env_size + module_result.temp_buffer_size)
+            var_to_be_eliminated = []
+            for var in env:
+                if (var not in required_outvars and
+                    (var not in eliminate_time or
+                     eliminate_time[var] >= stage_no)):
+                    var_to_be_eliminated.append(var)
+            for var in var_to_be_eliminated:
+                del env[var]
+            stage_no += 1
+        intermediate_size = sum(env.values())
+    for var in required_outvars:
+        del env[var]
+
+    assert len(env) == 0, "Some variables are not eliminated"
+
+    max_stage = int((available_memory - peak_memory - initial_size) //
+                    max(intermediate_size, 1e-8) - 1)
+    max_stage = min(max(-1, max_stage), INFINITY_N_STAGES)
+
+    return max_stage
+
+    # TODO:
+    #  1. Free unused memory
+    #  2. Decide intermediate memory
+    #  3. Check the correctness of the profiling result
+
+
+def interpret_profile_result_2d(profile_results: Dict[Tuple[int, ...],
+                                                      ProfileResult],
+                                num_layers: int, num_submesh_choices: int,
+                                num_autosharding_configs: int):
+    all_compute_cost = np.full(
+        (num_layers, num_layers, num_submesh_choices, num_autosharding_configs),
+        np.inf,
+        dtype=np.float64)
+    all_max_n_succ_stages = np.full(
+        (num_layers, num_layers, num_submesh_choices, num_autosharding_configs),
+        -1,
+        dtype=np.int64)
+
+    for index in np.ndindex(num_layers, num_layers, num_submesh_choices,
+                            num_autosharding_configs):
+        if index not in profile_results:
             continue
-        compute_cost = result.compute_cost
-        peak_memory = result.peak_memory
-        available_memory = result.available_memory
-        intermediate_size = result.intermediate_size
-        initial_size = result.initial_size
-        max_n_succ_stages = ((available_memory - peak_memory - initial_size) //
-                             max(intermediate_size, 1e-8) - 1)
-        max_n_succ_stages = np.clip(max_n_succ_stages, -1, INFINITY_N_STAGES)
-        if np.isinf(compute_cost):
-            max_n_succ_stages = -1
-        all_compute_cost[index] = compute_cost
-        all_max_n_succ_stages[index] = max_n_succ_stages
+        profile_result = profile_results[index]
+        all_compute_cost[index] = sum(
+            result.compute_cost
+            for result in profile_result.module_profile_results)
+        all_max_n_succ_stages[index] = get_max_n_succ_stages([profile_result])
 
     return all_compute_cost, all_max_n_succ_stages
 
 
-def generate_training_stages_1d(layers, donation_mapping, global_outvars,
+def generate_training_stages_1d(layers, accumulator_mapping, acc_grad_outvars,
                                 apply_grad_layers, apply_grad_global_info,
-                                autosharding_configs):
+                                mesh_id, autosharding_configs):
     print("- Generate all stage infos (Jaxpr -> HLO)")
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     stages = []
     for l in tqdm.tqdm(range(0, num_layers)):
-        layer_indices = (l, 2 * num_layers - l - 1)
-        selected_apply_grad_layers = filter(lambda x: x is not None,
-                                            [apply_grad_layers[l]])
+        selected_apply_grad_layers = ([] if apply_grad_layers[l] is None else
+                                      [apply_grad_layers[l]])
         stage_name = f"stage_{l}"
-        (intermediate_vars, stage_config) = generate_stage_info(
-            layers, layer_indices, donation_mapping, global_outvars, stage_name,
-            1, list(selected_apply_grad_layers), apply_grad_global_info)
+        stage_config = generate_stage_info(layers, [(l,),
+                                                    (2 * num_layers - l - 1,)],
+                                           accumulator_mapping,
+                                           acc_grad_outvars, stage_name,
+                                           list(selected_apply_grad_layers),
+                                           apply_grad_global_info)
         for config_idx, autosharding_config in enumerate(autosharding_configs):
             if autosharding_config is not None:
-                stage_indices = (l, l, config_idx)
-                stages.append((stage_indices, stage_config, autosharding_config,
-                               intermediate_vars))
+                stage_indices = (l, mesh_id, config_idx)
+                stages.append(
+                    (stage_indices, stage_config, autosharding_config))
     return stages
 
 
-def interpret_profile_result_1d(profile_results):
-    num_layers = profile_results.shape[0]
-    num_auto_sharding_configs = profile_results.shape[2]
-    profile_results = profile_results.diagonal()
-    all_compute_cost = np.full_like(profile_results, np.inf, dtype=np.float64)
-    all_max_n_succ_stages = np.full_like(profile_results, -1, dtype=np.int64)
+def interpret_profile_result_1d(profile_results: Dict[Tuple[int, ...],
+                                                      ProfileResult],
+                                num_layers: int, num_submesh_choices: int,
+                                num_autosharding_configs: int):
+    all_compute_cost = np.full(
+        (num_layers, num_layers, num_submesh_choices, num_autosharding_configs),
+        np.inf,
+        dtype=np.float64)
+    all_max_n_succ_stages = np.full(
+        (num_layers, num_layers, num_submesh_choices, num_autosharding_configs),
+        -1,
+        dtype=np.int64)
 
     for start in range(num_layers):
         for end in range(start, num_layers):
-            for config_idx in range(num_auto_sharding_configs):
-                results = profile_results[start:end, config_idx]
-                if any(result is None for result in results):
-                    continue
-                compute_cost = sum(result.compute_cost for result in results)
-                all_compute_cost[start, end, config_idx] = compute_cost
-                all_max_n_succ_stages[start, end,
-                                      config_idx] = INFINITY_N_STAGES
-            # TODO(zhuohan): Calculate max_n_succ_stages
-    raise NotImplementedError("1D is not implemented yet")
+            for submesh_choice in range(num_submesh_choices):
+                for config_idx in range(num_autosharding_configs):
+                    if any(
+                        (l, submesh_choice, config_idx) not in profile_results
+                            for l in range(start, end + 1)):
+                        continue
+                    selected_profile_results = [
+                        profile_results[(l, submesh_choice, config_idx)]
+                        for l in range(start, end + 1)
+                    ]
+                    all_compute_cost[
+                        start, end, submesh_choice, config_idx] = sum(
+                            result.compute_cost
+                            for profile_result in selected_profile_results
+                            for result in profile_result.module_profile_results)
+                    all_max_n_succ_stages[start, end, submesh_choice,
+                                          config_idx] = get_max_n_succ_stages(
+                                              selected_profile_results)
+    return all_compute_cost, all_max_n_succ_stages
 
 
 def distributed_profile_on_mesh(stages, meshes: Sequence[VirtualPhysicalMesh],
                                 num_micro_batches, default_as_option,
-                                auto_stage_option, mesh_cached_result):
+                                auto_stage_option, profile_results):
     timers("stage-construction-compilation").start()
 
     if len(stages) == 0:
@@ -705,27 +840,27 @@ def distributed_profile_on_mesh(stages, meshes: Sequence[VirtualPhysicalMesh],
         timers("stage-construction-compilation").suspend()
         timers("stage-construction-profiling").start()
         timers("stage-construction-profiling").suspend()
-        return mesh_cached_result
+        return profile_results
 
     print("- Compile all stages")
     try:
         compiled_outputs = compile_all(stages, num_micro_batches,
-                                       default_as_option, mesh_cached_result)
+                                       default_as_option, profile_results)
     except RayActorError as e:
         logger.warning(f"Compilation fatal error: {e}")
         timers("stage-construction-compilation").suspend()
-        return mesh_cached_result
+        return profile_results
     timers("stage-construction-compilation").suspend()
 
     print("- Profile all stages")
     # shape of compute_cost and max_n_succ_stages:
     # (num_layers, num_layers, num_autosharding_configs)
     timers("stage-construction-profiling").start()
-    mesh_profile_result = profile_all(stages, compiled_outputs, meshes,
-                                      num_micro_batches, auto_stage_option,
-                                      mesh_cached_result)
+    profile_results = profile_all(stages, compiled_outputs, meshes,
+                                  num_micro_batches, auto_stage_option,
+                                  profile_results)
     timers("stage-construction-profiling").suspend()
-    return mesh_profile_result
+    return profile_results
 
 
 def _get_layer_flops_prefix_sum(layers):
@@ -783,21 +918,18 @@ def get_compute_cost(
         max_n_succ_stages: The maximal number of succeeding stages. This
             is calculated based on memory constraints.
     """
+    cluster_size = virtual_mesh.num_devices
+    layer_flops_prefix_sum = _get_layer_flops_prefix_sum(layers)
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
     num_submesh_choices = len(submesh_choices)
     num_autosharding_configs = len(autosharding_configs[0])
-    cluster_size = virtual_mesh.num_devices
-    layer_flops_prefix_sum = _get_layer_flops_prefix_sum(layers)
 
     if auto_stage_option.cached_profile_result is not None:
-        profile_results = np.load(auto_stage_option.cached_profile_result,
-                                  allow_pickle=True)
+        with open(auto_stage_option.cached_profile_result, "rb") as f:
+            profile_results = pickle.load(f)
     else:
-        profile_results = np.full((num_layers, num_layers, num_submesh_choices,
-                                   num_autosharding_configs),
-                                  None,
-                                  dtype=object)
+        profile_results = {}
     print("-" * 20 + " Automatic stage clustering " + "-" * 20)
     print(f"submesh_choices: {submesh_choices}")
 
@@ -816,13 +948,11 @@ def get_compute_cost(
             sliced_virtual_meshes = virtual_mesh.slice_profiling_submeshes(
                 num_hosts, num_devices_per_host)
 
-        mesh_cached_result = profile_results[:, :, mesh_id]
-
         if auto_stage_option.layer_profile_mode == "composition":
             stages = generate_training_stages_2d(
                 layers, layer_flops_prefix_sum, accumulator_mapping,
                 acc_grad_outvars, apply_grad_layers, apply_grad_global_info,
-                autosharding_configs[mesh_id],
+                mesh_id, autosharding_configs[mesh_id],
                 sliced_virtual_meshes[0].num_devices, cluster_size,
                 auto_stage_option.stage_imbalance_tolerance)
         elif auto_stage_option.layer_profile_mode == "individual":
@@ -830,15 +960,15 @@ def get_compute_cost(
                                                  acc_grad_outvars,
                                                  apply_grad_layers,
                                                  apply_grad_global_info,
+                                                 mesh_id,
                                                  autosharding_configs[mesh_id])
         else:
             raise ValueError(f"Unknown layer profile mode: "
                              f"{auto_stage_option.layer_profile_mode}")
-        mesh_profile_result = distributed_profile_on_mesh(
+        profile_results = distributed_profile_on_mesh(
             stages, sliced_virtual_meshes, num_micro_batches, default_as_option,
-            auto_stage_option, mesh_cached_result)
+            auto_stage_option, profile_results)
 
-        profile_results[:, :, mesh_id] = mesh_profile_result
         toc = time()
         print(f"Profiling for submesh {mesh_id} {submesh} takes {toc - tic:.2f}"
               f" seconds")
@@ -854,10 +984,12 @@ def get_compute_cost(
 
     if auto_stage_option.layer_profile_mode == "composition":
         compute_cost, max_n_succ_stages = interpret_profile_result_2d(
-            profile_results)
+            profile_results, num_layers, num_submesh_choices,
+            num_autosharding_configs)
     elif auto_stage_option.layer_profile_mode == "individual":
         compute_cost, max_n_succ_stages = interpret_profile_result_1d(
-            profile_results)
+            profile_results, num_layers, num_submesh_choices,
+            num_autosharding_configs)
     else:
         raise ValueError(f"Unknown layer profile mode: "
                          f"{auto_stage_option.layer_profile_mode}")
@@ -865,57 +997,62 @@ def get_compute_cost(
     return compute_cost, max_n_succ_stages
 
 
-def split_global_use_and_donate(layers: Sequence[JaxPipelineComputation],
-                                layer_indices: OrderedSet[int],
-                                accumulator_mapping: Dict[Var, Var],
-                                acc_grad_outvars: Sequence[Var]):
+def select_module_layers(layers: Sequence[JaxPipelineComputation],
+                         module_layer_indices: Sequence[Sequence[int]],
+                         accumulator_mapping: Dict[Var, Var],
+                         acc_grad_outvars: Sequence[Var]):
     """
-    Obtains donation_mapping and global_use of each selected layer.
-
-    It picks some layers (no need to be consecutive) and assumes they are on a
-    mesh, it then returns `donation_mapping` and `global_use` of each selected
-    layer.
+    For each module, select the layers and get the accumulator mapping and
+    required outvars for each module.
 
     Args:
-        layers: all layers
-        layer_indices: indices of selected layers, they are assumed to be in
-            the same mesh
-        accumulator_mapping: known global donation mapping
-        acc_grad_outvars: global outvars
+        layers: all layers.
+        module_layer_indices: list of modules, each module is a list of layer
+            ids.
+        accumulator_mapping: the mapping from accumulator input to output,
+            used to determine the donation.
+        acc_grad_outvars: the outvars of the accumulator gradient layers.
 
     Returns:
-        donation_mapping: donation mapping of all picked layers
-        global_used: an OrderedSet of outvars used not only in selected layers
-        layers: layers rearranged for donate invar
+        modules: list of modules, each module is a list of layers.
+        module_accumulator_mappings: accumulator mapping for each module.
+        module_required_outvars: required outvars for each module.
     """
     reversed_accumulator_mapping = {
         v: k for k, v in accumulator_mapping.items()
     }
-    layer_indices = OrderedSet(layer_indices)
+    layer2module = {}
+    for module_id, layer_indices in enumerate(module_layer_indices):
+        for layer_id in layer_indices:
+            assert layer_id not in layer2module, (
+                "a layer cannot be in multiple modules")
+            layer2module[layer_id] = module_id
+
     gensym_fn = gensym([layer.closed_jaxpr().jaxpr for layer in layers])
     num_layers = len(layers)
-    out_donation_mapping = {}
-    out_global_used = OrderedSet()
     used = OrderedSet(acc_grad_outvars)
-    local_used = OrderedSet()  # limit donation
-    new_layers = []
-    for idx in reversed(range(num_layers)):
-        layer = layers[idx]
-        if idx in layer_indices:
-            local_donation, new_layer = get_donation_mapping_and_modify(
-                layer, reversed_accumulator_mapping, gensym_fn)
-            for invar in local_donation:
-                assert invar not in used and invar not in local_used
+    new_modules = [[] for _ in module_layer_indices]
+    module_required_outvars = [OrderedSet() for _ in module_layer_indices]
+    module_accumulator_mappings = [{} for _ in module_layer_indices]
+    for layer_id in reversed(range(num_layers)):
+        layer = layers[layer_id]
+        if layer_id in layer2module:
+            module_id = layer2module[layer_id]
+            layer_donation, new_layer = (
+                get_local_donation_mapping_and_add_missing_invars(
+                    layer, reversed_accumulator_mapping, gensym_fn))
+            for invar in layer_donation:
+                assert invar not in used
 
             global_used = [var for var in new_layer.outvars if var in used]
-            out_donation_mapping.update(local_donation)
-            out_global_used.update(global_used)
-            local_used.update(new_layer.invars)
-            new_layers.append(new_layer)
+            module_accumulator_mappings[module_id].update(layer_donation)
+            module_required_outvars[module_id].update(global_used)
+            used.update(new_layer.invars)
+            new_modules[module_id].append(new_layer)
             continue
         used.update(layer.invars)
-    new_layers = list(reversed(new_layers))
-    return out_donation_mapping, out_global_used, new_layers
+    new_modules = [reversed(layers) for layers in new_modules]
+    return new_modules, module_accumulator_mappings, module_required_outvars
 
 
 def split_sharding_specs(layers: Sequence[JaxPipelineComputation],
@@ -939,76 +1076,85 @@ def split_sharding_specs(layers: Sequence[JaxPipelineComputation],
     return layer_in_sharding_specs, layer_out_sharding_specs
 
 
-def generate_stage_info(all_layers, selected_indices, accumulator_mapping,
-                        acc_grad_outvars, name, insert_hook_after,
+def generate_stage_info(all_layers, selected_indices,
+                        global_accumulator_mapping, acc_grad_outvars, name,
                         apply_grad_layers, apply_grad_info):
     """Combine selected layers together for profiling."""
-    # TODO(yonghao): clean up code here
-    (selected_donation_mapping, used_outside,
-     layers) = split_global_use_and_donate(all_layers, selected_indices,
-                                           accumulator_mapping,
-                                           acc_grad_outvars)
+    (modules, module_accumulator_mapping,
+     module_required_outvars) = select_module_layers(
+         all_layers, selected_indices, global_accumulator_mapping,
+         acc_grad_outvars)
 
-    jaxprs = [layer.closed_jaxpr() for layer in layers]
-
-    merged, intermediate_vars = merge_marked_jaxprs_with_named_call(
-        jaxprs, used_outside, selected_donation_mapping, name + "_compute",
-        insert_hook_after)
-
-    outvars = OrderedSet(merged.jaxpr.outvars)
-    is_donated = [
-        invar in selected_donation_mapping and
-        selected_donation_mapping[invar] in outvars
-        for invar in merged.jaxpr.invars
+    n_modules = len(modules)
+    module_jaxprs = [
+        [layer.closed_jaxpr() for layer in layers] for layers in modules
     ]
-    donated_invars = [
-        invar for d, invar in zip(is_donated, merged.jaxpr.invars) if d
-    ]
-    donated_outvars = [selected_donation_mapping[v] for v in donated_invars]
-    new_invars = rearrange_vars(merged.jaxpr.invars, donated_invars)
-    new_outvars = rearrange_vars(merged.jaxpr.outvars, donated_outvars)
-    merged = clone_jaxpr(merged, new_invars, new_outvars)
-    compute_avals = [var.aval for var in merged.jaxpr.invars]
-    compute_out_avals = [var.aval for var in merged.jaxpr.outvars]
-    acc_grad_outvars_set = set(acc_grad_outvars)
-    output_acc_grad_indices = [
-        i for i, var in enumerate(merged.jaxpr.outvars)
-        if var in acc_grad_outvars_set
-    ]
-    profile_config = ProfileConfig(compute_avals, compute_out_avals,
-                                   list(is_donated), output_acc_grad_indices)
 
-    apply_info = ApplyGradConfig(None, None)
+    module_names = [f"{name}_acc_grad_{i}" for i in range(n_modules)]
+    module_merged_jaxprs = []
+    module_profile_configs = []
+
+    all_modules_donation_mapping = {}
+    all_modules_outvars = OrderedSet()
+    all_modules_required_outvars_indices = []
+    for module_name, jaxprs, accumulator_mapping, required_outvars in enumerate(
+            zip(module_names, module_jaxprs, module_accumulator_mapping,
+                module_required_outvars)):
+        merged_jaxpr = merge_marked_jaxprs_with_named_call(
+            jaxprs, required_outvars, accumulator_mapping, module_name)
+        outvars_set = set(merged_jaxpr.jaxpr.outvars)
+        is_donated = [
+            invar in accumulator_mapping and
+            accumulator_mapping[invar] in outvars_set
+            for invar in merged_jaxpr.jaxpr.invars
+        ]
+        required_outvars_set = set(required_outvars)
+        required_outvars_indices = [
+            i for i, outvar in enumerate(merged_jaxpr.jaxpr.outvars)
+            if outvar in required_outvars_set
+        ]
+        profile_config = ProfileConfig(merged_jaxpr.jaxpr.invars,
+                                       merged_jaxpr.jaxpr.outvars, is_donated,
+                                       required_outvars_indices)
+        module_merged_jaxprs.append(merged_jaxpr)
+        module_profile_configs.append(profile_config)
+        all_modules_donation_mapping.update(accumulator_mapping)
+        all_modules_outvars.update(merged_jaxpr.jaxpr.outvars)
+        all_modules_required_outvars_indices.append(required_outvars_indices)
 
     if apply_grad_layers:
         apply_grad_donation, apply_grad_outvars = apply_grad_info
+        apply_grad_module_name = name + APPLY_GRAD_MARKER_SUFFIX
         merged_apply = merge_marked_jaxprs_with_named_call(
             [layer.closed_jaxpr() for layer in apply_grad_layers],
             apply_grad_outvars, apply_grad_donation, name + "_apply")
-        apply_only_invars = OrderedSet(merged_apply.jaxpr.invars).difference(
-            new_invars).difference(new_outvars)
+        apply_only_invars = OrderedSet(merged_apply.jaxpr.invars)
+        for module_jaxpr in module_merged_jaxprs:
+            apply_only_invars = apply_only_invars.difference(
+                module_jaxpr.jaxpr.invars)
+            apply_only_invars = apply_only_invars.difference(
+                module_jaxpr.jaxpr.outvars)
         apply_info = ApplyGradConfig(merged_apply.jaxpr.invars,
                                      apply_only_invars)
-        names = ["merged", "merged_" + APPLY_GRAD_MARKER_SUFFIX]
-        all_outvars = OrderedSet(new_outvars).union(merged_apply.jaxpr.outvars)
-        all_outvars = list(all_outvars)
-        donation_map = dict(apply_grad_donation)
-        donation_map.update(selected_donation_mapping)
-        merged, is_donated = merge_unmarked_with_call([merged, merged_apply],
-                                                      names, all_outvars,
-                                                      donation_map)
+        module_names.append(apply_grad_module_name)
+        module_merged_jaxprs.append(merged_apply)
+        all_modules_donation_mapping.update(apply_grad_donation)
+        all_modules_outvars.update(merged_apply.jaxpr.outvars)
     else:
-        # Call merge_unmarked_with_call to add pipeline markers to the
-        # merged jaxpr.
-        merged, is_donated = merge_unmarked_with_call([merged], ["merged"],
-                                                      new_outvars,
-                                                      selected_donation_mapping)
+        apply_info = None
 
-    hlo_module = jaxpr_to_hlo_module(name, merged, is_donated)
+    all_modules_merged_jaxpr, all_modules_is_donated = (
+        merge_unmarked_with_call(module_merged_jaxprs, module_names,
+                                 all_modules_outvars,
+                                 all_modules_donation_mapping))
+    hlo_module = jaxpr_to_hlo_module(name, all_modules_merged_jaxpr,
+                                     all_modules_is_donated)
     proto = hlo_module.as_serialized_hlo_module_proto()
-    compile_config = CompileConfig(proto, output_acc_grad_indices)
-    stage_config = StageConfig(compile_config, profile_config, apply_info)
-    return intermediate_vars, stage_config
+    compile_config = CompileConfig(proto, module_names,
+                                   all_modules_required_outvars_indices)
+    stage_config = StageConfig(n_modules, compile_config,
+                               module_profile_configs, apply_info)
+    return stage_config
 
 
 def create_collective_group(src_mesh: PhysicalDeviceMesh,

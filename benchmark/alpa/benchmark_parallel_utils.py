@@ -79,7 +79,7 @@ def get_pipeshard_parallel_method(benchmark_case: BenchmarkCase,
             ),
             pipeline_schedule=pipeline_schedule,
             layer_option=AutoLayerOption(layer_num=num_auto_layers,
-                                         remat_model=remat_mode),
+                                         remat_mode=remat_mode),
             stage_option=AutoStageOption(**auto_stage_option))
     elif parallel_mode == "load_solution":
         assert isinstance(parallel_args, LoadSolutionParallelArgs)

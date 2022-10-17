@@ -86,21 +86,19 @@ Developers should at least run this test to make sure their modifications do not
 python3 benchmark.py --suite gpt.perf_test_manual
 ```
 
-Expected output on AWS p3.16 (07/27/2022)
+Expected output on AWS p3.16 (10/17/2022)
 ```
-$ python3 benchmark.py --suite gpt.perf_test_manual
-2022-07-27 07:00:18,603 INFO worker.py:852 -- Connecting to existing Ray cluster at address: 172.31.31.193:6379
+ubuntu@ip-172-31-34-216:~/efs/alpa/benchmark/alpa$ python3 benchmark.py --suite gpt.perf_test_manual
 Working on case: BenchmarkCase(batch_size=32, model_config=GPTModelConfig(seq_len=1024, hidden_size=2560, num_layers=32, num_heads=32, vocab_size=51200), num_micro_batches=4, parallel_mode='uniform', parallel_args=UniformParallelArgs(prefer_reduce_scatter=True, use_remat=True, dp=2, op=2, pp=2, force_batch_dim_mapping=True))
-2022-07-27 07:00:23,344 INFO worker.py:852 -- Connecting to existing Ray cluster at address: 172.31.31.193:6379
- - Prepare input: 5.31 s
- - Create train state: 2.56 s
- - Compile (driver): 66.46 s
- - Compile (worker): 79.97 s
+ - Prepare input: 0.05 s
+ - Create train state: 8.37 s
+ - Compile (driver): 67.38 s
+ - Compile (worker): 21.99 s
 Iteration 0 ...
 Iteration 1 ...
 Iteration 2 ...
- - Benchmark: 18.06 s
-Type: gpt  Model Config: GPTModelConfig(seq_len=1024, hidden_size=2560, num_layers=32, num_heads=32, vocab_size=51200)  #Microbatch: 4  #GPU: 8  Parallel Config: UniformParallelArgs(prefer_reduce_scatter=True, use_remat=True, dp=2, op=2, pp=2, force_batch_dim_mapping=True)  Mean Time (s): 2.454  Std Time (s): 0.000  #Params (Billion): 2.649B  TFLOPs: 37.16  Peak Mem (GB): 8.745  Metadata: {'compilation_times': 'None', 'compute_cost_file_name': 'None', 'forward_stage_layer_ids': 'None', 'submesh_shapes': 'None', 'logical_mesh_shapes': 'None', 'autosharding_option_dicts': 'None'}
+ - Benchmark: 18.83 s
+Type: gpt  Model Config: GPTModelConfig(seq_len=1024, hidden_size=2560, num_layers=32, num_heads=32, vocab_size=51200)  #Microbatch: 4  #GPU: 8  Parallel Config: UniformParallelArgs(prefer_reduce_scatter=True, use_remat=True, dp=2, op=2, pp=2, force_batch_dim_mapping=True)  Mean Time (s): 2.464  Std Time (s): 0.000  #Params (Billion): 2.649B  TFLOPs: 37.01  Peak Mem (GB): 8.745  Metadata: {'compilation_times': 'None', 'compute_cost_file_name': 'None', 'forward_stage_layer_ids': 'None', 'submesh_shapes': 'None', 'logical_mesh_shapes': 'None', 'autosharding_option_dicts': 'None'}
 ```
 
 ## Advanced Usage

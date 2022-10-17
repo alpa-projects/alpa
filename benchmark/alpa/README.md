@@ -126,7 +126,7 @@ python benchmark.py --suite gpt_inference.profile --profile-driver-time
 
 Add `--profile_stage_execution_time` to derive the stage execution timeline for each requests and dump into chrome tracing files in folder `$PWD/chrome_trace/`.
 ```
-python benchmark.py --suite gpt_inference.profile --profile_stage_execution_time
+python benchmark.py --suite gpt_inference.profile --profile-stage-execution-time
 ```
 
 We also include a convenient script `run_exp.py` to run multiple benchmarks with different cluster configurations. For example, to run all gpt search cases:

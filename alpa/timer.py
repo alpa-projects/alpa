@@ -18,9 +18,6 @@ class _Timer:
         self.ever_suspended = False
         self.accum_cost = 0.0
 
-        # started=False does not imply stopped=True
-        # because it may be suspended
-        self.stopped = True
         # start-stop timestamp pairs
         self.start_times = []
         self.stop_times = []
@@ -31,9 +28,7 @@ class _Timer:
         if sync_func and do_sync:
             sync_func()
         self.start_time = time.time()
-        if self.stopped:
-            self.stopped = False
-            self.start_times.append(self.start_time)
+        self.start_times.append(self.start_time)
         self.started = True
 
     def suspend(self, sync_func: Callable = None):
@@ -64,7 +59,6 @@ class _Timer:
             cost = time.time() - self.start_time
             self.costs.append(cost)
         self.stop_times.append(time.time())
-        self.stopped = True
         self.started = False
 
     def reset(self):

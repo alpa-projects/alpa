@@ -62,7 +62,7 @@ def benchmark_suite(suite_name,
     os.makedirs("tmp", exist_ok=True)
 
     model_type = suite_name.split(".")[0]
-    output_name = f"{model_type}_{exp_name}.tsv"
+    output_name = f"{exp_name}.tsv"
 
     # Run all cases
     for benchmark_case in suite:

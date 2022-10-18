@@ -12,7 +12,7 @@ def run_exp(cluster_settings, suite_name, benchmark_settings=None):
     os.environ["PYTHONUNBUFFERED"] = "1"
     now = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 
-    tee = subprocess.Popen(["tee", f"{suite_name}_{now}.log"],
+    tee = subprocess.Popen(["tee", f"{now}_{suite_name}.log"],
                            stdin=subprocess.PIPE)
     os.dup2(tee.stdin.fileno(), sys.stdout.fileno())
     os.dup2(tee.stdin.fileno(), sys.stderr.fileno())
@@ -24,7 +24,7 @@ def run_exp(cluster_settings, suite_name, benchmark_settings=None):
         benchmark_suite(suite_name,
                         num_hosts,
                         num_devices_per_host,
-                        exp_name=f"{suite_name}_{now}_{num_gpus}_gpus",
+                        exp_name=f"{now}_{suite_name}_{num_gpus}_gpus",
                         disable_tqdm=True,
                         **benchmark_settings)
 

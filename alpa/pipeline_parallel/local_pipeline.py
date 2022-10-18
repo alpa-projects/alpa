@@ -16,7 +16,7 @@ from alpa.pipeline_parallel.computation import (
 class LocalPipelineRunner:
     """Single-device local pipeline runner."""
 
-    def __init__(self, name: str, global_invals: Sequence[DeviceArray]):
+    def __init__(self, name: str, global_invals: Dict[Var, DeviceArray]):
         self.name = name
         self.env = {}
         self.global_invals = global_invals
@@ -147,10 +147,20 @@ class LocalPipelineExecutable:
                 if var_reference_count[var] == 0:
                     sender_runner.del_var(var)
         
+        # All of the below print -1.
         # mesh = get_global_physical_mesh(create_if_not_exist=True)
         # print(mesh.get_memory_allocated())
         # print(mesh.get_max_memory_allocated())
         # print(mesh.get_available_memory())
+
+        # cpu = jax.local_devices(backend="cpu")[0]
+        # print(cpu.memory_allocated())
+        # print(cpu.max_memory_allocated())
+        # print(cpu.available_memory())
+        # gpu = jax.local_devices()[0]
+        # print(gpu.memory_allocated())
+        # print(gpu.max_memory_allocated())
+        # print(gpu.available_memory())
 
         # jax.profiler.save_device_memory_profile(
         #     f"/home/dlzou/projects/alpa-experiments/swap_{self.swap}.prof")

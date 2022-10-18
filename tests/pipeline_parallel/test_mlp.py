@@ -59,10 +59,20 @@ class PipelineMLPTest(unittest.TestCase):
         p_train_step = parallelize(train_step, donate_argnums=(), method=method)
         gradients_with_pipeline = p_train_step(state, batch)
         
+        # All of the below print -1.
         # mesh = get_global_physical_mesh(create_if_not_exist=True)
         # print(mesh.get_memory_allocated())
         # print(mesh.get_max_memory_allocated())
         # print(mesh.get_available_memory())
+        
+        # cpu = jax.local_devices(backend="cpu")[0]
+        # print(cpu.memory_allocated())
+        # print(cpu.max_memory_allocated())
+        # print(cpu.available_memory())
+        # gpu = jax.local_devices()[0]
+        # print(gpu.memory_allocated())
+        # print(gpu.max_memory_allocated())
+        # print(gpu.available_memory())
 
         # if isinstance(method, LocalPipelineParallel):
             # jax.profiler.save_device_memory_profile(
@@ -77,7 +87,7 @@ class PipelineMLPTest(unittest.TestCase):
             executable.dump_debug_info("tmp")
 
     def test_2_layer_mlp_local_pipeline_parallel(self):
-        init(cluster="local")
+        # init(cluster="local")
         self.train_2_layer_mlp(LocalPipelineParallel(swap=True))
 
     def test_2_layer_mlp_pipeshard_parallel(self):

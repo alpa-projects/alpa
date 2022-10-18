@@ -196,7 +196,6 @@ def get_shard_parallel_method(benchmark_case: BenchmarkCase,
         as_option.force_zero_stage_3 = True
     elif parallel_mode in ["shard-largest"]:
         as_option.force_simple_heuristic = "largest"
-        global_config.remat_using_while = True
 
     if logical_mesh_options is None:
         logical_mesh_options = {}
@@ -268,7 +267,6 @@ def benchmark_inference_executable(niter,
     warmup = 2 if niter >= 5 else 1
 
     if profile_driver_time:
-        global_config.pipeline_check_alive = False
         # Benchmark latency with streaming
         for i in range(warmup):
             _ = infer_step(params, *other_infer_step_inputs)

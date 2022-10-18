@@ -55,15 +55,14 @@ def benchmark_suite(suite_name,
         assert shard_only, ("Only shard-only mode is supported for execution "
                             "on local GPUs.")
 
-    assert num_gpus in benchmark_suites[suite_name], (
-        f"No available benchmark suite for {suite_name} on {num_gpus} GPUs")
+    if num_gpus not in benchmark_suites[suite_name]:
+        return
     suite = benchmark_suites[suite_name][num_gpus]
 
     os.makedirs("tmp", exist_ok=True)
 
     model_type = suite_name.split(".")[0]
-    date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    output_name = f"{model_type}_alpa_{exp_name}_{date_str}.tsv"
+    output_name = f"{exp_name}.tsv"
 
     # Run all cases
     for benchmark_case in suite:
@@ -139,7 +138,7 @@ if __name__ == "__main__":
                         "Errors in a single case will terminate this "
                         "script.",
                         dest="use_separate_process")
-    parser.add_argument("--exp_name", type=str, default="default")
+    parser.add_argument("--exp-name", type=str, default="default")
     parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
 

@@ -994,7 +994,7 @@ def get_compute_cost(
 
 
 def select_module_layers(layers: Sequence[JaxPipelineComputation],
-                         module_layer_indices: Sequence[Sequence[int]],
+                         layer_indices: Sequence[int],
                          accumulator_mapping: Dict[Var, Var],
                          acc_grad_outvars: Sequence[Var]):
     """
@@ -1003,52 +1003,48 @@ def select_module_layers(layers: Sequence[JaxPipelineComputation],
 
     Args:
         layers: all layers.
-        module_layer_indices: list of modules, each module is a list of layer
-            ids.
+        layer_indices: a list of layer ids within the module.
         accumulator_mapping: the mapping from accumulator input to output,
             used to determine the donation.
         acc_grad_outvars: the outvars of the accumulator gradient layers.
 
     Returns:
-        modules: list of modules, each module is a list of layers.
+        module: a list of layers that belong to the module.
         module_accumulator_mappings: accumulator mapping for each module.
         module_required_outvars: required outvars for each module.
     """
     reversed_accumulator_mapping = {
         v: k for k, v in accumulator_mapping.items()
     }
-    layer2module = {}
-    for module_id, layer_indices in enumerate(module_layer_indices):
-        for layer_id in layer_indices:
-            assert layer_id not in layer2module, (
-                "a layer cannot be in multiple modules")
-            layer2module[layer_id] = module_id
 
     gensym_fn = gensym([layer.closed_jaxpr().jaxpr for layer in layers])
     num_layers = len(layers)
-    used = OrderedSet(acc_grad_outvars)
-    new_modules = [[] for _ in module_layer_indices]
-    module_required_outvars = [OrderedSet() for _ in module_layer_indices]
-    module_accumulator_mappings = [{} for _ in module_layer_indices]
+    local_used = OrderedSet()
+    new_layers = []
+    module_required_outvars = OrderedSet()
+    module_accumulator_mapping = {}
+    global_used = OrderedSet(acc_grad_outvars)
     for layer_id in reversed(range(num_layers)):
         layer = layers[layer_id]
-        if layer_id in layer2module:
-            module_id = layer2module[layer_id]
-            layer_donation, new_layer = (
-                get_local_donation_mapping_and_add_missing_invars(
-                    layer, reversed_accumulator_mapping, gensym_fn))
-            for invar in layer_donation:
-                assert invar not in used
-
-            global_used = [var for var in new_layer.outvars if var in used]
-            module_accumulator_mappings[module_id].update(layer_donation)
-            module_required_outvars[module_id].update(global_used)
-            used.update(new_layer.invars)
-            new_modules[module_id].append(new_layer)
+        if layer_id not in layer_indices:
+            global_used.update(layer.invars)
             continue
-        used.update(layer.invars)
-    new_modules = [reversed(layers) for layers in new_modules]
-    return new_modules, module_accumulator_mappings, module_required_outvars
+        layer_donation, new_layer = (
+            get_local_donation_mapping_and_add_missing_invars(
+                layer, reversed_accumulator_mapping, gensym_fn))
+        for invar in layer_donation:
+            assert invar not in local_used and invar not in global_used
+
+        global_used_outvars = [
+            var for var in new_layer.outvars if var in global_used
+        ]
+        module_accumulator_mapping.update(layer_donation)
+        module_required_outvars.update(global_used_outvars)
+        local_used.update(new_layer.invars)
+        new_layers.append(new_layer)
+        continue
+    return (reversed(new_layers), module_accumulator_mapping,
+            module_required_outvars)
 
 
 def split_sharding_specs(layers: Sequence[JaxPipelineComputation],
@@ -1076,10 +1072,16 @@ def generate_stage_info(all_layers, selected_indices,
                         global_accumulator_mapping, acc_grad_outvars, name,
                         apply_grad_layers, apply_grad_info):
     """Combine selected layers together for profiling."""
-    (modules, module_accumulator_mapping,
-     module_required_outvars) = select_module_layers(
-         all_layers, selected_indices, global_accumulator_mapping,
-         acc_grad_outvars)
+    modules = []
+    module_accumulator_mappings = []
+    module_required_outvars = []
+    for layer_indices in selected_indices:
+        module, module_accumulator_mapping, required_outvars = (
+            select_module_layers(all_layers, layer_indices,
+                                 global_accumulator_mapping, acc_grad_outvars))
+        modules.append(module)
+        module_accumulator_mappings.append(module_accumulator_mapping)
+        module_required_outvars.append(required_outvars)
 
     n_modules = len(modules)
     module_jaxprs = [

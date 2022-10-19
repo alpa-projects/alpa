@@ -1042,7 +1042,6 @@ def select_module_layers(layers: Sequence[JaxPipelineComputation],
         module_required_outvars.update(global_used_outvars)
         local_used.update(new_layer.invars)
         new_layers.append(new_layer)
-        continue
     return (reversed(new_layers), module_accumulator_mapping,
             module_required_outvars)
 
@@ -1096,7 +1095,7 @@ def generate_stage_info(all_layers, selected_indices,
     all_modules_outvars = OrderedSet()
     all_modules_required_outvars_indices = []
     for module_name, jaxprs, accumulator_mapping, required_outvars in zip(
-            module_names, module_jaxprs, module_accumulator_mapping,
+            module_names, module_jaxprs, module_accumulator_mappings,
             module_required_outvars):
         merged_jaxpr = merge_marked_jaxprs_with_named_call(
             jaxprs, required_outvars, accumulator_mapping, module_name)

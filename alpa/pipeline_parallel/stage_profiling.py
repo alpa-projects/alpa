@@ -65,9 +65,10 @@ CompileOutput = namedtuple(
 CompileConfig = namedtuple("CompileConfig",
                            ["model_proto", "names", "required_outvars_indices"])
 
-ProfileConfig = namedtuple(
-    "ProfileConfig",
-    ["invars", "outvars", "donate_invars", "required_outvars_indices"])
+ProfileConfig = namedtuple("ProfileConfig", [
+    "invar_names", "outvar_names", "invar_avals", "outvar_avals",
+    "donated_invars", "required_outvars_indices"
+])
 
 ApplyGradConfig = namedtuple("ApplyGradConfig",
                              ["invars", "apply_grad_only_invars"])
@@ -78,7 +79,7 @@ StageConfig = namedtuple("StageConfig", [
 
 ModuleProfileResult = namedtuple("ModuleProfileResult", [
     "compute_cost", "peak_memory", "temp_buffer_size", "invar_names",
-    "outvar_names", "invar_sizes", "outvar_sizes", "donate_invars",
+    "outvar_names", "invar_sizes", "outvar_sizes", "donated_invars",
     "required_outvars_indices", "available_memory"
 ])
 
@@ -216,8 +217,8 @@ class CompileWorker:
         # Read input/output shardings
         modules_dict = dict(zip(module_names, modules))
 
-        assert (sum(name.endswith(APPLY_GRAD_MARKER_SUFFIX)
-                    for name in config.names) <=
+        assert (sum(
+            name.endswith(APPLY_GRAD_MARKER_SUFFIX) for name in config.names) <=
                 1), ("Only one apply grad module is allowed in a single stage.")
 
         acc_grad_modules = []
@@ -299,7 +300,7 @@ class ProfileWorker:
         self.virtual_mesh = virtual_mesh
 
     def _profile_impl(self, stage_id, compiled_module_output, stage_plan,
-                      profile_info):
+                      profile_config):
         """Implementation of profile function.
 
         The profiler first compile the HLO Proto into Mesh Executable, then
@@ -312,7 +313,7 @@ class ProfileWorker:
                 spec and output sharding spec.
             stage_plan: The compiled sharding strategy from the auto sharding
                 pass.
-            profile_info: input avals, output avals, donation mapping.
+            profile_config: Profile config of the module.
 
         Returns:
             stage_id: the input stage id.
@@ -322,13 +323,11 @@ class ProfileWorker:
                 peak memory during the computation, the total available memory,
                 the input intermediate size and input initial size.
         """
-        (invars, outvars, tot_donation) = profile_info
-        input_avals = [x.aval for x in invars]
-        output_avals = [x.aval for x in outvars]
+        input_avals = profile_config.invar_avals
+        output_avals = profile_config.outvar_avals
+        donated_invars = profile_config.donated_invars
         input_shardings = compiled_module_output.input_sharding_protos
         output_sharding = compiled_module_output.output_sharding_proto
-        donated_invars = (True,) * len(tot_donation) + (False,) * (
-            len(input_avals) - len(tot_donation))
         hlo_module = xc.XlaComputation(
             compiled_module_output.module_proto).as_hlo_module()
         if input_shardings is not None:
@@ -529,7 +528,8 @@ def generate_module_profile_result(raw_result: Tuple,
         [compile_output.output_sharding_proto], output_avals,
         logical_mesh_shape)
     donate_invar_sizes = [
-        size for donated, size in zip(profile_config.donate_invars, invar_sizes)
+        size
+        for donated, size in zip(profile_config.donated_invars, invar_sizes)
         if donated
     ]
     temp_buffer_size = (peak_memory - sum(invar_sizes) - sum(outvar_sizes) +
@@ -539,11 +539,11 @@ def generate_module_profile_result(raw_result: Tuple,
         compute_cost=np.mean(compute_costs),
         peak_memory=peak_memory,
         temp_buffer_size=temp_buffer_size,
-        invar_names=(x.name for x in profile_config.invars),
-        outvar_names=(x.name for x in profile_config.outvars),
+        invar_names=tuple(profile_config.invar_names),
+        outvar_names=tuple(profile_config.outvar_names),
         invar_sizes=invar_sizes,
         outvar_sizes=outvar_sizes,
-        donate_invars=tuple(profile_config.donate_invars),
+        donated_invars=tuple(profile_config.donated_invars),
         required_outvars_indices=tuple(profile_config.required_outvars_indices),
         available_memory=available_memory,
     )
@@ -702,7 +702,7 @@ def get_max_n_succ_stages(profile_results: Sequence[ProfileResult]):
             module_result = stage_result.module_profile_results[i]
             for invar, size, donated in zip(module_result.invar_names,
                                             module_result.invar_sizes,
-                                            module_result.donate_invars):
+                                            module_result.donated_invars):
                 if invar not in env:
                     env[invar] = size
                 else:
@@ -1095,8 +1095,8 @@ def generate_stage_info(all_layers, selected_indices,
     all_modules_outvars = OrderedSet()
     all_modules_required_outvars_indices = []
     for module_name, jaxprs, accumulator_mapping, required_outvars in zip(
-                module_names, module_jaxprs, module_accumulator_mapping,
-                module_required_outvars):
+            module_names, module_jaxprs, module_accumulator_mapping,
+            module_required_outvars):
         merged_jaxpr = merge_marked_jaxprs_with_named_call(
             jaxprs, required_outvars, accumulator_mapping, module_name)
         outvars_set = set(merged_jaxpr.jaxpr.outvars)
@@ -1110,8 +1110,12 @@ def generate_stage_info(all_layers, selected_indices,
             i for i, outvar in enumerate(merged_jaxpr.jaxpr.outvars)
             if outvar in required_outvars_set
         ]
-        profile_config = ProfileConfig(merged_jaxpr.jaxpr.invars,
-                                       merged_jaxpr.jaxpr.outvars, is_donated,
+        invar_names = [var.name for var in merged_jaxpr.jaxpr.invars]
+        outvar_names = [var.name for var in merged_jaxpr.jaxpr.outvars]
+        invar_avals = [var.aval for var in merged_jaxpr.jaxpr.invars]
+        outvar_avals = [var.aval for var in merged_jaxpr.jaxpr.outvars]
+        profile_config = ProfileConfig(invar_names, outvar_names, invar_avals,
+                                       outvar_avals, is_donated,
                                        required_outvars_indices)
         module_merged_jaxprs.append(merged_jaxpr)
         module_profile_configs.append(profile_config)

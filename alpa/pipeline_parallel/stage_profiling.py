@@ -95,6 +95,9 @@ class ProfileResult:
     def fully_profiled(self):
         return all(r is not None for r in self.module_profile_results)
 
+    def is_module_profiled(self, module_idx):
+        return self.module_profile_results[module_idx] is not None
+
     def add_module_profile_result(self, module_idx, result):
         self.module_profile_results[module_idx] = result
         if self.available_memory is None:
@@ -574,12 +577,12 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
         if compiled_output is None:
             continue
         stage_idx, stage_config, _ = stage
-        if stage_idx in profile_results:
-            continue
 
         for module_id, (acc_grad_module, profile_config) in enumerate(
                 zip(compiled_output.acc_grad_modules,
                     stage_config.module_profile_configs)):
+            if profile_results[stage_idx].is_module_profiled(module_id):
+                continue
             profile_workers.submit(lambda w, v: w.profile.remote(*v),
                                    ((i, module_id), acc_grad_module,
                                     compiled_output.stage_plan, profile_config))

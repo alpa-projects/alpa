@@ -6,17 +6,17 @@ import jax.numpy as jnp
 import optax
 import ray
 
-from alpa import init, parallelize, PipeshardParallel
+from alpa import init, parallelize, PipeshardParallel, get_global_physical_mesh
 from alpa.model.model_util import TrainState
 from alpa.parallel_method import LocalPipelineParallel
 from alpa.pipeline_parallel.layer_construction import manual_layer_construction
 from alpa.testing import MLPModel, assert_allclose
 
 
-class PipelineMLPTest(unittest.TestCase):
+class SwappingPipelineMLPTest(unittest.TestCase):
 
     def setUp(self):
-        os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+        pass
 
     def train_2_layer_mlp(self, method):
 
@@ -58,6 +58,17 @@ class PipelineMLPTest(unittest.TestCase):
         gradients = train_step(state, batch)
         p_train_step = parallelize(train_step, donate_argnums=(), method=method)
         gradients_with_pipeline = p_train_step(state, batch)
+        
+        # Sanity check on GPU memory usage.
+        gpu = jax.local_devices()[0]
+        print(f"{gpu} memory allocated: {gpu.memory_allocated()}")
+        print(f"{gpu} max memory allocated: {gpu.max_memory_allocated()}")
+        print(f"{gpu} available memory: {gpu.available_memory()}")
+
+        # Use pprof to visualize memory footprint.
+        # if isinstance(method, LocalPipelineParallel):
+        #     jax.profiler.save_device_memory_profile(
+        #         f"/home/dlzou/projects/alpa-experiments/swap_{method.swap}.prof")
 
         # Check results
         assert_allclose(gradients, gradients_with_pipeline)
@@ -68,17 +79,13 @@ class PipelineMLPTest(unittest.TestCase):
             executable.dump_debug_info("tmp")
 
     def test_2_layer_mlp_local_pipeline_parallel(self):
-        self.train_2_layer_mlp(LocalPipelineParallel())
-
-    def test_2_layer_mlp_pipeshard_parallel(self):
-        init(cluster="ray")
-        self.train_2_layer_mlp(PipeshardParallel(layer_option="manual"))
+        # init(cluster="local")
+        self.train_2_layer_mlp(LocalPipelineParallel(swap=True))
 
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(PipelineMLPTest("test_2_layer_mlp_local_pipeline_parallel"))
-    suite.addTest(PipelineMLPTest("test_2_layer_mlp_pipeshard_parallel"))
+    suite.addTest(SwappingPipelineMLPTest("test_2_layer_mlp_local_pipeline_parallel"))
     return suite
 
 

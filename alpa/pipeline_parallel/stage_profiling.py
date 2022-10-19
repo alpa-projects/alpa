@@ -213,7 +213,7 @@ class CompileWorker:
         # Read input/output shardings
         modules_dict = dict(zip(module_names, modules))
 
-        assert (sum([name.endswiwtwh(APPLY_GRAD_MARKER_SUFFIX)]
+        assert (sum(name.endswith(APPLY_GRAD_MARKER_SUFFIX)
                     for name in config.names) <=
                 1), ("Only one apply grad module is allowed in a single stage.")
 
@@ -230,7 +230,6 @@ class CompileWorker:
                 required_outvars_indices = (
                     config.required_outvars_indices[module_id])
                 rewrite_for_grad_acc = len(required_outvars_indices) > 0
-                acc_grad_modules.append(module)
                 (input_sharding_protos,
                  output_sharding_proto) = get_input_output_sharding_proto(
                      module, logical_mesh.num_devices)
@@ -1097,9 +1096,9 @@ def generate_stage_info(all_layers, selected_indices,
     all_modules_donation_mapping = {}
     all_modules_outvars = OrderedSet()
     all_modules_required_outvars_indices = []
-    for module_name, jaxprs, accumulator_mapping, required_outvars in enumerate(
-            zip(module_names, module_jaxprs, module_accumulator_mapping,
-                module_required_outvars)):
+    for module_name, jaxprs, accumulator_mapping, required_outvars in zip(
+                module_names, module_jaxprs, module_accumulator_mapping,
+                module_required_outvars):
         merged_jaxpr = merge_marked_jaxprs_with_named_call(
             jaxprs, required_outvars, accumulator_mapping, module_name)
         outvars_set = set(merged_jaxpr.jaxpr.outvars)

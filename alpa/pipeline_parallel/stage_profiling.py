@@ -519,13 +519,11 @@ def generate_module_profile_result(raw_result: Tuple,
                                    compile_output: ModuleCompileOutput,
                                    logical_mesh_shape: Tuple[int, ...]):
     compute_costs, peak_memory, available_memory = raw_result
-    input_avals = [x.aval for x in profile_config.invars]
-    output_avals = [x.aval for x in profile_config.outvars]
     invar_sizes = get_sharded_size_by_proto(
-        compile_output.input_sharding_protos, input_avals, logical_mesh_shape,
-        False)
+        compile_output.input_sharding_protos, profile_config.invar_avals,
+        logical_mesh_shape, False)
     outvar_sizes = get_sharded_size_by_proto(
-        [compile_output.output_sharding_proto], output_avals,
+        [compile_output.output_sharding_proto], profile_config.outvar_avals,
         logical_mesh_shape)
     donate_invar_sizes = [
         size
@@ -609,6 +607,7 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
             module_raw_result, stage_config.module_profile_configs[module_id],
             stage_compile_output.acc_grad_modules[module_id],
             stage_compile_output.stage_plan.logical_mesh_shape)
+        print("module_profile_result", module_profile_result)
         profile_results[stage_idx].add_module_profile_result(
             module_id, module_profile_result)
     profile_workers.shutdown()
@@ -692,7 +691,7 @@ def get_max_n_succ_stages(profile_results: Sequence[ProfileResult]):
             for invar in module_result.invar_names:
                 if invar not in eliminate_time:
                     eliminate_time[invar] = stage_no
-            for required_idx in module_result.required_outvar_indices:
+            for required_idx in module_result.required_outvars_indices:
                 required_outvars.add(module_result.outvar_names[required_idx])
 
     stage_no = 0
@@ -1110,8 +1109,8 @@ def generate_stage_info(all_layers, selected_indices,
             i for i, outvar in enumerate(merged_jaxpr.jaxpr.outvars)
             if outvar in required_outvars_set
         ]
-        invar_names = [var.name for var in merged_jaxpr.jaxpr.invars]
-        outvar_names = [var.name for var in merged_jaxpr.jaxpr.outvars]
+        invar_names = [repr(var) for var in merged_jaxpr.jaxpr.invars]
+        outvar_names = [repr(var) for var in merged_jaxpr.jaxpr.outvars]
         invar_avals = [var.aval for var in merged_jaxpr.jaxpr.invars]
         outvar_avals = [var.aval for var in merged_jaxpr.jaxpr.outvars]
         profile_config = ProfileConfig(invar_names, outvar_names, invar_avals,
@@ -1302,7 +1301,7 @@ def get_sharded_size_by_proto(serialized_proto,
                                               logical_mesh_shape)
                 for (proto, aval) in zip(serialized_proto, avals)
             ]
-    return _get_sharded_sizes(sharding_specs, avals, logical_mesh_shape)
+    return tuple(_get_sharded_sizes(sharding_specs, avals, logical_mesh_shape))
 
 
 def compute_apply_grad_invar_size(input_sharding_protos,

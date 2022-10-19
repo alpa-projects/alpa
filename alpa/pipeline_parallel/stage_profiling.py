@@ -736,11 +736,6 @@ def get_max_n_succ_stages(profile_results: Sequence[ProfileResult]):
 
     return max_stage
 
-    # TODO:
-    #  1. Free unused memory
-    #  2. Decide intermediate memory
-    #  3. Check the correctness of the profiling result
-
 
 def interpret_profile_result_2d(profile_results: Dict[Tuple[int, ...],
                                                       ProfileResult],

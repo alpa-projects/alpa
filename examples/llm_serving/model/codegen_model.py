@@ -54,7 +54,7 @@ class CodeGenLMOutput(ModelOutput):
 class CodeGenConfig:
     # Inherited from CodeGen
     # decoder_layers: int = 20
-    # max_target_positions: int = 2048
+    # max_seq_len: int = 2048
     # decoder_embed_dim: int = 768
     # decoder_attention_heads: int = 12
     # decoder_input_dim: int = 768
@@ -67,7 +67,7 @@ class CodeGenConfig:
     # decoder_learned_pos: bool = True
     # share_decoder_input_output_embed: bool = True
     vocab_size: int = 50400
-    max_target_positions: int = 2048
+    max_seq_len: int = 2048
     n_ctx: int = 2048
     decoder_embed_dim: int = 4096
     decoder_layers: int = 28
@@ -118,10 +118,10 @@ class CodeGenEmbeddings(nn.Module):
             self.config.decoder_input_dim,
             dtype=self.dtype,
         )
-        assert self.config.max_target_positions is not None
+        assert self.config.max_seq_len is not None
         assert self.config.decoder_learned_pos
         self.position_embeddings = nn.Embed(
-            self.config.max_target_positions + self.config.pad + 1,
+            self.config.max_seq_len + self.config.pad + 1,
             self.config.decoder_embed_dim,
             dtype=self.dtype,
         )
@@ -451,7 +451,7 @@ class CodeGenTransformerModule(nn.Module):
     def setup(self):
         self.embeddings = CodeGenEmbeddings(self.config, dtype=self.dtype)
         self.embed_positions = create_sinusoidal_positions(
-            self.config.max_target_positions, self.config.decoder_embed_dim // self.config.decoder_attention_heads
+            self.config.max_seq_len, self.config.decoder_embed_dim // self.config.decoder_attention_heads
         )
         self.encoder = CodeGenTransformerLayerCollection(self.config,
                                                      dtype=self.dtype)
@@ -568,28 +568,28 @@ class CodeGenForLMModule(nn.Module):
 
 # TODO(chris) refactor: replace with hyperparameters from the paper
 #  - weight decay
-def get_codegen_config(name, **kwargs):
-    if name == "codegen-350M-mono":
+def get_config(name, **kwargs):
+    if name == "codegen-350m-mono":
         config = CodeGenConfig(
-            max_target_positions=2048, decoder_layers=20, decoder_attention_heads=16,
+            max_seq_len=2048, decoder_layers=20, decoder_attention_heads=16,
             decoder_embed_dim=1024, decoder_input_dim=1024, decoder_ffn_embed_dim=1024 * 4,
             rotary_dim=32, bos_token_id=1
         )
-    elif name == "codegen-2B-mono":
+    elif name == "codegen-2b-mono":
         config = CodeGenConfig(
-            max_target_positions=2048, decoder_layers=32, decoder_attention_heads=32,
+            max_seq_len=2048, decoder_layers=32, decoder_attention_heads=32,
             decoder_embed_dim=2560, decoder_input_dim=2560, decoder_ffn_embed_dim=2560 * 4,
             rotary_dim=64, bos_token_id=1
         )
-    elif name == "codegen-6B-mono":
+    elif name == "codegen-6b-mono":
         config = CodeGenConfig(
-            max_target_positions=2048, decoder_layers=33, decoder_attention_heads=16,
+            max_seq_len=2048, decoder_layers=33, decoder_attention_heads=16,
             decoder_embed_dim=4096, decoder_input_dim=4096, decoder_ffn_embed_dim=4096 * 4,
             rotary_dim=64, bos_token_id=1
         )
-    elif name == "codegen-16B-mono":
+    elif name == "codegen-16b-mono":
         config = CodeGenConfig(
-            max_target_positions=2048, decoder_layers=34, decoder_attention_heads=24,
+            max_seq_len=2048, decoder_layers=34, decoder_attention_heads=24,
             decoder_embed_dim=6144, decoder_input_dim=6144, decoder_ffn_embed_dim=6144 * 4,
             rotary_dim=64, bos_token_id=1
         )
@@ -619,10 +619,10 @@ def init_cache_aval(config, batch_size):
     all_cache = []
     for _ in range(config.decoder_layers):
         layer_cache = (
-            jax.core.ShapedArray((batch_size, config.max_target_positions,
+            jax.core.ShapedArray((batch_size, config.max_seq_len,
                                   config.decoder_attention_heads, head_dim),
                                  dtype),
-            jax.core.ShapedArray((batch_size, config.max_target_positions,
+            jax.core.ShapedArray((batch_size, config.max_seq_len,
                                   config.decoder_attention_heads, head_dim),
                                  dtype),
             jax.core.ShapedArray((batch_size,), jnp.int32),
@@ -633,7 +633,7 @@ def init_cache_aval(config, batch_size):
 
 def init_mask_aval(config, batch_size):
     """Initialize attention mask with abstract values (shape-only arrays)."""
-    mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_target_positions), dtype=np.int8)
+    mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_seq_len), dtype=np.int8)
     return mask
 
 
@@ -645,10 +645,10 @@ def init_cache_np(config, batch_size):
     all_cache = []
     for i in range(config.decoder_layers):
         layer_cache = (
-            np.zeros((batch_size, config.max_target_positions,
+            np.zeros((batch_size, config.max_seq_len,
                       config.decoder_attention_heads, head_dim),
                      dtype=np_dtype),
-            np.zeros((batch_size, config.max_target_positions,
+            np.zeros((batch_size, config.max_seq_len,
                       config.decoder_attention_heads, head_dim),
                      dtype=np_dtype),
             np.zeros((batch_size,), np.int32),

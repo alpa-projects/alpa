@@ -17,7 +17,11 @@ def main(args):
         name = args.model.replace("alpa", "bigscience")\
                          .replace("jax", "bigscience")
         tokenizer = AutoTokenizer.from_pretrained(name)
-
+    elif "codegen" in args.model:
+        name = args.model.replace("alpa", "Salesforce")\
+                         .replace("jax", "Salesforce")
+        tokenizer = AutoTokenizer.from_pretrained(name)
+        tokenizer.pad_token = 50256
     generate_params = {
         "do_sample": args.do_sample,
         "num_beams": args.num_beams,
@@ -35,7 +39,8 @@ def main(args):
         "Paris is the capital city of",
         "Today is a good day and I'd like to",
         "Computer Science studies the area of",
-        "University of California Berkeley is a public university"
+        "University of California Berkeley is a public university",
+        "Create a function that prints hello world"
     ]
     prompts = prompts[:args.n_prompts]
     input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids

@@ -274,8 +274,7 @@ def get_model_1d(model_name: str,
         elif "bloom" in name:
             embed_weight = os.path.join(path, "word_embeddings.weight")
         elif "codegen" in name:
-            # TODO(chris) refactor to fit my needs
-            embed_weight = os.path.join(path, "decoder.embed_tokens.weight")
+            embed_weight = os.path.join(path, "wte.weight")
         assert os.path.exists(embed_weight), f"No such file or directory: '{embed_weight}'"
     # TODO(Hao): figure out the actual input size
     config = opt_model.get_config(name, dtype=dtype, max_seq_len=max_seq_len)
@@ -398,8 +397,7 @@ def get_alpa_model(model_name: str,
         elif "bloom" in name:
             embed_weight = os.path.join(path, "word_embeddings.weight")
         elif "codegen" in name:
-            # TODO(chris) refactor to fit codegen needs
-            embed_weight = os.path.join(path, "decoder.embed_tokens.weight")
+            embed_weight = os.path.join(path, "wte.weight")
         assert os.path.exists(embed_weight), f"No such file or directory: '{embed_weight}'"
 
     # Figure out the actual input size
@@ -750,6 +748,7 @@ def download_weights(model_name, path):
     elif "codegen" in model_name:
         # TOOD(chris) refactor to fit for codegen model
         for name, param in tqdm(list(model.transformer.named_parameters())):
+            print(name)
             param_path = os.path.join(path, name)
             with open(param_path, "wb") as f:
                 np.save(f, param.cpu().detach().numpy())

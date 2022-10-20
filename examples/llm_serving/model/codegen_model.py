@@ -700,55 +700,47 @@ def load_params_np(params, path, config, dummy=False):
                 param_dict = param_dict[key]
 
     params = params.unfreeze()
-    load_param("params.transformers.embeddings.word_embeddings.embedding",
-               load_array("decoder.embed_tokens.weight"))
-    load_param("params.transformers.embeddings.position_embeddings.embedding",
-               load_array("decoder.embed_positions.weight"),
-               is_position_embedding=True)
-    if config.version > 2:
-        load_param("params.transformers.layer_norm.scale",
-                   load_array("decoder.layer_norm.weight"))
-        load_param("params.transformers.layer_norm.bias",
-                   load_array("decoder.layer_norm.bias"))
+    load_param("params.transformer.ln_f.scale", load_array("ln_f.weight"))
+    load_param("params.transformer.ln_f.bias", load_array("ln_f.bias"))
+    load_param("params.transformer.wte.embedding", load_array("wte.weight"))
+
     for i in tqdm(range(config.decoder_layers)):
-        param_prefix = f"params.transformers.encoder.{i}."
-        load_prefix = f"decoder.layers.{i}."
+        param_prefix = f"params.transformer.h.{i}."
+        load_prefix = f"h.{i}."
         # Attention weights
-        wq = load_array(load_prefix + "self_attn.q_proj.weight")
-        wk = load_array(load_prefix + "self_attn.k_proj.weight")
-        wv = load_array(load_prefix + "self_attn.v_proj.weight")
-        dim = wq.shape[-1]
-        w_qkv = np.concatenate([wq, wk, wv], axis=0).reshape(
-            (3, -1, dim)).transpose([2, 1, 0]).reshape((dim, -1))
-        load_param(param_prefix + "attention.self.qkv_combined.kernel", w_qkv)
-        bq = load_array(load_prefix + "self_attn.q_proj.bias")
-        bk = load_array(load_prefix + "self_attn.k_proj.bias")
-        bv = load_array(load_prefix + "self_attn.v_proj.bias")
-        b_qkv = np.concatenate([bq, bk, bv], axis=0).reshape(
-            (3, dim)).transpose([1, 0]).reshape((-1,))
-        load_param(param_prefix + "attention.self.qkv_combined.bias", b_qkv)
+        w_qkv = load_array(load_prefix + "attn.qkv_proj.weight").transpose()
+        load_param(param_prefix + "attn.self.qkv_proj.kernel", w_qkv)
+        # bq = load_array(load_prefix + "self_attn.q_proj.bias")
+        # bk = load_array(load_prefix + "self_attn.k_proj.bias")
+        # bv = load_array(load_prefix + "self_attn.v_proj.bias")
+        # b_qkv = np.concatenate([bq, bk, bv], axis=0).reshape(
+        #     (3, dim)).transpose([1, 0]).reshape((-1,))
+        # load_param(param_prefix + "attention.self.qkv_combined.bias", b_qkv)
         load_param(
-            param_prefix + "attention.dense.kernel",
-            np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))
-        load_param(param_prefix + "attention.dense.bias",
-                   load_array(load_prefix + "self_attn.out_proj.bias"))
-        load_param(param_prefix + "attention.layer_norm.scale",
-                   load_array(load_prefix + "self_attn_layer_norm.weight"))
-        load_param(param_prefix + "attention.layer_norm.bias",
-                   load_array(load_prefix + "self_attn_layer_norm.bias"))
-        # FFN weights
-        load_param(param_prefix + "ffn.fc1.bias",
-                   load_array(load_prefix + "fc1.bias"))
-        load_param(param_prefix + "ffn.fc1.kernel",
-                   np.transpose(load_array(load_prefix + "fc1.weight")))
-        load_param(param_prefix + "ffn.fc2.bias",
-                   load_array(load_prefix + "fc2.bias"))
-        load_param(param_prefix + "ffn.fc2.kernel",
-                   np.transpose(load_array(load_prefix + "fc2.weight")))
-        load_param(param_prefix + "ffn.layer_norm.scale",
-                   load_array(load_prefix + "final_layer_norm.weight"))
-        load_param(param_prefix + "ffn.layer_norm.bias",
-                   load_array(load_prefix + "final_layer_norm.bias"))
+            param_prefix + "attn.self.out_proj.kernel",
+            np.transpose(load_array(load_prefix + "attn.out_proj.weight")))
+        # load_param(param_prefix + "attention.dense.bias",
+        #            load_array(load_prefix + "self_attn.out_proj.bias"))
+        load_param(param_prefix + "attn.layer_norm.scale",
+                   load_array(load_prefix + "ln_1.weight"))
+        load_param(param_prefix + "attnn.layer_norm.bias",
+                   load_array(load_prefix + "ln_1.bias"))
+
+        # MLP weights
+        load_param(param_prefix + "mlp.fc_in.kernel",
+                   load_array(load_prefix + "mlp.fc_in.weight"))
+        load_param(param_prefix + "mlp.fc_in.bias",
+                   np.transpose(load_array(load_prefix + "mlp.fc_in.bias")))
+        load_param(param_prefix + "mlp.fc_out.bias",
+                   load_array(load_prefix + "mlp.fc_out.bias"))
+        load_param(param_prefix + "mlp.fc_out.kernel",
+                   load_array(load_prefix + "mlp.fc_out.weight"))
+        # load_param(param_prefix + "ffn.fc2.kernel",
+        #            np.transpose(load_array(load_prefix + "fc2.weight")))
+        # load_param(param_prefix + "ffn.layer_norm.scale",
+        #            load_array(load_prefix + "final_layer_norm.weight"))
+        # load_param(param_prefix + "ffn.layer_norm.bias",
+        #            load_array(load_prefix + "final_layer_norm.bias"))
 
     return flax.core.freeze(params)
 

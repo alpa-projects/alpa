@@ -723,7 +723,7 @@ def load_params_np(params, path, config, dummy=False):
         #            load_array(load_prefix + "self_attn.out_proj.bias"))
         load_param(param_prefix + "attn.layer_norm.scale",
                    load_array(load_prefix + "ln_1.weight"))
-        load_param(param_prefix + "attnn.layer_norm.bias",
+        load_param(param_prefix + "attn.layer_norm.bias",
                    load_array(load_prefix + "ln_1.bias"))
 
         # MLP weights

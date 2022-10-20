@@ -334,7 +334,11 @@ class LangaugeModelWorker:
         for x in request.scope['headers']:
             if x[0] == b"x-forwarded-for":
                 v = x[1].decode()
-                return v[:v.index(':')]
+                v = v.split(",")[0] # Obtain the client IP
+                if ":" in v:
+                    # Drop the port number
+                    return v[:v.index(":")]
+                return v
         return request.client.host
 
 

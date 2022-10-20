@@ -331,13 +331,17 @@ class LangaugeModelWorker:
                              "contact alpa developers to get an API key.")
 
     def get_remote_ip(self, request):
+        from urllib.parse import urlparse
         self.logger.info(f"Recived request {request}")
         for x in request.scope['headers']:
             self.logger.info(f"Checking header {x}")
             if x[0] == b"x-forwarded-for":
-                v = x[1].decode()
+                v = urlparse(x[1].decode())
                 self.logger.info(f"Header x-forwarded-for: {v}")
-                return v[:v.index(':')]
+                self.logger.info(f"Return {v.hostname}")
+                #return v[:v.index(':')]
+                return v.hostname
+        self.logger.info(f"Return {request.client.host}")
         return request.client.host
 
 

@@ -331,9 +331,12 @@ class LangaugeModelWorker:
                              "contact alpa developers to get an API key.")
 
     def get_remote_ip(self, request):
+        self.logger.info(f"Recived request {request}")
         for x in request.scope['headers']:
+            self.logger.info(f"Checking header {x}")
             if x[0] == b"x-forwarded-for":
                 v = x[1].decode()
+                self.logger.info(f"Header x-forwarded-for: {v}")
                 return v[:v.index(':')]
         return request.client.host
 

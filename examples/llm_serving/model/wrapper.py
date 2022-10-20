@@ -14,7 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 import torch
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
-from transformers import OPTForCausalLM, BloomForCausalLM, GPT2LMHeadModel
+from transformers import OPTForCausalLM, BloomForCausalLM, CodeGenForCausalLM, GPT2LMHeadModel
 from tqdm import tqdm
 
 from llm_serving.model import opt_model, bloom_model, opt_model_1d
@@ -191,6 +191,7 @@ def get_hf_model(model_name, device):
         model_class = OPTForCausalLM
     elif "bloom" in model_name:
         model_class = BloomForCausalLM
+    elif "cod"
     else:
         raise ValueError(f"Invalid model name: {model_name}")
 

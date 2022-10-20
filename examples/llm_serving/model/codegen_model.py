@@ -569,25 +569,25 @@ class CodeGenForLMModule(nn.Module):
 # TODO(chris) refactor: replace with hyperparameters from the paper
 #  - weight decay
 def get_codegen_config(name, **kwargs):
-    if name == "350M":
+    if name == "codegen-350m":
         config = CodeGenConfig(
             max_target_positions=2048, decoder_layers=20, decoder_attention_heads=16,
             decoder_embed_dim=1024, decoder_input_dim=1024, decoder_ffn_embed_dim=1024 * 4,
             rotary_dim=32, bos_token_id=1
         )
-    elif name == "2.7B":
+    elif name == "codegen-2.7b":
         config = CodeGenConfig(
             max_target_positions=2048, decoder_layers=32, decoder_attention_heads=32,
             decoder_embed_dim=2560, decoder_input_dim=2560, decoder_ffn_embed_dim=2560 * 4,
             rotary_dim=64, bos_token_id=1
         )
-    elif name == "6.1B":
+    elif name == "codegen-6.1b":
         config = CodeGenConfig(
             max_target_positions=2048, decoder_layers=33, decoder_attention_heads=16,
             decoder_embed_dim=4096, decoder_input_dim=4096, decoder_ffn_embed_dim=4096 * 4,
             rotary_dim=64, bos_token_id=1
         )
-    elif name == "16.1B":
+    elif name == "codegen-16.1b":
         config = CodeGenConfig(
             max_target_positions=2048, decoder_layers=34, decoder_attention_heads=24,
             decoder_embed_dim=6144, decoder_input_dim=6144, decoder_ffn_embed_dim=6144 * 4,

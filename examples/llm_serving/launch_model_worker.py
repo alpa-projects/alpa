@@ -337,7 +337,7 @@ class LangaugeModelWorker:
                 v = v.split(",")[0] # Obtain the client IP
                 if ":" in v:
                     # Drop the port number
-                    return v[:v.index(':')]
+                    return v[:v.index(":")]
                 return v
         return request.client.host
 

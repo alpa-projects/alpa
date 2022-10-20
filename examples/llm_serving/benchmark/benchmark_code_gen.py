@@ -91,7 +91,6 @@ if __name__ == "__main__":
             path=args.path,
             torch_device=torch_device,
             dummy=args.dummy,
-            autoregressive=autoregressive,
             max_target_positions=seq_len,
             dtype=dtype,
             batch_size=batch_size,
@@ -176,7 +175,6 @@ if __name__ == "__main__":
                           args.path,
                           torch_device=torch_device,
                           dummy=args.dummy,
-                          autoregressive=autoregressive,
                           dtype=dtype,
                           encoder_chunk_sizes=encoder_chunk_sizes,
                           **generate_args)

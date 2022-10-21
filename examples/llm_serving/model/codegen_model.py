@@ -708,22 +708,15 @@ def load_params_np(params, path, config, dummy=False):
         param_prefix = f"params.transformer.h.{i}."
         load_prefix = f"h.{i}."
         # Attention weights
-        w_qkv = load_array(load_prefix + "attn.qkv_proj.weight").transpose()
-        load_param(param_prefix + "attn.self.qkv_proj.kernel", w_qkv)
-        # bq = load_array(load_prefix + "self_attn.q_proj.bias")
-        # bk = load_array(load_prefix + "self_attn.k_proj.bias")
-        # bv = load_array(load_prefix + "self_attn.v_proj.bias")
-        # b_qkv = np.concatenate([bq, bk, bv], axis=0).reshape(
-        #     (3, dim)).transpose([1, 0]).reshape((-1,))
-        # load_param(param_prefix + "attention.self.qkv_combined.bias", b_qkv)
+        load_param(
+            param_prefix + "attn.self.qkv_proj.kernel",
+            load_array(load_prefix + "attn.qkv_proj.weight").transpose())
         load_param(
             param_prefix + "attn.self.out_proj.kernel",
             np.transpose(load_array(load_prefix + "attn.out_proj.weight")))
-        # load_param(param_prefix + "attention.dense.bias",
-        #            load_array(load_prefix + "self_attn.out_proj.bias"))
-        load_param(param_prefix + "attn.layer_norm.scale",
+        load_param(param_prefix + "ln_1.scale",
                    load_array(load_prefix + "ln_1.weight"))
-        load_param(param_prefix + "attn.layer_norm.bias",
+        load_param(param_prefix + "ln_1.bias",
                    load_array(load_prefix + "ln_1.bias"))
 
         # MLP weights
@@ -735,12 +728,6 @@ def load_params_np(params, path, config, dummy=False):
                    load_array(load_prefix + "mlp.fc_out.bias"))
         load_param(param_prefix + "mlp.fc_out.kernel",
                    load_array(load_prefix + "mlp.fc_out.weight"))
-        # load_param(param_prefix + "ffn.fc2.kernel",
-        #            np.transpose(load_array(load_prefix + "fc2.weight")))
-        # load_param(param_prefix + "ffn.layer_norm.scale",
-        #            load_array(load_prefix + "final_layer_norm.weight"))
-        # load_param(param_prefix + "ffn.layer_norm.bias",
-        #            load_array(load_prefix + "final_layer_norm.bias"))
 
     return flax.core.freeze(params)
 

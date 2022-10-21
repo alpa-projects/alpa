@@ -78,11 +78,25 @@ StageConfig = namedtuple("StageConfig", [
     "n_modules", "compile_config", "module_profile_configs", "apply_grad_config"
 ])
 
-ModuleProfileResult = namedtuple("ModuleProfileResult", [
-    "compute_cost", "peak_memory", "temp_buffer_size", "invar_names",
-    "outvar_names", "invar_sizes", "outvar_sizes", "donated_invars",
-    "required_outvars_indices", "available_memory"
-])
+
+class ModuleProfileResult(
+        namedtuple("ModuleProfileResult", [
+            "compute_cost", "peak_memory", "temp_buffer_size", "invar_names",
+            "outvar_names", "invar_sizes", "outvar_sizes", "donated_invars",
+            "required_outvars_indices", "available_memory"
+        ])):
+    """Profile result of a module."""
+
+    def __str__(self):
+        invar_size = sum(self.invar_sizes)
+        outvar_size = sum(self.outvar_sizes)
+        return (f"ModuleProfileResult("
+                f"compute_cost={self.compute_cost:.3f}, "
+                f"peak_memory={self.peak_memory / GB:.3f} GB, "
+                f"invar_size={invar_size / GB:.3f} GB, "
+                f"outvar_size={outvar_size / GB:.3f} GB, "
+                f"temp_buffer_size={self.temp_buffer_size / GB:.3f} GB,"
+                f"available_memory={self.available_memory / GB:.3f} GB)")
 
 
 class StageProfileResult:
@@ -92,8 +106,8 @@ class StageProfileResult:
         self.n_modules = n_modules
         self.module_profile_results = [None] * n_modules
         self.available_memory = None
-        self.initial_var_names = initial_var_names
-        self.initial_var_sizes = initial_var_sizes
+        self.initial_var_names = tuple(initial_var_names)
+        self.initial_var_sizes = tuple(initial_var_sizes)
 
     def fully_profiled(self):
         return all(r is not None for r in self.module_profile_results)
@@ -112,12 +126,12 @@ class StageProfileResult:
                 f"mismatch of loaded profile results and newly profiled "
                 f"results.")
 
-    # def __str__(self):
-    #     return (f"StageProfileResult(compute_cost={self.compute_cost:.3f}, "
-    #             f"peak_memory={self.peak_memory / GB:.3f}GB, "
-    #             f"temp_buffer_size={self.temp_buffer_size / GB:.3f}GB, "
-    #             f"initial_size={self.initial_size / GB:.3f}, "
-    #             f"available_memory={self.available_memory / GB:.3f}GB)")
+    def __str__(self):
+        total_initial_var_size = sum(self.initial_var_sizes)
+        return (f"StageProfileResult("
+                f"available_memory={self.available_memory / GB:.3f} GB, "
+                f"initial_var_size={total_initial_var_size / GB:.3f} GB, "
+                f"module_profile_results={self.module_profile_results})")
 
 
 class BaseWorkerPoolWrapper(ABC):
@@ -1295,8 +1309,9 @@ def _get_sharded_sizes(sharding_specs, avals, logical_mesh_shape):
         for aval, spec in zip(avals, sharding_specs)
     ]
 
-    return (get_byte(shape, aval.dtype)
-            for shape, aval in zip(sharded_shapes, avals))
+    return tuple(
+        get_byte(shape, aval.dtype)
+        for shape, aval in zip(sharded_shapes, avals))
 
 
 def get_sharded_size_by_proto(serialized_proto,
@@ -1327,7 +1342,7 @@ def get_sharded_size_by_proto(serialized_proto,
                                               logical_mesh_shape)
                 for (proto, aval) in zip(serialized_proto, avals)
             ]
-    return tuple(_get_sharded_sizes(sharding_specs, avals, logical_mesh_shape))
+    return _get_sharded_sizes(sharding_specs, avals, logical_mesh_shape)
 
 
 def compute_apply_grad_invar_size(input_sharding_protos,

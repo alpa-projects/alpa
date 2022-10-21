@@ -56,7 +56,7 @@ class CodeGenConfig:
     # num_hidden_layers: int = 20
     # max_seq_len: int = 2048
     # hidden_size: int = 768
-    # decoder_attention_heads: int = 12
+    # n_head: int = 12
     # decoder_input_dim: int = 768
     # decoder_ffn_embed_dim: int = 3072
     # pad: int = 1
@@ -71,7 +71,7 @@ class CodeGenConfig:
     n_ctx: int = 2048
     hidden_size: int = 4096
     num_hidden_layers: int = 28
-    decoder_attention_heads: int = 16
+    n_head: int = 16
     rotary_dim: int = 64
     n_inner: int = None
     activation_fn: str = 'gelu_new'
@@ -148,10 +148,10 @@ class CodeGenAttention(nn.Module):
     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
-        if self.config.hidden_size % self.config.decoder_attention_heads != 0:
+        if self.config.hidden_size % self.config.n_head != 0:
             raise ValueError(
                 f"`hidden_size`: {self.config.hidden_size} has to be a "
-                f"multiple of `decoder_attention_heads`: {self.config.decoder_attention_heads}"
+                f"multiple of `n_head`: {self.config.n_head}"
             )
 
         self.qkv_combined = nn.Dense(
@@ -167,7 +167,7 @@ class CodeGenAttention(nn.Module):
                  output_attentions: bool = False,
                  attention_cache=None,
                  attention_mask=None):
-        head_dim = self.config.hidden_size // self.config.decoder_attention_heads
+        head_dim = self.config.hidden_size // self.config.n_head
 
         qkv_combined_states = self.qkv_combined(hidden_states)
         qkv_combined_states = qkv_combined_states.reshape(
@@ -178,13 +178,13 @@ class CodeGenAttention(nn.Module):
 
         # shape: [B, S, #head, head_dim]
         query_states = query_states.reshape(hidden_states.shape[:2] + (
-            self.config.decoder_attention_heads, head_dim))
+            self.config.n_head, head_dim))
         # shape: [B, S, #head, head_dim]
         value_states = value_states.reshape(hidden_states.shape[:2] + (
-            self.config.decoder_attention_heads, head_dim))
+            self.config.n_head, head_dim))
         # shape: [B, S, #head, head_dim]
         key_states = key_states.reshape(hidden_states.shape[:2] +
-                                        (self.config.decoder_attention_heads,
+                                        (self.config.n_head,
                                          head_dim))
         
 
@@ -451,7 +451,7 @@ class CodeGenTransformerModule(nn.Module):
     def setup(self):
         self.embeddings = CodeGenEmbeddings(self.config, dtype=self.dtype)
         self.embed_positions = create_sinusoidal_positions(
-            self.config.max_seq_len, self.config.hidden_size // self.config.decoder_attention_heads
+            self.config.max_seq_len, self.config.hidden_size // self.config.n_head
         )
         self.encoder = CodeGenTransformerLayerCollection(self.config,
                                                      dtype=self.dtype)
@@ -571,25 +571,25 @@ class CodeGenForLMModule(nn.Module):
 def get_config(name, **kwargs):
     if name == "codegen-350m-mono":
         config = CodeGenConfig(
-            max_seq_len=2048, num_hidden_layers=20, decoder_attention_heads=16,
+            max_seq_len=2048, num_hidden_layers=20, n_head=16,
             hidden_size=1024, decoder_input_dim=1024, decoder_ffn_embed_dim=1024 * 4,
             rotary_dim=32, bos_token_id=1
         )
     elif name == "codegen-2b-mono":
         config = CodeGenConfig(
-            max_seq_len=2048, num_hidden_layers=32, decoder_attention_heads=32,
+            max_seq_len=2048, num_hidden_layers=32, n_head=32,
             hidden_size=2560, decoder_input_dim=2560, decoder_ffn_embed_dim=2560 * 4,
             rotary_dim=64, bos_token_id=1
         )
     elif name == "codegen-6b-mono":
         config = CodeGenConfig(
-            max_seq_len=2048, num_hidden_layers=33, decoder_attention_heads=16,
+            max_seq_len=2048, num_hidden_layers=33, n_head=16,
             hidden_size=4096, decoder_input_dim=4096, decoder_ffn_embed_dim=4096 * 4,
             rotary_dim=64, bos_token_id=1
         )
     elif name == "codegen-16b-mono":
         config = CodeGenConfig(
-            max_seq_len=2048, num_hidden_layers=34, decoder_attention_heads=24,
+            max_seq_len=2048, num_hidden_layers=34, n_head=24,
             hidden_size=6144, decoder_input_dim=6144, decoder_ffn_embed_dim=6144 * 4,
             rotary_dim=64, bos_token_id=1
         )
@@ -614,16 +614,16 @@ def init_model_aval(config):
 def init_cache_aval(config, batch_size):
     """Initialize cache with abstract values (shape-only arrays)."""
     dtype = config.dtype
-    head_dim = config.hidden_size // config.decoder_attention_heads
+    head_dim = config.hidden_size // config.n_head
 
     all_cache = []
     for _ in range(config.num_hidden_layers):
         layer_cache = (
             jax.core.ShapedArray((batch_size, config.max_seq_len,
-                                  config.decoder_attention_heads, head_dim),
+                                  config.n_head, head_dim),
                                  dtype),
             jax.core.ShapedArray((batch_size, config.max_seq_len,
-                                  config.decoder_attention_heads, head_dim),
+                                  config.n_head, head_dim),
                                  dtype),
             jax.core.ShapedArray((batch_size,), jnp.int32),
         )
@@ -640,16 +640,16 @@ def init_mask_aval(config, batch_size):
 def init_cache_np(config, batch_size):
     """Init cache with numpy arrays."""
     np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
-    head_dim = config.hidden_size // config.decoder_attention_heads
+    head_dim = config.hidden_size // config.n_head
 
     all_cache = []
     for i in range(config.num_hidden_layers):
         layer_cache = (
             np.zeros((batch_size, config.max_seq_len,
-                      config.decoder_attention_heads, head_dim),
+                      config.n_head, head_dim),
                      dtype=np_dtype),
             np.zeros((batch_size, config.max_seq_len,
-                      config.decoder_attention_heads, head_dim),
+                      config.n_head, head_dim),
                      dtype=np_dtype),
             np.zeros((batch_size,), np.int32),
         )

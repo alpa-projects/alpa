@@ -55,7 +55,7 @@ class CodeGenConfig:
     # Inherited from CodeGen
     # decoder_layers: int = 20
     # max_seq_len: int = 2048
-    # decoder_embed_dim: int = 768
+    # hidden_size: int = 768
     # decoder_attention_heads: int = 12
     # decoder_input_dim: int = 768
     # decoder_ffn_embed_dim: int = 3072
@@ -69,7 +69,7 @@ class CodeGenConfig:
     vocab_size: int = 50400
     max_seq_len: int = 2048
     n_ctx: int = 2048
-    decoder_embed_dim: int = 4096
+    hidden_size: int = 4096
     decoder_layers: int = 28
     decoder_attention_heads: int = 16
     rotary_dim: int = 64
@@ -112,7 +112,7 @@ class CodeGenEmbeddings(nn.Module):
     def setup(self):
         assert not self.config.use_stable_embedding
         self.embed_scale = 1.0 if self.config.no_scale_embedding else math.sqrt(
-            self.config.decoder_embed_dim)
+            self.config.hidden_size)
         self.word_embeddings = nn.Embed(
             self.config.vocab_size,
             self.config.decoder_input_dim,
@@ -122,13 +122,13 @@ class CodeGenEmbeddings(nn.Module):
         assert self.config.decoder_learned_pos
         self.position_embeddings = nn.Embed(
             self.config.max_seq_len + self.config.pad + 1,
-            self.config.decoder_embed_dim,
+            self.config.hidden_size,
             dtype=self.dtype,
         )
         self.project_in_dim = nn.Dense(
-            self.config.decoder_embed_dim,
+            self.config.hidden_size,
             dtype=self.dtype,
-        ) if self.config.decoder_input_dim != self.config.decoder_embed_dim else None
+        ) if self.config.decoder_input_dim != self.config.hidden_size else None
 
     def __call__(self, input_ids, position_ids):
         # Embed
@@ -148,14 +148,14 @@ class CodeGenAttention(nn.Module):
     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
-        if self.config.decoder_embed_dim % self.config.decoder_attention_heads != 0:
+        if self.config.hidden_size % self.config.decoder_attention_heads != 0:
             raise ValueError(
-                f"`decoder_embed_dim`: {self.config.decoder_embed_dim} has to be a "
+                f"`hidden_size`: {self.config.hidden_size} has to be a "
                 f"multiple of `decoder_attention_heads`: {self.config.decoder_attention_heads}"
             )
 
         self.qkv_combined = nn.Dense(
-            self.config.decoder_embed_dim * 3,
+            self.config.hidden_size * 3,
             dtype=self.dtype,
         )
         
@@ -167,7 +167,7 @@ class CodeGenAttention(nn.Module):
                  output_attentions: bool = False,
                  attention_cache=None,
                  attention_mask=None):
-        head_dim = self.config.decoder_embed_dim // self.config.decoder_attention_heads
+        head_dim = self.config.hidden_size // self.config.decoder_attention_heads
 
         qkv_combined_states = self.qkv_combined(hidden_states)
         qkv_combined_states = qkv_combined_states.reshape(
@@ -328,7 +328,7 @@ class CodeGenMLP(nn.Module):
         )
         self.act = ACT2FN[self.config.activation_fn]
         self.fc_out = nn.Dense(
-            self.config.decoder_embed_dim,
+            self.config.hidden_size,
             dtype=self.dtype,
         )
         self.dropout = nn.Dropout(self.config.resid_pdrop)
@@ -451,7 +451,7 @@ class CodeGenTransformerModule(nn.Module):
     def setup(self):
         self.embeddings = CodeGenEmbeddings(self.config, dtype=self.dtype)
         self.embed_positions = create_sinusoidal_positions(
-            self.config.max_seq_len, self.config.decoder_embed_dim // self.config.decoder_attention_heads
+            self.config.max_seq_len, self.config.hidden_size // self.config.decoder_attention_heads
         )
         self.encoder = CodeGenTransformerLayerCollection(self.config,
                                                      dtype=self.dtype)
@@ -508,7 +508,7 @@ class CodeGenForLMModule(nn.Module):
         self.project_out_dim = nn.Dense(
             self.config.decoder_input_dim,
             dtype=self.dtype,
-        ) if self.config.decoder_input_dim != self.config.decoder_embed_dim else None
+        ) if self.config.decoder_input_dim != self.config.hidden_size else None
 
         if self.config.share_decoder_input_output_embed:
             self.decoder = None
@@ -572,25 +572,25 @@ def get_config(name, **kwargs):
     if name == "codegen-350m-mono":
         config = CodeGenConfig(
             max_seq_len=2048, decoder_layers=20, decoder_attention_heads=16,
-            decoder_embed_dim=1024, decoder_input_dim=1024, decoder_ffn_embed_dim=1024 * 4,
+            hidden_size=1024, decoder_input_dim=1024, decoder_ffn_embed_dim=1024 * 4,
             rotary_dim=32, bos_token_id=1
         )
     elif name == "codegen-2b-mono":
         config = CodeGenConfig(
             max_seq_len=2048, decoder_layers=32, decoder_attention_heads=32,
-            decoder_embed_dim=2560, decoder_input_dim=2560, decoder_ffn_embed_dim=2560 * 4,
+            hidden_size=2560, decoder_input_dim=2560, decoder_ffn_embed_dim=2560 * 4,
             rotary_dim=64, bos_token_id=1
         )
     elif name == "codegen-6b-mono":
         config = CodeGenConfig(
             max_seq_len=2048, decoder_layers=33, decoder_attention_heads=16,
-            decoder_embed_dim=4096, decoder_input_dim=4096, decoder_ffn_embed_dim=4096 * 4,
+            hidden_size=4096, decoder_input_dim=4096, decoder_ffn_embed_dim=4096 * 4,
             rotary_dim=64, bos_token_id=1
         )
     elif name == "codegen-16b-mono":
         config = CodeGenConfig(
             max_seq_len=2048, decoder_layers=34, decoder_attention_heads=24,
-            decoder_embed_dim=6144, decoder_input_dim=6144, decoder_ffn_embed_dim=6144 * 4,
+            hidden_size=6144, decoder_input_dim=6144, decoder_ffn_embed_dim=6144 * 4,
             rotary_dim=64, bos_token_id=1
         )
     else:
@@ -614,7 +614,7 @@ def init_model_aval(config):
 def init_cache_aval(config, batch_size):
     """Initialize cache with abstract values (shape-only arrays)."""
     dtype = config.dtype
-    head_dim = config.decoder_embed_dim // config.decoder_attention_heads
+    head_dim = config.hidden_size // config.decoder_attention_heads
 
     all_cache = []
     for _ in range(config.decoder_layers):
@@ -640,7 +640,7 @@ def init_mask_aval(config, batch_size):
 def init_cache_np(config, batch_size):
     """Init cache with numpy arrays."""
     np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
-    head_dim = config.decoder_embed_dim // config.decoder_attention_heads
+    head_dim = config.hidden_size // config.decoder_attention_heads
 
     all_cache = []
     for i in range(config.decoder_layers):

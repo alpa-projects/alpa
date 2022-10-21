@@ -53,7 +53,7 @@ class CodeGenLMOutput(ModelOutput):
 @dataclass(frozen=True)
 class CodeGenConfig:
     # Inherited from CodeGen
-    # decoder_layers: int = 20
+    # num_hidden_layers: int = 20
     # max_seq_len: int = 2048
     # hidden_size: int = 768
     # decoder_attention_heads: int = 12
@@ -70,7 +70,7 @@ class CodeGenConfig:
     max_seq_len: int = 2048
     n_ctx: int = 2048
     hidden_size: int = 4096
-    decoder_layers: int = 28
+    num_hidden_layers: int = 28
     decoder_attention_heads: int = 16
     rotary_dim: int = 64
     n_inner: int = None
@@ -386,7 +386,7 @@ class CodeGenTransformerLayerCollection(nn.Module):
     def setup(self):
         self.layers = [
             CodeGenTransformerLayer(self.config, name=str(i), dtype=self.dtype)
-            for i in range(self.config.decoder_layers)
+            for i in range(self.config.num_hidden_layers)
         ]
 
     def __call__(
@@ -404,8 +404,8 @@ class CodeGenTransformerLayerCollection(nn.Module):
         new_attention_cache = () if attention_cache is not None else None
 
         if self.config.num_pp_stages is not None:
-            assert self.config.decoder_layers % self.config.num_pp_stages == 0
-            layers_per_stage = self.config.decoder_layers // self.config.num_pp_stages
+            assert self.config.num_hidden_layers % self.config.num_pp_stages == 0
+            layers_per_stage = self.config.num_hidden_layers // self.config.num_pp_stages
 
         for i, layer in enumerate(self.layers):
             if self.config.num_pp_stages is not None:
@@ -571,25 +571,25 @@ class CodeGenForLMModule(nn.Module):
 def get_config(name, **kwargs):
     if name == "codegen-350m-mono":
         config = CodeGenConfig(
-            max_seq_len=2048, decoder_layers=20, decoder_attention_heads=16,
+            max_seq_len=2048, num_hidden_layers=20, decoder_attention_heads=16,
             hidden_size=1024, decoder_input_dim=1024, decoder_ffn_embed_dim=1024 * 4,
             rotary_dim=32, bos_token_id=1
         )
     elif name == "codegen-2b-mono":
         config = CodeGenConfig(
-            max_seq_len=2048, decoder_layers=32, decoder_attention_heads=32,
+            max_seq_len=2048, num_hidden_layers=32, decoder_attention_heads=32,
             hidden_size=2560, decoder_input_dim=2560, decoder_ffn_embed_dim=2560 * 4,
             rotary_dim=64, bos_token_id=1
         )
     elif name == "codegen-6b-mono":
         config = CodeGenConfig(
-            max_seq_len=2048, decoder_layers=33, decoder_attention_heads=16,
+            max_seq_len=2048, num_hidden_layers=33, decoder_attention_heads=16,
             hidden_size=4096, decoder_input_dim=4096, decoder_ffn_embed_dim=4096 * 4,
             rotary_dim=64, bos_token_id=1
         )
     elif name == "codegen-16b-mono":
         config = CodeGenConfig(
-            max_seq_len=2048, decoder_layers=34, decoder_attention_heads=24,
+            max_seq_len=2048, num_hidden_layers=34, decoder_attention_heads=24,
             hidden_size=6144, decoder_input_dim=6144, decoder_ffn_embed_dim=6144 * 4,
             rotary_dim=64, bos_token_id=1
         )
@@ -617,7 +617,7 @@ def init_cache_aval(config, batch_size):
     head_dim = config.hidden_size // config.decoder_attention_heads
 
     all_cache = []
-    for _ in range(config.decoder_layers):
+    for _ in range(config.num_hidden_layers):
         layer_cache = (
             jax.core.ShapedArray((batch_size, config.max_seq_len,
                                   config.decoder_attention_heads, head_dim),
@@ -643,7 +643,7 @@ def init_cache_np(config, batch_size):
     head_dim = config.hidden_size // config.decoder_attention_heads
 
     all_cache = []
-    for i in range(config.decoder_layers):
+    for i in range(config.num_hidden_layers):
         layer_cache = (
             np.zeros((batch_size, config.max_seq_len,
                       config.decoder_attention_heads, head_dim),
@@ -704,7 +704,7 @@ def load_params_np(params, path, config, dummy=False):
     load_param("params.transformer.ln_f.bias", load_array("ln_f.bias"))
     load_param("params.transformer.wte.embedding", load_array("wte.weight"))
 
-    for i in tqdm(range(config.decoder_layers)):
+    for i in tqdm(range(config.num_hidden_layers)):
         param_prefix = f"params.transformer.h.{i}."
         load_prefix = f"h.{i}."
         # Attention weights
@@ -920,9 +920,9 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
         load_param("params.transformers.layer_norm.bias",
                    load_array("decoder.layer_norm.bias"))
 
-    layers_per_stage = config.decoder_layers // config.num_pp_stages
+    layers_per_stage = config.num_hidden_layers // config.num_pp_stages
 
-    for i in range(config.decoder_layers):
+    for i in range(config.num_hidden_layers):
         stage_id = i // layers_per_stage
         if stage_id != self.mesh_id:
             continue

@@ -1302,7 +1302,7 @@ def _get_sharded_sizes(sharding_specs, avals, logical_mesh_shape):
         return ()
 
     if np.prod(logical_mesh_shape) == 1:
-        return (get_byte(aval.shape, aval.dtype) for aval in avals)
+        return tuple(get_byte(aval.shape, aval.dtype) for aval in avals)
 
     sharded_shapes = [
         get_shard_shape(aval, spec)

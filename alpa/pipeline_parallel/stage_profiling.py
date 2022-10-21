@@ -63,7 +63,7 @@ CompileOutput = namedtuple(
     ["acc_grad_modules", "stage_plan", "apply_grad_input_sharding_protos"])
 
 CompileConfig = namedtuple("CompileConfig",
-                           ["model_proto", "names", "required_outvars_indices"])
+                           ["model_proto", "names", "acc_grad_outvars_indices"])
 
 ProfileConfig = namedtuple("ProfileConfig", [
     "invar_names", "outvar_names", "invar_avals", "outvar_avals",
@@ -231,9 +231,9 @@ class CompileWorker:
                     get_input_output_sharding_proto(module,
                                                     logical_mesh.num_devices))
             else:
-                required_outvars_indices = (
-                    config.required_outvars_indices[module_id])
-                rewrite_for_grad_acc = len(required_outvars_indices) > 0
+                acc_grad_outvars_indices = (
+                    config.acc_grad_outvars_indices[module_id])
+                rewrite_for_grad_acc = len(acc_grad_outvars_indices) > 0
                 (input_sharding_protos,
                  output_sharding_proto) = get_input_output_sharding_proto(
                      module, logical_mesh.num_devices)
@@ -244,7 +244,7 @@ class CompileWorker:
                         module,
                         logical_mesh.num_devices,
                         rewrite_for_grad_acc=rewrite_for_grad_acc,
-                        rewrite_grad_acc_indices=required_outvars_indices)
+                        rewrite_grad_acc_indices=acc_grad_outvars_indices)
                 except IndexError as e:
                     logger.warning(f"Compilation error (spmd partitioner pass) "
                                    f"for stage {stage_id} : {e}")
@@ -1010,8 +1010,8 @@ def select_module_layers(layers: Sequence[JaxPipelineComputation],
 
     Returns:
         module: a list of layers that belong to the module.
-        module_accumulator_mappings: accumulator mapping for each module.
-        module_required_outvars: required outvars for each module.
+        module_accumulator_mappings: accumulator mapping for the module.
+        module_required_outvars: required outvars for the module.
     """
     reversed_accumulator_mapping = {
         v: k for k, v in accumulator_mapping.items()
@@ -1093,7 +1093,8 @@ def generate_stage_info(all_layers, selected_indices,
 
     all_modules_donation_mapping = {}
     all_modules_outvars = OrderedSet()
-    all_modules_required_outvars_indices = []
+    all_modules_acc_grad_outvars_indices = []
+    acc_grad_outvars_set = OrderedSet(acc_grad_outvars)
     for module_name, jaxprs, accumulator_mapping, required_outvars in zip(
             module_names, module_jaxprs, module_accumulator_mappings,
             module_required_outvars):
@@ -1110,6 +1111,10 @@ def generate_stage_info(all_layers, selected_indices,
             i for i, outvar in enumerate(merged_jaxpr.jaxpr.outvars)
             if outvar in required_outvars_set
         ]
+        acc_grad_outvars_indices = [
+            i for i, outvar in enumerate(merged_jaxpr.jaxpr.outvars)
+            if outvar in acc_grad_outvars_set
+        ]
         invar_names = [repr(var) for var in merged_jaxpr.jaxpr.invars]
         outvar_names = [repr(var) for var in merged_jaxpr.jaxpr.outvars]
         invar_avals = [var.aval for var in merged_jaxpr.jaxpr.invars]
@@ -1121,7 +1126,7 @@ def generate_stage_info(all_layers, selected_indices,
         module_profile_configs.append(profile_config)
         all_modules_donation_mapping.update(accumulator_mapping)
         all_modules_outvars.update(merged_jaxpr.jaxpr.outvars)
-        all_modules_required_outvars_indices.append(required_outvars_indices)
+        all_modules_acc_grad_outvars_indices.append(acc_grad_outvars_indices)
 
     if apply_grad_layers:
         apply_grad_donation, apply_grad_outvars = apply_grad_info
@@ -1152,7 +1157,7 @@ def generate_stage_info(all_layers, selected_indices,
                                      all_modules_is_donated)
     proto = hlo_module.as_serialized_hlo_module_proto()
     compile_config = CompileConfig(proto, module_names,
-                                   all_modules_required_outvars_indices)
+                                   all_modules_acc_grad_outvars_indices)
     stage_config = StageConfig(n_modules, compile_config,
                                module_profile_configs, apply_info)
     return stage_config

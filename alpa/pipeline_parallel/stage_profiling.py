@@ -58,9 +58,10 @@ ModuleCompileOutput = namedtuple(
     "ModuleCompileOutput",
     ["module_proto", "input_sharding_protos", "output_sharding_proto"])
 
-CompileOutput = namedtuple(
-    "CompileOutput",
-    ["acc_grad_modules", "stage_plan", "apply_grad_input_sharding_protos"])
+CompileOutput = namedtuple("CompileOutput", [
+    "acc_grad_module_compile_outputs", "stage_plan",
+    "apply_grad_input_sharding_protos"
+])
 
 CompileConfig = namedtuple("CompileConfig",
                            ["model_proto", "names", "acc_grad_outvars_indices"])
@@ -84,14 +85,15 @@ ModuleProfileResult = namedtuple("ModuleProfileResult", [
 ])
 
 
-class ProfileResult:
+class StageProfileResult:
     """Profile result of a stage."""
 
-    def __init__(self, n_modules, initial_size):
+    def __init__(self, n_modules, initial_var_names, initial_var_sizes):
         self.n_modules = n_modules
         self.module_profile_results = [None] * n_modules
         self.available_memory = None
-        self.initial_size = initial_size
+        self.initial_var_names = initial_var_names
+        self.initial_var_sizes = initial_var_sizes
 
     def fully_profiled(self):
         return all(r is not None for r in self.module_profile_results)
@@ -111,7 +113,7 @@ class ProfileResult:
                 f"results.")
 
     # def __str__(self):
-    #     return (f"ProfileResult(compute_cost={self.compute_cost:.3f}, "
+    #     return (f"StageProfileResult(compute_cost={self.compute_cost:.3f}, "
     #             f"peak_memory={self.peak_memory / GB:.3f}GB, "
     #             f"temp_buffer_size={self.temp_buffer_size / GB:.3f}GB, "
     #             f"initial_size={self.initial_size / GB:.3f}, "
@@ -221,7 +223,7 @@ class CompileWorker:
             name.endswith(APPLY_GRAD_MARKER_SUFFIX) for name in config.names) <=
                 1), ("Only one apply grad module is allowed in a single stage.")
 
-        acc_grad_modules = []
+        acc_grad_module_compile_outputs = []
         apply_grad_input_sharding_protos = None
 
         for module_id, module_name in enumerate(config.names):
@@ -250,11 +252,12 @@ class CompileWorker:
                                    f"for stage {stage_id} : {e}")
                     return stage_id, None
                 optimized_proto = hlo_module.as_serialized_hlo_module_proto()
-                acc_grad_modules.append(
+                acc_grad_module_compile_outputs.append(
                     ModuleCompileOutput(optimized_proto, input_sharding_protos,
                                         output_sharding_proto))
 
-        return stage_id, CompileOutput(acc_grad_modules, stage_plan,
+        return stage_id, CompileOutput(acc_grad_module_compile_outputs,
+                                       stage_plan,
                                        apply_grad_input_sharding_protos)
 
     @staticmethod
@@ -498,17 +501,22 @@ def compile_all(stages, num_micro_batches, default_as_option, profile_results):
         stage_idx, stage_config, auto_sharding_config = stages[i]
         logical_mesh_shape = compiled_output.stage_plan.logical_mesh_shape
         apply_in_shardings = compiled_output.apply_grad_input_sharding_protos
-        initial_size = compute_apply_grad_invar_size(
+        initial_var_names, initial_var_sizes = compute_apply_grad_invar_size(
             apply_in_shardings, stage_config.apply_grad_config,
             logical_mesh_shape)
         if stage_idx not in profile_results:
-            profile_results[stage_idx] = ProfileResult(stage_config.n_modules,
-                                                       initial_size)
+            profile_results[stage_idx] = StageProfileResult(
+                stage_config.n_modules, initial_var_names, initial_var_sizes)
         else:
-            assert profile_results[stage_idx].initial_size == initial_size, (
-                f"Initial size mismatch between loaded result and newly "
-                f"compiled result: {profile_results[stage_idx].initial_size} "
-                f"vs {initial_size}.")
+            original_initial_size_dict = dict(
+                zip(profile_results[stage_idx].initial_var_names,
+                    profile_results[stage_idx].initial_var_sizes))
+            new_initial_size_dict = dict(
+                zip(initial_var_names, initial_var_sizes))
+            assert original_initial_size_dict == new_initial_size_dict, (
+                f"Initial sizes mismatch between loaded result and newly "
+                f"compiled result: {original_initial_size_dict} "
+                f"vs {new_initial_size_dict}.")
 
     compile_workers.shutdown()
     return compiled_outputs
@@ -577,7 +585,7 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
         stage_idx, stage_config, _ = stage
 
         for module_id, (acc_grad_module, profile_config) in enumerate(
-                zip(compiled_output.acc_grad_modules,
+                zip(compiled_output.acc_grad_module_compile_outputs,
                     stage_config.module_profile_configs)):
             if profile_results[stage_idx].is_module_profiled(module_id):
                 continue
@@ -605,7 +613,7 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
         stage_compile_output = compiled_outputs[i]
         module_profile_result = generate_module_profile_result(
             module_raw_result, stage_config.module_profile_configs[module_id],
-            stage_compile_output.acc_grad_modules[module_id],
+            stage_compile_output.acc_grad_module_compile_outputs[module_id],
             stage_compile_output.stage_plan.logical_mesh_shape)
         print("module_profile_result", module_profile_result)
         profile_results[stage_idx].add_module_profile_result(
@@ -668,9 +676,20 @@ def generate_training_stages_2d(layers,
     return stages
 
 
-def get_max_n_succ_stages(profile_results: Sequence[ProfileResult]):
+def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
     env = {}
-    initial_size = sum(result.initial_size for result in profile_results)
+    initial_var_sizes_dict = {}
+    for stage_result in profile_results:
+        for name, size in zip(stage_result.initial_var_names,
+                              stage_result.initial_var_sizes):
+            if name not in initial_var_sizes_dict:
+                initial_var_sizes_dict[name] = size
+            else:
+                assert initial_var_sizes_dict[name] == size, (
+                    f"Apply grad invar {name} has different size accross "
+                    f"different stages: {initial_var_sizes_dict[name]} "
+                    f"vs. {size}.")
+    initial_size = sum(initial_var_sizes_dict.values())
     peak_memory = 0
     available_memory = profile_results[0].available_memory
     assert all(result.available_memory == available_memory
@@ -740,7 +759,7 @@ def get_max_n_succ_stages(profile_results: Sequence[ProfileResult]):
 
 
 def interpret_profile_result_2d(profile_results: Dict[Tuple[int, ...],
-                                                      ProfileResult],
+                                                      StageProfileResult],
                                 num_layers: int, num_submesh_choices: int,
                                 num_autosharding_configs: int):
     all_compute_cost = np.full(
@@ -791,7 +810,7 @@ def generate_training_stages_1d(layers, accumulator_mapping, acc_grad_outvars,
 
 
 def interpret_profile_result_1d(profile_results: Dict[Tuple[int, ...],
-                                                      ProfileResult],
+                                                      StageProfileResult],
                                 num_layers: int, num_submesh_choices: int,
                                 num_autosharding_configs: int):
     all_compute_cost = np.full(
@@ -961,6 +980,7 @@ def get_compute_cost(
         else:
             raise ValueError(f"Unknown layer profile mode: "
                              f"{auto_stage_option.layer_profile_mode}")
+
         profile_results = distributed_profile_on_mesh(
             stages, sliced_virtual_meshes, num_micro_batches, default_as_option,
             auto_stage_option, profile_results)
@@ -1338,6 +1358,7 @@ def compute_apply_grad_invar_size(input_sharding_protos,
                 ordered_selected_vars.append(var)
                 selected_sharding_specs.append(spec)
     ordered_selected_avals = [v.aval for v in ordered_selected_vars]
-    return sum(
-        _get_sharded_sizes(selected_sharding_specs, ordered_selected_avals,
-                           logical_mesh_shape))
+    ordered_selected_names = [repr(v) for v in ordered_selected_vars]
+    return (ordered_selected_names,
+            _get_sharded_sizes(selected_sharding_specs, ordered_selected_avals,
+                               logical_mesh_shape))

@@ -24,7 +24,6 @@ def run_exp(cluster_settings, suite_name, benchmark_settings=None):
         benchmark_suite(suite_name,
                         num_hosts,
                         num_devices_per_host,
-                        exp_name=f"{now}_{suite_name}_{num_gpus}_gpus",
                         disable_tqdm=True,
                         **benchmark_settings)
 
@@ -39,7 +38,7 @@ model_search_suites = {
         "profile_driver_time": True
     }),
 }
-cluster_settings = [(8, 8), (4, 8), (2, 8), (1, 8), (1, 4), (1, 2), (1, 1)]
+cluster_settings = [(4, 8), (3, 8), (2, 8), (1, 8), (1, 4), (1, 2), (1, 1)]
 
 
 if __name__ == "__main__":

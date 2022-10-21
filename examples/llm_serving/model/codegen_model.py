@@ -83,6 +83,8 @@ class CodeGenConfig:
     scale_attn_weights: bool = True
     bos_token_id: int = 50256
     eos_token_id: int = 50256
+    use_stable_embedding: bool = False
+    no_scale_embedding: bool = True
     # Added
     decoder_input_dim: int = 4096
     decoder_ffn_embed_dim: int = 16384
@@ -90,6 +92,7 @@ class CodeGenConfig:
     num_pp_stages: int = None,
     # parallelize
     mark_boundary: bool = True
+    share_decoder_input_output_embed: bool = False
 
 
 # Copied from transformers.models.marian.modeling_flax_marian.create_sinusoidal_positions

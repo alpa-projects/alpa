@@ -59,12 +59,12 @@ class CodeGenConfig:
     # n_head: int = 12
     # decoder_input_dim: int = 768
     # decoder_ffn_embed_dim: int = 3072
-    # pad: int = 1
+    pad: int = 1
     # activation_fn: str = 'relu'
     # dtype: any = jnp.float16
     # use_stable_embedding: bool = False
     # no_scale_embedding: bool = True
-    # decoder_learned_pos: bool = True
+    decoder_learned_pos: bool = True
     # share_decoder_input_output_embed: bool = True
     vocab_size: int = 50400
     max_seq_len: int = 2048
@@ -336,13 +336,15 @@ class CodeGenMLP(nn.Module):
         )
         self.dropout = nn.Dropout(self.config.resid_pdrop)
 
-    def __call__(self, hidden_states):
+    def __call__(self,
+                 hidden_states,
+                 deterministic: bool = True):
         residual = hidden_states
         # TODO(chris): we are changing order here to follow codegen, double check this is correct
         hidden_states = self.fc_in(hidden_states)
         hidden_states = self.act(hidden_states)
         hidden_states = self.fc_out(hidden_states)
-        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.dropout(hidden_states, deterministic=deterministic)
         return hidden_states
 
 

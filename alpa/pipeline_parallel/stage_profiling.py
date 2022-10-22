@@ -1171,7 +1171,7 @@ def generate_stage_info(all_layers, selected_indices,
         acc_grad_outvars_indices = tuple(
             i for i, outvar in enumerate(merged_jaxpr.jaxpr.outvars)
             if outvar in acc_grad_outvars_set)
-        invar_names = tuple(repr(var) for var in merged_jaxpr.jaxpr.invar)
+        invar_names = tuple(repr(var) for var in merged_jaxpr.jaxpr.invars)
         outvar_names = tuple(repr(var) for var in merged_jaxpr.jaxpr.outvars)
         invar_avals = tuple(var.aval for var in merged_jaxpr.jaxpr.invars)
         outvar_avals = tuple(var.aval for var in merged_jaxpr.jaxpr.outvars)

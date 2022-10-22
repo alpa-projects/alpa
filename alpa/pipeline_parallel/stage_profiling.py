@@ -734,7 +734,7 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
 
     intermediate_size = None
     for stage_no, (i, j) in enumerate(stage_module_execution_order):
-        module_result = stage_result.module_profile_results[i]
+        module_result = profile_results[i].module_profile_results[j]
         for invar, size, donated in zip(module_result.invar_names,
                                         module_result.invar_sizes,
                                         module_result.donated_invars):

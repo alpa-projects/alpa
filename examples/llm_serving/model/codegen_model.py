@@ -676,6 +676,8 @@ def inference_step_no_cache(params, batch, apply_func):
 # TODO(chris): rename the loaded np arrays
 def load_params_np(params, path, config, dummy=False):
     """Load parameters with numpy arrays."""
+    for i, j in enumerate(params):
+        print(i, ": ", params[j])
     if dummy:
         np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
         return jax.tree_map(lambda x: np.full(x.shape, 1e-9, np_dtype), params)
@@ -705,33 +707,34 @@ def load_params_np(params, path, config, dummy=False):
                 param_dict = param_dict[key]
 
     params = params.unfreeze()
-    load_param("params.transformer.ln_f.scale", load_array("ln_f.weight"))
-    load_param("params.transformer.ln_f.bias", load_array("ln_f.bias"))
-    load_param("params.transformer.wte.embedding", load_array("wte.weight"))
+    load_param("params.transformers.layer_norm.scale", load_array("ln_f.weight"))
+    load_param("params.transformers.layer_norm.bias", load_array("ln_f.bias"))
+    # load_param("params.transformers.position_embeddings", load_array("wte.weight"))
+    load_param("params.transformers.embeddings.word_embeddings.embedding", load_array("wte.weight"))
 
     for i in tqdm(range(config.num_hidden_layers)):
-        param_prefix = f"params.transformer.h.{i}."
+        param_prefix = f"params.transformers.h.{i}."
         load_prefix = f"h.{i}."
         # Attention weights
         load_param(
-            param_prefix + "attn.self.qkv_proj.kernel",
+            param_prefix + "attention.self.qkv_combined.kernel",
             load_array(load_prefix + "attn.qkv_proj.weight").transpose())
         load_param(
-            param_prefix + "attn.self.out_proj.kernel",
+            param_prefix + "attention.self.out_proj.kernel",
             np.transpose(load_array(load_prefix + "attn.out_proj.weight")))
-        load_param(param_prefix + "ln_1.scale",
+        load_param(param_prefix + "attention.layer_norm.scale",
                    load_array(load_prefix + "ln_1.weight"))
-        load_param(param_prefix + "ln_1.bias",
+        load_param(param_prefix + "attention.layer_norm.bias",
                    load_array(load_prefix + "ln_1.bias"))
 
         # MLP weights
-        load_param(param_prefix + "mlp.fc_in.kernel",
+        load_param(param_prefix + "attention.mlp.fc_in.kernel",
                    load_array(load_prefix + "mlp.fc_in.weight"))
-        load_param(param_prefix + "mlp.fc_in.bias",
+        load_param(param_prefix + "attention.mlp.fc_in.bias",
                    np.transpose(load_array(load_prefix + "mlp.fc_in.bias")))
-        load_param(param_prefix + "mlp.fc_out.bias",
+        load_param(param_prefix + "attention.mlp.fc_out.bias",
                    load_array(load_prefix + "mlp.fc_out.bias"))
-        load_param(param_prefix + "mlp.fc_out.kernel",
+        load_param(param_prefix + "attention.mlp.fc_out.kernel",
                    load_array(load_prefix + "mlp.fc_out.weight"))
 
     return flax.core.freeze(params)

@@ -95,7 +95,7 @@ class ModuleProfileResult(
                 f"peak_memory={self.peak_memory / GB:.3f} GB, "
                 f"invar_size={invar_size / GB:.3f} GB, "
                 f"outvar_size={outvar_size / GB:.3f} GB, "
-                f"temp_buffer_size={self.temp_buffer_size / GB:.3f} GB,"
+                f"temp_buffer_size={self.temp_buffer_size / GB:.3f} GB, "
                 f"available_memory={self.available_memory / GB:.3f} GB)")
 
 
@@ -629,7 +629,7 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
             module_raw_result, stage_config.module_profile_configs[module_id],
             stage_compile_output.acc_grad_module_compile_outputs[module_id],
             stage_compile_output.stage_plan.logical_mesh_shape)
-        print("module_profile_result", module_profile_result)
+        pbar.write(f"result[{stage_idx}, {module_id}] = {module_profile_result}")
         profile_results[stage_idx].add_module_profile_result(
             module_id, module_profile_result)
     profile_workers.shutdown()

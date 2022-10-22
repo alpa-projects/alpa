@@ -760,7 +760,8 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
             for var in var_to_be_eliminated:
                 del env[var]
             stage_no += 1
-        intermediate_size = sum(env.values())
+        if i == 0:
+            intermediate_size = sum(env.values())
     for var in required_outvars:
         del env[var]
 

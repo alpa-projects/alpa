@@ -709,59 +709,61 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
     available_memory = profile_results[0].available_memory
     assert all(result.available_memory == available_memory
                for result in profile_results)
+    n_stages = len(profile_results)
     n_modules = profile_results[0].n_modules
     assert n_modules == 2, "Only support forward and backward module"
     assert all(result.n_modules == n_modules for result in profile_results)
+
+    stage_module_execution_order = (
+        [(i, 0) for i in range(n_stages)] +
+        [(i, 1) for i in range(n_stages - 1, -1, -1)])
 
     stage_no = n_modules * len(profile_results)
     # eliminate_time[var] = k means that the variable can be eliminated after
     # stage k.
     eliminate_time = {}
     required_outvars = set()
-    for i in reversed(range(n_modules)):
-        for stage_result in reversed(profile_results):
-            stage_no -= 1
-            module_result = stage_result.module_profile_results[i]
-            for invar in module_result.invar_names:
-                if invar not in eliminate_time:
-                    eliminate_time[invar] = stage_no
-            for required_idx in module_result.required_outvars_indices:
-                required_outvars.add(module_result.outvar_names[required_idx])
+    for stage_no, (i, j) in reversed(
+            list(enumerate(stage_module_execution_order))):
+        module_result = profile_results[i].module_profile_results[j]
+        for invar in module_result.invar_names:
+            if invar not in eliminate_time:
+                eliminate_time[invar] = stage_no
+        for required_idx in module_result.required_outvars_indices:
+            required_outvars.add(module_result.outvar_names[required_idx])
 
-    stage_no = 0
     intermediate_size = None
-    for i in range(n_modules):
-        for stage_result in profile_results:
-            module_result = stage_result.module_profile_results[i]
-            for invar, size, donated in zip(module_result.invar_names,
-                                            module_result.invar_sizes,
-                                            module_result.donated_invars):
-                if invar not in env:
-                    env[invar] = size
-                else:
-                    assert env[invar] == size
-                if donated:
-                    del env[invar]
-            for outvar, size in zip(module_result.outvar_names,
-                                    module_result.outvar_sizes):
-                if outvar not in env:
-                    env[outvar] = size
-                else:
-                    assert env[outvar] == size
-            total_env_size = sum(env.values())
-            peak_memory = max(peak_memory,
-                              total_env_size + module_result.temp_buffer_size)
-            var_to_be_eliminated = []
-            for var in env:
-                if (var not in required_outvars and
-                    (var not in eliminate_time or
-                     eliminate_time[var] >= stage_no)):
-                    var_to_be_eliminated.append(var)
-            for var in var_to_be_eliminated:
-                del env[var]
-            stage_no += 1
-        if i == 0:
-            intermediate_size = sum(env.values())
+    for stage_no, (i, j) in enumerate(stage_module_execution_order):
+        module_result = stage_result.module_profile_results[i]
+        for invar, size, donated in zip(module_result.invar_names,
+                                        module_result.invar_sizes,
+                                        module_result.donated_invars):
+            if invar not in env:
+                env[invar] = size
+            else:
+                assert env[invar] == size
+            if donated:
+                del env[invar]
+        for outvar, size in zip(module_result.outvar_names,
+                                module_result.outvar_sizes):
+            if outvar not in env:
+                env[outvar] = size
+            else:
+                assert env[outvar] == size
+        total_env_size = sum(env.values())
+        peak_memory = max(peak_memory,
+                          total_env_size + module_result.temp_buffer_size)
+        var_to_be_eliminated = []
+        for var in env:
+            if (var not in required_outvars and
+                (var not in eliminate_time or eliminate_time[var] >= stage_no)):
+                var_to_be_eliminated.append(var)
+        for var in var_to_be_eliminated:
+            del env[var]
+        if stage_no == n_stages - 1:
+            # Record the variables that are not eliminated at the end of the
+            # last forward module.
+            intermediate_size = total_env_size
     for var in required_outvars:
         del env[var]
 

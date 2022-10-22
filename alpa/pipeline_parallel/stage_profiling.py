@@ -629,7 +629,8 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
             module_raw_result, stage_config.module_profile_configs[module_id],
             stage_compile_output.acc_grad_module_compile_outputs[module_id],
             stage_compile_output.stage_plan.logical_mesh_shape)
-        pbar.write(f"result[{stage_idx}, {module_id}] = {module_profile_result}")
+        pbar.write(f"result[{stage_idx}, {module_id}] "
+                   f"= {module_profile_result}")
         profile_results[stage_idx].add_module_profile_result(
             module_id, module_profile_result)
     profile_workers.shutdown()
@@ -892,6 +893,29 @@ def distributed_profile_on_mesh(stages, meshes: Sequence[VirtualPhysicalMesh],
     return profile_results
 
 
+def check_profile_results_consistent(stages,
+                                     profile_results: Dict[Tuple,
+                                                           StageProfileResult]):
+    for stage_idx, stage_config, _ in stages:
+        if stage_idx not in profile_results:
+            continue
+        profile_result = profile_results[stage_idx]
+        assert profile_result.n_modules == stage_config.n_modules
+        for module_profile_result, module_profile_config in (
+                profile_result.module_profile_results,
+                stage_config.module_profile_configs):
+            if module_profile_result is None:
+                continue
+            assert (module_profile_result.invar_names ==
+                    module_profile_config.invar_names)
+            assert (module_profile_result.outvar_names ==
+                    module_profile_config.outvar_names)
+            assert (module_profile_result.donated_invars ==
+                    module_profile_config.donated_invars)
+            assert (module_profile_result.required_outvars_indices ==
+                    module_profile_config.required_outvars_indices)
+
+
 def _get_layer_flops_prefix_sum(layers):
     layer_flops_prefix_sum = [0]
     for layer in layers:
@@ -994,6 +1018,8 @@ def get_compute_cost(
         else:
             raise ValueError(f"Unknown layer profile mode: "
                              f"{auto_stage_option.layer_profile_mode}")
+
+        check_profile_results_consistent(stages, profile_results)
 
         profile_results = distributed_profile_on_mesh(
             stages, sliced_virtual_meshes, num_micro_batches, default_as_option,
@@ -1135,24 +1161,20 @@ def generate_stage_info(all_layers, selected_indices,
         merged_jaxpr = merge_marked_jaxprs_with_named_call(
             jaxprs, required_outvars, accumulator_mapping, module_name)
         outvars_set = set(merged_jaxpr.jaxpr.outvars)
-        is_donated = [
-            invar in accumulator_mapping and
-            accumulator_mapping[invar] in outvars_set
-            for invar in merged_jaxpr.jaxpr.invars
-        ]
+        is_donated = tuple(invar in accumulator_mapping and
+                           accumulator_mapping[invar] in outvars_set
+                           for invar in merged_jaxpr.jaxpr.invars)
         required_outvars_set = set(required_outvars)
-        required_outvars_indices = [
+        required_outvars_indices = tuple(
             i for i, outvar in enumerate(merged_jaxpr.jaxpr.outvars)
-            if outvar in required_outvars_set
-        ]
-        acc_grad_outvars_indices = [
+            if outvar in required_outvars_set)
+        acc_grad_outvars_indices = tuple(
             i for i, outvar in enumerate(merged_jaxpr.jaxpr.outvars)
-            if outvar in acc_grad_outvars_set
-        ]
-        invar_names = [repr(var) for var in merged_jaxpr.jaxpr.invars]
-        outvar_names = [repr(var) for var in merged_jaxpr.jaxpr.outvars]
-        invar_avals = [var.aval for var in merged_jaxpr.jaxpr.invars]
-        outvar_avals = [var.aval for var in merged_jaxpr.jaxpr.outvars]
+            if outvar in acc_grad_outvars_set)
+        invar_names = tuple(repr(var) for var in merged_jaxpr.jaxpr.invar)
+        outvar_names = tuple(repr(var) for var in merged_jaxpr.jaxpr.outvars)
+        invar_avals = tuple(var.aval for var in merged_jaxpr.jaxpr.invars)
+        outvar_avals = tuple(var.aval for var in merged_jaxpr.jaxpr.outvars)
         profile_config = ProfileConfig(invar_names, outvar_names, invar_avals,
                                        outvar_avals, is_donated,
                                        required_outvars_indices)

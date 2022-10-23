@@ -264,7 +264,6 @@ class OPTTransformerLayerCollection(nn.Module):
         return_dict: bool = True,
         attention_cache=None,
     ):
-        assert not output_attentions, "Do not support output_attentions"
         all_hidden_states = () if output_hidden_states else None
 
         if self.config.num_pp_stages is not None:

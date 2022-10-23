@@ -64,11 +64,6 @@ class GlobalConfig:
         # "xla_extension"}
         self.nccl_mode = "cupy"
 
-        ########## Options of XLA compilation ##########
-        # Whether to use xla while instruction for preventing CSE in
-        # rematerialization
-        self.remat_using_while = False
-
         ########## Options of benchmark ##########
         # If true, the system is allowed to use dummy values during
         # tensor creation and copy to reduce the initialization and copy time.

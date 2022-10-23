@@ -76,7 +76,7 @@ for batch in data_loader:
 ```
 
 ## Learning more
-- [OSDI 2022 paper](https://www.usenix.org/system/files/osdi22-zheng-lianmin.pdf)
+- [OSDI 2022 paper](https://arxiv.org/abs/2201.12023)
 - [Google AI blog](https://ai.googleblog.com/2022/05/alpa-automated-model-parallel-deep.html)
 - [Talk slides](https://docs.google.com/presentation/d/1CQ4S1ff8yURk9XmL5lpQOoMMlsjw4m0zPS6zYDcyp7Y/edit?usp=sharing)
 - [ICML 2022 Big Model Tutorial slides](https://sites.google.com/view/icml-2022-big-model/home)

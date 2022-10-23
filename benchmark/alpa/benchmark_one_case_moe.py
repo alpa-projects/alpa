@@ -3,8 +3,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from alpa import (get_global_cluster, set_global_virtual_physical_mesh,
-                  global_config)
+from alpa import get_global_cluster, set_global_virtual_physical_mesh
 from alpa.model.moe import FlaxMoEForLMModule, MoEConfig, TrainState
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 from alpa.util import print_used_time

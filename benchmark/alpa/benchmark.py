@@ -57,6 +57,7 @@ def benchmark_suite(suite_name,
                     shard_only=False,
                     local=False,
                     profile_driver_time=False,
+                    profile_stage_execution_time=False,
                     disable_tqdm=False,
                     use_separate_process=True):
     num_gpus = num_hosts * num_devices_per_host
@@ -65,8 +66,8 @@ def benchmark_suite(suite_name,
         assert shard_only, ("Only shard-only mode is supported for execution "
                             "on local GPUs.")
 
-    assert num_gpus in benchmark_suites[suite_name], (
-        f"No available benchmark suite for {suite_name} on {num_gpus} GPUs")
+    if num_gpus not in benchmark_suites[suite_name]:
+        return
     suite = benchmark_suites[suite_name][num_gpus]
     #print("suit is {},suit[0]is {}".format(suite,benchmark_case))
 
@@ -79,8 +80,7 @@ def benchmark_suite(suite_name,
     os.makedirs("tmp", exist_ok=True)
 
     model_type = suite_name.split(".")[0]
-    date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    output_name = f"{model_type}_alpa_{exp_name}_{date_str}.tsv"
+    output_name = f"{exp_name}.tsv"
 
     # Run all cases
     for benchmark_case in suite:
@@ -153,13 +153,18 @@ if __name__ == "__main__":
                         action="store_true",
                         help="Profile the execution time on the driver instead "
                         "of the workers.")
+    parser.add_argument(
+        "--profile-stage-execution-time",
+        action="store_true",
+        help="Profile the execution timestamps of each pipeline "
+        "stage")
     parser.add_argument("--no-separate-process",
                         action="store_false",
                         help="Do not launch separate processes for benchmark. "
                         "Errors in a single case will terminate this "
                         "script.",
                         dest="use_separate_process")
-    parser.add_argument("--exp_name", type=str, default="default")
+    parser.add_argument("--exp-name", type=str, default="default")
     parser.add_argument("--disable-tqdm", action="store_true")
     parser.add_argument("--num_gpt_layer", type=int, default=1)
     parser.add_argument("--num_batch_size", type=int, default=4)

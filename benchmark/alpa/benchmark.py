@@ -52,6 +52,8 @@ def benchmark_suite(suite_name,
                     input_gpt_layer,
                     input_batch_size,
                     input_micro_batches,
+                    reduce_scatter,
+                    dp,op,
                     exp_name="default",
                     niter=3,
                     shard_only=False,
@@ -85,16 +87,19 @@ def benchmark_suite(suite_name,
     # Run all cases
     for benchmark_case in suite:
 
-        model_config = benchmark_case.model_config
-        num_micro_batches = benchmark_case.num_micro_batches
-        parallel_args = benchmark_case.parallel_args
+        assert dp*op == num_gpus, ("dp*op != num_gpus.")
 
         # B, model, NB, PM, (RS, Remat, 3D Config, FM)
         benchmark_case_new= BenchmarkCase(input_batch_size,
-                                      GPTModelConfig(2048, 4096, input_gpt_layer, 32, 51200),
+                                      GPTModelConfig(1024, 4096, input_gpt_layer, 32, 51200),
                                       input_micro_batches,
                                       "uniform",
-                                      UniformParallelArgs(False, True, 4, 1, 1, True))
+                                      UniformParallelArgs(reduce_scatter, True, dp, op, 1, True))
+
+        model_config = benchmark_case_new.model_config
+        num_micro_batches = benchmark_case_new.num_micro_batches
+        parallel_args = benchmark_case_new.parallel_args
+
 
         # Run one case
         print("Working on case: {}".format(str(benchmark_case_new)))
@@ -169,6 +174,11 @@ if __name__ == "__main__":
     parser.add_argument("--num_gpt_layer", type=int, default=1)
     parser.add_argument("--num_batch_size", type=int, default=4)
     parser.add_argument("--num_micro_batches", type=int, default=1)
+    parser.add_argument("--reduce_scatter",
+                        action="store_true",
+                        help="Prefer_reduce_scatter = True.")
+    parser.add_argument("--dp", type=int, default=4)
+    parser.add_argument("--op", type=int, default=1)
     args = parser.parse_args()
 
     num_hosts, num_devices_per_host = get_num_hosts_and_num_devices(args)
@@ -176,6 +186,7 @@ if __name__ == "__main__":
     benchmark_suite(args.suite, num_hosts, num_devices_per_host,
                     args.num_gpt_layer, args.num_batch_size,
                     args.num_micro_batches,
+                    args.reduce_scatter,args.dp,args.op,
                     args.exp_name,
                     args.niter, args.shard_only, args.local,
                     args.profile_driver_time, args.disable_tqdm,

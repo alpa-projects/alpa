@@ -72,13 +72,6 @@ def benchmark_suite(suite_name,
         return
     suite = benchmark_suites[suite_name][num_gpus]
     #print("suit is {},suit[0]is {}".format(suite,benchmark_case))
-
-    # change benchmark_case according to the inputs
-    # benchmark_case._replace(model_config=GPTModelConfig(1024, 4096, input_gpt_layer, 32, 51200))
-    # benchmark_case._replace(num_micro_batches=input_micro_batches)
-    # benchmark_case._replace(batch_size=input_batch_size)
-    # print("suit is {},suit[0]is {}".format(suite,benchmark_case))
-
     os.makedirs("tmp", exist_ok=True)
 
     model_type = suite_name.split(".")[0]
@@ -87,14 +80,19 @@ def benchmark_suite(suite_name,
     # Run all cases
     for benchmark_case in suite:
 
-        assert dp*op == num_gpus, ("dp*op != num_gpus.")
-
-        # B, model, NB, PM, (RS, Remat, 3D Config, FM)
-        benchmark_case_new= BenchmarkCase(input_batch_size,
+        
+        
+        if shard_only:
+            assert dp*op == num_gpus, ("dp*op != num_gpus.")
+            # B, model, NB, PM, (RS, Remat, 3D Config, FM)
+            benchmark_case_new= BenchmarkCase(input_batch_size,
                                       GPTModelConfig(1024, 4096, input_gpt_layer, 32, 51200),
                                       input_micro_batches,
                                       "uniform",
                                       UniformParallelArgs(reduce_scatter, True, dp, op, 1, True))
+        
+        benchmark_case_new=benchmark_case
+        
 
         model_config = benchmark_case_new.model_config
         num_micro_batches = benchmark_case_new.num_micro_batches

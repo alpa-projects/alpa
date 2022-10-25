@@ -8,7 +8,7 @@ import numpy as np
 
 from alpa.util import (write_tsv, get_num_hosts_and_num_devices, to_str_round,
                        GB)
-
+from collections import namedtuple
 from benchmark_one_case import benchmark_one_case
 import suite_auto_gpt
 import suite_auto_moe
@@ -16,6 +16,14 @@ import suite_manual_gpt
 import suite_manual_moe
 import suite_wresnet
 import suite_inference_gpt
+from benchmark_parallel_utils import (BenchmarkCase, ShardParallelArgs, UniformParallelArgs)
+#from suite_manual_gpt import GPTModelConfig
+
+#B = batch_size, S = seq_len, H = hidden_size, L = num_layers, V = vocab_size
+GPTModelConfig = namedtuple(
+    "GPTModelConfig",
+    ["seq_len", "hidden_size", "num_layers", "num_heads", "vocab_size"])
+
 
 benchmark_suites = {
     "gpt.tmp": suite_manual_gpt.tmp_suite,
@@ -41,6 +49,9 @@ benchmark_suites = {
 def benchmark_suite(suite_name,
                     num_hosts,
                     num_devices_per_host,
+                    input_gpt_layer,
+                    input_batch_size,
+                    input_micro_batches,
                     exp_name="default",
                     niter=3,
                     shard_only=False,
@@ -57,6 +68,13 @@ def benchmark_suite(suite_name,
     assert num_gpus in benchmark_suites[suite_name], (
         f"No available benchmark suite for {suite_name} on {num_gpus} GPUs")
     suite = benchmark_suites[suite_name][num_gpus]
+    #print("suit is {},suit[0]is {}".format(suite,benchmark_case))
+
+    # change benchmark_case according to the inputs
+    # benchmark_case._replace(model_config=GPTModelConfig(1024, 4096, input_gpt_layer, 32, 51200))
+    # benchmark_case._replace(num_micro_batches=input_micro_batches)
+    # benchmark_case._replace(batch_size=input_batch_size)
+    # print("suit is {},suit[0]is {}".format(suite,benchmark_case))
 
     os.makedirs("tmp", exist_ok=True)
 
@@ -66,14 +84,24 @@ def benchmark_suite(suite_name,
 
     # Run all cases
     for benchmark_case in suite:
+
         model_config = benchmark_case.model_config
         num_micro_batches = benchmark_case.num_micro_batches
         parallel_args = benchmark_case.parallel_args
 
+        # B, model, NB, PM, (RS, Remat, 3D Config, FM)
+        benchmark_case_new= BenchmarkCase(input_batch_size,
+                                      GPTModelConfig(2048, 4096, input_gpt_layer, 32, 51200),
+                                      input_micro_batches,
+                                      "uniform",
+                                      UniformParallelArgs(False, True, 4, 1, 1, True))
+
         # Run one case
-        print("Working on case: {}".format(str(benchmark_case)))
+        print("Working on case: {}".format(str(benchmark_case_new)))
+        
+        
         result = benchmark_one_case(model_type,
-                                    benchmark_case,
+                                    benchmark_case_new,
                                     niter,
                                     num_hosts,
                                     num_devices_per_host,
@@ -133,11 +161,17 @@ if __name__ == "__main__":
                         dest="use_separate_process")
     parser.add_argument("--exp_name", type=str, default="default")
     parser.add_argument("--disable-tqdm", action="store_true")
+    parser.add_argument("--num_gpt_layer", type=int, default=1)
+    parser.add_argument("--num_batch_size", type=int, default=4)
+    parser.add_argument("--num_micro_batches", type=int, default=1)
     args = parser.parse_args()
 
     num_hosts, num_devices_per_host = get_num_hosts_and_num_devices(args)
 
-    benchmark_suite(args.suite, num_hosts, num_devices_per_host, args.exp_name,
+    benchmark_suite(args.suite, num_hosts, num_devices_per_host,
+                    args.num_gpt_layer, args.num_batch_size,
+                    args.num_micro_batches,
+                    args.exp_name,
                     args.niter, args.shard_only, args.local,
                     args.profile_driver_time, args.disable_tqdm,
-                    args.use_separate_process)
+                    args.use_separate_process,)

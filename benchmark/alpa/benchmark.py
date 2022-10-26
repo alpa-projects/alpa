@@ -91,7 +91,8 @@ def benchmark_suite(suite_name,
                                       "uniform",
                                       UniformParallelArgs(reduce_scatter, True, dp, op, 1, True))
         
-        benchmark_case_new=benchmark_case
+        else:
+            benchmark_case_new=benchmark_case
         
 
         model_config = benchmark_case_new.model_config

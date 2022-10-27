@@ -24,6 +24,7 @@ def run_exp(cluster_settings, suite_name, benchmark_settings=None):
         benchmark_suite(suite_name,
                         num_hosts,
                         num_devices_per_host,
+                        exp_name="bert-2.6b",
                         disable_tqdm=True,
                         **benchmark_settings)
 

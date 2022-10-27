@@ -11,8 +11,9 @@ from alpa.util import print_used_time
 
 from util import compute_gpt_parameter_count, compute_gpt_tflops
 from benchmark_parallel_utils import (
-    get_pipeshard_parallel_method,
-    compile_and_benchmark_pipeshard_inference_executable)
+    get_pipeshard_parallel_method, dump_chrome_tracing,
+    compile_and_benchmark_pipeshard_inference_executable,
+    compute_avg_stage_latencies)
 
 
 def create_infer_params_aval(rngkey, model, batch, model_type):
@@ -169,9 +170,16 @@ def benchmark_gpt_inference_internal(model_type,
          profile_driver_time=profile_driver_time)
 
     if profile_stage_execution_time:
-        executable.dump_stage_execution_trace(
-            f"./chrome_trace/bs={benchmark_case.batch_size},pp={num_manual_pipeline_stages}.json"
+        exec_info = executable.get_stage_execution_info()
+        timelines = list(zip(*exec_info))
+        # drop warmup case
+        timelines = timelines[1:]
+        dump_chrome_tracing(
+            timelines,
+            f"./chrome_trace/bs={benchmark_case.batch_size},op={benchmark_case.parallel_args.op},pp={benchmark_case.parallel_args.pp}.json"
         )
+        avg_stage_latencies = compute_avg_stage_latencies(timelines)
+        assert len(avg_stage_latencies) == num_manual_pipeline_stages
 
     # Compute statistics
     tflops, parameter_count = compute_gpt_inference_statistics(
@@ -179,5 +187,6 @@ def benchmark_gpt_inference_internal(model_type,
     metadata = {
         "latencies": latencies,
         "compilation_times": compilation_times,
+        "avg_stage_latencies": avg_stage_latencies 
     }
     return parameter_count, max_mem_allocated, latencies, tflops, metadata

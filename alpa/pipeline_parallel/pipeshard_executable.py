@@ -1,6 +1,7 @@
 """The dirver part and worker part of a pipeshard executable."""
 import logging
 from functools import partial
+import json
 import os
 import time
 from typing import Optional, Sequence
@@ -374,6 +375,10 @@ class PipeshardDriverExecutable:
             for task in self.resharding_tasks:
                 f.write(str(task) + "\n\n")
 
+    def dump_stage_execution_trace(self, filename: str):
+        exec_info = self.get_stage_execution_info()
+        dump_stage_execution_trace_internal(exec_info, filename)
+
     def profile_all_executable_with_dummy_inputs(self):
         """Profile all stage executables with dummy inputs."""
         all_profiled_handles = []
@@ -598,3 +603,68 @@ class PipeshardMeshWorkerExecuable:
     def __del__(self):
         for exec_id in self._related_exec_uuids:
             self.worker.delete_executable(exec_id)
+
+
+def dump_stage_execution_trace_internal(stage_execution_info, filename: str):
+    """Dump stage execution info as a chrome tracing file."""
+
+    def get_color(i):
+        color_list = [
+            "thread_state_uninterruptible",
+            "thread_state_iowait",
+            "thread_state_running",
+            "thread_state_runnable",
+            "thread_state_unknown",
+            "background_memory_dump",
+            "light_memory_dump",
+            "detailed_memory_dump",
+            "vsync_highlight_color",
+            "generic_work",
+            "good",
+            "bad",
+            "terrible",
+            "yellow",
+            "olive",
+            "rail_response",
+            "rail_animation",
+            "rail_idle",
+            "rail_load",
+            "startup",
+            "heap_dump_stack_frame",
+            "heap_dump_object_type",
+            "heap_dump_child_node_arrow",
+            "cq_build_running",
+            "cq_build_passed",
+            "cq_build_failed",
+            "cq_build_attempt_runnig",
+            "cq_build_attempt_passed",
+            "cq_build_attempt_failed",
+        ]
+        return color_list[i % len(color_list)]
+
+    slot_list = []
+    for request_id, request_timeline in enumerate(zip(*stage_execution_info)):
+        sorted_timeline = sorted(request_timeline, key=lambda x: x[0])
+
+        for stage_num, (s, e, node_ids, devices) in enumerate(sorted_timeline):
+            for node_id, devices_per_node in zip(node_ids, devices):
+                for device_id in devices_per_node:
+                    slot = {
+                        "name": f"r{request_id}s{stage_num}",
+                        "cat": f"request {request_id}, stage {stage_num}",
+                        "ph": "X",
+                        "pid": node_id,
+                        "tid": device_id,
+                        "ts": float(s) * 1e6,
+                        "dur": float(e - s) * 1e6,
+                        "cname": get_color(request_id)
+                    }
+                    slot_list.append(slot)
+
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    with open(filename, "w") as fout:
+        fout.write(
+            json.dumps({
+                "traceEvents": slot_list,
+                "displayTimeUnit": "ms",
+            }))

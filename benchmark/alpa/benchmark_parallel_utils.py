@@ -309,7 +309,7 @@ def compile_pipeshard_executable(parallel_mode, train_step, state,
 
     if parallel_mode == "search":
         compilation_times = {
-            k: timers(k).elapsed() for k in [
+            k: timers(k).elapsed(mode="sum") for k in [
                 "stage-construction", "stage-construction-dp",
                 "stage-construction-compilation", "stage-construction-profiling"
             ]

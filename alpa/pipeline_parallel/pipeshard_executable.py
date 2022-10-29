@@ -1,6 +1,5 @@
 """The dirver part and worker part of a pipeshard executable."""
 import logging
-from collections import defaultdict
 from functools import partial
 import os
 import time
@@ -263,13 +262,12 @@ class PipeshardDriverExecutable:
         num_stages = len(self.stages)
         stage_start = [[] for _ in range(num_stages)]
         stage_end = [[] for _ in range(num_stages)]
-        stage_mesh = [None] * num_stages
 
         # Extract events
         for mesh in self.mesh_group:
-            tracer = mesh.get_remote_tracer()
+            mesh_tracer = mesh.get_remote_tracer()
 
-            for x in tracer.events:
+            for x in mesh_tracer.events:
                 if x.name == run_begin_event and "stage" in x.info:
                     stage_id = int(x.info[6:])
                     stage_start[stage_id].append(x.tstamp)
@@ -291,11 +289,9 @@ class PipeshardDriverExecutable:
             all_stages_info_list.append(per_stage_info_list)
         return all_stages_info_list
 
-    def get_execution_time_costs(self,
-                                 timer_name=None,
-                                 return_all_costs=False):
+    def get_execution_time_costs(self, timer_name=None, return_all_costs=False):
         """Get the execution time costs with internal timers."""
-        assert timer_name == None  # TODO(lmzheng): support other timers later
+        assert timer_name is None  # TODO(lmzheng): support other timers later
         timer_name = get_execution_timer_name(self.exec_uuid)
         mesh_costs = []
         for mesh in self.mesh_group:
@@ -519,11 +515,15 @@ class PipeshardMeshWorkerExecuable:
         # Setup tracer
         if collect_trace:
             log_run_begin = partial(tracer.log,
-                self.exec_timer_name + "-ins-run-begin")
+                                    self.exec_timer_name + "-ins-run-begin")
             log_run_end = partial(tracer.log,
-                self.exec_timer_name + "-ins-run-end")
+                                  self.exec_timer_name + "-ins-run-end")
         else:
-            log_run_begin = log_run_end = lambda *args, **kwargs: None
+
+            def log_run_begin(*_, **__):
+                pass
+
+            log_run_end = log_run_begin
 
         # Execute
         timers(self.exec_timer_name).start(sync_func=sync_func)

@@ -84,7 +84,7 @@ class Tracer:
     def __init__(self):
         self.events = []
 
-    def log(self, name: str, info: Any, sync_func: Callable=None):
+    def log(self, name: str, info: Any, sync_func: Callable = None):
         if sync_func:
             sync_func()
 

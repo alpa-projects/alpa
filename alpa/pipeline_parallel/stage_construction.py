@@ -214,7 +214,7 @@ def dp_2(
     best_solution = get_optimal_submeshes(best_s, f_argmin, num_devices,
                                           num_layers, submesh_sizes)
 
-    timers("stage-construction-dp").suspend()
+    timers("stage-construction-dp").stop()
     return best_cost, best_solution
 
 
@@ -322,7 +322,7 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices,
             best_solution = solution
         last_max_stage_cost = max_stage_cost
 
-    timers("stage-construction-dp").suspend()
+    timers("stage-construction-dp").stop()
     return best_cost, best_solution
 
 
@@ -483,9 +483,7 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
 
     if len(stages) == 0:
         # Suspend timers
-        timers("stage-construction-compilation").suspend()
-        timers("stage-construction-profiling").start()
-        timers("stage-construction-profiling").suspend()
+        timers("stage-construction-compilation").stop()
         return compute_cost, max_n_succ_stages, is_profiled
 
     print("- Compile all stages")
@@ -494,9 +492,9 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
                                        default_as_option)
     except RayActorError as e:
         logger.warning(f"Compilation fatal error: {e}")
-        timers("stage-construction-compilation").suspend()
+        timers("stage-construction-compilation").stop()
         return compute_cost, max_n_succ_stages, is_profiled
-    timers("stage-construction-compilation").suspend()
+    timers("stage-construction-compilation").stop()
 
     print("- Profile all stages")
     # shape of compute_cost and max_n_succ_stages:
@@ -506,7 +504,7 @@ def distributed_profile_on_mesh(meshes: Sequence[VirtualPhysicalMesh], layers,
      is_profiled) = profile_all(stages, compiled_outputs, meshes, num_layers,
                                 num_autosharding_configs, num_micro_batches,
                                 auto_stage_option, mesh_cached_result)
-    timers("stage-construction-profiling").suspend()
+    timers("stage-construction-profiling").stop()
     return compute_cost, max_n_succ_stages, is_profiled
 
 
@@ -707,8 +705,9 @@ def cluster_layers_and_slice_mesh(
         default_as_option: The default auto-sharding option.
         stage_option: The options controling how to construct stages.
     """
-    inference_mode = (pipeline_schedule == "inference")
     timers("stage-construction").start()
+
+    inference_mode = (pipeline_schedule == "inference")
     if virtual_mesh.launched_physical_mesh_group is None:
         given_mesh = False
     else:
@@ -882,17 +881,11 @@ def cluster_layers_and_slice_mesh(
     else:
         autosharding_option_dicts = [{}] * len(sliced_meshes)
 
-    for name in [
-            "stage-construction", "stage-construction-dp",
-            "stage-construction-compilation", "stage-construction-profiling"
-    ]:
-        if name in timers.timers:
-            timers(name).stop()
-
     manual_stage_option = ManualStageOption(
         forward_stage_layer_ids, tuple(x.shape for x in sliced_meshes),
         logical_mesh_shapes, autosharding_option_dicts)
 
+    timers("stage-construction").stop()
     return stages, stage_to_mesh, sliced_meshes, manual_stage_option
 
 

@@ -144,7 +144,8 @@ class MeshDriverDataLoader:
         self.physical_mesh = physical_mesh
 
         # Create output DisributedArray
-        ary_refs, ary_uuids = create_remote_array_refs(physical_mesh, len(avals))
+        ary_refs, ary_uuids = create_remote_array_refs(physical_mesh,
+                                                       len(avals))
         self.output_uuids = ary_uuids
         self.output_arrays = []
         for i in range(len(avals)):

@@ -653,8 +653,8 @@ def dump_stage_execution_trace_internal(stage_execution_info, filename: str):
                         "name": f"r{request_id}s{stage_num}",
                         "cat": f"request {request_id}, stage {stage_num}",
                         "ph": "X",
-                        "pid": node_id,
-                        "tid": device_id,
+                        "pid": int(node_id),
+                        "tid": int(device_id),
                         "ts": float(s) * 1e6,
                         "dur": float(e - s) * 1e6,
                         "cname": get_color(request_id)

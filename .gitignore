@@ -53,6 +53,7 @@ benchmark/alpa/chrome_trace
 
 # Tests temp files
 tests/tmp
+tests/*/tmp
 
 # Dataset
 benchmark/deepspeed/data

@@ -1,5 +1,7 @@
 """The dirver part and worker part of a pipeshard executable."""
 import logging
+from collections import defaultdict
+from functools import partial
 import os
 import time
 from typing import Optional, Sequence
@@ -26,7 +28,7 @@ from alpa.pipeline_parallel.runtime_emitter import (
     PartialGradWorkerExecutableConfig, PipelineInstType, PipelineInstruction,
     PipeshardConfig)
 from alpa.shard_parallel.auto_sharding import HloStatus
-from alpa.timer import timers
+from alpa.timer import timers, tracer
 from alpa.util import OrderedSet
 
 traceback_util.register_exclusion(__file__)
@@ -182,7 +184,8 @@ class PipeshardDriverExecutable:
                     self.exec_uuid,
                     input_uuids,
                     output_uuids[mesh_idx],
-                    sync_for_timer=global_config.pipeline_sync_for_timer)
+                    sync_for_timer=global_config.pipeline_sync_for_timer,
+                    collect_trace=global_config.collect_trace)
 
         # Handle donation
         for mesh_idx in range(len(self.mesh_group)):
@@ -248,17 +251,43 @@ class PipeshardDriverExecutable:
 
     ##### Profiling and Debugging Related Functions #####
     def get_stage_execution_info(self):
-        """Get the execution information of each request's each stage.
+        """Get the per-stage execution information of all invocations.
            Return a list, where each element corresponds to a single stage.
            Each element is a list of (start, stop, node_ids, devices) tuple,
-           where each tuple corresponds to a single request.
+           where each tuple corresponds to one invocation.
         """
-        all_stages_info_list = []
+        exec_timer_name = get_execution_timer_name(self.exec_uuid)
+        run_begin_event = exec_timer_name + "-ins-run-begin"
+        run_end_event = exec_timer_name + "-ins-run-end"
+
+        num_stages = len(self.stages)
+        stage_start = [[] for _ in range(num_stages)]
+        stage_end = [[] for _ in range(num_stages)]
+        stage_mesh = [None] * num_stages
+
+        # Extract events
         for mesh in self.mesh_group:
-            timer = mesh.get_remote_timer("stage_timestamps")
+            tracer = mesh.get_remote_tracer()
+
+            for x in tracer.events:
+                if x.name == run_begin_event and "stage" in x.info:
+                    stage_id = int(x.info[6:])
+                    stage_start[stage_id].append(x.tstamp)
+                if x.name == run_end_event and "stage" in x.info:
+                    stage_id = int(x.info[6:])
+                    stage_end[stage_id].append(x.tstamp)
+
+        # Organize return values
+        all_stages_info_list = []
+        for i in range(num_stages):
+            mesh_idx = self.schedule.stage_placement(i)
+            assert len(mesh_idx) == 1
+            mesh_idx = list(mesh_idx)[0]
+            mesh = self.mesh_group[mesh_idx]
+            host_ids, devices = mesh.host_ids, mesh.devices
             per_stage_info_list = []
-            for s, e in zip(timer.start_times, timer.stop_times):
-                per_stage_info_list.append((s, e, mesh.host_ids, mesh.devices))
+            for s, e in zip(stage_start[i], stage_end[i]):
+                per_stage_info_list.append((s, e, host_ids, devices))
             all_stages_info_list.append(per_stage_info_list)
         return all_stages_info_list
 
@@ -469,7 +498,7 @@ class PipeshardMeshWorkerExecuable:
         self.partial_grad_exec_uuids = list(self.partial_grad_exec_uuids)
 
     def execute_on_worker(self, input_global_uuids, output_global_uuids,
-                          sync_for_timer):
+                          sync_for_timer, collect_trace):
         """Execute on the mesh worker given input and output uuids."""
         # create a local buffer environment
         assert len(self.input_local_uuids) == len(input_global_uuids)
@@ -487,6 +516,15 @@ class PipeshardMeshWorkerExecuable:
         self.worker.buffers = buffers
         sync_func = self.worker.sync if sync_for_timer else None
 
+        # Setup tracer
+        if collect_trace:
+            log_run_begin = partial(tracer.log,
+                self.exec_timer_name + "-ins-run-begin")
+            log_run_end = partial(tracer.log,
+                self.exec_timer_name + "-ins-run-end")
+        else:
+            log_run_begin = log_run_end = lambda *args, **kwargs: None
+
         # Execute
         timers(self.exec_timer_name).start(sync_func=sync_func)
 
@@ -499,10 +537,12 @@ class PipeshardMeshWorkerExecuable:
             #      f"next instruction: {instruction}", flush=True)
 
             if instruction.opcode == PipelineInstType.RUN:
+                log_run_begin(instruction.info, sync_func=sync_func)
                 self.worker.run_executable(instruction.task_uuid,
                                            instruction.input_uuids,
                                            instruction.output_uuids,
                                            **instruction.opaques["kwargs"])
+                log_run_end(instruction.info, sync_func=sync_func)
             elif instruction.opcode == PipelineInstType.SEND:
                 self.worker.run_resharding_send_task(instruction.task_uuid,
                                                      instruction.input_uuids[0])

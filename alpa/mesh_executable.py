@@ -151,7 +151,7 @@ def next_mesh_executable_uuid():
 
 def get_execution_timer_name(exec_uuid: int):
     """Return the name of the timer used for recording pure execution time."""
-    return f"{exec_uuid}-execution"
+    return f"exec-{exec_uuid}"
 
 
 def get_sync_func_driver(physical_mesh):

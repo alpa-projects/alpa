@@ -1,8 +1,7 @@
 """Global timer for profiling."""
+from collections import namedtuple
 import time
-from typing import Callable
-
-do_sync = True
+from typing import Callable, Any
 
 
 class _Timer:
@@ -21,7 +20,7 @@ class _Timer:
     def start(self, sync_func: Callable = None):
         """Start the timer."""
         assert not self.started, f"timer {self.name} has already been started."
-        if sync_func and do_sync:
+        if sync_func:
             sync_func()
 
         self.start_time = time.time()
@@ -31,7 +30,7 @@ class _Timer:
     def stop(self, sync_func: Callable = None):
         """Stop the timer."""
         assert self.started, f"timer {self.name} is not started."
-        if sync_func and do_sync:
+        if sync_func:
             sync_func()
 
         stop_time = time.time()
@@ -75,3 +74,21 @@ class Timers:
 
 
 timers = Timers()
+
+Event = namedtuple("Event", ("tstamp", "name", "info"))
+
+
+class Tracer:
+    """An activity tracer."""
+
+    def __init__(self):
+        self.events = []
+
+    def log(self, name: str, info: Any, sync_func: Callable=None):
+        if sync_func:
+            sync_func()
+
+        self.events.append(Event(time.time(), name, info))
+
+
+tracer = Tracer()

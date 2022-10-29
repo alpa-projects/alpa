@@ -51,7 +51,7 @@ from alpa.global_env import global_config
 from alpa.monkey_patch import set_override_backend
 from alpa.shard_parallel.auto_sharding import (LogicalDeviceMesh)
 from alpa.parallel_plan import PlacementSpec
-from alpa.timer import timers
+from alpa.timer import timers, tracer
 from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
                        update_jax_platform, is_ray_node_resource,
                        try_import_ray_worker, create_placement_group,
@@ -557,6 +557,10 @@ class MeshHostWorker:
     def reset_timer(name: str):
         timers(name).reset()
 
+    @staticmethod
+    def get_tracer():
+        return tracer
+
     def get_live_buffer_uuids(self):
         return list(self.buffers.keys())
 
@@ -758,6 +762,10 @@ class PhysicalDeviceMesh(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    def get_remote_tracer(self):
+        raise NotImplementedError()
+
+    @abstractmethod
     def get_memory_allocated(self):
         raise NotImplementedError()
 
@@ -865,6 +873,9 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def reset_remote_timer(self, timer_name: str):
         timers(timer_name).reset()
+
+    def get_remote_tracer(self):
+        return tracer
 
     def get_memory_allocated(self):
         return max(d.memory_allocated() for d in self.devices)
@@ -1327,6 +1338,9 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
     def reset_remote_timer(self, timer_name: str):
         for worker in self.workers:
             ray.get(worker.reset_timer.remote(timer_name))
+
+    def get_remote_tracer(self):
+        return ray.get(self.workers[0].get_tracer.remote())
 
     def get_memory_allocated(self):
         return max(

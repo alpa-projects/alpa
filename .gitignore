@@ -47,12 +47,13 @@ alpa_debug_info
 *.tsv
 *.hlo
 *.pkl
-benchmark/alpa/tmp
+benchmark/alpa/tmp*
 benchmark/alpa/chrome_trace
 *.log
 
 # Tests temp files
 tests/tmp
+tests/*/tmp
 
 # Dataset
 benchmark/deepspeed/data

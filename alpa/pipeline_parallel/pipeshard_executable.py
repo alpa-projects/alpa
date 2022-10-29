@@ -1,5 +1,7 @@
 """The dirver part and worker part of a pipeshard executable."""
 import logging
+from functools import partial
+import json
 import os
 import time
 from typing import Optional, Sequence
@@ -16,7 +18,8 @@ from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
                                   UtilMeshWorkerExecutable,
                                   MemzeroWorkerExecutable,
                                   PartialGradAccMeshWorkerExecutable,
-                                  next_mesh_executable_uuid)
+                                  next_mesh_executable_uuid,
+                                  get_execution_timer_name)
 from alpa.parallel_plan import ClusterInfo, PipelinePlan, ParallelPlan
 from alpa.pipeline_parallel.layer_construction import LayerOption
 from alpa.pipeline_parallel.runtime_emitter import (
@@ -25,21 +28,13 @@ from alpa.pipeline_parallel.runtime_emitter import (
     PartialGradWorkerExecutableConfig, PipelineInstType, PipelineInstruction,
     PipeshardConfig)
 from alpa.shard_parallel.auto_sharding import HloStatus
-from alpa.timer import timers
+from alpa.timer import timers, tracer
 from alpa.util import OrderedSet
 
 traceback_util.register_exclusion(__file__)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
-timer_names = {
-    "overall": "average",
-    "compute": "sum",
-    "resharding_send": "sum",
-    "resharding_recv": "sum",
-    "free": "sum",
-}
 
 
 class PipeshardDriverExecutable:
@@ -189,7 +184,8 @@ class PipeshardDriverExecutable:
                     self.exec_uuid,
                     input_uuids,
                     output_uuids[mesh_idx],
-                    sync_for_timer=global_config.pipeline_sync_for_timer)
+                    sync_for_timer=global_config.pipeline_sync_for_timer,
+                    collect_trace=global_config.collect_trace)
 
         # Handle donation
         for mesh_idx in range(len(self.mesh_group)):
@@ -255,28 +251,49 @@ class PipeshardDriverExecutable:
 
     ##### Profiling and Debugging Related Functions #####
     def get_stage_execution_info(self):
-        """Get the execution information of each request's each stage.
+        """Get the per-stage execution information of all invocations.
            Return a list, where each element corresponds to a single stage.
            Each element is a list of (start, stop, node_ids, devices) tuple,
-           where each tuple corresponds to a single request.
+           where each tuple corresponds to one invocation.
         """
-        all_stages_info_list = []
+        exec_timer_name = get_execution_timer_name(self.exec_uuid)
+        run_begin_event = exec_timer_name + "-ins-run-begin"
+        run_end_event = exec_timer_name + "-ins-run-end"
+
+        num_stages = len(self.stages)
+        stage_start = [[] for _ in range(num_stages)]
+        stage_end = [[] for _ in range(num_stages)]
+
+        # Extract events
         for mesh in self.mesh_group:
-            timer = mesh.get_remote_timer("stage_timestamps")
+            mesh_tracer = mesh.get_remote_tracer()
+
+            for x in mesh_tracer.events:
+                if x.name == run_begin_event and "stage" in x.info:
+                    stage_id = int(x.info[6:])
+                    stage_start[stage_id].append(x.tstamp)
+                if x.name == run_end_event and "stage" in x.info:
+                    stage_id = int(x.info[6:])
+                    stage_end[stage_id].append(x.tstamp)
+
+        # Organize return values
+        all_stages_info_list = []
+        for i in range(num_stages):
+            mesh_idx = self.schedule.stage_placement(i)
+            assert len(mesh_idx) == 1
+            mesh_idx = list(mesh_idx)[0]
+            mesh = self.mesh_group[mesh_idx]
+            host_ids, devices = mesh.host_ids, mesh.devices
             per_stage_info_list = []
-            for s, e in zip(timer.start_times, timer.stop_times):
-                per_stage_info_list.append((s, e, mesh.host_ids, mesh.devices))
+            for s, e in zip(stage_start[i], stage_end[i]):
+                per_stage_info_list.append((s, e, host_ids, devices))
             all_stages_info_list.append(per_stage_info_list)
         return all_stages_info_list
 
-    def get_execution_time_costs(self,
-                                 timer_name="overall",
-                                 return_all_costs=False):
+    def get_execution_time_costs(self, timer_name=None, return_all_costs=False):
         """Get the execution time costs with internal timers."""
-        if timer_name not in timer_names:
-            raise RuntimeError(
-                f"Unrecognized timer name for pipeline parallel runtime. "
-                f"Query timer name from the following: {timer_names.keys()}.")
+        assert timer_name is None  # TODO(lmzheng): support other timers later
+        timer_name = get_execution_timer_name(self.exec_uuid)
         mesh_costs = []
         for mesh in self.mesh_group:
             mesh_costs.append(mesh.get_remote_timer(timer_name).costs)
@@ -294,14 +311,8 @@ class PipeshardDriverExecutable:
         return max_costs
 
     def get_shard_args_time_costs(self):
-        # TODO(lmzheng): Implement this
-        return [0]
-
-    def reset_benchmark_timers(self):
-        """Reset all benchmarking timers."""
-        for name in timer_names:
-            for mesh in self.mesh_group:
-                mesh.reset_remote_timer(name)
+        # TODO(lmzheng): implement this
+        raise NotImplementedError()
 
     def get_hlo_text(self, status: HloStatus = HloStatus.FULLY_OPTIMIZED):
         """Return the HLO text for all stages."""
@@ -364,6 +375,10 @@ class PipeshardDriverExecutable:
             for task in self.resharding_tasks:
                 f.write(str(task) + "\n\n")
 
+    def dump_stage_execution_trace(self, filename: str):
+        exec_info = self.get_stage_execution_info()
+        dump_stage_execution_trace_internal(exec_info, filename)
+
     def profile_all_executable_with_dummy_inputs(self):
         """Profile all stage executables with dummy inputs."""
         all_profiled_handles = []
@@ -424,6 +439,7 @@ class PipeshardMeshWorkerExecuable:
                  donate_invars: Sequence[bool]):
         # Instruction Lists
         self.exec_uuid = uuid
+        self.exec_timer_name = get_execution_timer_name(uuid)
         self.instructions = instructions
         self.input_local_uuids = input_local_uuids
         self.output_local_uuids = output_local_uuids
@@ -483,7 +499,7 @@ class PipeshardMeshWorkerExecuable:
         self.partial_grad_exec_uuids = list(self.partial_grad_exec_uuids)
 
     def execute_on_worker(self, input_global_uuids, output_global_uuids,
-                          sync_for_timer):
+                          sync_for_timer, collect_trace):
         """Execute on the mesh worker given input and output uuids."""
         # create a local buffer environment
         assert len(self.input_local_uuids) == len(input_global_uuids)
@@ -501,8 +517,22 @@ class PipeshardMeshWorkerExecuable:
         self.worker.buffers = buffers
         sync_func = self.worker.sync if sync_for_timer else None
 
+        # Setup tracer
+        if collect_trace:
+            log_run_begin = partial(tracer.log,
+                                    self.exec_timer_name + "-ins-run-begin")
+            log_run_end = partial(tracer.log,
+                                  self.exec_timer_name + "-ins-run-end")
+        else:
+
+            def log_run_begin(*_, **__):
+                pass
+
+            log_run_end = log_run_begin
+
         # Execute
-        timers("overall").start(sync_func=sync_func)
+        timers(self.exec_timer_name).start(sync_func=sync_func)
+
         for instruction in self.instructions:
             #self.worker.sync()
             #print(f"memory_allocated: "
@@ -510,26 +540,18 @@ class PipeshardMeshWorkerExecuable:
             #      f"max_memory_allocated: "
             #      f"{self.worker.get_max_memory_allocated()/1024**3:.3f} GB "
             #      f"next instruction: {instruction}", flush=True)
-            #self.worker.sync()
 
             if instruction.opcode == PipelineInstType.RUN:
-                if "stage" in instruction.info:
-                    timers("stage_timestamps").start(sync_func=sync_func)
-                timers("compute").start()
+                log_run_begin(instruction.info, sync_func=sync_func)
                 self.worker.run_executable(instruction.task_uuid,
                                            instruction.input_uuids,
                                            instruction.output_uuids,
                                            **instruction.opaques["kwargs"])
-                if "stage" in instruction.info:
-                    timers("stage_timestamps").stop(sync_func=sync_func)
-                timers("compute").suspend()
+                log_run_end(instruction.info, sync_func=sync_func)
             elif instruction.opcode == PipelineInstType.SEND:
-                timers("resharding_send").start()
                 self.worker.run_resharding_send_task(instruction.task_uuid,
                                                      instruction.input_uuids[0])
-                timers("resharding_send").suspend()
             elif instruction.opcode == PipelineInstType.RECV:
-                timers("resharding_recv").start()
                 self.worker.run_resharding_recv_task(
                     instruction.task_uuid, instruction.output_uuids[0],
                     instruction.opaques["set_empty_buffer"])
@@ -539,28 +561,15 @@ class PipeshardMeshWorkerExecuable:
                     ary_uuid = instruction.output_uuids[0]
                     self.worker.run_executable(task_uuid, [ary_uuid],
                                                [ary_uuid], False, False)
-                timers("resharding_recv").suspend()
             elif instruction.opcode == PipelineInstType.BROADCAST:
-                timers("resharding_broadcast").start()
                 self.worker.run_resharding_broadcast_task(
                     instruction.task_uuid,
                     (instruction.input_uuids if instruction.input_uuids
                      is not None else instruction.output_uuids)[0])
-                timers("resharding_broadcast").suspend()
             elif instruction.opcode == PipelineInstType.FREE:
-                timers("free").start()
                 self.worker.delete_buffers(instruction.input_uuids)
-                timers("free").suspend()
 
-        for timer_name in [
-                "compute", "resharding_send", "resharding_recv",
-                "resharding_broadcast", "free"
-        ]:
-            if timer_name in timers:
-                timers(timer_name).stop()
-                # timers(timer_name).log(mode="sum")
-                # timers(timer_name).reset()
-        timers("overall").stop(sync_func=sync_func)
+        timers(self.exec_timer_name).stop(sync_func=sync_func)
 
         # copy to global env
         assert len(self.output_local_uuids) == len(output_global_uuids)
@@ -594,3 +603,68 @@ class PipeshardMeshWorkerExecuable:
     def __del__(self):
         for exec_id in self._related_exec_uuids:
             self.worker.delete_executable(exec_id)
+
+
+def dump_stage_execution_trace_internal(stage_execution_info, filename: str):
+    """Dump stage execution info as a chrome tracing file."""
+
+    def get_color(i):
+        color_list = [
+            "thread_state_uninterruptible",
+            "thread_state_iowait",
+            "thread_state_running",
+            "thread_state_runnable",
+            "thread_state_unknown",
+            "background_memory_dump",
+            "light_memory_dump",
+            "detailed_memory_dump",
+            "vsync_highlight_color",
+            "generic_work",
+            "good",
+            "bad",
+            "terrible",
+            "yellow",
+            "olive",
+            "rail_response",
+            "rail_animation",
+            "rail_idle",
+            "rail_load",
+            "startup",
+            "heap_dump_stack_frame",
+            "heap_dump_object_type",
+            "heap_dump_child_node_arrow",
+            "cq_build_running",
+            "cq_build_passed",
+            "cq_build_failed",
+            "cq_build_attempt_runnig",
+            "cq_build_attempt_passed",
+            "cq_build_attempt_failed",
+        ]
+        return color_list[i % len(color_list)]
+
+    slot_list = []
+    for request_id, request_timeline in enumerate(zip(*stage_execution_info)):
+        sorted_timeline = sorted(request_timeline, key=lambda x: x[0])
+
+        for stage_num, (s, e, node_ids, devices) in enumerate(sorted_timeline):
+            for node_id, devices_per_node in zip(node_ids, devices):
+                for device_id in devices_per_node:
+                    slot = {
+                        "name": f"r{request_id}s{stage_num}",
+                        "cat": f"request {request_id}, stage {stage_num}",
+                        "ph": "X",
+                        "pid": int(node_id),
+                        "tid": int(device_id),
+                        "ts": float(s) * 1e6,
+                        "dur": float(e - s) * 1e6,
+                        "cname": get_color(request_id)
+                    }
+                    slot_list.append(slot)
+
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    with open(filename, "w") as fout:
+        fout.write(
+            json.dumps({
+                "traceEvents": slot_list,
+                "displayTimeUnit": "ms",
+            }))

@@ -39,9 +39,6 @@ from alpa.util import (compile_allocate_zero_buffers,
                        get_index_select_computation, get_shard_shape,
                        get_microbatch_sharding_spec, profile_xla_executable)
 
-# The global executable and buffer counter.
-mesh_executable_counter = 0
-
 
 class MeshDriverExecutable(ABC):
     """The base class of the driver part of a mesh executable."""
@@ -141,6 +138,10 @@ class MeshWorkerExecutable(ABC):
         raise NotImplementedError()
 
 
+# The global executable counter
+mesh_executable_counter = 0
+
+
 def next_mesh_executable_uuid():
     """Return the next uuid of a mesh executable."""
     global mesh_executable_counter
@@ -150,7 +151,7 @@ def next_mesh_executable_uuid():
 
 def get_execution_timer_name(exec_uuid: int):
     """Return the name of the timer used for recording pure execution time."""
-    return f"{exec_uuid}-execution"
+    return f"exec-{exec_uuid}"
 
 
 def get_sync_func_driver(physical_mesh):

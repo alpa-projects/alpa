@@ -78,6 +78,9 @@ class GlobalConfig:
         self.print_compilation_time = False
         self.print_auto_layer_stats = False
 
+        # Whether to collect activity trace
+        self.collect_trace = False
+
 
 global_config = GlobalConfig()
 

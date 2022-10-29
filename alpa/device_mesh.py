@@ -51,7 +51,7 @@ from alpa.global_env import global_config
 from alpa.monkey_patch import set_override_backend
 from alpa.shard_parallel.auto_sharding import (LogicalDeviceMesh)
 from alpa.parallel_plan import PlacementSpec
-from alpa.timer import timers
+from alpa.timer import timers, tracer
 from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
                        update_jax_platform, is_ray_node_resource,
                        try_import_ray_worker, create_placement_group,
@@ -557,6 +557,10 @@ class MeshHostWorker:
     def reset_timer(name: str):
         timers(name).reset()
 
+    @staticmethod
+    def get_tracer():
+        return tracer
+
     def get_live_buffer_uuids(self):
         return list(self.buffers.keys())
 
@@ -758,6 +762,10 @@ class PhysicalDeviceMesh(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    def get_remote_tracer(self):
+        raise NotImplementedError()
+
+    @abstractmethod
     def get_memory_allocated(self):
         raise NotImplementedError()
 
@@ -865,6 +873,9 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def reset_remote_timer(self, timer_name: str):
         timers(timer_name).reset()
+
+    def get_remote_tracer(self):
+        return tracer
 
     def get_memory_allocated(self):
         return max(d.memory_allocated() for d in self.devices)
@@ -1328,6 +1339,9 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         for worker in self.workers:
             ray.get(worker.reset_timer.remote(timer_name))
 
+    def get_remote_tracer(self):
+        return ray.get(self.workers[0].get_tracer.remote())
+
     def get_memory_allocated(self):
         return max(
             ray.get([w.get_memory_allocated.remote() for w in self.workers]))
@@ -1371,17 +1385,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 ########################################
 # Distributed Array and Buffers
 ########################################
-remote_buffer_counter = 0
-
-
-def next_array_uuids(number=1):
-    """Return the next uuid of a remote buffer."""
-    global remote_buffer_counter
-    ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
-    remote_buffer_counter = (remote_buffer_counter + number) % (1 << 60)
-    return ret
-
-
 class RemoteArrayRef:
     """
     A reference to all device buffers of a logical array.
@@ -1414,8 +1417,21 @@ class RemoteArrayRef:
             self.device_mesh.delete_remote_buffers((self,))
 
 
-def create_remote_array_refs(device_mesh, num=1):
-    ary_uuids = next_array_uuids(num)
+# The global buffer counter
+remote_buffer_counter = 0
+
+
+def next_array_uuids(number=1):
+    """Return the next uuid of a remote buffer."""
+    global remote_buffer_counter
+    ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
+    remote_buffer_counter = (remote_buffer_counter + number) % (1 << 60)
+    return ret
+
+
+def create_remote_array_refs(device_mesh, number=1):
+    """Create a list of remote array refs."""
+    ary_uuids = next_array_uuids(number)
     ary_refs = [RemoteArrayRef(device_mesh, uuid) for uuid in ary_uuids]
     return ary_refs, ary_uuids
 

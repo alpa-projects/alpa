@@ -1,7 +1,6 @@
 """Test whether there is any memory leak for distributed arrays and remote buffers."""
 import unittest
 
-import jax.numpy as jnp
 import ray
 
 from alpa import (init, shutdown, parallelize, global_config, ShardParallel,

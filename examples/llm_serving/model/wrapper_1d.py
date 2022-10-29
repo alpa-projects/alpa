@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import torch
 import tqdm
 from llm_serving.model import opt_model_1d
+import cupy
 
 from alpa.timer import timers
 from transformers import OPTForCausalLM, BloomForCausalLM
@@ -17,7 +18,8 @@ from examples.llm_serving.model.opt_utils import TransformerModelConfig
 from examples.llm_serving.model.wrapper import disable_torch_init, restore_torch_init, InferenceFuncOutput, \
     InferenceFuncConfig, WrappedInferenceFunc
 from examples.llm_serving.model import opt_model
-from examples.llm_serving.model.opt_model_1d import IterationLevelInputPool, unpad, pad
+from examples.llm_serving.model.opt_model_1d import IterationLevelInputPool, unpad, pad, custom_reshape_logits
+from alpa.collective.worker_nccl_util_cupy import jax_tensor_to_cupy
 
 
 logger = logging.getLogger(__name__)
@@ -72,6 +74,7 @@ class SequenceGenerator:
             timers("enter").start(sync)
             input, input_index, position_ids, logit_positions = input_pool.next()
             timers("enter").suspend(sync)
+            # print(input_pool.cache.kv_caches_cupy[0][0][0:512, 0, 0])
             os.environ["FT_INPUT_INDEX_ADDR"] = str(input_index.ctypes.data)
             os.environ["FT_CACHE_INDEX_ADDR"] = str(input_pool.cache.kv_cache_ids.ctypes.data)
             os.environ["FT_MAX_CACHE_LEN_PER_SEQ"] = str(input_pool.max_cache_per_seq)
@@ -93,9 +96,9 @@ class SequenceGenerator:
             timers("generate").suspend(sync)
             logger.debug(f"iteration {iteration}: generated ids: {generated_ids}")
 
-            timers("update cache").start(sync)
+            timers("update").start(sync)
             input_pool.update_cache(kv, generated_ids)
-            timers("update cache").suspend(sync)
+            timers("update").suspend(sync)
             iteration += 1
 
         ret = input_pool.get_results()
@@ -104,12 +107,23 @@ class SequenceGenerator:
 
     @staticmethod
     def _generate_greedy(logits, positions):
-        """TODO(Hao): make this on GPU"""
-        outputs = []
+        # outputs = []
         next_token = np.array(jnp.argmax(logits, axis=-1))
-        for pos in positions:
-            outputs.append(int(next_token[pos]))
+        outputs = next_token[positions].tolist()
+        # for pos in positions:
+        #     outputs.append(int(next_token[pos]))
         return outputs
+
+    @staticmethod
+    def _generate_greedy_v2(logits, positions):
+        src_indices = cupy.array(positions)
+        src_logits =  jax_tensor_to_cupy(logits)
+        dst_shape = (len(positions), 50272)
+        dst_logits = cupy.zeros(dst_shape, dtype=logits.dtype)
+        num_blocks = len(positions)
+        custom_reshape_logits[num_blocks, 1024](dst_logits.ravel(), src_logits.ravel(), src_indices)
+        next_token = cupy.asnumpy(cupy.argmax(dst_logits, axis=-1)).tolist()
+        return next_token
 
 
 def get_model(model_name: str,

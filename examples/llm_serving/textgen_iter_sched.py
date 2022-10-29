@@ -23,43 +23,46 @@ def main(args):
     # Load the model
     model = get_model(model_name=args.model,
                       path="~/opt_weights",
-                      cache_size=256*2,
+                      cache_size=4096,
                       max_cache_per_seq=256)
 
     prompts = [
-        # "Computer science is the study of computation and",
-        # "Ion Stoica is a Romanian-American computer scientist specializing in",
-        # "The University of California, Berkeley is a public",
-        # "Today is a good day and I want to",
-        "What is the valuation of Databricks?",
         "Computer science is the study of computation and",
-        # "Paris is the capital city of",
-        # "Which country has the most population?",
-        # "What do you think about the future of Cryptocurrency?",
-        # "What do you think about the meaning of life?",
-        # "Donald Trump is the president of",
-        # "GPT-3 is a large language model that is capable of"
+        "Ion Stoica is a Romanian-American computer scientist specializing in",
+        "The University of California, Berkeley is a public",
+        "Today is a good day and I want to",
+        "What is the valuation of Databricks?",
+        "Paris is the capital city of",
+        "Which country has the most population?",
+        "What do you think about the future of Cryptocurrency?",
+        "What do you think about the meaning of life?",
+        "Donald Trump is the president of",
+        "GPT-3 is a large language model that is capable of"
     ]
     # prompts = prompts * 10
-    # timer_names = ["enter", "compute", "update", "reshape"]
+    timer_names = ["enter", "compute", "generate", "update"]
 
     input_ids = tokenizer(prompts, return_tensors="np", padding="longest").input_ids
 
-    n_warmup = 1
+    n_warmup = 10
     for i in range(n_warmup):
         tic = time.time()
         output_ids = model.generate(input_ids,
                                     **generate_params)
         elapsed = time.time() - tic
+        for timer_name in timer_names:
+            timers(timer_name).stop()
         print(f"- It takes {elapsed}")
+        timers.log(timer_names)
+        for timer_name in timer_names:
+            timers(timer_name).reset()
 
-        # Print results
         outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
-        if True:
-            print("Outputs:\n" + 100 * '-')
-            for i, output in enumerate(outputs):
-                print(f"{i}: {output}")
-                print(100 * '-')
+    if True:
+        print("Outputs:\n" + 100 * '-')
+        for i, output in enumerate(outputs):
+            print(f"{i + 1}: {output}")
+            print(100 * '-')
 
 
 if __name__ == "__main__":

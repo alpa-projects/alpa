@@ -39,9 +39,6 @@ from alpa.util import (compile_allocate_zero_buffers,
                        get_index_select_computation, get_shard_shape,
                        get_microbatch_sharding_spec, profile_xla_executable)
 
-# The global executable and buffer counter.
-mesh_executable_counter = 0
-
 
 class MeshDriverExecutable(ABC):
     """The base class of the driver part of a mesh executable."""
@@ -139,6 +136,10 @@ class MeshWorkerExecutable(ABC):
     def get_total_allocation_size(self):
         """Get the total memory allocation size in bytes."""
         raise NotImplementedError()
+
+
+# The global executable counter
+mesh_executable_counter = 0
 
 
 def next_mesh_executable_uuid():

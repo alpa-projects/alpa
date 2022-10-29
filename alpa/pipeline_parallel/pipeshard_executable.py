@@ -16,7 +16,8 @@ from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
                                   UtilMeshWorkerExecutable,
                                   MemzeroWorkerExecutable,
                                   PartialGradAccMeshWorkerExecutable,
-                                  next_mesh_executable_uuid)
+                                  next_mesh_executable_uuid,
+                                  get_execution_timer_name)
 from alpa.parallel_plan import ClusterInfo, PipelinePlan, ParallelPlan
 from alpa.pipeline_parallel.layer_construction import LayerOption
 from alpa.pipeline_parallel.runtime_emitter import (
@@ -32,14 +33,6 @@ traceback_util.register_exclusion(__file__)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
-timer_names = {
-    "overall": "average",
-    "compute": "sum",
-    "resharding_send": "sum",
-    "resharding_recv": "sum",
-    "free": "sum",
-}
 
 
 class PipeshardDriverExecutable:
@@ -270,13 +263,11 @@ class PipeshardDriverExecutable:
         return all_stages_info_list
 
     def get_execution_time_costs(self,
-                                 timer_name="overall",
+                                 timer_name=None,
                                  return_all_costs=False):
         """Get the execution time costs with internal timers."""
-        if timer_name not in timer_names:
-            raise RuntimeError(
-                f"Unrecognized timer name for pipeline parallel runtime. "
-                f"Query timer name from the following: {timer_names.keys()}.")
+        assert timer_name == None  # TODO(lmzheng): support other timers later
+        timer_name = get_execution_timer_name(self.exec_uuid)
         mesh_costs = []
         for mesh in self.mesh_group:
             mesh_costs.append(mesh.get_remote_timer(timer_name).costs)
@@ -294,14 +285,8 @@ class PipeshardDriverExecutable:
         return max_costs
 
     def get_shard_args_time_costs(self):
-        # TODO(lmzheng): Implement this
-        return [0]
-
-    def reset_benchmark_timers(self):
-        """Reset all benchmarking timers."""
-        for name in timer_names:
-            for mesh in self.mesh_group:
-                mesh.reset_remote_timer(name)
+        # TODO(lmzheng): implement this
+        raise NotImplementedError()
 
     def get_hlo_text(self, status: HloStatus = HloStatus.FULLY_OPTIMIZED):
         """Return the HLO text for all stages."""
@@ -424,6 +409,7 @@ class PipeshardMeshWorkerExecuable:
                  donate_invars: Sequence[bool]):
         # Instruction Lists
         self.exec_uuid = uuid
+        self.exec_timer_name = get_execution_timer_name(uuid)
         self.instructions = instructions
         self.input_local_uuids = input_local_uuids
         self.output_local_uuids = output_local_uuids
@@ -502,7 +488,8 @@ class PipeshardMeshWorkerExecuable:
         sync_func = self.worker.sync if sync_for_timer else None
 
         # Execute
-        timers("overall").start(sync_func=sync_func)
+        timers(self.exec_timer_name).start(sync_func=sync_func)
+
         for instruction in self.instructions:
             #self.worker.sync()
             #print(f"memory_allocated: "
@@ -510,26 +497,16 @@ class PipeshardMeshWorkerExecuable:
             #      f"max_memory_allocated: "
             #      f"{self.worker.get_max_memory_allocated()/1024**3:.3f} GB "
             #      f"next instruction: {instruction}", flush=True)
-            #self.worker.sync()
 
             if instruction.opcode == PipelineInstType.RUN:
-                if "stage" in instruction.info:
-                    timers("stage_timestamps").start(sync_func=sync_func)
-                timers("compute").start()
                 self.worker.run_executable(instruction.task_uuid,
                                            instruction.input_uuids,
                                            instruction.output_uuids,
                                            **instruction.opaques["kwargs"])
-                if "stage" in instruction.info:
-                    timers("stage_timestamps").stop(sync_func=sync_func)
-                timers("compute").suspend()
             elif instruction.opcode == PipelineInstType.SEND:
-                timers("resharding_send").start()
                 self.worker.run_resharding_send_task(instruction.task_uuid,
                                                      instruction.input_uuids[0])
-                timers("resharding_send").suspend()
             elif instruction.opcode == PipelineInstType.RECV:
-                timers("resharding_recv").start()
                 self.worker.run_resharding_recv_task(
                     instruction.task_uuid, instruction.output_uuids[0],
                     instruction.opaques["set_empty_buffer"])
@@ -539,28 +516,15 @@ class PipeshardMeshWorkerExecuable:
                     ary_uuid = instruction.output_uuids[0]
                     self.worker.run_executable(task_uuid, [ary_uuid],
                                                [ary_uuid], False, False)
-                timers("resharding_recv").suspend()
             elif instruction.opcode == PipelineInstType.BROADCAST:
-                timers("resharding_broadcast").start()
                 self.worker.run_resharding_broadcast_task(
                     instruction.task_uuid,
                     (instruction.input_uuids if instruction.input_uuids
                      is not None else instruction.output_uuids)[0])
-                timers("resharding_broadcast").suspend()
             elif instruction.opcode == PipelineInstType.FREE:
-                timers("free").start()
                 self.worker.delete_buffers(instruction.input_uuids)
-                timers("free").suspend()
 
-        for timer_name in [
-                "compute", "resharding_send", "resharding_recv",
-                "resharding_broadcast", "free"
-        ]:
-            if timer_name in timers:
-                timers(timer_name).stop()
-                # timers(timer_name).log(mode="sum")
-                # timers(timer_name).reset()
-        timers("overall").stop(sync_func=sync_func)
+        timers(self.exec_timer_name).stop(sync_func=sync_func)
 
         # copy to global env
         assert len(self.output_local_uuids) == len(output_global_uuids)

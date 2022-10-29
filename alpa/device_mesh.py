@@ -1371,17 +1371,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 ########################################
 # Distributed Array and Buffers
 ########################################
-remote_buffer_counter = 0
-
-
-def next_array_uuids(number=1):
-    """Return the next uuid of a remote buffer."""
-    global remote_buffer_counter
-    ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
-    remote_buffer_counter = (remote_buffer_counter + number) % (1 << 60)
-    return ret
-
-
 class RemoteArrayRef:
     """
     A reference to all device buffers of a logical array.
@@ -1414,8 +1403,21 @@ class RemoteArrayRef:
             self.device_mesh.delete_remote_buffers((self,))
 
 
-def create_remote_array_refs(device_mesh, num=1):
-    ary_uuids = next_array_uuids(num)
+# The global buffer counter
+remote_buffer_counter = 0
+
+
+def next_array_uuids(number=1):
+    """Return the next uuid of a remote buffer."""
+    global remote_buffer_counter
+    ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
+    remote_buffer_counter = (remote_buffer_counter + number) % (1 << 60)
+    return ret
+
+
+def create_remote_array_refs(device_mesh, number=1):
+    """Create a list of remote array refs."""
+    ary_uuids = next_array_uuids(number)
     ary_refs = [RemoteArrayRef(device_mesh, uuid) for uuid in ary_uuids]
     return ary_refs, ary_uuids
 

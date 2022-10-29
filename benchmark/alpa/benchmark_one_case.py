@@ -75,6 +75,8 @@ def benchmark_one_case_internal(model,
 
     else:
         global_config.pipeline_sync_for_timer = True
+        if profile_stage_execution_time:
+            global_config.collect_trace = True
         init(cluster="ray")
 
         # Run benchmark

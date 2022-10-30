@@ -180,6 +180,8 @@ def benchmark_gpt_inference_internal(model_type,
         )
         avg_stage_latencies = compute_avg_stage_latencies(timelines)
         assert len(avg_stage_latencies) == num_manual_pipeline_stages
+    else:
+        avg_stage_latencies = None
 
     # Compute statistics
     tflops, parameter_count = compute_gpt_inference_statistics(
@@ -187,6 +189,6 @@ def benchmark_gpt_inference_internal(model_type,
     metadata = {
         "latencies": latencies,
         "compilation_times": compilation_times,
-        "avg_stage_latencies": avg_stage_latencies 
+        "avg_stage_latencies": avg_stage_latencies
     }
     return parameter_count, max_mem_allocated, latencies, tflops, metadata

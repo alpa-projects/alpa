@@ -2,7 +2,7 @@
 
 #conda init bash
 
-#conda activate alpa 
+conda activate alpa 
 
-echo y|ray start --head
+echo y|ray start --head 
 cd benchmark/alpa

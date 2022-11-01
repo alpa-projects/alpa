@@ -42,11 +42,11 @@ def benchmark_suite(suite_name,
                     num_hosts,
                     num_devices_per_host,
                     exp_name="default",
-                    niter=10,
+                    niter=3,
                     shard_only=False,
                     local=False,
                     profile_driver_time=False,
-                    profile_stage_execution_time=True,
+                    profile_stage_execution_time=False,
                     disable_tqdm=False,
                     use_separate_process=True):
     num_gpus = num_hosts * num_devices_per_host
@@ -88,16 +88,16 @@ def benchmark_suite(suite_name,
         (parameter_count, peak_mem, latencies, tflops, metadata) = result
 
         heads = [
-            "ModelName", "BS", "#Microbatch", "DP", "OP", "PP", "#GPU",
-            "MeanTime(s)", "StdTime(s)", "TFLOPs", "Weights(GB)", "PeakMem(GB)",
-            "StageLatencies(s)"
+            "Type", "Model Config", "#Microbatch", "#GPU", "Parallel Config",
+            "Mean Time (s)", "Std Time (s)", "#Params (Billion)", "TFLOPs",
+            "Peak Mem (GB)", "Metadata"
         ]
         values = [
-            exp_name, benchmark_case.batch_size, num_micro_batches,
-            parallel_args.dp, parallel_args.op, parallel_args.pp, num_gpus,
-            f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
-            f"{tflops:.2f}", f"{parameter_count/1e9:.3f}", f"{peak_mem/GB:.3f}",
-            metadata["avg_stage_latencies"]
+            model_type, model_config, num_micro_batches, num_gpus,
+            parallel_args, f"{np.mean(latencies):.3f}",
+            f"{np.std(latencies):.3f}", f"{parameter_count/1e9:.3f}B",
+            f"{tflops:.2f}", f"{peak_mem/GB:.3f}",
+            to_str_round(metadata, 2)
         ]
         write_tsv(heads, values, output_name)
 

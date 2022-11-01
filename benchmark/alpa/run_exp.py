@@ -35,7 +35,10 @@ model_search_suites = {
     "gpt": ("gpt.grid_search_auto", {}),
     "moe": ("moe.grid_search_auto", {}),
     "wresnet": ("wresnet.grid_search_auto", {}),
-    "gpt_inference": ("gpt_inference.profile", {}),
+    "gpt_inference": ("gpt_inference.profile", {
+        "niter": 10,
+        "profile_stage_execution_time": True
+    }),
     "gpt_no_embedding_inference": ("gpt_no_embedding_inference.profile", {}),
     "gpt_inference_streaming": ("gpt_inference.profile", {
         "profile_driver_time": True

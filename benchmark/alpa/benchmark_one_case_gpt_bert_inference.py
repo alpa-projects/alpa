@@ -1,4 +1,6 @@
 """Benchmark one case of inter-op + intra-op parallelism."""
+import os
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -7,7 +9,7 @@ from alpa import (parallelize, get_global_cluster,
                   set_global_virtual_physical_mesh)
 from alpa.model.bert_model import BertConfig, FlaxBertLayerCollection
 from alpa.model.gpt_model import FlaxGPTForLMModule
-from alpa.util import print_used_time
+from alpa.util import print_used_time, GB, write_tsv
 
 from util import compute_gpt_parameter_count, compute_gpt_tflops
 from benchmark_parallel_utils import (
@@ -169,6 +171,11 @@ def benchmark_gpt_inference_internal(model_type,
          params, (batch, rngkey),
          profile_driver_time=profile_driver_time)
 
+    # Compute statistics
+    tflops, parameter_count = compute_gpt_inference_statistics(
+        benchmark_case, latencies, virtual_mesh.num_devices_per_host)
+
+    # Log per-stage execution information if needed
     if profile_stage_execution_time:
         exec_info = executable.get_stage_execution_info()
         timelines = list(zip(*exec_info))
@@ -180,15 +187,25 @@ def benchmark_gpt_inference_internal(model_type,
         )
         avg_stage_latencies = compute_avg_stage_latencies(timelines)
         assert len(avg_stage_latencies) == num_manual_pipeline_stages
-    else:
-        avg_stage_latencies = None
+        parallel_args = benchmark_case.parallel_args
+        dp, op, pp = parallel_args.dp, parallel_args.op, parallel_args.pp
+        model_name = os.environ.get("MODEL_NAME", default="bert_model")
+        heads = [
+            "ModelName", "BS", "#Microbatch", "DP", "OP", "PP", "#GPU",
+            "MeanTime(s)", "StdTime(s)", "TFLOPs", "Weights(GB)", "PeakMem(GB)",
+            "StageLatencies(s)"
+        ]
+        values = [
+            model_name, benchmark_case.batch_size,
+            benchmark_case.num_micro_batches, dp, op, pp, dp * op * pp,
+            f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
+            f"{tflops:.2f}", f"{parameter_count/1e9:.3f}",
+            f"{max_mem_allocated/GB:.3f}", avg_stage_latencies
+        ]
+        write_tsv(heads, values, f"{model_name}.tsv")
 
-    # Compute statistics
-    tflops, parameter_count = compute_gpt_inference_statistics(
-        benchmark_case, latencies, virtual_mesh.num_devices_per_host)
     metadata = {
         "latencies": latencies,
         "compilation_times": compilation_times,
-        "avg_stage_latencies": avg_stage_latencies
     }
     return parameter_count, max_mem_allocated, latencies, tflops, metadata

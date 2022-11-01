@@ -13,7 +13,7 @@ from alpa.util import print_used_time, GB, write_tsv
 
 from util import compute_gpt_parameter_count, compute_gpt_tflops
 from benchmark_parallel_utils import (
-    get_pipeshard_parallel_method, dump_chrome_tracing,
+    get_pipeshard_parallel_method,
     compile_and_benchmark_pipeshard_inference_executable,
     compute_avg_stage_latencies)
 
@@ -178,14 +178,15 @@ def benchmark_gpt_inference_internal(model_type,
 
     # Log per-stage execution information if needed
     if profile_stage_execution_time:
+        # # dump chrome trace
+        # executable.dump_stage_execution_trace(
+        #     f"./chrome_trace/bs={benchmark_case.batch_size},op={benchmark_case.parallel_args.op},pp={benchmark_case.parallel_args.pp}.json"
+        # )
+        # compute and log per-stage latency/memory statistics
         exec_info = executable.get_stage_execution_info()
         timelines = list(zip(*exec_info))
         # drop warmup case
         timelines = timelines[1:]
-        dump_chrome_tracing(
-            timelines,
-            f"./chrome_trace/bs={benchmark_case.batch_size},op={benchmark_case.parallel_args.op},pp={benchmark_case.parallel_args.pp}.json"
-        )
         avg_stage_latencies = compute_avg_stage_latencies(timelines)
         assert len(avg_stage_latencies) == num_manual_pipeline_stages
         parallel_args = benchmark_case.parallel_args

@@ -163,8 +163,9 @@ def benchmark_gpt_inference_internal(model_type,
 
     infer_step = get_infer_step(method, model, model_type)
 
-    (latencies, max_mem_allocated, compilation_times,
-     executable) = compile_and_benchmark_pipeshard_inference_executable(
+    (latencies, max_mem_allocated, compilation_times, executable,
+     per_stage_weight_mem,
+     per_stage_peak_mem) = compile_and_benchmark_pipeshard_inference_executable(
          benchmark_case.parallel_mode,
          niter,
          infer_step,
@@ -192,15 +193,15 @@ def benchmark_gpt_inference_internal(model_type,
         model_name = os.environ.get("MODEL_NAME", default="bert_model")
         heads = [
             "ModelName", "BS", "#Microbatch", "DP", "OP", "PP", "#GPU",
-            "MeanTime(s)", "StdTime(s)", "TFLOPs", "Weights(GB)", "PeakMem(GB)",
-            "StageLatencies(s)"
+            "MeanTime(s)", "StdTime(s)", "TFLOPs", "StageWeights(GB)",
+            "StagePeakMem(GB)", "StageLatencies(s)"
         ]
         values = [
             model_name, benchmark_case.batch_size,
             benchmark_case.num_micro_batches, dp, op, pp, dp * op * pp,
             f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
-            f"{tflops:.2f}", f"{parameter_count/1e9:.3f}",
-            f"{max_mem_allocated/GB:.3f}", avg_stage_latencies
+            f"{tflops:.2f}", f"{np.array(per_stage_weight_mem)/1e9}",
+            f"{np.array(per_stage_peak_mem)/GB}", avg_stage_latencies
         ]
         write_tsv(heads, values, f"{model_name}.tsv")
 

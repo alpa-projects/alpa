@@ -408,7 +408,7 @@ def compile_and_benchmark_pipeshard_inference_executable(
         in_tree,
         executable.mesh_group.shard_args_to_arrays(flat_ps, flat_params))
     print_used_time("Preshard (driver)")
-    per_stage_weight_mem = executable.mesh_group.get_max_memory_allocated_per_stage(
+    per_stage_weight_mem = executable.mesh_group.get_max_memory_allocated_per_mesh(
     )
 
     latencies = benchmark_inference_executable(
@@ -419,7 +419,7 @@ def compile_and_benchmark_pipeshard_inference_executable(
         other_inference_step_inputs,
         profile_driver_time=profile_driver_time)
     max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
-    per_stage_peak_mem = executable.mesh_group.get_max_memory_allocated_per_stage(
+    per_stage_peak_mem = executable.mesh_group.get_max_memory_allocated_per_mesh(
     )
 
     return latencies, max_mem_allocated, compilation_times, executable, per_stage_weight_mem, per_stage_peak_mem

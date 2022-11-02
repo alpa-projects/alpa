@@ -178,10 +178,10 @@ def benchmark_gpt_inference_internal(model_type,
 
     # Log per-stage execution information if needed
     if profile_stage_execution_time:
-        # # dump chrome trace
-        # executable.dump_stage_execution_trace(
-        #     f"./chrome_trace/bs={benchmark_case.batch_size},op={benchmark_case.parallel_args.op},pp={benchmark_case.parallel_args.pp}.json"
-        # )
+        # dump chrome trace
+        executable.dump_stage_execution_trace(
+            f"./chrome_trace/bs={benchmark_case.batch_size},op={benchmark_case.parallel_args.op},pp={benchmark_case.parallel_args.pp}.json"
+        )
         # compute and log per-stage latency/memory statistics
         exec_info = executable.get_stage_execution_info()
         timelines = list(zip(*exec_info))
@@ -207,7 +207,6 @@ def benchmark_gpt_inference_internal(model_type,
         write_tsv(heads, values, f"{model_name}.tsv")
 
     metadata = {
-        "latencies": latencies,
         "compilation_times": compilation_times,
     }
     return parameter_count, max_mem_allocated, latencies, tflops, metadata

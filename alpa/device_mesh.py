@@ -2033,8 +2033,8 @@ class PhysicalDeviceMeshGroup:
                 calls.append(worker.get_max_memory_allocated.remote())
         return max(ray.get(calls))
 
-    def get_max_memory_allocated_per_stage(self):
-        """Get the maximal size of memory allocated for each stage so far."""
+    def get_max_memory_allocated_per_mesh(self):
+        """Get the maximal size of memory allocated for each mesh so far."""
         return [mesh.get_max_memory_allocated() for mesh in self.meshes]
 
     def reset_memory_stats(self):

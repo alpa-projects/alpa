@@ -49,4 +49,4 @@ def get_config(model_config,
 #get_config(gpt_specs["6.7B"], [1, 2, 4, 8], [1], [1], [1], [1, 4, 16])
 #get_config(gpt_specs["15B"],  [1, 2, 4, 8], [1], [1], [1], [1, 4, 16])
 
-get_config(gpt_specs["350M"], [8], [1], [1], [4], [16])
+get_config(gpt_specs["2.6B"], [1, 2, 4, 8], [1], [1], [1], [1, 4, 16])

@@ -1,4 +1,6 @@
 """Benchmark one case of inter-op + intra-op parallelism."""
+import os
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -7,12 +9,13 @@ from alpa import (parallelize, get_global_cluster,
                   set_global_virtual_physical_mesh)
 from alpa.model.bert_model import BertConfig, FlaxBertLayerCollection
 from alpa.model.gpt_model import FlaxGPTForLMModule
-from alpa.util import print_used_time
+from alpa.util import print_used_time, GB, write_tsv
 
 from util import compute_gpt_parameter_count, compute_gpt_tflops
 from benchmark_parallel_utils import (
     get_pipeshard_parallel_method,
-    compile_and_benchmark_pipeshard_inference_executable)
+    compile_and_benchmark_pipeshard_inference_executable,
+    compute_avg_stage_latencies)
 
 
 def create_infer_params_aval(rngkey, model, batch, model_type):
@@ -160,24 +163,50 @@ def benchmark_gpt_inference_internal(model_type,
 
     infer_step = get_infer_step(method, model, model_type)
 
-    (latencies, max_mem_allocated, compilation_times,
-     executable) = compile_and_benchmark_pipeshard_inference_executable(
+    (latencies, max_mem_allocated, compilation_times, executable,
+     per_stage_weight_mem,
+     per_stage_peak_mem) = compile_and_benchmark_pipeshard_inference_executable(
          benchmark_case.parallel_mode,
          niter,
          infer_step,
          params, (batch, rngkey),
          profile_driver_time=profile_driver_time)
 
-    if profile_stage_execution_time:
-        executable.dump_stage_execution_trace(
-            f"./chrome_trace/bs={benchmark_case.batch_size},pp={num_manual_pipeline_stages}.json"
-        )
-
     # Compute statistics
     tflops, parameter_count = compute_gpt_inference_statistics(
         benchmark_case, latencies, virtual_mesh.num_devices_per_host)
+
+    # Log per-stage execution information if needed
+    if profile_stage_execution_time:
+        # dump chrome trace
+        executable.dump_stage_execution_trace(
+            f"./chrome_trace/bs={benchmark_case.batch_size},op={benchmark_case.parallel_args.op},pp={benchmark_case.parallel_args.pp}.json"
+        )
+        # compute and log per-stage latency/memory statistics
+        exec_info = executable.get_stage_execution_info()
+        timelines = list(zip(*exec_info))
+        # drop warmup case
+        timelines = timelines[1:]
+        avg_stage_latencies = compute_avg_stage_latencies(timelines)
+        assert len(avg_stage_latencies) == num_manual_pipeline_stages
+        parallel_args = benchmark_case.parallel_args
+        dp, op, pp = parallel_args.dp, parallel_args.op, parallel_args.pp
+        model_name = os.environ.get("MODEL_NAME", default="bert_model")
+        heads = [
+            "ModelName", "BS", "#Microbatch", "DP", "OP", "PP", "#GPU",
+            "MeanTime(s)", "StdTime(s)", "TFLOPs", "StageWeights(GB)",
+            "StagePeakMem(GB)", "StageLatencies(s)"
+        ]
+        values = [
+            model_name, benchmark_case.batch_size,
+            benchmark_case.num_micro_batches, dp, op, pp, dp * op * pp,
+            f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
+            f"{tflops:.2f}", f"{np.array(per_stage_weight_mem)/GB}",
+            f"{np.array(per_stage_peak_mem)/GB}", avg_stage_latencies
+        ]
+        write_tsv(heads, values, f"{model_name}.tsv")
+
     metadata = {
-        "latencies": latencies,
         "compilation_times": compilation_times,
     }
     return parameter_count, max_mem_allocated, latencies, tflops, metadata

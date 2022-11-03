@@ -12,6 +12,7 @@ from jax.core import (Jaxpr, ClosedJaxpr, Literal, gensym, get_aval,
 from jax.lax import add_p, div_p
 from jax.tree_util import PyTreeDef
 
+from alpa import global_config
 from alpa.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh
 from alpa.mesh_executable import (NormalMeshDriverExecutable,
                                   GradAccMeshDriverExecutable)
@@ -75,6 +76,9 @@ def compile_shard_executable(
                                        physical_mesh, logical_mesh_choices,
                                        as_option, *avals)
     else:
+        if global_config.backend == "tpu":
+            raise NotImplementedError(
+                "Gradient accumulation for tpu is not supported")
         return shard_parallel_internal_gradient_accumulation(
             fun, in_tree, out_tree_thunk, static_argnums, donated_invars,
             batch_invars, physical_mesh, logical_mesh_choices,

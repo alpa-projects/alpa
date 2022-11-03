@@ -7,6 +7,7 @@ from jax.interpreters import pxla
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 import numpy as np
 
+from alpa import global_config
 from alpa.device_mesh import ReplicatedDistributedArray, PhysicalDeviceMeshGroup
 from alpa.mesh_executable import (NormalMeshDriverExecutable,
                                   GradAccMeshDriverExecutable)
@@ -88,6 +89,9 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
     placement_specs = executable.get_input_placement_specs()[0]
     placement_specs, _ = tree_flatten(placement_specs)
 
+    if (not isinstance(executable, NormalMeshDriverExecutable) and
+            global_config.backend == "tpu"):
+        raise NotImplementedError(f"{type(executable)} is not supported in tpu")
     if isinstance(executable,
                   (NormalMeshDriverExecutable, GradAccMeshDriverExecutable)):
         sharding_protos = []

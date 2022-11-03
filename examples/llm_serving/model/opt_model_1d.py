@@ -20,14 +20,11 @@ import numpy as np
 import os
 from enum import Enum
 from functools import partial
-from jax._src.lib import xla_client as xc
 
 from alpa.collective.worker_nccl_util_cupy import jax_tensor_to_cupy
 from alpa.model.model_util import ModelOutput
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 from alpa.util import OrderedSet
-from alpa.timer import timers
-from examples.llm_serving.model.opt_utils import sync
 
 try:
     from ft_mha import fused_mmha
@@ -1025,11 +1022,8 @@ class IterationLevelInputPool:
             return
 
         # update cache
-        timers("update cache").start(sync)
         self.cache.update_cache(kv, src_indices, dst_indices, src_sentence_ids)
-        timers("update cache").suspend(sync)
 
-        timers("reorg cache").start(sync)
         reorg_dst_slots, reorg_src_slots = self.cache.get_continuation_plan()
         if len(reorg_dst_slots) > 0:
             self.cache.continuize(reorg_dst_slots, reorg_src_slots)
@@ -1117,23 +1111,6 @@ def custom_mv(k, v, dst_indices, src_indices, hidden_dim):
             k[src_idx * hidden_dim + j] = 0.0
             v[dst_idx * hidden_dim + j] = v[src_idx * hidden_dim + j]
             v[src_idx * hidden_dim + j] = 0.0
-
-
-# @cupyx.jit.rawkernel()
-# def custom_memcpy_fused(dst_k, dst_v, src_k, src_v, dst_indices, src_indices, hidden_dim, breakpoint):
-#     thread_idx = cupyx.jit.threadIdx.x
-#     src_idx = src_indices[cupyx.jit.blockIdx.x]
-#     dst_idx = dst_indices[cupyx.jit.blockIdx.x]
-#     num_elements_per_thread = (hidden_dim + 256 - 1) // 256
-#     for i in range(num_elements_per_thread):
-#         j = thread_idx + 256 * i
-#         if j < hidden_dim:
-#             if cupyx.jit.blockIdx.x < breakpoint:
-#                 dst_k[dst_idx * hidden_dim + j] = src_k[src_idx * hidden_dim + j]
-#                 dst_v[dst_idx * hidden_dim + j] = src_v[src_idx * hidden_dim + j]
-#             else:
-#                 src_k[dst_idx * hidden_dim + j] = src_k[src_idx * hidden_dim + j]
-#                 src_v[dst_idx * hidden_dim + j] = src_v[src_idx * hidden_dim + j]
 
 
 @cupyx.jit.rawkernel()

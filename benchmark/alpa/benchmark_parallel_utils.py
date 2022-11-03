@@ -1,7 +1,9 @@
 """Options of a benchmark case."""
-import time
-from typing import Optional, Dict, Any
 from collections import namedtuple
+import json
+import os
+import time
+from typing import Optional, Dict, Any, List
 
 import numpy as np
 import jax
@@ -77,7 +79,7 @@ def get_pipeshard_parallel_method(benchmark_case: BenchmarkCase,
             ),
             pipeline_schedule=pipeline_schedule,
             layer_option=AutoLayerOption(layer_num=num_auto_layers,
-                                         remat_model=remat_mode),
+                                         remat_mode=remat_mode),
             stage_option=AutoStageOption(**auto_stage_option))
     elif parallel_mode == "load_solution":
         assert isinstance(parallel_args, LoadSolutionParallelArgs)
@@ -89,8 +91,8 @@ def get_pipeshard_parallel_method(benchmark_case: BenchmarkCase,
         num_manual_pipeline_stages = None
         add_manual_remat = None
         if use_remat:
-            remat_mode = ("fine_grained_remat" if use_fine_grained_remat else
-                          "coarse_grained_remat")
+            remat_mode = ("fine_grained_remat"
+                          if use_fine_grained_remat else "coarse_grained_remat")
         else:
             remat_mode = "none"
         model_num_layers = benchmark_case.model_config.num_layers
@@ -194,7 +196,6 @@ def get_shard_parallel_method(benchmark_case: BenchmarkCase,
         as_option.force_zero_stage_3 = True
     elif parallel_mode in ["shard-largest"]:
         as_option.force_simple_heuristic = "largest"
-        global_config.remat_using_while = True
 
     if logical_mesh_options is None:
         logical_mesh_options = {}
@@ -266,7 +267,6 @@ def benchmark_inference_executable(niter,
     warmup = 2 if niter >= 5 else 1
 
     if profile_driver_time:
-        global_config.pipeline_check_alive = False
         # Benchmark latency with streaming
         for i in range(warmup):
             _ = infer_step(params, *other_infer_step_inputs)
@@ -280,7 +280,7 @@ def benchmark_inference_executable(niter,
         for i in range(niter):
             print(f"Iteration {i} ...")
             loss = infer_step(params, *other_infer_step_inputs)
-            loss.get_remote_buffers_async()
+            loss.prefetch()
             losses.append(loss)
         for i, loss in enumerate(losses):
             _ = loss._value
@@ -309,7 +309,7 @@ def compile_pipeshard_executable(parallel_mode, train_step, state,
 
     if parallel_mode == "search":
         compilation_times = {
-            k: timers(k).elapsed() for k in [
+            k: timers(k).elapsed(mode="sum") for k in [
                 "stage-construction", "stage-construction-dp",
                 "stage-construction-compilation", "stage-construction-profiling"
             ]
@@ -400,6 +400,7 @@ def compile_and_benchmark_pipeshard_inference_executable(
         parallel_mode, infer_step, params, other_inference_step_inputs)
 
     # Preshard params
+    executable.mesh_group.reset_memory_stats()
     params_ps = executable.get_input_placement_specs()[0]
     flat_params, in_tree = tree_flatten(params)
     flat_ps = tree_leaves(params_ps)
@@ -407,6 +408,8 @@ def compile_and_benchmark_pipeshard_inference_executable(
         in_tree,
         executable.mesh_group.shard_args_to_arrays(flat_ps, flat_params))
     print_used_time("Preshard (driver)")
+    per_stage_weight_mem = executable.mesh_group.get_max_memory_allocated_per_mesh(
+    )
 
     latencies = benchmark_inference_executable(
         niter,
@@ -416,5 +419,22 @@ def compile_and_benchmark_pipeshard_inference_executable(
         other_inference_step_inputs,
         profile_driver_time=profile_driver_time)
     max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
+    per_stage_peak_mem = executable.mesh_group.get_max_memory_allocated_per_mesh(
+    )
 
-    return latencies, max_mem_allocated, compilation_times, executable
+    return latencies, max_mem_allocated, compilation_times, executable, per_stage_weight_mem, per_stage_peak_mem
+
+
+def compute_avg_stage_latencies(timelines: List[tuple]):
+    stage_latencies = []
+    for request_timeline in timelines:
+        sorted_timeline = sorted(request_timeline, key=lambda x: x[0])
+        stage_borders = [sorted_timeline[0][0]]
+        for _, e, _, _ in sorted_timeline:
+            stage_borders.append(e)
+        stage_latency = [
+            stage_borders[i + 1] - stage_borders[i]
+            for i in range(len(stage_borders) - 1)
+        ]
+        stage_latencies.append(stage_latency)
+    return np.mean(stage_latencies, axis=0)

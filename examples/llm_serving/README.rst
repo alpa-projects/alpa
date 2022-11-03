@@ -3,7 +3,8 @@ Serving OPT-175B using Alpa
 ===========================
 
 This tutorial shows how to setup a serving system to serve the largest available pretrained language model `OPT-175B <https://github.com/facebookresearch/metaseq/tree/main/projects/OPT>`_.
-You can also try a live demo at `Alpa-OPT Demo <https://opt.alpa.ai>`_.
+
+👉 Try a live demo at `Alpa-OPT Demo <https://opt.alpa.ai>`_ 👈
 
 Overview
 ========
@@ -42,9 +43,8 @@ The code below shows how to use huggingface/transformers interface and Alpa dist
   from transformers import AutoTokenizer
   from llm_serving.model.wrapper import get_model
 
-  # Load the tokenizer. We have to use the 30B version because
-  # other versions have some issues. The 30B version works for all OPT models.
-  tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", use_fast=False)
+  # Load the tokenizer. All OPT models with different sizes share the same tokenizer
+  tokenizer = AutoTokenizer.from_pretrained("facebook/opt-2.7b")
   tokenizer.add_bos_token = False
 
   # Load the model. Alpa automatically downloads the weights to the specificed path
@@ -59,7 +59,6 @@ The code below shows how to use huggingface/transformers interface and Alpa dist
 
   print(generated_string)
 
-
 Requirements
 ============
 1. Install Alpa following the `installation guide <https://alpa-projects.github.io/install.html>`_. You can either install by python wheel or build from source.
@@ -68,7 +67,7 @@ Requirements
 
   .. code:: shell
 
-    pip3 install transformers flask omegaconf
+    pip3 install transformers fastapi uvicorn omegaconf jinja2
 
     # Install torch corresponding to your CUDA version, e.g., for CUDA 11.3:
     pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu113
@@ -198,16 +197,20 @@ The code of this tutorial is under `examples/llm_serving <https://github.com/alp
 Launch a Web Server to Serve the OPT Models
 ===========================================
 
-Launch the web server:
+We need to run two scripts: one for web server and another for the model serving worker.
+They will use two ports. The port of the website is defined in the command line and the port of the worker is defined in ``service/constants.py``
 
 .. code:: shell
 
-  # Serve the OPT-175B model at port 20001
-  python3 interactive_hosted.py --model alpa/opt-175b --port 20001
+  # Launch the model worker
+  python3 launch_model_worker.py --model alpa/opt-175b
 
-Then open ``https://[IP-ADDRESS]:20001`` in your browser to try out the model!
+  # Launch the website (in a new terminal)
+  uvicorn launch_website:app --host 0.0.0.0 --port 8001
 
-There is also a client library which can be used to query the web server
+Then open ``http://[IP-ADDRESS]:8001`` in your browser to try out the model!
+
+There is also a client library which can be used to query the model worker
 via a python script. Please check ``test_completions.py`` for the usage.
 
 Improving Generation Speed
@@ -221,6 +224,24 @@ Here are some tips for improving the generation speed.
 3. Tune parallelization strategy. If you are familiar with alpa, you can tune the ``method`` argument of ``alpa.parallelize`` and try different parallelization methods.
 
 If you find the generation speed too slow and want to accelerate it, please join `Alpa slack <https://forms.gle/YEZTCrtZD6EAVNBQ7>`_ and tell us your use cases. We are acitvely working on improving the performance.
+
+
+Other Models
+============
+Alpa also supports `BLOOM <https://huggingface.co/bigscience/bloom>`_.
+You can use commands similar to OPT but with a different model name.
+
+  .. code:: shell
+
+    # Huggingface/pytorch backend
+    python3 textgen.py --model bigscience/bloom-560m
+
+    # Jax backend
+    python3 textgen.py --model jax/bloom-560m
+
+    # Alpa backend
+    python3 textgen.py --model alpa/bloom-560m
+
 
 License
 =======

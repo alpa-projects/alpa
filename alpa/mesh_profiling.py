@@ -86,7 +86,7 @@ class MeshProfilingResult:
 
             for key, value in cost_dict.items():
                 sizes = [x[0] for x in value]
-                indices = np.argsort(sizes)
+                indices = np.argsort(sizes, kind="stable")
                 new_cost_dict[key] = [value[i] for i in indices]
 
             cost_dict.update(new_cost_dict)

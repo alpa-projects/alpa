@@ -161,37 +161,25 @@ class OrderedSet:
 
     def __init__(self, iterable=()):
         self.dict = OrderedDict()
-        for element in iterable:
-            self.dict[element] = None
+        self.dict.update({x: None for x in iterable})
 
     def add(self, *args):
-        for x in args:
-            self.dict[x] = None
+        self.dict.update({x: None for x in args})
 
     def update(self, other):
-        for x in other:
-            self.dict[x] = None
+        self.dict.update({x: None for x in other})
 
     def union(self, other):
-        result = OrderedSet()
-        result.update(self)
+        result = OrderedSet(self)
         result.update(other)
         return result
 
     def intersection_update(self, other):
-        to_be_removed = []
-        for x in self:
-            if x not in other:
-                to_be_removed.append(x)
-        for x in to_be_removed:
-            self.remove(x)
+        for x in [x for x in self.dict if x not in other]:
+            del self.dict[x]
 
     def intersection(self, other):
-        result = OrderedSet()
-        for x in self:
-            if x in other:
-                result.add(x)
-        return result
+        return OrderedSet(x for x in self if x in other)
 
     def discard(self, element):
         if element in self:
@@ -206,11 +194,7 @@ class OrderedSet:
         self.dict.clear()
 
     def difference(self, other):
-        result = OrderedSet()
-        for x in self:
-            if x not in other:
-                result.add(x)
-        return result
+        return OrderedSet([x for x in self if x not in other])
 
     def difference_update(self, other):
         for x in other:
@@ -227,8 +211,7 @@ class OrderedSet:
         return result
 
     def __iter__(self):
-        for x in self.dict:
-            yield x
+        return iter(self.dict)
 
     def __len__(self):
         return len(self.dict)
@@ -1496,6 +1479,7 @@ def env_integer(key, default):
 
 def create_placement_group(num_hosts,
                            host_num_devices,
+                           name,
                            additional_resources_per_host=None):
     """Creates a placement group if it does not exist.
 
@@ -1537,7 +1521,9 @@ def create_placement_group(num_hosts,
         # Each bundle must be scheduled in a separate node.
         strategy = "SPREAD"
 
-        placement_group = ray.util.placement_group(bundles, strategy=strategy)
+        placement_group = ray.util.placement_group(bundles,
+                                                   strategy=strategy,
+                                                   name=name or "")
         logger.debug("Waiting for placement group to start.")
         timeout = env_integer(PLACEMENT_GROUP_TIMEOUT_S_ENV, 100)
         ready, _ = ray.wait([placement_group.ready()], timeout=timeout)

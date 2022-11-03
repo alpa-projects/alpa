@@ -23,8 +23,9 @@ is_initialized = False
 
 
 def init(cluster: str = "ray",
-         devices_per_node: Optional[int] = None,
-         num_nodes: Optional[int] = None):
+         num_nodes: Optional[int] = None,
+         num_devices_per_node: Optional[int] = None,
+         namespace: Optional[str] = None):
     """Initialize the global environment.
 
     `devices_per_node, num_nodes` are used to specify the number of devices.
@@ -39,8 +40,8 @@ def init(cluster: str = "ray",
         Possible choices: {"local", "ray"}.
         "local" means using all local devices on a single node.
         "ray" means using all devices in a ray cluster.
-      devices_per_node: The number of devices per node.
       num_nodes: The number of nodes.
+      num_devices_per_node: The number of devices per node.
     """
     global is_initialized
 
@@ -48,7 +49,7 @@ def init(cluster: str = "ray",
         return
     is_initialized = True
 
-    init_global_cluster(cluster, devices_per_node, num_nodes)
+    init_global_cluster(cluster, num_nodes, num_devices_per_node, namespace)
 
 
 def shutdown():

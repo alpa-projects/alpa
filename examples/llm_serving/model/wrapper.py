@@ -2,7 +2,7 @@
 from collections import defaultdict
 import os
 import time
-from typing import Sequence, Any, Optional
+from typing import Sequence, Any, Optional, List
 import warnings
 
 import alpa
@@ -34,7 +34,6 @@ class InferenceFuncOutput(ModelOutput):
 @dataclass
 class InferenceFuncConfig:
     """Implements a minimal config class for using huggingface's generator.
-
     Note: these parameters might be overwritten by model.generate(**kwargs).
     """
     bos_token_id: int = 0
@@ -46,6 +45,7 @@ class InferenceFuncConfig:
     num_return_sequences: int = 1
     pad_token_id: int = 1
     eos_token_id: int = 2
+    unk_token_id: int = 0
     output_scores: bool = False
     output_attentions: bool = False
     output_hidden_states: bool = False
@@ -65,6 +65,9 @@ class InferenceFuncConfig:
     top_p: int = 1.0
     typical_p: int = 1.0
     temperature: float = 1.0
+    suppress_tokens: Optional[List[int]] = None
+    begin_suppress_tokens: Optional[List[int]] = None
+    forced_decoder_ids: Optional[List[int]] = None
 
 
 class WrappedInferenceFunc(GenerationMixin):
@@ -211,11 +214,12 @@ def get_hf_model(model_name, device):
 
     inference_func_config = InferenceFuncConfig()
     for key in inference_func_config.__dataclass_fields__.keys():
-        setattr(inference_func_config, key, getattr(model.config, key))
-    if hasattr(model.config, "seq_length"):
-        seq_len = model.config.seq_length
-    else:
+        if hasattr(model.config, key):
+            setattr(inference_func_config, key, getattr(model.config, key))
+    if hasattr(model.config, "max_position_embeddings"):
         seq_len = model.config.max_position_embeddings
+    else:
+        seq_len = 2048
 
     transformer_config = TransformerModelConfig(
         H=model.config.hidden_size,
@@ -404,10 +408,6 @@ def get_alpa_model(model_name: str,
             m = opt_model
         elif "bloom" in model_name:
             m = bloom_model
-            if any(x > 1 for x in encoder_chunk_sizes):
-                # TODO: support chunk size > 1
-                warnings.warn("encoder_chunk_size > 1 is not supported. Ignored.")
-                encoder_chunk_sizes = [1]
         config = m.get_config(name,
                               num_pp_stages=None,
                               mark_boundary=False,
@@ -434,10 +434,6 @@ def get_alpa_model(model_name: str,
             m = opt_model
         elif "bloom" in model_name:
             m = bloom_model
-            if any(x > 1 for x in encoder_chunk_sizes):
-                # TODO: support chunk size > 1
-                warnings.warn("encoder_chunk_size > 1 is not supported. Ignored.")
-                encoder_chunk_sizes = [1]
 
         alpa.init()
 
@@ -590,6 +586,11 @@ def get_alpa_model(model_name: str,
                                    output.hidden_states, output.attentions)
 
     inference_func_config = InferenceFuncConfig()
+    if "bloom" in model_name:
+        inference_func_config.bos_token_id = 1
+        inference_func_config.eos_token_id = 2
+        inference_func_config.pad_token_id = 3
+        inference_func_config.unk_token_id = 0
     return WrappedInferenceFunc(inference_func,
                                 inference_func_config,
                                 executables[1],
@@ -617,7 +618,6 @@ def get_model(model_name: str,
               output_attentions: bool = False,
               output_hidden_states: bool = False):
     """Get a model that is compatible with HuggingFace's generation API.
-
     Args:
         model_name: "facebook/opt-", or "alpa/opt-".
         path: The path to opt weights.

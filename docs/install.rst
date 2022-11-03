@@ -223,3 +223,7 @@ then follow the procedures in :ref:`install from source<install-from-source>` to
 Optionally, you can switch back to use the higher version of numpy (``numpy>=1.20``) to run Alpa and your other applications, thanks to numpy's backward compatibility.
 
 See `Issue#461 <https://github.com/alpa-projects/alpa/issues/461>`_ for more discussion.
+
+Tests Hang with no Errors on Multi-GPU Nodes
+############################################
+This could be an indication that IO virtualization (VT-d, or IOMMU) is interfereing with the NCCL library. On multi-gpu systems, PCI point-to-point traffic can be redirected to the CPU by these systems causing performance reductions or programs to hang. These settings can typically be disabled from the BIOS, or sometimes from the OS. You can find more information on Nividia's NCCL troubleshooting guide `here <https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/troubleshooting.html>`_. Note that disabling IO virtualization can introduce security vulnerabilities, with peripherals having read/write access to DRAM through the DMA (Direct Memory Access) protocol.

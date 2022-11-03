@@ -78,6 +78,7 @@
         $.map(unindexed_array, function(n, i){
             indexed_array[n['name']] = n['value'].replace("\r\n", "\n");
         });
+        indexed_array['model'] = "default"
         return indexed_array;
     }
 
@@ -145,14 +146,16 @@
         $("#loader_holder").css("visibility", "visible");
         $("#generate-form-button").prop("disabled", true);
         $("#error").text("");
-        var submitData = getFormData($("form"));
-        console.log(JSON.stringify(submitData));
+        var formData = getFormData($("form"));
+        var submitData = JSON.stringify(formData)
+        console.log("submitData:");
+        console.log(submitData);
         $.ajax({
-            url: "completions",
+            url: {{alpa_serve_url | safe}},
             type: "POST",
             processData: true,
             contentType: "application/json",
-            data: JSON.stringify(getFormData($("form"))),
+            data: submitData,
             complete: function () {
                 $("#loader_holder").css("visibility", "hidden");
                 $("#generate-form-button").prop("disabled", false);
@@ -162,8 +165,7 @@
                 console.log("Response:");
                 console.log(data);
                 for (let i = 0; i < data["choices"].length; ++i) {
-                  console.log(data["choices"][i]["text"]);
-                  $("#promptDisplay", "#result" + i + "-content").text(submitData["prompt"]);
+                  $("#promptDisplay", "#result" + i + "-content").text(formData["prompt"]);
                   $("#response", "#result" + i + "-content").text(data["choices"][i]["text"]);
                   $("#error", "#result" + i + "-content").text("");
                 }
@@ -173,8 +175,21 @@
                 console.log(xhr);
                 $("#promptDisplay").text("");
                 $("#response").text("");
-                $("#error").text(xhr.responseJSON.error.message + "\n\n" +
-                                 xhr.responseJSON.error.stacktrace.join())
+                if ("responseJSON" in xhr) {
+                  msg = "Error: " + xhr.responseJSON.message;
+                  if (msg.includes("No replica of model") ||
+                      msg.includes("is not registered") ||
+                      msg.includes("object has no attribute")) {
+                    msg += "\nThe server is probably under regular maintenance. " +
+                           "Please come back 10 minutes later.";
+                  }
+                  $("#error").text(msg);
+                } else {
+                  $("#error").text(
+                      "Cannot connect to the server due to unknown errors. " +
+                      "\nThe server is probably under regular maintenance. " +
+                      "Please come back 10 minutes later.");
+                }
             }
         });
       });
@@ -365,7 +380,7 @@
 
       <div class="d-grid gap-4 d-sm-flex justify-content-sm-center">
         <a href="#generation" class="btn btn-primary px-4 btn-lg">Try Live Generation</a>
-        <a href="https://alpa-projects.github.io/tutorials/llm_serving.html" class="btn btn-outline-primary px-4 btn-lg" target="_blank">Host Your Own Service</a>
+        <a href="https://alpa-projects.github.io/tutorials/opt_serving.html" class="btn btn-outline-primary px-4 btn-lg" target="_blank">Host Your Own Service</a>
       </div>
   </div>
 
@@ -409,7 +424,7 @@
     <div class="form-group row" data-html2canvas-ignore="true" style="{{sampling_css}}">
         <label for="temperature_slider" class="col col-form-label text-end fw-bold">Temperature:</label>
         <div class="col my-2">
-            <input type="range" value="0.7" min="0.1" max="1.0" step="0.10" class="form-range"
+            <input type="range" value="0.7" min="0.0" max="1.0" step="0.10" class="form-range"
             oninput="this.parentNode.nextElementSibling.value = this.value" name="temperature" id="temperature_slider">
         </div>
             <output class='col col-form-label'>0.7</output>

@@ -29,10 +29,12 @@ build_jaxlib/dist
 
 # Examples build and tmp files
 examples/build/
+examples/imagenet/imagenet
 examples/llm_serving/dataset/*.so
 examples/llm_serving/dataset/*.c
 examples/llm_serving/dataset/*.cpp
 examples/llm_serving/weblogs
+examples/llm_serving/keys_file.json
 examples/llm_serving/benchmark/tmp*
 examples/llm_serving/tmp*
 examples/opt_finetune/output/
@@ -44,28 +46,27 @@ alpa_debug_info
 *.prof
 *.tsv
 *.hlo
+*.pkl
+benchmark/alpa/tmp*
+benchmark/alpa/chrome_trace
+*.log
 
 # Tests temp files
 tests/tmp
+tests/*/tmp
 
 # Dataset
 benchmark/deepspeed/data
 
 # plots
-benchmark/**.pdf
+benchmark/*.pdf
 
 # Numpy cache
 *.npy
-*.pkl
-benchmark/alpa/tmp
-*.log
 
 # Documentation website build
 docs/_build
 docs/tutorials
-
-# Example temp files
-examples/imagenet/imagenet
 
 # macOS temp files
 .DS_Store

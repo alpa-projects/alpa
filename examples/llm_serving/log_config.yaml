@@ -1,0 +1,21 @@
+version: 1
+formatters:
+  simple:
+    format: "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+    datefmt: "%Y-%m-%d %H:%M:%S"
+handlers:
+  console:
+    class : logging.StreamHandler
+    formatter: simple
+    level   : INFO
+    stream  : ext://sys.stdout
+  file:
+    class : logging.handlers.TimedRotatingFileHandler
+    filename: weblogs/llm_serving.website.log
+    when: "D"
+    utc: True
+    formatter: simple
+    level   : INFO
+root:
+  level: INFO
+  handlers: [console, file]

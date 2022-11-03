@@ -68,12 +68,12 @@ class DeviceMeshTest(unittest.TestCase):
 class DeviceMesh_ResourceAwareness(unittest.TestCase):
 
     def setUp(self):
-        init(cluster="ray", devices_per_node=2, num_nodes=1)
+        init(cluster="ray", num_nodes=1, num_devices_per_node=2)
 
     def tearDown(self):
         shutdown()
 
-    @unittest.skipIf(jax.local_device_count("gpu") < 8, "no enough device")
+    @unittest.skipIf(jax.local_device_count("gpu") < 4, "no enough device")
     def test_resource_check(self):
         cluster_devices = ray.cluster_resources().get("GPU", 0)
         available_devices = ray.available_resources().get("GPU", 0)

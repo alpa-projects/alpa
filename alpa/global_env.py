@@ -43,7 +43,7 @@ class GlobalConfig:
         self.always_donate_micro_batch_vars = True
 
         ########## Options of pipeline runtime ##########
-        self.pipeline_check_alive = True
+        self.pipeline_check_alive = False
         # Whether to sync before and after the executable for accurate internal
         # timer
         self.pipeline_sync_for_timer = False
@@ -64,11 +64,6 @@ class GlobalConfig:
         # "xla_extension"}
         self.nccl_mode = "cupy"
 
-        ########## Options of XLA compilation ##########
-        # Whether to use xla while instruction for preventing CSE in
-        # rematerialization
-        self.remat_using_while = False
-
         ########## Options of benchmark ##########
         # If true, the system is allowed to use dummy values during
         # tensor creation and copy to reduce the initialization and copy time.
@@ -82,6 +77,9 @@ class GlobalConfig:
         ########## Options of logging ##########
         self.print_compilation_time = False
         self.print_auto_layer_stats = False
+
+        # Whether to collect activity trace
+        self.collect_trace = False
 
 
 global_config = GlobalConfig()

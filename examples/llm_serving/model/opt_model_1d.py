@@ -26,6 +26,8 @@ from alpa.collective.worker_nccl_util_cupy import jax_tensor_to_cupy
 from alpa.model.model_util import ModelOutput
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 from alpa.util import OrderedSet
+from alpa.timer import timers
+from examples.llm_serving.model.opt_utils import sync
 
 try:
     from ft_mha import fused_mmha
@@ -777,12 +779,6 @@ class Cache:
         heapq.heappush(self.vacancies, slot)
         # reset the cache indices of this slot as there
         self.kv_cache_ids[slot:slot + self.max_cache_per_seq] = 0
-
-        # also set the cache values
-        # for layer_idx, (k, v) in enumerate(self.kv_caches_cupy):
-        #     k[slot:slot+self.max_cache_per_seq,:,:] = 0.0
-        #     v[slot:slot+self.max_cache_per_seq,:,:] = 0.0
-
         if self.continuity_tracker - slot == self.max_cache_per_seq:
             # meaning the released slot is next to the tracker
             new_start = slot - self.max_cache_per_seq
@@ -834,14 +830,12 @@ class Cache:
         dst_indices_cupy = cupy.array(dst_indices)
         src_indices_cupy = cupy.array(src_indices)
         src_kv = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in kv]
-        # print(src_kv[0][0][:, 0, 0, 0])
         for layer_idx, (src_k, src_v) in enumerate(src_kv):
             dst_k, dst_v = self.kv_caches_cupy[layer_idx]
             custom_memcpy_v2[len(src_indices), num_threads_per_block](dst_k.ravel(), dst_v.ravel(),
-                                                                   src_k.ravel(), src_v.ravel(),
-                                                                   dst_indices_cupy, src_indices_cupy,
-                                                                   self.hidden_dim)
-
+                                                                      src_k.ravel(), src_v.ravel(),
+                                                                      dst_indices_cupy, src_indices_cupy,
+                                                                      self.hidden_dim)
         # update cache ids
         self.kv_cache_ids[dst_indices] = src_sentence_ids
 
@@ -863,34 +857,13 @@ class Cache:
 
         # update vacancies
         for slot in src_slots:
-            heapq.heappush(self.vacancies, slot)
+            if slot not in self.vacancies:
+                self.release_slot(slot)
         for slot in dst_slots:
-            self.vacancies.remove(slot)
-        logger.info(f"vacancy update: src {src_slots}, dst {dst_slots}, "
-                    f"after vacancy: {self.vacancies}")
-
+            if slot in self.vacancies:
+                self.vacancies.remove(slot)
         # update continuity tracker
         self.continuity_tracker = self.vacancies[0]
-
-    def update_continuation_fused(self, kv, src_indices, dst_indices, src_sentence_ids, breakpoint):
-        """Copy the KV caches from src_indices and write to dst_indices.
-
-        For entries before `breakpoint`, copy from kv and write to self.kv_caches;
-        for entries after `breakpoint`, copy from self.kv_caches and write to self.kv_caches.
-        """
-        num_threads_per_block = 256
-        dst_indices_cupy = cupy.array(dst_indices)
-        src_indices_cupy = cupy.array(src_indices)
-        src_kv = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in kv]
-        for layer_idx, (src_k, src_v) in enumerate(src_kv):
-            dst_k, dst_v = self.kv_caches_cupy[layer_idx]
-            custom_memcpy_fused[len(src_indices), num_threads_per_block](dst_k.ravel(), dst_v.ravel(),
-                                                                         src_k.ravel(), src_v.ravel(),
-                                                                         dst_indices_cupy, src_indices_cupy,
-                                                                         self.hidden_dim, breakpoint)
-        # update cache indices
-        self.kv_cache_ids[dst_indices] = src_sentence_ids
-        self.kv_cache_ids[src_indices[breakpoint:]] = 0
 
 
 class IterationLevelInputPool:
@@ -898,14 +871,19 @@ class IterationLevelInputPool:
     def __init__(self,
                  input_pool_config,
                  model_config,
-                 max_generation_length=64):
+                 max_length=None,
+                 max_new_tokens=None):
         self.batch_size = input_pool_config.batch_size
         self.cache_size = input_pool_config.cache_size
-        self.max_cache_per_seq=input_pool_config.max_cache_per_seq
+        self.max_cache_per_seq = input_pool_config.max_cache_per_seq
         self.model_config = model_config
-        self.max_generation_length = max_generation_length
-        if self.max_generation_length > self.max_cache_per_seq:
-            warnings.warn("max generation length > max cache per seq...")
+        self.max_length = max_length
+        self.max_new_tokens = max_new_tokens
+
+        if self.max_length and self.max_length > self.max_cache_per_seq:
+            warnings.warn("`max_length` is greater than `max_cache_per_seq`.")
+        if self.max_new_tokens and self.max_new_tokens > self.max_cache_per_seq:
+            warnings.warn("`max_new_tokens` is greater than `max_cache_per_seq`.")
 
         self.cache = Cache(self.cache_size, self.max_cache_per_seq, self.model_config)
 
@@ -1006,11 +984,7 @@ class IterationLevelInputPool:
         # check EOS, move finished sentences from wip to finished queue
         read_idx = 0
         for generated_id, p in zip(generated_ids, self._current_batch):
-            # logger.debug(f"Prompt {p.sentence_id} generate {generated_id}")
-            # check finish criteria: it generates EOS or it is about to reach max_length.
-            if generated_id == self.eos or \
-                    p.generation_length + 1 + p.prompt_length == self.max_generation_length:
-                # ANY -> FINISHED
+            if self.check_exit_condition(p, generated_id):
                 if p.status == PromptStatus.DECODING:
                     assert p in self.wip
                     self.wip.remove(p)
@@ -1018,7 +992,7 @@ class IterationLevelInputPool:
                 if p.status == PromptStatus.PROMPT:
                     read_idx += p.prompt_length
                 exit_reason = "EOS" if generated_id == self.eos else "reaching max length"
-                logger.info(f"Prompt {p.sentence_id} exits because of {exit_reason}. "
+                logger.debug(f"Prompt {p.sentence_id} exits because of {exit_reason}. "
                              f"Release cache {p.cache_start_index // self.max_cache_per_seq}" )
                 p.finish(generated_id)
                 self.done.add(p)
@@ -1051,80 +1025,23 @@ class IterationLevelInputPool:
             return
 
         # update cache
-        logger.debug(f"Update cache: src {src_indices}, dst {dst_indices}, sen ids: {src_sentence_ids}")
+        timers("update cache").start(sync)
         self.cache.update_cache(kv, src_indices, dst_indices, src_sentence_ids)
-        # logger.debug(f"after update_cache id: {self.cache.kv_cache_ids}, "
-        #              f"cache: {self.cache.kv_caches_cupy[0][0][0:768, 0, 0]}")
+        timers("update cache").suspend(sync)
 
-        # # Now check continuity and get the copy plan if non-continuous
-        # if not self.cache.is_continuous():
-        #     reorg_dst_slots, reorg_src_slots = self.cache.get_continuation_plan()
-        #     logger.debug(f"Reorg plan: move slot from {reorg_src_slots} to {reorg_dst_slots}")
-        #     self.cache.continuize(reorg_dst_slots, reorg_src_slots)
-        #     # repointing
-        #     for dst_slot, src_slot in zip(reorg_dst_slots, reorg_src_slots):
-        #         for p in self.wip:
-        #             if p.cache_start_index == src_slot:
-        #                 logger.debug(f"Reorg: repoint prompt {p.sentence_id} from {src_slot} to {dst_slot}")
-        #                 p.cache_start_index = dst_slot
-        #                 break
-        #     logger.debug(f"After reorg, vacancies: {self.cache.vacancies}, vacancies top: {self.cache.vacancies[0]} "
-        #                  f"continuity: {self.cache.continuity_tracker}")
-
+        timers("reorg cache").start(sync)
         reorg_dst_slots, reorg_src_slots = self.cache.get_continuation_plan()
         if len(reorg_dst_slots) > 0:
-            logger.info(f"Reorg plan: move slot from {reorg_src_slots} to {reorg_dst_slots}")
-            for k, v in self.cache.kv_caches_cupy:
-                for src_slot, dst_slot in zip(reorg_src_slots, reorg_dst_slots):
-                    k[dst_slot:dst_slot+self.max_cache_per_seq, :, :] = \
-                        k[src_slot:src_slot+self.max_cache_per_seq, :, :]
-                    k[src_slot:src_slot + self.max_cache_per_seq, :, :] = 0.0
-                    v[dst_slot:dst_slot+self.max_cache_per_seq, :, :] = \
-                        v[src_slot:src_slot+self.max_cache_per_seq, :, :]
-                    v[src_slot:src_slot + self.max_cache_per_seq, :, :] = 0.0
-            for src_slot, dst_slot in zip(reorg_src_slots, reorg_dst_slots):
-                self.cache.kv_cache_ids[dst_slot:dst_slot+self.max_cache_per_seq] = \
-                    self.cache.kv_cache_ids[src_slot:src_slot+self.max_cache_per_seq]
-                self.cache.kv_cache_ids[src_slot:src_slot+self.max_cache_per_seq] = 0
-
+            self.cache.continuize(reorg_dst_slots, reorg_src_slots)
             # update the prompt that has been influenced
             for dst_slot, src_slot in zip(reorg_dst_slots, reorg_src_slots):
                 for p in self.wip:
                     if p.cache_start_index == src_slot:
-                        # reorg_src_indices.extend(list(range(src_slot, src_slot + self.max_cache_per_seq)))
-                        # reorg_sentence_ids.extend(self.cache.kv_cache_ids[src_slot:src_slot+self.max_cache_per_seq].tolist())
                         p.cache_start_index = dst_slot
-                        # reorg_dst_indices.extend(list(range(dst_slot, dst_slot + self.max_cache_per_seq)))
                         break
-
-
-            # breakpoint = len(src_indices)
-            # src_indices.extend(reorg_src_indices)
-            # dst_indices.extend(reorg_dst_indices)
-            # src_sentence_ids.extend(reorg_sentence_ids)
-            # copy cache in one kernel and update cache indices
-            # self.cache.update_fused(kv, src_indices, dst_indices, src_sentence_ids, breakpoint)
-            # logger.debug(f"cache update plan: move from {[s for s in src_indices]} "
-            #              f"to {[s for s in dst_indices]}")
-            # if len(reorg_dst_slots) > 0:
-            #     logger.debug(f"cache reorg is required: move from {[s//self.max_cache_per_seq for s in reorg_src_slots]} "
-            #                  f"to {[s//self.max_cache_per_seq for s in reorg_dst_slots]}. "
-            #                  f"Move plan: src {src_indices}, dst: {dst_indices}, src_sen: {src_sentence_ids}")
-            #
-
-            # update vacancies
-            for slot in reorg_src_slots:
-                if slot not in self.cache.vacancies:
-                    self.cache.release_slot(slot)
-            for slot in reorg_dst_slots:
-                if slot in self.cache.vacancies:
-                    self.cache.vacancies.remove(slot)
-            self.cache.continuity_tracker = self.cache.vacancies[0]
-
-            # sort self._current_batch based on the order of cache
-            logger.debug(f"before sort: {[(p.sentence_id, p.cache_start_index) for p in self.wip]}")
+            # Note(Hao): the cache order must align with input order.
+            # so we have to sort self._current_batch based on the order of cache
             self.wip = OrderedSet(sorted(self.wip, key=lambda x: x.cache_start_index, reverse=False))
-            logger.debug(f"after sort: {[(p.sentence_id, p.cache_start_index) for p in self.wip]}")
 
     def get_results(self):
         """Return results sorted by their sentence id."""
@@ -1144,6 +1061,18 @@ class IterationLevelInputPool:
     def num_vacant_sequence_slot(self):
         """Return the global vacancy."""
         return min(self.batch_size - len(self.wip), len(self.cache.vacancies))
+
+    def check_exit_condition(self, prompt, generated_id):
+        """Check Exit condition: reaching EOS or reaching max length."""
+        if generated_id == self.eos:
+            return True
+        if self.max_new_tokens:
+            if prompt.generation_length + 1 == self.max_new_tokens:
+                return True
+        if self.max_length:
+            if prompt.generation_length + 1 + prompt.prompt_length == self.max_length:
+                return True
+        return False
 
 
 @cupyx.jit.rawkernel()
@@ -1190,21 +1119,21 @@ def custom_mv(k, v, dst_indices, src_indices, hidden_dim):
             v[src_idx * hidden_dim + j] = 0.0
 
 
-@cupyx.jit.rawkernel()
-def custom_memcpy_fused(dst_k, dst_v, src_k, src_v, dst_indices, src_indices, hidden_dim, breakpoint):
-    thread_idx = cupyx.jit.threadIdx.x
-    src_idx = src_indices[cupyx.jit.blockIdx.x]
-    dst_idx = dst_indices[cupyx.jit.blockIdx.x]
-    num_elements_per_thread = (hidden_dim + 256 - 1) // 256
-    for i in range(num_elements_per_thread):
-        j = thread_idx + 256 * i
-        if j < hidden_dim:
-            if cupyx.jit.blockIdx.x < breakpoint:
-                dst_k[dst_idx * hidden_dim + j] = src_k[src_idx * hidden_dim + j]
-                dst_v[dst_idx * hidden_dim + j] = src_v[src_idx * hidden_dim + j]
-            else:
-                src_k[dst_idx * hidden_dim + j] = src_k[src_idx * hidden_dim + j]
-                src_v[dst_idx * hidden_dim + j] = src_v[src_idx * hidden_dim + j]
+# @cupyx.jit.rawkernel()
+# def custom_memcpy_fused(dst_k, dst_v, src_k, src_v, dst_indices, src_indices, hidden_dim, breakpoint):
+#     thread_idx = cupyx.jit.threadIdx.x
+#     src_idx = src_indices[cupyx.jit.blockIdx.x]
+#     dst_idx = dst_indices[cupyx.jit.blockIdx.x]
+#     num_elements_per_thread = (hidden_dim + 256 - 1) // 256
+#     for i in range(num_elements_per_thread):
+#         j = thread_idx + 256 * i
+#         if j < hidden_dim:
+#             if cupyx.jit.blockIdx.x < breakpoint:
+#                 dst_k[dst_idx * hidden_dim + j] = src_k[src_idx * hidden_dim + j]
+#                 dst_v[dst_idx * hidden_dim + j] = src_v[src_idx * hidden_dim + j]
+#             else:
+#                 src_k[dst_idx * hidden_dim + j] = src_k[src_idx * hidden_dim + j]
+#                 src_v[dst_idx * hidden_dim + j] = src_v[src_idx * hidden_dim + j]
 
 
 @cupyx.jit.rawkernel()

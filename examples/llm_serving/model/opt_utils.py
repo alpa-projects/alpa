@@ -1,9 +1,15 @@
 from functools import partial
 
+import jax
 from jax import xla, jit
 from jax.core import Primitive
 from jax._src.lib import xla_client as xc
 from transformers.generation_utils import dataclass
+
+
+def sync(device_id=0):
+    jax.devices()[device_id].synchronize_all_activity()
+    return
 
 
 @dataclass

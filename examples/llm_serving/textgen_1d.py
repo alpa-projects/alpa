@@ -45,7 +45,8 @@ def main(args):
     for i in range(n_warmup):
         tic = time.time()
         output_ids = model.generate(input_ids=input_ids,
-                                    max_new_tokens=64,
+                                    max_length=128,
+                                    # max_new_tokens=1024,
                                     **generate_params)
         elapsed = time.time() - tic
         for timer_name in timer_names:

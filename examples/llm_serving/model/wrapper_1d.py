@@ -19,16 +19,12 @@ from examples.llm_serving.model.wrapper import disable_torch_init, restore_torch
     InferenceFuncConfig, WrappedInferenceFunc
 from examples.llm_serving.model import opt_model
 from examples.llm_serving.model.opt_model_1d import IterationLevelInputPool, unpad, pad, custom_reshape_logits
+from examples.llm_serving.model.opt_utils import sync
 from alpa.collective.worker_nccl_util_cupy import jax_tensor_to_cupy
 
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
-
-def sync(device_id=0):
-    jax.devices()[device_id].synchronize_all_activity()
-    return
 
 
 @dataclass
@@ -50,24 +46,33 @@ class SequenceGenerator:
 
     def generate(self,
                  input: Union[IterationLevelInputPool, List[List[int]], np.ndarray],
-                 max_length=64,
+                 max_length=None,
+                 max_new_tokens=None,
                  do_sample=False,
                  **kwargs):
+        if max_length == None and max_new_tokens == None:
+            raise RuntimeError("Please provide at least one of max_length and max_new_tokens.")
+
         if isinstance(input, IterationLevelInputPool):
             raise NotImplementedError()
         elif isinstance(input, (List, np.ndarray, torch.Tensor)):
             unpadded_input = unpad(input)
-            return self.generate_by_batch(unpadded_input, max_length=max_length, do_sample=do_sample)
+            return self.generate_by_batch(unpadded_input,
+                                          max_length=max_length,
+                                          max_new_tokens=max_new_tokens,
+                                          do_sample=do_sample)
         else:
             raise RuntimeError()
 
     def generate_by_batch(self,
                           input_ids: List[List[int]],
-                          max_length=64,
+                          max_length=None,
+                          max_new_tokens=None,
                           do_sample=False):
         input_pool = IterationLevelInputPool(self.input_pool_config,
                                              self.model_config,
-                                             max_generation_length=max_length)
+                                             max_length=max_length,
+                                             max_new_tokens=max_new_tokens)
         input_pool.enter_prompts(input_ids)
         iteration = 0
         while not input_pool.is_finished():
@@ -94,7 +99,6 @@ class SequenceGenerator:
             else:
                 raise NotImplementedError()
             timers("generate").suspend(sync)
-            logger.debug(f"iteration {iteration}: generated ids: {generated_ids}")
 
             timers("update").start(sync)
             input_pool.update_cache(kv, generated_ids)

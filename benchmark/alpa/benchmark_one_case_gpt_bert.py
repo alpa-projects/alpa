@@ -137,7 +137,8 @@ def prepare_gpt_bert_input_and_model(model_type,
     batch_size = benchmark_case.batch_size
     (seq_len, hidden_size, num_layers, num_heads,
      vocab_size) = benchmark_case.model_config
-    dtype = jnp.float16
+    dtype = jnp.float32
+    #dtype = jnp.float16
     # Prepare input batch
     batch = {
         "input_ids": jnp.ones((batch_size, seq_len), dtype=jnp.int32),

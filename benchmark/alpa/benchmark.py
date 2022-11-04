@@ -53,7 +53,7 @@ def benchmark_suite(suite_name,
                     input_batch_size,
                     input_micro_batches,
                     reduce_scatter,
-                    dp,op,
+                    dp,op,recomputation,
                     exp_name="default",
                     niter=3,
                     shard_only=False,
@@ -79,8 +79,6 @@ def benchmark_suite(suite_name,
 
     # Run all cases
     for benchmark_case in suite:
-
-        
         
         if shard_only:
             assert dp*op == num_gpus, ("dp*op != num_gpus.")
@@ -89,7 +87,7 @@ def benchmark_suite(suite_name,
                                       GPTModelConfig(1024, 4096, input_gpt_layer, 32, 51200),
                                       input_micro_batches,
                                       "uniform",
-                                      UniformParallelArgs(reduce_scatter, True, dp, op, 1, True))
+                                      UniformParallelArgs(reduce_scatter, recomputation, dp, op, 1, True))
         
         else:
             benchmark_case_new=benchmark_case
@@ -178,6 +176,9 @@ if __name__ == "__main__":
                         help="Prefer_reduce_scatter = True.")
     parser.add_argument("--dp", type=int, default=4)
     parser.add_argument("--op", type=int, default=1)
+    parser.add_argument("--recomputation",
+                        action="store_true",
+                        help="remat = True.")
     args = parser.parse_args()
 
     num_hosts, num_devices_per_host = get_num_hosts_and_num_devices(args)
@@ -185,7 +186,7 @@ if __name__ == "__main__":
     benchmark_suite(args.suite, num_hosts, num_devices_per_host,
                     args.num_gpt_layer, args.num_batch_size,
                     args.num_micro_batches,
-                    args.reduce_scatter,args.dp,args.op,
+                    args.reduce_scatter,args.dp,args.op,args.recomputation,
                     args.exp_name,
                     args.niter, args.shard_only, args.local,
                     args.profile_driver_time, args.disable_tqdm,

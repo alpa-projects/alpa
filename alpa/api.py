@@ -145,6 +145,7 @@ class ParallelizedFunc:
                                                          self.batch_argnums)
         kwargs = {}
 
+
         f = lu.wrap_init(self.fun)
 
         # Deal with static arguments and extract dynamic arguments

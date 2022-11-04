@@ -20,7 +20,7 @@ from tqdm import tqdm
 from llm_serving.model import opt_model, bloom_model, opt_model_1d
 from llm_serving.model.opt_utils import (TransformerModelConfig,
                                          jax_index_select, is_power_of_two)
-from llm_serving.model.opt_model_1d import TransformerInputPool
+from llm_serving.model.opt_model_1d import BatchLevelInputPool
 
 
 @dataclass
@@ -289,8 +289,8 @@ def get_model_1d(model_name: str,
     # TODO(Hao): use the same func with 2D
     params = opt_model_1d.load_params_np(params_aval, path, config, dummy)
     params = jax.tree_map(jnp.array, params)
-    input_pool = TransformerInputPool(config, batch_size=batch_size, cache_size=cache_size,
-                                      max_cache_per_seq=max_cache_per_seq)
+    input_pool = BatchLevelInputPool(config, batch_size=batch_size, cache_size=cache_size,
+                                     max_cache_per_seq=max_cache_per_seq)
 
     def sync(device_id=0):
         jax.devices()[device_id].synchronize_all_activity()
@@ -303,7 +303,7 @@ def get_model_1d(model_name: str,
                        output_hidden_states):
         timers("enter").start(sync)
         if input_ids.shape[1] > 1:
-            unpadded_input = input_pool.unpad(input_ids)
+            unpadded_input = opt_model_1d.unpad(input_ids)
             input, input_index, position_ids = input_pool.enter_prompts(unpadded_input)
         else:
             unpadded_input = input_ids.tolist()
@@ -331,7 +331,6 @@ def get_model_1d(model_name: str,
 
         timers("reshape").start(sync)
         logits = input_pool.reshape_logits(logits, unpadded_input, tuple(input_ids.shape))
-        # logits = input_pool.reshape_logits_legacy(logits, input_index, tuple(input_ids.shape))
         logits_step = torch.from_numpy(logits).to(torch_device).float()
         timers("reshape").suspend(sync)
         return InferenceFuncOutput(logits_step, kv, None, None)

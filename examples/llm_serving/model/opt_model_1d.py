@@ -49,12 +49,16 @@ ACT2FN = {
 class OPTModelOutput(ModelOutput):
     last_hidden_state: jax_xla.DeviceArray
     hidden_states: Optional[Tuple[jax_xla.DeviceArray]] = None
+    attentions: Optional[Tuple[jax_xla.DeviceArray]] = None
+    attention_cache: Optional[Tuple[Tuple[jax_xla.DeviceArray]]] = None
 
 
 @flax.struct.dataclass
 class OPTLMOutput(ModelOutput):
     logits: jax_xla.DeviceArray
     hidden_states: Optional[Tuple[jax_xla.DeviceArray]] = None
+    attentions: Optional[Tuple[jax_xla.DeviceArray]] = None
+    attention_cache: Optional[Tuple[Tuple[jax_xla.DeviceArray]]] = None
 
 
 @dataclass(frozen=True)
@@ -163,6 +167,8 @@ class OPTSelfAttention(nn.Module):
         # Shape: [1D seq, 3, heads, head_dim]
         qkv_combined_states = qkv_combined_states.transpose((0, 3, 1, 2))
 
+        qkv_combined_states_w_bias = qkv_combined_states + self.qkv_combined_bias
+
         # Shape of cache_key and cache_value: [batch * max_length, heads, head_dim]
         # Shape of cache_index: [batch * max_length]
         cache_key, cache_value = attention_cache
@@ -175,9 +181,18 @@ class OPTSelfAttention(nn.Module):
         #     attn_output = jnp.ones((qkv_combined_states.shape[0], qkv_combined_states.shape[2], qkv_combined_states.shape[3]))
 
         attn_output = attn_output.reshape(attn_output.shape[:1] + (-1,))
+
+        # Update cache key and value. Note that the cache index should
+        # be updated outside the model.
+        _, key_states, value_states = jnp.split(qkv_combined_states_w_bias,
+                                                3,
+                                                axis=1)
+        attention_cache = (key_states, value_states)
+
         if output_attentions:
             print("Do not support output_attentions")
-        return attn_output
+        outputs = (attn_output, attention_cache)
+        return outputs
 
 
 class OPTAttention(nn.Module):
@@ -200,12 +215,19 @@ class OPTAttention(nn.Module):
                  attention_cache=None):
         residual = hidden_states
         hidden_states = self.layer_norm(hidden_states)
-        attn_output = self.self(hidden_states,
-                                output_attentions=output_attentions,
-                                attention_cache=attention_cache)
+        attn_outputs = self.self(hidden_states,
+                                 output_attentions=output_attentions,
+                                 attention_cache=attention_cache)
+        attn_output = attn_outputs[0]
+        attention_cache = attn_outputs[1]
         hidden_states = self.dense(attn_output)
         hidden_states = hidden_states + residual
-        return hidden_states
+        outputs = (hidden_states, attention_cache)
+
+        if output_attentions:
+            outputs += (attn_outputs[2],)
+
+        return outputs
 
 
 class OPTFFN(nn.Module):
@@ -252,11 +274,19 @@ class OPTTransformerLayer(nn.Module):
                  output_attentions: bool = False,
                  attention_cache=None):
 
-        attention_output = self.attention(hidden_states,
-                                          output_attentions=output_attentions,
-                                          attention_cache=attention_cache)
+        attention_outputs = self.attention(hidden_states,
+                                           output_attentions=output_attentions,
+                                           attention_cache=attention_cache)
+        attention_output = attention_outputs[0]
+        attention_cache = attention_outputs[1]
+
         hidden_states = self.ffn(attention_output)
-        return hidden_states
+
+        outputs = (hidden_states, attention_cache)
+
+        if output_attentions:
+            outputs += (attention_outputs[2],)
+        return outputs
 
 
 class OPTTransformerLayerCollection(nn.Module):
@@ -277,7 +307,9 @@ class OPTTransformerLayerCollection(nn.Module):
         return_dict: bool = True,
         attention_cache=None,
     ):
+        all_attentions = () if output_attentions else None
         all_hidden_states = () if output_hidden_states else None
+        new_attention_cache = () if attention_cache is not None else None
 
         if self.config.num_pp_stages is not None:
             assert self.config.num_hidden_layers % self.config.num_pp_stages == 0
@@ -295,9 +327,14 @@ class OPTTransformerLayerCollection(nn.Module):
             layer_attention_cache = None
             if attention_cache is not None:
                 layer_attention_cache = attention_cache[i]
-            hidden_states = layer(hidden_states,
+            layer_outputs = layer(hidden_states,
                                   output_attentions=output_attentions,
                                   attention_cache=layer_attention_cache)
+            hidden_states = layer_outputs[0]
+            if attention_cache is not None:
+                new_attention_cache += (layer_outputs[1],)
+            if output_attentions:
+                all_attentions += (layer_outputs[2],)
 
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
@@ -308,7 +345,9 @@ class OPTTransformerLayerCollection(nn.Module):
             return tuple(v for v in outputs if v is not None)
 
         return OPTModelOutput(last_hidden_state=hidden_states,
-                              hidden_states=all_hidden_states)
+                              hidden_states=all_hidden_states,
+                              attentions=all_attentions,
+                              attention_cache=new_attention_cache)
 
 
 class OPTTransformerModule(nn.Module):
@@ -351,7 +390,10 @@ class OPTTransformerModule(nn.Module):
 
         return OPTModelOutput(
             last_hidden_state=hidden_states,
-            hidden_states=outputs.hidden_states)
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+            attention_cache=outputs.attention_cache,
+        )
 
 
 class OPTForLMModule(nn.Module):
@@ -417,7 +459,10 @@ class OPTForLMModule(nn.Module):
 
         return OPTLMOutput(
             logits=logits,
-            hidden_states=outputs.hidden_states)
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+            attention_cache=outputs.attention_cache,
+        )
 
 
 def init_model_aval(config, total_input_len, total_cache_len):
@@ -729,6 +774,10 @@ class Cache:
         self.continuity_tracker = 0
         self.hidden_dim = self.model_config.hidden_size
 
+        # kernels.
+        self.custom_memcpy_v2 = cupyx.jit.rawkernel()(custom_memcpy_v2)
+        self.custom_mv = cupyx.jit.rawkernel()(custom_mv)
+
     def release_slot(self, slot: int):
         """Release a cache slot given its starting index."""
         assert slot not in self.vacancies
@@ -788,10 +837,9 @@ class Cache:
         src_kv = [(jax_tensor_to_cupy(k), jax_tensor_to_cupy(v)) for k, v in kv]
         for layer_idx, (src_k, src_v) in enumerate(src_kv):
             dst_k, dst_v = self.kv_caches_cupy[layer_idx]
-            custom_memcpy_v2[len(src_indices), num_threads_per_block](dst_k.ravel(), dst_v.ravel(),
-                                                                      src_k.ravel(), src_v.ravel(),
-                                                                      dst_indices_cupy, src_indices_cupy,
-                                                                      self.hidden_dim)
+            self.custom_memcpy_v2[len(src_indices), num_threads_per_block](
+                dst_k.ravel(), dst_v.ravel(), src_k.ravel(), src_v.ravel(),
+                dst_indices_cupy, src_indices_cupy, self.hidden_dim)
         # update cache ids
         self.kv_cache_ids[dst_indices] = src_sentence_ids
 
@@ -807,7 +855,7 @@ class Cache:
         dst_indices_cupy = cupy.array(dst_indices)
 
         for layer_idx, (k, v) in enumerate(self.kv_caches_cupy):
-            custom_mv[len(src_indices), num_threads_per_block](
+            self.custom_mv[len(src_indices), num_threads_per_block](
                 k.ravel(), v.ravel(), dst_indices_cupy, src_indices_cupy,
                 self.hidden_dim)
 
@@ -1028,7 +1076,6 @@ class IterationLevelInputPool:
         return False
 
 
-@cupyx.jit.rawkernel()
 def custom_memcpy(dst_k, dst_v, src_k, src_v, dst_indices, hidden_dim):
     thread_idx = cupyx.jit.threadIdx.x
     src_idx = cupyx.jit.blockIdx.x
@@ -1041,7 +1088,6 @@ def custom_memcpy(dst_k, dst_v, src_k, src_v, dst_indices, hidden_dim):
             dst_v[dst_idx * hidden_dim + j] = src_v[src_idx * hidden_dim + j]
 
 
-@cupyx.jit.rawkernel()
 def custom_memcpy_v2(dst_k, dst_v, src_k, src_v, dst_indices, src_indices, hidden_dim):
     thread_idx = cupyx.jit.threadIdx.x
     src_idx = src_indices[cupyx.jit.blockIdx.x]
@@ -1055,7 +1101,6 @@ def custom_memcpy_v2(dst_k, dst_v, src_k, src_v, dst_indices, src_indices, hidde
             dst_v[dst_idx * hidden_dim + j] = src_v[src_idx * hidden_dim + j]
 
 
-@cupyx.jit.rawkernel()
 def custom_mv(k, v, dst_indices, src_indices, hidden_dim):
     """This custom kernel moves contents at src_indices to dst_indices."""
     thread_idx = cupyx.jit.threadIdx.x
@@ -1072,7 +1117,6 @@ def custom_mv(k, v, dst_indices, src_indices, hidden_dim):
             v[src_idx * hidden_dim + j] = 0.0
 
 
-@cupyx.jit.rawkernel()
 def custom_reshape_logits(dst, src, indices):
     thread_idx = cupyx.jit.threadIdx.x
     dst_idx = cupyx.jit.blockIdx.x

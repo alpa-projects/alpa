@@ -41,7 +41,7 @@ def main(args):
         "GPT-3 is a large language model that is capable of"
     ]
     # prompts = prompts * 10
-    timer_names = ["enter", "compute", "generate", "update", "update cache", "reorg cache"]
+    timer_names = ["enter", "compute", "generate", "update"]
 
     input_ids = tokenizer(prompts, return_tensors="np", padding="longest").input_ids
 

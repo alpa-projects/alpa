@@ -1,6 +1,8 @@
 """Code to wrap some NCCL API calls."""
 import numpy
 
+from alpa.collective.collective import nccl_available
+from alpa.collective.types import ReduceOp, torch_available
 from alpa.global_env import global_config
 
 if global_config.has_cuda:
@@ -18,8 +20,6 @@ if global_config.has_cuda:
         raise ImportError(
             "Please install nccl library following the above instructions")
 
-from alpa.collective.types import ReduceOp, torch_available
-if global_config.has_cuda:
     NCCL_REDUCE_OP_MAP = {
         ReduceOp.SUM: nccl.NCCL_SUM,
         ReduceOp.PRODUCT: nccl.NCCL_PROD,
@@ -51,7 +51,6 @@ if torch_available():
     import torch
     import torch.utils.dlpack
 
-    from alpa.collective.collective import nccl_available
     if nccl_available():
         TORCH_NCCL_DTYPE_MAP = {
             # INT types

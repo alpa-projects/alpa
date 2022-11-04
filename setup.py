@@ -92,9 +92,7 @@ install_require_list = [
     "numba",
 ]
 
-dev_require_list = [
-    "yapf==0.32.0", "pylint==2.14.0", "cmake", "pybind11"
-]
+dev_require_list = ["yapf==0.32.0", "pylint==2.14.0", "cmake", "pybind11"]
 
 if IS_CUDA:
     dev_require_list += [
@@ -151,7 +149,8 @@ if __name__ == "__main__":
         ],
         keywords=("alpa distributed parallel machine-learning model-parallelism"
                   "gpt-3 deep-learning language-model python"),
-        packages=find_packages(exclude=["benchmark", "examples", "playground", "tests"]),
+        packages=find_packages(
+            exclude=["benchmark", "examples", "playground", "tests"]),
         python_requires='>=3.7',
         cmdclass={"install": InstallPlatlib},
         install_requires=install_require_list,

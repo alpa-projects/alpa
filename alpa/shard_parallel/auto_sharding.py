@@ -188,7 +188,7 @@ def run_auto_sharding_pass(
       return_mode: The mode of return value.
         The choices are {"single", "stages", "stage_and_hook_protos"}.
         If it is "single", return a single WrappedHlo, whose status is
-          SPMD_PARTITIONED.
+          SHARDING_ANNOTATED.
         If it is "stages", return WrappedHlo of multiple pipeline stages,
           whose statuses are SHARDING_ANNOTATED.
         If it is "stages_and_hook", return WrappedHlos of multiple pipeline
@@ -343,7 +343,7 @@ def run_auto_sharding_pass(
         timers("auto-sharding").start()
         xe.run_auto_sharding(hlo.get_module(), compile_options)
         timers("auto-sharding").stop()
-    hlo.status = HloStatus.SPMD_PARTITIONED
+    hlo.status = HloStatus.SHARDING_ANNOTATED
 
     if multiple_stages:
         hlo_stage_names, hlo_stages = get_auto_sharded_hlo_stages()

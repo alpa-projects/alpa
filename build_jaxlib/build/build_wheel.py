@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2020 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -48,10 +48,6 @@ parser.add_argument(
   default=None,
   required=True,
   help="Target CPU architecture. Required.")
-parser.add_argument(
-  "--dev_install",
-  action="store_true",
-  help="Do not build wheel. Use dev install")
 args = parser.parse_args()
 
 r = runfiles.Create()
@@ -83,12 +79,6 @@ def copy_file(src_file, dst_dir, dst_filename=None, from_runfiles=True):
   else:
     shutil.copy(src_file, dst_file)
 
-def dev_install(sources_path, output_path):
-  sys.stderr.write("Dev Install:\n")
-  sys.stderr.write(f'Run "pip install -e ." once in {output_path}\n')
-  os.system(f"rm -rf {output_path}/*")
-  os.system(f"cp -r {sources_path}/* {output_path}")
-  return
 
 _XLA_EXTENSION_STUBS = [
     "__init__.pyi",
@@ -181,8 +171,8 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib("__main__/jaxlib/lapack.py")
   copy_to_jaxlib(f"__main__/jaxlib/_lapack.{pyext}")
   copy_to_jaxlib("__main__/jaxlib/mhlo_helpers.py")
-  copy_to_jaxlib(f"__main__/jaxlib/_pocketfft.{pyext}")
-  copy_to_jaxlib("__main__/jaxlib/pocketfft.py")
+  copy_to_jaxlib(f"__main__/jaxlib/_ducc_fft.{pyext}")
+  copy_to_jaxlib("__main__/jaxlib/ducc_fft.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_prng.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_linalg.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_solver.py")
@@ -240,10 +230,12 @@ def prepare_wheel(sources_path):
 
   copy_file("__main__/jaxlib/mlir/_mlir_libs/__init__.py", dst_dir=mlir_libs_dir)
   copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_mlir.{pyext}", dst_dir=mlir_libs_dir)
+  copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_chlo.{pyext}", dst_dir=mlir_libs_dir)
   copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_mlirHlo.{pyext}", dst_dir=mlir_libs_dir)
   copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsSparseTensor.{pyext}", dst_dir=mlir_libs_dir)
-  copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_mlirRegisterEverything.{pyext}", dst_dir=mlir_libs_dir)
   copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_mlirSparseTensorPasses.{pyext}", dst_dir=mlir_libs_dir)
+  copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_stablehlo.{pyext}", dst_dir=mlir_libs_dir)
+  copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_site_initialize_0.{pyext}", dst_dir=mlir_libs_dir)
   if _is_windows():
     copy_file("__main__/jaxlib/mlir/_mlir_libs/jaxlib_mlir_capi.dll", dst_dir=mlir_libs_dir)
   elif _is_mac():
@@ -310,10 +302,7 @@ if sources_path is None:
 try:
   os.makedirs(args.output_path, exist_ok=True)
   prepare_wheel(sources_path)
-  if args.dev_install:
-    dev_install(sources_path, args.output_path)
-  else:
-    build_wheel(sources_path, args.output_path, args.cpu)
+  build_wheel(sources_path, args.output_path, args.cpu)
 finally:
   if tmpdir:
     tmpdir.cleanup()

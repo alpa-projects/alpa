@@ -356,16 +356,12 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
 
     if distributed_compile:
         for _ in range(num_meshes):
-            mesh_idx, (computation_names, computation_modules,
+            mesh_idx, (computation_names, computation_hlos,
                        stage_plan) = compile_workers.get_next_unordered()
-            computation_modules = [
-                xe.HloModule.from_serialized_hlo_module_proto(x)
-                for x in computation_modules
-            ]
             jax_computations, computation_donate_invars = compile_intermediate[
                 mesh_idx]
             sharded_xla_stages = generate_computations_from_modules(
-                jax_computations, computation_names, computation_modules,
+                jax_computations, computation_names, computation_hlos,
                 computation_donate_invars, donatable_dict[mesh_idx],
                 acc_grad_outvars, stage_plan)
             for i, xla_stage in zip(stage_id_dict[mesh_idx],

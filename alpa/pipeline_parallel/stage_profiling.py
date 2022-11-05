@@ -191,7 +191,7 @@ class CompileWorker:
         rewrite_for_grad_acc = len(config.output_acc_grad_indices) > 0
         try:
             hlo = run_spmd_partitioner_pass(
-                hlo,
+                acc_grad_hlo,
                 logical_mesh.num_devices,
                 rewrite_for_grad_acc=rewrite_for_grad_acc,
                 rewrite_grad_acc_indices=config.output_acc_grad_indices)
@@ -205,14 +205,12 @@ class CompileWorker:
                                        apply_grad_input_sharding_protos)
 
     @staticmethod
-    def run_auto_sharding_pass(stage_id, proto, other_kwargs):
+    def run_auto_sharding_pass(stage_id, hlo, other_kwargs):
         """Run auto-sharding pass on a proto."""
-        hlo_module = xe.HloModule.from_serialized_hlo_module_proto(proto)
         assert other_kwargs["return_mode"] == "stages"
         # pylint: disable=unbalanced-tuple-unpacking
         hlo_stage_names, hlo_stages, stage_plan = run_auto_sharding_pass(
-            hlo_module, **other_kwargs)
-        hlo_stages = [x.as_serialized_hlo_module_proto() for x in hlo_stages]
+            hlo, **other_kwargs)
         return stage_id, (hlo_stage_names, hlo_stages, stage_plan)
 
 
@@ -277,14 +275,14 @@ class ProfileWorker:
         output_sharding = compiled_output.output_sharding_proto
         donated_invars = (True,) * len(tot_donation) + (False,) * (
             len(avals) - len(tot_donation))
-        hlo_module = xc.XlaComputation(
-            compiled_output.model_proto).as_hlo_module()
+        hlo = compiled_output.model_proto
+        hlo_module = hlo.get_module()
         if input_shardings is not None:
             hlo_module.set_spmd_parameters_shardings(
                 [xe.HloSharding(x) for x in input_shardings])
             hlo_module.set_spmd_output_sharding(xe.HloSharding(output_sharding))
         executable = PartialGradAccMeshDriverExecutable(
-            self.mesh, hlo_module, compiled_output.stage_plan, avals, out_avals,
+            self.mesh, hlo, compiled_output.stage_plan, avals, out_avals,
             donated_invars, output_acc_grad_indices)
 
         # Run profiling

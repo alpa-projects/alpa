@@ -521,7 +521,7 @@ def compile_concatenate(mesh_shape, sharding_spec, batch_size, batch_dim, aval):
         parameter_is_tupled_arguments=False,
         build_random_seed=build_random_seed)
     xe.run_spmd_partitioner(hlo_module, compile_options)
-    return hlo_module.as_serialized_hlo_module_proto()
+    return WrappedHlo(hlo_module, HloStatus.SPMD_PARTITIONED)
 
 
 def compile_allgather(shape, dtype, src_spec, dst_spec, num_devices):
@@ -551,7 +551,7 @@ def compile_allgather(shape, dtype, src_spec, dst_spec, num_devices):
         parameter_is_tupled_arguments=False,
         build_random_seed=build_random_seed)
     xe.run_spmd_partitioner(hlo_module, compile_options)
-    return hlo_module.as_serialized_hlo_module_proto()
+    return WrappedHlo(hlo_module, HloStatus.SPMD_PARTITIONED)
 
 
 def get_index_select_computation(sharding_specs, dim, avals, index_shape):

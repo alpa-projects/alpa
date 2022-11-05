@@ -149,7 +149,7 @@ class XlaPipelineComputation(PipelineComputation):
 
         return cls(
             name=jax_pipeline_computation.name,
-            hlo=hlo.get_module(),
+            hlo=hlo,
             invars=jax_pipeline_computation.invars,
             outvars=jax_pipeline_computation.outvars,
         )
@@ -264,7 +264,6 @@ class XlaShardedPipelineComputation(PipelineComputation):
                    output_acc_grad_indices=acc_grad_indices,
                    donatables=donatables)
 
-    # FIXME(yonghao)
     def donate_intermediates(self, computation):
         """Donate intermediate variables."""
         # get sharding annotated hlo module
@@ -316,16 +315,16 @@ class XlaShardedPipelineComputation(PipelineComputation):
         """Run spmd partitioner to get the input/output sharding specs after
         partitioning."""
         if self.hlo.is_spmd_partitioned():
-            return self.hlo.get_module()
+            return self.hlo
 
         stage_plan = self.stage_plan
         logical_mesh_shape = stage_plan.logical_mesh_shape
-        setup_computation_alias(self.hlo.get_module(), self.donated_invars)
+        setup_computation_alias(self.hlo, self.donated_invars)
 
         num_devices = np.prod(logical_mesh_shape)
         rewrite_for_grad_acc = len(self.output_acc_grad_indices) > 0
         hlo = run_spmd_partitioner_pass(
-            hlo,
+            self.hlo,
             num_devices,
             rewrite_for_grad_acc=rewrite_for_grad_acc,
             rewrite_grad_acc_indices=self.output_acc_grad_indices)
@@ -340,7 +339,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
         self.output_sharding_specs = output_sharding_specs
         # The run_spmd_partitioner_pass modifies hlo module in-place,
         # so the old hlo module cannot be accessed anymore
-        return hlo.get_module()
+        return hlo
 
     def get_runnable(self, mesh=None):
         """Return a callable of the pipeline computation."""

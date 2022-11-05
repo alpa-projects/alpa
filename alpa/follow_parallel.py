@@ -5,7 +5,7 @@ from jax.core import ClosedJaxpr
 from jax.interpreters import partial_eval as pe
 from jax.tree_util import tree_leaves
 
-from alpa import global_config
+from alpa.global_env import global_config
 from alpa.mesh_executable import (NormalMeshDriverExecutable,
                                   GradAccMeshDriverExecutable)
 from alpa.parallel_plan import PlacementSpec

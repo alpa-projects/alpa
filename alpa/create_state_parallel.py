@@ -7,8 +7,8 @@ from jax.interpreters import pxla
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 import numpy as np
 
-from alpa import global_config
 from alpa.device_mesh import ReplicatedDistributedArray, PhysicalDeviceMeshGroup
+from alpa.global_env import global_config
 from alpa.mesh_executable import (NormalMeshDriverExecutable,
                                   GradAccMeshDriverExecutable)
 from alpa.parallel_plan import PlacementSpec

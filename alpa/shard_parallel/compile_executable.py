@@ -12,8 +12,8 @@ from jax.core import (Jaxpr, ClosedJaxpr, Literal, gensym, get_aval,
 from jax.lax import add_p, div_p
 from jax.tree_util import PyTreeDef
 
-from alpa import global_config
 from alpa.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh
+from alpa.global_env import global_config
 from alpa.mesh_executable import (NormalMeshDriverExecutable,
                                   GradAccMeshDriverExecutable)
 from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX

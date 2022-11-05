@@ -329,7 +329,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
             for stage_idx in stage_id_dict[mesh_idx]
         ]
         if distributed_compile:
-            module, flops = (generate_sharded_xla_computations_arguments(
+            hlo, flops = (generate_sharded_xla_computations_arguments(
                 f"{name_base}_mesh_{mesh_idx}", stage_dict[mesh_idx],
                 stage_donate_invars, input_sharding_dict, output_sharding_dict,
                 stage_input_sharding))
@@ -339,8 +339,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                 "as_option": autosharding_option,
                 "num_micro_batches": num_microbatch,
             }
-            proto = module.as_serialized_hlo_module_proto()
-            compile_workers.submit(compile_fn, (mesh_idx, proto, other_kwargs))
+            compile_workers.submit(compile_fn, (mesh_idx, hlo, other_kwargs))
             compile_intermediate[mesh_idx] = (stage_dict[mesh_idx],
                                               stage_donate_invars)
             total_flops += flops

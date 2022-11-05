@@ -42,6 +42,7 @@ import alpa
 from alpa.global_env import global_config, is_worker
 from alpa.monkey_patch import (restore_random, monkey_patch_random,
                                rng_primitives)
+from alpa.wrapped_hlo import HloStatus, WrappedHlo
 
 PLACEMENT_GROUP_TIMEOUT_S_ENV = "ALPA_PLACEMENT_GROUP_TIMEOUT_S_ENV"
 
@@ -327,11 +328,11 @@ def get_compile_options(num_replicas: int, num_partitions: int,
     return compile_options
 
 
-def jaxpr_to_hlo_module(name: str,
-                        closed_jaxpr: ClosedJaxpr,
-                        donated_invars: Sequence[bool],
-                        platform: str = "cuda"):
-    """Convert a jaxpr to an XLA HloModule.
+def jaxpr_to_hlo(name: str,
+                 closed_jaxpr: ClosedJaxpr,
+                 donated_invars: Sequence[bool],
+                 platform: str = "cuda"):
+    """Convert a jaxpr to a wrapped XLA HloModule.
 
     Reference code: jax/jax/_src/dispatch.py::lower_xla_callable
     """
@@ -357,10 +358,10 @@ def jaxpr_to_hlo_module(name: str,
         mlir.module_to_string(lowering_result.module),
         use_tuple_args=tuple_args,
         return_tuple=True)
-    ret = xla_computation.as_hlo_module()
-    return ret
+    return WrappedHlo(xla_computation)
 
 
+# FIXME(yonghao)
 def setup_computation_alias(xla_computation: Union[xc.XlaComputation,
                                                    xe.HloModule],
                             donated_invars: Sequence[bool]):
@@ -427,7 +428,7 @@ def compile_dummy_zero_constant():
     zero = xc.ops.Constant(c, np.array(0, dtype=np.dtype(np.int32)))
     c.clear_sharding()
     c = c.build(xc.ops.Tuple(c, [zero]))
-    return c.get_hlo_module()
+    return WrappedHlo(c, HloStatus.SHARDING_ANNOTATED)
 
 
 def compile_allocate_zero_buffers(backend, num_devices: int,
@@ -577,7 +578,7 @@ def get_index_select_computation(sharding_specs, dim, avals, index_shape):
     sharding2.tuple_shardings = shardings
     c.set_sharding(sharding2)
     c = c.build(xc.ops.Tuple(c, selected))
-    return c
+    return WrappedHlo(c, HloStatus.SHARDING_ANNOTATED)
 
 
 def get_shard_shape(aval: ShapedArray, sharding_spec: pxla.ShardingSpec):

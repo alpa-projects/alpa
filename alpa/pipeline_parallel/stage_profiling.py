@@ -36,9 +36,8 @@ from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                run_spmd_partitioner_pass,
                                                run_backend_compilation,
                                                hlo_sharding_to_sharding_spec)
-from alpa.util import (clone_jaxpr, get_shard_shape, jaxpr_to_hlo_module,
-                       OrderedSet, retrieve_placement_group,
-                       get_num_available_gpus)
+from alpa.util import (clone_jaxpr, get_shard_shape, jaxpr_to_hlo, OrderedSet,
+                       retrieve_placement_group, get_num_available_gpus)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -156,36 +155,34 @@ class CompileWorker:
             "memory_budget_per_device": None,
         }
         try:
-            hlo_module = xe.HloModule.from_serialized_hlo_module_proto(
-                config.model_proto)
             # pylint: disable=unbalanced-tuple-unpacking
-            module_names, modules, hooked_proto, stage_plan = (
-                run_auto_sharding_pass(hlo_module, **other_kwargs))
+            module_names, hlos, hooked_proto, stage_plan = (
+                run_auto_sharding_pass(config.model_proto, **other_kwargs))
         except RuntimeError as e:
             logger.warning(f"Compilation error (auto-sharding pass) "
                            f"for stage {stage_id} : {e}")
             return stage_id, None
 
-        assert (len(modules) <=
+        assert (len(hlos) <=
                 2), "Can only compile no more than two stages (compute+(apply))"
 
         # Read input/output shardings
 
-        if len(modules) > 1:
+        if len(hlos) > 1:
             if module_names[0].endswith(APPLY_GRAD_MARKER_SUFFIX):
                 module_names[0], module_names[1] = module_names[
                     1], module_names[0]
-                modules[0], modules[1] = modules[1], modules[0]
+                hlos[0], hlos[1] = hlos[1], hlos[0]
             assert module_names[1].endswith(APPLY_GRAD_MARKER_SUFFIX)
 
-        acc_grad_module = modules[0]
+        acc_grad_hlo = hlos[0]
         (input_sharding_protos,
          output_sharding_proto) = get_input_output_sharding_proto(
-             acc_grad_module, logical_mesh.num_devices)
+             acc_grad_hlo.get_module(), logical_mesh.num_devices)
 
-        if len(modules) > 1:
+        if len(hlos) > 1:
             apply_grad_input_sharding_protos, _ = (
-                get_input_output_sharding_proto(modules[1],
+                get_input_output_sharding_proto(hlos[1].get_module(),
                                                 logical_mesh.num_devices))
         else:
             apply_grad_input_sharding_protos = None
@@ -193,8 +190,8 @@ class CompileWorker:
         # Compile accumulate_grad part to fully optimized
         rewrite_for_grad_acc = len(config.output_acc_grad_indices) > 0
         try:
-            hlo_module = run_spmd_partitioner_pass(
-                acc_grad_module,
+            hlo = run_spmd_partitioner_pass(
+                hlo,
                 logical_mesh.num_devices,
                 rewrite_for_grad_acc=rewrite_for_grad_acc,
                 rewrite_grad_acc_indices=config.output_acc_grad_indices)
@@ -203,9 +200,7 @@ class CompileWorker:
                            f"for stage {stage_id} : {e}")
             return stage_id, None
 
-        optimized_proto = hlo_module.as_serialized_hlo_module_proto()
-        return stage_id, CompileOutput(optimized_proto, stage_plan,
-                                       input_sharding_protos,
+        return stage_id, CompileOutput(hlo, stage_plan, input_sharding_protos,
                                        output_sharding_proto, hooked_proto,
                                        apply_grad_input_sharding_protos)
 
@@ -687,9 +682,9 @@ def generate_stage_info(all_layers, selected_indices, donation_mapping,
                                                       new_outvars,
                                                       selected_donation_mapping)
 
-    hlo_module = jaxpr_to_hlo_module(name, merged, is_donated)
-    proto = hlo_module.as_serialized_hlo_module_proto()
-    compile_config = CompileConfig(proto, output_acc_grad_indices)
+    hlo = jaxpr_to_hlo(name, merged, is_donated)
+    # FIXME(yonghao): change those using this one
+    compile_config = CompileConfig(hlo, output_acc_grad_indices)
     stage_config = StageConfig(compile_config, profile_config, apply_info)
     return intermediate_vars, stage_config
 

@@ -602,10 +602,9 @@ class PipelineInstEmitter:
             mesh_idx = self.schedule.stage_placement(stage_idx)
             assert len(mesh_idx) == 1
             mesh_idx = list(mesh_idx)[0]
-            hlo_module = stage.get_spmd_partitioned()
-            hlo_proto = hlo_module.as_serialized_hlo_module_proto()
+            hlo = stage.get_spmd_partitioned()
             exec_config = PartialGradWorkerExecutableConfig(
-                exec_uuid, hlo_proto, stage.stage_plan, stage.donated_invars)
+                exec_uuid, hlo, stage.stage_plan, stage.donated_invars)
 
             for worker in self.mesh_group[mesh_idx].workers:
                 executable_config_lists[worker].append(exec_config)

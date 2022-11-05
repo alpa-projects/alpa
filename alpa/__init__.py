@@ -1,13 +1,4 @@
 """Alpa is a system for training large-scale neural networks."""
-from . import global_env
-
-from .global_env import global_config
-try:
-    import cupy
-    global_config.has_cuda = True
-except ImportError:
-    global_config.has_cuda = False
-
 # Import all public packages
 from . import api
 from . import collective
@@ -15,6 +6,7 @@ from . import create_state_parallel
 from . import data_loader
 from . import device_mesh
 from . import follow_parallel
+from . import global_env
 from . import mesh_executable
 from . import mesh_profiling
 from . import monkey_patch

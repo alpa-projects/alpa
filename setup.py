@@ -9,7 +9,7 @@ from setuptools import setup, find_packages
 
 IS_WINDOWS = sys.platform == "win32"
 ROOT_DIR = os.path.dirname(__file__)
-IS_CUDA = False
+HAS_CUDA = os.system("nvidia-smi > /dev/null 2>&1") == 0
 
 
 def get_cuda_version(cuda_home):
@@ -94,7 +94,7 @@ install_require_list = [
 
 dev_require_list = ["yapf==0.32.0", "pylint==2.14.0", "cmake", "pybind11"]
 
-if IS_CUDA:
+if HAS_CUDA:
     dev_require_list += [
         f"cupy-cuda{get_cuda_version_str(no_dot=True)}",
     ]

@@ -361,15 +361,12 @@ def jaxpr_to_hlo(name: str,
     return WrappedHlo(xla_computation)
 
 
-# FIXME(yonghao)
-def setup_computation_alias(xla_computation: Union[xc.XlaComputation,
-                                                   xe.HloModule],
-                            donated_invars: Sequence[bool]):
+def setup_computation_alias(hlo: WrappedHlo, donated_invars: Sequence[bool]):
     """Set input/output alias in xla computation.
 
     Assume the tensors in output tuple strictly match the donated parameters.
     """
-    program_shape = xla_computation.program_shape()
+    program_shape = hlo.program_shape()
     parameter_shapes = program_shape.parameter_shapes()
     result_shapes = program_shape.result_shape().tuple_shapes()
 
@@ -382,7 +379,7 @@ def setup_computation_alias(xla_computation: Union[xc.XlaComputation,
     while p_in < len(parameter_shapes) and p_out < len(result_shapes):
         if donated_invars[p_in]:
             if parameter_shapes[p_in] == result_shapes[p_out]:
-                xla_computation.setup_alias((p_out,), p_in, ())
+                hlo.get_module().setup_alias((p_out,), p_in, ())
                 p_in += 1
                 p_out += 1
             else:

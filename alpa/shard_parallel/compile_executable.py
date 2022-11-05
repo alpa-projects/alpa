@@ -154,7 +154,7 @@ def shard_parallel_internal_gradient_accumulation(
     donated_invars = donated_invars + (False,) * num_grads
     name = f"{fun.__name__}_shard_parallel"
     hlo = jaxpr_to_hlo(name, closed_jaxpr, donated_invars)
-    flop_count = xe.hlo_module_count_flop_dot_conv_only(hlo)
+    flop_count = xe.hlo_module_count_flop_dot_conv_only(hlo.get_module())
     flop_count *= num_micro_batches
 
     # pylint: disable=unbalanced-tuple-unpacking

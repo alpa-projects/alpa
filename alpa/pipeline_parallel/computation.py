@@ -157,8 +157,7 @@ class XlaPipelineComputation(PipelineComputation):
     def get_runnable(self, mesh=None):
         """Return a callable of the pipeline computation."""
         out_avals = [var.aval for var in self.outvars]
-        tuple_args = len(
-            self.invars) > 100  # pass long arg lists as tuple for TPU
+        tuple_args = len(self.invars) > 100 and global_config.backend == "tpu"
         backend = xb.get_backend(global_config.backend)
         device = backend.get_default_device_assignment(1)[0]
         options = get_compile_options(

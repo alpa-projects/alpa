@@ -419,12 +419,12 @@ def run_backend_compilation(backend: xe.Client,
       num_devices: The total number of devices.
       bypass_device_assignment_check: Whether to compile without exact devices.
     """
-    assert hlo.is_spmd_partitioned()
+    assert hlo.is_spmd_partitioned() or hlo.is_sharding_annotated()
     compile_options = get_compile_options(
         num_replicas=1,
         num_partitions=num_devices,
         device_assignment=np.arange(num_devices).reshape((1, -1)),
-        use_spmd_partitioning=True,
+        use_spmd_partitioning=hlo.is_sharding_annotated(),
         parameter_is_tupled_arguments=False,
         build_random_seed=stage_plan.build_random_seed)
 

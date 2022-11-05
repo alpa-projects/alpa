@@ -1,7 +1,6 @@
 """Follow the parallelization strategy of another function."""
 import logging
 
-from jax._src.lib import xla_extension as xe
 from jax.core import ClosedJaxpr
 from jax.interpreters import partial_eval as pe
 from jax.tree_util import tree_leaves
@@ -16,7 +15,7 @@ from alpa.pipeline_parallel.layer_construction import (ManualLayerOption,
 from alpa.pipeline_parallel.stage_construction import UniformStageOption
 from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                AutoShardingOption)
-from alpa.util import (jaxpr_to_hlo_module, undefined_sharding_spec_proto)
+from alpa.util import (jaxpr_to_hlo, undefined_sharding_spec_proto)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -45,7 +44,7 @@ def compile_follow_parallel_executable(fun, in_tree, out_tree_thunk,
         out_tree = out_tree_thunk()
 
         name = f"{fun.__name__}_follow_shard_parallel"
-        hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, donated_invars)
+        hlo = jaxpr_to_hlo(name, closed_jaxpr, donated_invars)
 
         # Get input sharding specs
         sharding_protos = []
@@ -58,15 +57,14 @@ def compile_follow_parallel_executable(fun, in_tree, out_tree_thunk,
 
         # Run sharding propagation
         physical_mesh = executable.physical_mesh
-        xe.set_hlo_module_input_shardings(hlo_module, sharding_protos)
-        hlo_module, stage_plan = run_auto_sharding_pass(
-            hlo_module, physical_mesh.get_logical_mesh(), "single", 1,
+        hlo.set_input_shardings(sharding_protos)
+        hlo, stage_plan = run_auto_sharding_pass(
+            hlo, physical_mesh.get_logical_mesh(), "single", 1,
             AutoShardingOption(enable_auto_sharding=False))
 
-        return NormalMeshDriverExecutable(physical_mesh, hlo_module, stage_plan,
-                                          avals, out_avals,
-                                          [False] * len(avals), static_argnums,
-                                          in_tree, out_tree)
+        return NormalMeshDriverExecutable(physical_mesh, hlo, stage_plan, avals,
+                                          out_avals, [False] * len(avals),
+                                          static_argnums, in_tree, out_tree)
     else:
         num_micro_batches = num_micro_batches or 1
 

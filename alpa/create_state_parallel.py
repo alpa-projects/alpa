@@ -2,7 +2,6 @@
 from collections import defaultdict, deque
 from typing import Sequence, Optional
 
-from jax._src.lib import xla_extension as xe
 from jax.core import Var
 from jax.interpreters import pxla
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
@@ -19,7 +18,7 @@ from alpa.pipeline_parallel.runtime_emitter import PipeshardConfig
 from alpa.pipeline_parallel.stage_construction import UniformStageOption
 from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                AutoShardingOption)
-from alpa.util import jaxpr_to_hlo_module, trace_jaxpr_with_micro_batch
+from alpa.util import jaxpr_to_hlo, trace_jaxpr_with_micro_batch
 
 
 class CreateStateExecutable(PipeshardDriverExecutable):
@@ -80,7 +79,7 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
     jaxpr = closed_jaxpr.jaxpr
 
     name = f"{fun.__name__}_create_state_parallel"
-    hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, donated_invars)
+    hlo = jaxpr_to_hlo(name, closed_jaxpr, donated_invars)
 
     # Compile train_step to get the placement specs.
     out_tree = out_tree_thunk()
@@ -99,17 +98,16 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
         physical_mesh = executable.physical_mesh
 
         # Run sharding propagation
-        xe.set_hlo_module_output_shardings(hlo_module, sharding_protos)
-        hlo_module, stage_plan = run_auto_sharding_pass(
-            hlo_module,
+        hlo.set_output_shardings(sharding_protos)
+        hlo, stage_plan = run_auto_sharding_pass(
+            hlo,
             physical_mesh.get_logical_mesh(
                 executable.stage_plan.logical_mesh_shape), "single", 1,
             AutoShardingOption(enable_auto_sharding=False))
 
-        return NormalMeshDriverExecutable(physical_mesh, hlo_module, stage_plan,
-                                          avals, out_avals,
-                                          [False] * len(avals), static_argnums,
-                                          in_tree, out_tree)
+        return NormalMeshDriverExecutable(physical_mesh, hlo, stage_plan, avals,
+                                          out_avals, [False] * len(avals),
+                                          static_argnums, in_tree, out_tree)
     else:
         # Construct a new pipelined jaxpr
         outvars = jaxpr.outvars

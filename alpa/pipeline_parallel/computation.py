@@ -5,7 +5,7 @@ import logging
 from typing import Sequence, Any, Dict, Optional
 
 from jax import jit
-from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
+from jax._src.lib import xla_bridge as xb, xla_extension as xe
 from jax._src.util import partial, safe_map
 from jax._src import dispatch
 from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
@@ -25,10 +25,11 @@ from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                AutoShardingOption)
 from alpa.global_env import global_config
 from alpa.util import (OrderedSet, clone_jaxpr, clone_jaxpr_eqn,
-                       get_compile_options, jaxpr_to_hlo_module,
+                       get_compile_options, jaxpr_to_hlo,
                        setup_computation_alias, compile_dummy_zero_constant,
                        get_var_mapping, undefined_sharding_spec_proto,
                        new_jaxpr_eqn)
+from alpa.wrapped_hlo import HloStatus, WrappedHlo
 
 # pylint: disable=redefined-builtin
 unsafe_map, map = map, safe_map  # type: ignore
@@ -129,7 +130,7 @@ class JaxPipelineComputation(PipelineComputation):
 class XlaPipelineComputation(PipelineComputation):
     """A pipeline computation defined by XLA HLO Module."""
 
-    hlo_module: xe.HloModule = None
+    hlo: WrappedHlo = None
 
     @classmethod
     def from_jax_pipeline_computation(
@@ -144,11 +145,11 @@ class XlaPipelineComputation(PipelineComputation):
         closed_jaxpr = jax_pipeline_computation.closed_jaxpr()
         name = f"pipeline_computation_{jax_pipeline_computation.name}"
         donated_invars = (False,) * len(jax_pipeline_computation.invars)
-        hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, donated_invars)
+        hlo = jaxpr_to_hlo(name, closed_jaxpr, donated_invars)
 
         return cls(
             name=jax_pipeline_computation.name,
-            hlo_module=hlo_module,
+            hlo=hlo,
             invars=jax_pipeline_computation.invars,
             outvars=jax_pipeline_computation.outvars,
         )
@@ -168,10 +169,10 @@ class XlaPipelineComputation(PipelineComputation):
             build_random_seed=global_config.compile_random_seed,
         )
 
-        xla_computation = xc.XlaComputation(
-            self.hlo_module.as_serialized_hlo_module_proto())
+        xla_computation = self.hlo.get_computation()
         compiled = backend.compile(xla_computation, compile_options=options)
-        self.hlo_module = compiled.hlo_modules()[0]
+        self.hlo.module = compiled.hlo_modules()[0]
+        self.hlo.status = HloStatus.FULLY_OPTIMIZED
         # pylint: disable=protected-access
         result_handler = dispatch._result_handler(backend, device, [(
             aval,
@@ -194,7 +195,7 @@ class XlaPipelineComputation(PipelineComputation):
 
     def get_hlo_text(self):
         """Get the HLO text."""
-        return self.hlo_module.to_string()
+        return self.hlo.to_string()
 
 
 @dataclass
@@ -204,14 +205,13 @@ class XlaShardedPipelineComputation(PipelineComputation):
     The XLA HLO is annotated by sharding spec.
     """
 
-    sharding_annotated_module: xe.HloModule = None
+    hlo: WrappedHlo = None
     donated_invars: Sequence[bool] = None
     stage_plan: StagePlan = None
     input_sharding_specs: Sequence[pxla.ShardingSpec] = None
     output_sharding_specs: Sequence[pxla.ShardingSpec] = None
     output_acc_grad_indices: Sequence[int] = None
     donatables: OrderedSet[Var] = None
-    spmd_partitioned_hlo_module: xe.HloModule = None
 
     @classmethod
     def dummy_computation(cls, name, logical_mesh_shape, gensym_func):
@@ -219,11 +219,11 @@ class XlaShardedPipelineComputation(PipelineComputation):
         stage_plan = StagePlan(global_config.compile_random_seed,
                                logical_mesh_shape, 1, 1, AutoShardingOption(),
                                None, 0)
-        sharding_annotated_module = compile_dummy_zero_constant()
+        sharding_annotated_hlo = compile_dummy_zero_constant()
         outvar = gensym_func(ShapedArray((), np.dtype(np.int32)))
         return cls(
             name=name,
-            sharding_annotated_module=sharding_annotated_module,
+            hlo=sharding_annotated_hlo,
             stage_plan=stage_plan,
             donated_invars=[],
             invars=[],
@@ -237,7 +237,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
             cls,
             *,
             jax_pipeline_computation: JaxPipelineComputation,
-            sharding_annotated_module: xe.HloModule,
+            sharding_annotated_hlo: WrappedHlo,
             stage_plan: StagePlan,
             donated_invars: Sequence[bool] = None,
             acc_grad_outvars: Sequence[Var] = (),
@@ -256,7 +256,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
         ]
 
         return cls(name=jax_pipeline_computation.name,
-                   sharding_annotated_module=sharding_annotated_module,
+                   hlo=sharding_annotated_hlo,
                    stage_plan=stage_plan,
                    donated_invars=donated_invars,
                    invars=jax_pipeline_computation.invars,
@@ -314,18 +314,17 @@ class XlaShardedPipelineComputation(PipelineComputation):
     def get_spmd_partitioned(self):
         """Run spmd partitioner to get the input/output sharding specs after
         partitioning."""
-        if self.spmd_partitioned_hlo_module is not None:
-            return self.spmd_partitioned_hlo_module
+        if self.hlo.is_spmd_partitioned():
+            return self.hlo
 
         stage_plan = self.stage_plan
         logical_mesh_shape = stage_plan.logical_mesh_shape
-        hlo_module = self.sharding_annotated_module
-        setup_computation_alias(hlo_module, self.donated_invars)
+        setup_computation_alias(self.hlo, self.donated_invars)
 
         num_devices = np.prod(logical_mesh_shape)
         rewrite_for_grad_acc = len(self.output_acc_grad_indices) > 0
-        spmd_partitioned_hlo_module = run_spmd_partitioner_pass(
-            hlo_module,
+        hlo = run_spmd_partitioner_pass(
+            self.hlo,
             num_devices,
             rewrite_for_grad_acc=rewrite_for_grad_acc,
             rewrite_grad_acc_indices=self.output_acc_grad_indices)
@@ -333,35 +332,33 @@ class XlaShardedPipelineComputation(PipelineComputation):
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
         input_sharding_specs, output_sharding_specs = (
-            get_input_output_sharding_specs(spmd_partitioned_hlo_module, avals,
-                                            out_avals, num_devices,
+            get_input_output_sharding_specs(hlo.get_module(), avals, out_avals,
+                                            num_devices,
                                             stage_plan.logical_mesh_shape))
         self.input_sharding_specs = input_sharding_specs
         self.output_sharding_specs = output_sharding_specs
         # The run_spmd_partitioner_pass modifies hlo module in-place,
         # so the old hlo module cannot be accessed anymore
-        self.sharding_annotated_module = None
-        self.spmd_partitioned_hlo_module = spmd_partitioned_hlo_module
-        return spmd_partitioned_hlo_module
+        return hlo
 
     def get_runnable(self, mesh=None):
         """Return a callable of the pipeline computation."""
         if not mesh:
             raise RuntimeError(
                 "`XlaShardedPipelineComputation` requires a mesh.")
-        hlo_module = self.get_spmd_partitioned()
+        hlo = self.get_spmd_partitioned()
 
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
         mesh_executable = PartialGradAccMeshDriverExecutable(
-            mesh, hlo_module, self.stage_plan, avals, out_avals,
-            self.donated_invars, self.output_acc_grad_indices)
+            mesh, hlo, self.stage_plan, avals, out_avals, self.donated_invars,
+            self.output_acc_grad_indices)
         return mesh_executable.get_driver_callable()
 
     def get_hlo_text(self):
         """Get the HLO text."""
-        assert self.sharding_annotated_module is not None
-        return self.sharding_annotated_module.to_string()
+        assert self.hlo.is_sharding_annotated()
+        return self.hlo.to_string()
 
 
 def slice_closed_jaxpr_by_full_pipeline_marks(
@@ -655,14 +652,14 @@ def rearrange_vars(vars,
 
 
 def generate_computations_from_modules(
-        jax_computations, computation_names, computation_modules, donate_invars,
+        jax_computations, computation_names, computation_hlos, donate_invars,
         donatable_lists, acc_grad_outvars,
         stage_plan) -> Sequence[XlaShardedPipelineComputation]:
     """Generate pipeline computation from HLO modules."""
-    module_dict = dict(zip(computation_names, computation_modules))
+    module_dict = dict(zip(computation_names, computation_hlos))
     computations = [
         XlaShardedPipelineComputation.from_auto_sharded_computation(
-            sharding_annotated_module=module_dict[computation.name],
+            sharding_annotated_hlo=module_dict[computation.name],
             jax_pipeline_computation=computation,
             stage_plan=stage_plan,
             donated_invars=donate_invars,
@@ -714,7 +711,7 @@ def generate_sharded_xla_computations_arguments(
     dummy_donated_invars = (True,) * donation_num + (False,) * (len(invars) -
                                                                 donation_num)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts_dir.values())
-    hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, dummy_donated_invars)
+    hlo = jaxpr_to_hlo(name, closed_jaxpr, dummy_donated_invars)
 
     if input_sharding_dict:
         sharding_protos = []
@@ -726,23 +723,23 @@ def generate_sharded_xla_computations_arguments(
             else:
                 sharding_protos.append(spec.sharding_proto())
             sharding_specs.append(spec)
-        xe.set_hlo_module_input_shardings(hlo_module, sharding_protos)
+        hlo.set_input_shardings(sharding_protos)
 
     if output_sharding_dict:
         sharding_protos = [
             output_sharding_dict[x].sharding_proto() for x in outvars
         ]
-        xe.set_hlo_module_output_shardings(hlo_module, sharding_protos)
+        hlo.set_output_shardings(sharding_protos)
 
     if stage_input_sharding:
         sharding_protos = [
             sharding_spec.sharding_proto()
             for sharding_spec in stage_input_sharding
         ]
-        xe.set_hlo_module_input_shardings(hlo_module, sharding_protos)
+        hlo.set_input_shardings(sharding_protos)
 
-    flops = xe.hlo_module_count_flop_dot_conv_only(hlo_module)
-    return hlo_module, flops
+    flops = xe.hlo_module_count_flop_dot_conv_only(hlo.get_module())
+    return hlo, flops
 
 
 def generate_sharded_xla_computations(
@@ -757,18 +754,18 @@ def generate_sharded_xla_computations(
     Note: we merge the co-located forward and backward computation and compile
     them together to get a sharding strategy config.
     """
-    hlo_module, flops = generate_sharded_xla_computations_arguments(
+    hlo, flops = generate_sharded_xla_computations_arguments(
         name, jax_computations, computation_donate_invars, input_sharding_dict,
         output_sharding_dict, stage_input_sharding)
 
     #  pylint: disable=unbalanced-tuple-unpacking
-    (computation_names, computation_modules,
-     stage_plan) = run_auto_sharding_pass(hlo_module, logical_mesh, "stages",
+    (computation_names, computation_hlos,
+     stage_plan) = run_auto_sharding_pass(hlo, logical_mesh, "stages",
                                           num_micro_batches,
                                           autosharding_option)
 
     computations = generate_computations_from_modules(
-        jax_computations, computation_names, computation_modules,
+        jax_computations, computation_names, computation_hlos,
         computation_donate_invars, donatable_lists, acc_grad_outvars,
         stage_plan)
     return computations, flops

@@ -10,7 +10,7 @@ import time
 from collections import OrderedDict
 from functools import partial, partialmethod
 import threading
-from typing import Iterable, Dict, Sequence, Any, Union, List
+from typing import Iterable, Dict, Sequence, Any, List
 from warnings import warn
 
 import flax
@@ -42,6 +42,7 @@ import alpa
 from alpa.global_env import global_config, is_worker
 from alpa.monkey_patch import (restore_random, monkey_patch_random,
                                rng_primitives)
+from alpa.wrapped_hlo import HloStatus, WrappedHlo
 
 PLACEMENT_GROUP_TIMEOUT_S_ENV = "ALPA_PLACEMENT_GROUP_TIMEOUT_S_ENV"
 
@@ -327,11 +328,11 @@ def get_compile_options(num_replicas: int, num_partitions: int,
     return compile_options
 
 
-def jaxpr_to_hlo_module(name: str,
-                        closed_jaxpr: ClosedJaxpr,
-                        donated_invars: Sequence[bool],
-                        platform: str = "cuda"):
-    """Convert a jaxpr to an XLA HloModule.
+def jaxpr_to_hlo(name: str,
+                 closed_jaxpr: ClosedJaxpr,
+                 donated_invars: Sequence[bool],
+                 platform: str = "cuda"):
+    """Convert a jaxpr to a wrapped XLA HloModule.
 
     Reference code: jax/jax/_src/dispatch.py::lower_xla_callable
     """
@@ -357,18 +358,15 @@ def jaxpr_to_hlo_module(name: str,
         mlir.module_to_string(lowering_result.module),
         use_tuple_args=tuple_args,
         return_tuple=True)
-    ret = xla_computation.as_hlo_module()
-    return ret
+    return WrappedHlo(xla_computation)
 
 
-def setup_computation_alias(xla_computation: Union[xc.XlaComputation,
-                                                   xe.HloModule],
-                            donated_invars: Sequence[bool]):
+def setup_computation_alias(hlo: WrappedHlo, donated_invars: Sequence[bool]):
     """Set input/output alias in xla computation.
 
     Assume the tensors in output tuple strictly match the donated parameters.
     """
-    program_shape = xla_computation.program_shape()
+    program_shape = hlo.program_shape()
     parameter_shapes = program_shape.parameter_shapes()
     result_shapes = program_shape.result_shape().tuple_shapes()
 
@@ -381,7 +379,7 @@ def setup_computation_alias(xla_computation: Union[xc.XlaComputation,
     while p_in < len(parameter_shapes) and p_out < len(result_shapes):
         if donated_invars[p_in]:
             if parameter_shapes[p_in] == result_shapes[p_out]:
-                xla_computation.setup_alias((p_out,), p_in, ())
+                hlo.get_module().setup_alias((p_out,), p_in, ())
                 p_in += 1
                 p_out += 1
             else:
@@ -427,7 +425,7 @@ def compile_dummy_zero_constant():
     zero = xc.ops.Constant(c, np.array(0, dtype=np.dtype(np.int32)))
     c.clear_sharding()
     c = c.build(xc.ops.Tuple(c, [zero]))
-    return c.get_hlo_module()
+    return WrappedHlo(c, HloStatus.SHARDING_ANNOTATED)
 
 
 def compile_allocate_zero_buffers(backend, num_devices: int,
@@ -523,7 +521,7 @@ def compile_concatenate(mesh_shape, sharding_spec, batch_size, batch_dim, aval):
         parameter_is_tupled_arguments=False,
         build_random_seed=build_random_seed)
     xe.run_spmd_partitioner(hlo_module, compile_options)
-    return hlo_module.as_serialized_hlo_module_proto()
+    return WrappedHlo(hlo_module, HloStatus.SPMD_PARTITIONED)
 
 
 def compile_allgather(shape, dtype, src_spec, dst_spec, num_devices):
@@ -553,7 +551,7 @@ def compile_allgather(shape, dtype, src_spec, dst_spec, num_devices):
         parameter_is_tupled_arguments=False,
         build_random_seed=build_random_seed)
     xe.run_spmd_partitioner(hlo_module, compile_options)
-    return hlo_module.as_serialized_hlo_module_proto()
+    return WrappedHlo(hlo_module, HloStatus.SPMD_PARTITIONED)
 
 
 def get_index_select_computation(sharding_specs, dim, avals, index_shape):
@@ -577,7 +575,7 @@ def get_index_select_computation(sharding_specs, dim, avals, index_shape):
     sharding2.tuple_shardings = shardings
     c.set_sharding(sharding2)
     c = c.build(xc.ops.Tuple(c, selected))
-    return c
+    return WrappedHlo(c, HloStatus.SHARDING_ANNOTATED)
 
 
 def get_shard_shape(aval: ShapedArray, sharding_spec: pxla.ShardingSpec):

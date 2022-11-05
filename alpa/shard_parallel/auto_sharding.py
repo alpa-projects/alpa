@@ -19,7 +19,6 @@ SPMD_PARTITIONED
 FULLY_OPTIMIZED
 """
 import dataclasses
-from enum import Enum, auto
 import logging
 import multiprocessing
 import os
@@ -37,6 +36,7 @@ from alpa.global_env import global_config
 from alpa.parallel_plan import StagePlan
 from alpa.timer import timers
 from alpa.util import check_arithmetic_sequence, get_compile_options, XlaPassContext
+from alpa.wrapped_hlo import HloStatus, WrappedHlo
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -169,19 +169,8 @@ class LogicalDeviceMesh:
                                      other.mesh_alpha, other.mesh_beta))
 
 
-class HloStatus(Enum):
-    """
-    The status of an HloModule.
-    See also the docstring at the beginning of this file.
-    """
-    UNOPTIMIZED = auto()
-    SHARDING_ANNOTATED = auto()
-    SPMD_PARTITIONED = auto()
-    FULLY_OPTIMIZED = auto()
-
-
 def run_auto_sharding_pass(
-        hlo_module: xe.HloModule,
+        hlo: WrappedHlo,
         logical_mesh: LogicalDeviceMesh,
         return_mode: str,
         num_micro_batches: int,
@@ -193,18 +182,18 @@ def run_auto_sharding_pass(
     Computation.
 
     Args:
-      hlo_module: The hlo module got by tracing the jax function,
+      hlo: The hlo module got by tracing the jax function,
         whose status should be UNOPTIMIZED.
       logical_mesh: The logical device mesh.
       return_mode: The mode of return value.
         The choices are {"single", "stages", "stage_and_hook_protos"}.
-        If it is "single", return a single HLO module, whose status is
+        If it is "single", return a single WrappedHlo, whose status is
           SPMD_PARTITIONED.
-        If it is "stages", return HLO modules of multiple pipeline stages,
+        If it is "stages", return WrappedHlo of multiple pipeline stages,
           whose statuses are SHARDING_ANNOTATED.
-        If it is "stages_and_hook", return HLO modules of multiple pipeline
+        If it is "stages_and_hook", return WrappedHlos of multiple pipeline
           stages and the hooked hlo sharding. The statuses of the returned
-          protos are SHARDING_ANNOTATED.
+          WrappedHlos are SHARDING_ANNOTATED.
       num_micro_batches: The number of micro batches
         if gradient accumulation is used. If this is set, the cost of all-reduce
         for gradient synchronization is divided by this number.
@@ -218,6 +207,7 @@ def run_auto_sharding_pass(
     # Set compile options
     if memory_budget_per_device is None:
         memory_budget_per_device = -1
+    assert hlo.is_unoptimized()
 
     multiple_stages = return_mode in ["stages", "stages_and_hook"]
     num_devices = logical_mesh.num_devices
@@ -275,8 +265,7 @@ def run_auto_sharding_pass(
     # Set configs for gradient accumulation rewrite pass
     if rewrite_for_grad_acc and rewrite_grad_acc_indices is None:
         rewrite_grad_acc_indices = tuple(
-            range(len(
-                hlo_module.program_shape().result_shape().tuple_shapes())))
+            range(len(hlo.program_shape().result_shape().tuple_shapes())))
 
     # Temporarily disable this.
     grad_acc_num_micro_batches = None
@@ -352,19 +341,24 @@ def run_auto_sharding_pass(
             "auto_sharding::force_strategy_stra_names": [],
     }):
         timers("auto-sharding").start()
-        xe.run_auto_sharding(hlo_module, compile_options)
+        xe.run_auto_sharding(hlo.get_module(), compile_options)
         timers("auto-sharding").stop()
+    hlo.status = HloStatus.SPMD_PARTITIONED
 
     if multiple_stages:
         hlo_stage_names, hlo_stages = get_auto_sharded_hlo_stages()
         hooked_proto = get_hooked_sharding_protos()
+        hlo_stages = [
+            WrappedHlo(stage, HloStatus.SHARDING_ANNOTATED)
+            for stage in hlo_stages
+        ]
 
     stage_plan = StagePlan(build_random_seed, logical_mesh.shape,
                            all_gather_threshold, as_option.all_reduce_threshold,
                            as_option, last_s_val, last_objective)
 
     if return_mode == "single":
-        return hlo_module, stage_plan
+        return hlo, stage_plan
     elif return_mode == "stages":
         return hlo_stage_names, hlo_stages, stage_plan
     elif return_mode == "stages_and_hook":
@@ -374,20 +368,20 @@ def run_auto_sharding_pass(
 
 
 def run_spmd_partitioner_pass(
-        hlo_module: xe.HloModule,
+        hlo: WrappedHlo,
         num_devices: int,
         rewrite_for_grad_acc: bool = False,
         rewrite_grad_acc_indices: Optional[Sequence[int]] = None):
     """Run SPMD partitioner pass on a sharding annotated HLO Module.
 
     Args:
-      hlo_module: The input HLO module, whose status should be
-        SHARDING_ANNOTATED.
+      hlo: The wrapped HLO module, whose status should be SHARDING_ANNOTATED.
       num_devices: The total number of devices.
       rewrite_for_grad_acc: Whether to do rewriting for gradient accumulation.
       rewrite_grad_acc_indices: The indices of tensors in output that are
         gradients.
     """
+    assert hlo.is_sharding_annotated()
     compile_options = get_compile_options(
         num_replicas=1,
         num_partitions=num_devices,
@@ -398,22 +392,21 @@ def run_spmd_partitioner_pass(
 
     if rewrite_for_grad_acc and rewrite_grad_acc_indices is None:
         rewrite_grad_acc_indices = tuple(
-            range(len(
-                hlo_module.program_shape().result_shape().tuple_shapes())))
+            range(len(hlo.program_shape().result_shape().tuple_shapes())))
 
     with XlaPassContext({
             # Gradient accumulation rewrite
             "auto_sharding::rewrite_for_grad_acc": rewrite_for_grad_acc,
             "auto_sharding::rewrite_indices": rewrite_grad_acc_indices,
     }):
-        xe.run_spmd_partitioner(hlo_module, compile_options)
+        xe.run_spmd_partitioner(hlo.get_module(), compile_options)
+    hlo.status = HloStatus.SPMD_PARTITIONED
 
-    return hlo_module
+    return hlo
 
 
 def run_backend_compilation(backend: xe.Client,
-                            hlo_module: Union[xe.HloModule, xe.XlaComputation,
-                                              bytes],
+                            hlo: WrappedHlo,
                             stage_plan: StagePlan,
                             num_devices: int,
                             bypass_device_assignment_check: bool = False):
@@ -421,11 +414,12 @@ def run_backend_compilation(backend: xe.Client,
 
     Args:
       backend: The XLA backend client.
-      hlo_module: The input HLO Module, whose status should be SPMD_PARTITIONED.
+      hlo: The Wrapped input HLO.
       stage_plan: The auto-sharding strategy solution.
       num_devices: The total number of devices.
       bypass_device_assignment_check: Whether to compile without exact devices.
     """
+    assert hlo.is_spmd_partitioned()
     compile_options = get_compile_options(
         num_replicas=1,
         num_partitions=num_devices,
@@ -433,15 +427,6 @@ def run_backend_compilation(backend: xe.Client,
         use_spmd_partitioning=False,
         parameter_is_tupled_arguments=False,
         build_random_seed=stage_plan.build_random_seed)
-
-    if isinstance(hlo_module, xe.HloModule):
-        xla_computation = xe.XlaComputation(
-            hlo_module.as_serialized_hlo_module_proto())
-    elif isinstance(hlo_module, bytes):  # protobuf
-        xla_computation = xe.XlaComputation(hlo_module)
-    else:
-        assert isinstance(hlo_module, xe.XlaComputation)
-        xla_computation = hlo_module
 
     with XlaPassContext({
             # Build options
@@ -454,7 +439,7 @@ def run_backend_compilation(backend: xe.Client,
             "combiner::all_reduce_threshold":
                 stage_plan.all_reduce_threshold,
     }):
-        compiled = backend.compile(xla_computation, compile_options)
+        compiled = backend.compile(hlo.get_computation(), compile_options)
 
     return compiled
 
@@ -467,7 +452,7 @@ def get_input_output_sharding_specs(
     """Get the sharding specs of input/output tensors from an HloModule.
 
     Args:
-      hlo_module: The sharded HLO module.
+      hlo: The sharded HLO module.
       avals: The abstract values of input tensors.
       out_avals: The abstract values of output tensors.
       num_devices: The total number of devices.

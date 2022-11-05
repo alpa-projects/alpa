@@ -19,7 +19,7 @@ from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                run_spmd_partitioner_pass,
                                                AutoShardingOption)
-from alpa.util import (jaxpr_to_hlo_module, trace_jaxpr_with_micro_batch,
+from alpa.util import (jaxpr_to_hlo, trace_jaxpr_with_micro_batch,
                        setup_computation_alias, OrderedSet, new_jaxpr_eqn)
 
 traceback_util.register_exclusion(__file__)
@@ -110,17 +110,16 @@ def shard_parallel_internal(
 
     # Convert jaxpr to XLA HLO
     name = f"{fun.__name__}_shard_parallel"
-    hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, donated_invars)
-    flop_count = xe.hlo_module_count_flop_dot_conv_only(hlo_module)
+    hlo = jaxpr_to_hlo(name, closed_jaxpr, donated_invars)
+    flop_count = xe.hlo_module_count_flop_dot_conv_only(hlo.get_module())
 
     # Compile a XLA executable
-    hlo_module, stage_plan = run_auto_sharding_pass(hlo_module,
-                                                    logical_mesh_choices[0],
-                                                    "single", 1, as_option)
+    hlo, stage_plan = run_auto_sharding_pass(hlo, logical_mesh_choices[0],
+                                             "single", 1, as_option)
 
     # Compile a mesh executable
     return NormalMeshDriverExecutable(physical_mesh,
-                                      hlo_module,
+                                      hlo,
                                       stage_plan,
                                       avals,
                                       out_avals,
@@ -154,14 +153,13 @@ def shard_parallel_internal_gradient_accumulation(
     # and apply_grad
     donated_invars = donated_invars + (False,) * num_grads
     name = f"{fun.__name__}_shard_parallel"
-    hlo_module = jaxpr_to_hlo_module(name, closed_jaxpr, donated_invars)
-    flop_count = xe.hlo_module_count_flop_dot_conv_only(hlo_module)
+    hlo = jaxpr_to_hlo(name, closed_jaxpr, donated_invars)
+    flop_count = xe.hlo_module_count_flop_dot_conv_only(hlo.get_module())
     flop_count *= num_micro_batches
 
     # pylint: disable=unbalanced-tuple-unpacking
     hlo_stage_names, hlo_stages, stage_plan = run_auto_sharding_pass(
-        hlo_module, logical_mesh_choices[0], "stages", num_micro_batches,
-        as_option)
+        hlo, logical_mesh_choices[0], "stages", num_micro_batches, as_option)
     assert len(hlo_stages) == 2
 
     if hlo_stage_names[0].endswith(APPLY_GRAD_MARKER_SUFFIX):

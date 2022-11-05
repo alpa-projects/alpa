@@ -357,7 +357,7 @@ class PipeshardDriverExecutable:
         Dump intermediate representations and other informations for debugging.
         """
         os.makedirs(folder, exist_ok=True)
-        name = self.stages[0].spmd_partitioned_hlo_module.name
+        name = self.stages[0].hlo.name
         name = name[:name.index("pipeshard_parallel") - 1]
         prefix = os.path.join(folder, name)
 
@@ -463,7 +463,7 @@ class PipeshardMeshWorkerExecuable:
             if isinstance(task_config, PartialGradWorkerExecutableConfig):
                 self.worker.put_executable(task_config.exec_uuid,
                                            PartialGradAccMeshWorkerExecutable,
-                                           task_config.hlo_proto,
+                                           task_config.hlo,
                                            task_config.stage_plan,
                                            task_config.donated_invars)
                 self.partial_grad_exec_uuids.add(task_config.exec_uuid)

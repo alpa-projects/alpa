@@ -5,7 +5,6 @@ import time
 from typing import Callable, Sequence, Optional
 
 from jax import linear_util as lu
-from jax._src.lib import xla_extension as xe
 from jax.core import gensym, AbstractValue, ClosedJaxpr
 from jax.interpreters import pxla
 from jax.tree_util import PyTreeDef
@@ -329,7 +328,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
             for stage_idx in stage_id_dict[mesh_idx]
         ]
         if distributed_compile:
-            module, flops = (generate_sharded_xla_computations_arguments(
+            hlo, flops = (generate_sharded_xla_computations_arguments(
                 f"{name_base}_mesh_{mesh_idx}", stage_dict[mesh_idx],
                 stage_donate_invars, input_sharding_dict, output_sharding_dict,
                 stage_input_sharding))
@@ -339,8 +338,7 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
                 "as_option": autosharding_option,
                 "num_micro_batches": num_microbatch,
             }
-            proto = module.as_serialized_hlo_module_proto()
-            compile_workers.submit(compile_fn, (mesh_idx, proto, other_kwargs))
+            compile_workers.submit(compile_fn, (mesh_idx, hlo, other_kwargs))
             compile_intermediate[mesh_idx] = (stage_dict[mesh_idx],
                                               stage_donate_invars)
             total_flops += flops
@@ -357,16 +355,12 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, n_stages,
 
     if distributed_compile:
         for _ in range(num_meshes):
-            mesh_idx, (computation_names, computation_modules,
+            mesh_idx, (computation_names, computation_hlos,
                        stage_plan) = compile_workers.get_next_unordered()
-            computation_modules = [
-                xe.HloModule.from_serialized_hlo_module_proto(x)
-                for x in computation_modules
-            ]
             jax_computations, computation_donate_invars = compile_intermediate[
                 mesh_idx]
             sharded_xla_stages = generate_computations_from_modules(
-                jax_computations, computation_names, computation_modules,
+                jax_computations, computation_names, computation_hlos,
                 computation_donate_invars, donatable_dict[mesh_idx],
                 acc_grad_outvars, stage_plan)
             for i, xla_stage in zip(stage_id_dict[mesh_idx],

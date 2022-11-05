@@ -9,7 +9,7 @@ from typing import Dict, Sequence
 import jax.numpy as jnp
 from jax.core import (ClosedJaxpr, Var, gensym)
 from jax.interpreters import pxla
-from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
+from jax._src.lib import xla_bridge as xb, xla_extension as xe
 import numpy as np
 import tqdm
 import ray
@@ -36,9 +36,8 @@ from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                run_spmd_partitioner_pass,
                                                run_backend_compilation,
                                                hlo_sharding_to_sharding_spec)
-from alpa.util import (clone_jaxpr, get_shard_shape, jaxpr_to_hlo_module,
-                       OrderedSet, retrieve_placement_group,
-                       get_num_available_gpus)
+from alpa.util import (clone_jaxpr, get_shard_shape, jaxpr_to_hlo, OrderedSet,
+                       retrieve_placement_group, get_num_available_gpus)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -47,13 +46,11 @@ INFINITY_N_STAGES = 4096
 GB = 1024**3
 
 CompileOutput = namedtuple("CompileOutput", [
-    "model_proto", "stage_plan", "input_sharding_protos",
-    "output_sharding_proto", "intermediate_proto",
-    "apply_grad_input_sharding_protos"
+    "hlo", "stage_plan", "input_sharding_protos", "output_sharding_proto",
+    "intermediate_proto", "apply_grad_input_sharding_protos"
 ])
 
-CompileConfig = namedtuple("CompileConfig",
-                           ["model_proto", "output_acc_grad_indices"])
+CompileConfig = namedtuple("CompileConfig", ["hlo", "output_acc_grad_indices"])
 
 ProfileConfig = namedtuple(
     "ProfileConfig",
@@ -142,8 +139,11 @@ class CompileWorker:
             num_micro_batches: the number of microbatches.
 
         Returns:
-            proto: The proto of compiled executable
+            hlo: The WrappedHlo of the compiled executable for accumulate grad
             stage_plan: The sharding strategy from auto sharding
+            input_sharding_protos: The proto of accumulate grad's input sharding
+            output_sharding_protos: same as above
+            hooked_proto: The proto of variables from forward to backward
         """
         self.cnt += 1
 
@@ -156,36 +156,34 @@ class CompileWorker:
             "memory_budget_per_device": None,
         }
         try:
-            hlo_module = xe.HloModule.from_serialized_hlo_module_proto(
-                config.model_proto)
             # pylint: disable=unbalanced-tuple-unpacking
-            module_names, modules, hooked_proto, stage_plan = (
-                run_auto_sharding_pass(hlo_module, **other_kwargs))
+            module_names, hlos, hooked_proto, stage_plan = (
+                run_auto_sharding_pass(config.hlo, **other_kwargs))
         except RuntimeError as e:
             logger.warning(f"Compilation error (auto-sharding pass) "
                            f"for stage {stage_id} : {e}")
             return stage_id, None
 
-        assert (len(modules) <=
+        assert (len(hlos) <=
                 2), "Can only compile no more than two stages (compute+(apply))"
 
         # Read input/output shardings
 
-        if len(modules) > 1:
+        if len(hlos) > 1:
             if module_names[0].endswith(APPLY_GRAD_MARKER_SUFFIX):
                 module_names[0], module_names[1] = module_names[
                     1], module_names[0]
-                modules[0], modules[1] = modules[1], modules[0]
+                hlos[0], hlos[1] = hlos[1], hlos[0]
             assert module_names[1].endswith(APPLY_GRAD_MARKER_SUFFIX)
 
-        acc_grad_module = modules[0]
+        acc_grad_hlo = hlos[0]
         (input_sharding_protos,
          output_sharding_proto) = get_input_output_sharding_proto(
-             acc_grad_module, logical_mesh.num_devices)
+             acc_grad_hlo.get_module(), logical_mesh.num_devices)
 
-        if len(modules) > 1:
+        if len(hlos) > 1:
             apply_grad_input_sharding_protos, _ = (
-                get_input_output_sharding_proto(modules[1],
+                get_input_output_sharding_proto(hlos[1].get_module(),
                                                 logical_mesh.num_devices))
         else:
             apply_grad_input_sharding_protos = None
@@ -193,8 +191,8 @@ class CompileWorker:
         # Compile accumulate_grad part to fully optimized
         rewrite_for_grad_acc = len(config.output_acc_grad_indices) > 0
         try:
-            hlo_module = run_spmd_partitioner_pass(
-                acc_grad_module,
+            hlo = run_spmd_partitioner_pass(
+                acc_grad_hlo,
                 logical_mesh.num_devices,
                 rewrite_for_grad_acc=rewrite_for_grad_acc,
                 rewrite_grad_acc_indices=config.output_acc_grad_indices)
@@ -203,21 +201,17 @@ class CompileWorker:
                            f"for stage {stage_id} : {e}")
             return stage_id, None
 
-        optimized_proto = hlo_module.as_serialized_hlo_module_proto()
-        return stage_id, CompileOutput(optimized_proto, stage_plan,
-                                       input_sharding_protos,
+        return stage_id, CompileOutput(hlo, stage_plan, input_sharding_protos,
                                        output_sharding_proto, hooked_proto,
                                        apply_grad_input_sharding_protos)
 
     @staticmethod
-    def run_auto_sharding_pass(stage_id, proto, other_kwargs):
-        """Run auto-sharding pass on a proto."""
-        hlo_module = xe.HloModule.from_serialized_hlo_module_proto(proto)
+    def run_auto_sharding_pass(stage_id, hlo, other_kwargs):
+        """Run auto-sharding pass on a WrappedHlo."""
         assert other_kwargs["return_mode"] == "stages"
         # pylint: disable=unbalanced-tuple-unpacking
         hlo_stage_names, hlo_stages, stage_plan = run_auto_sharding_pass(
-            hlo_module, **other_kwargs)
-        hlo_stages = [x.as_serialized_hlo_module_proto() for x in hlo_stages]
+            hlo, **other_kwargs)
         return stage_id, (hlo_stage_names, hlo_stages, stage_plan)
 
 
@@ -241,7 +235,7 @@ class CompileWorkerPool(BaseWorkerPoolWrapper):
 
 
 class ProfileWorker:
-    """A ray actor to profile a HLO Proto on a given mesh.
+    """A ray actor to profile a WrappedHlo on a given mesh.
 
     It requests gpu resources from ray. When exceptions is catched, it restarts
     the whole mesh.
@@ -255,14 +249,14 @@ class ProfileWorker:
                       intermediate_size, initial_size):
         """Implementation of profile function.
 
-        The profiler first compile the HLO Proto into Mesh Executable, then
+        The profiler first compile the WrappedHLO into Mesh Executable, then
         profiles the executable and computes the maximal number of stages
         following up this stage.
 
         Args:
             stage_id: the stage id of the proto.
-            compiled_output: Compiled HLO Proto, strategy config, input sharding
-                spec and output sharding spec.
+            compiled_output: Compiled WrappedHlo, strategy config, input
+                sharding spec and output sharding spec.
             profile_info: input avals, output avals, donation mapping and
                 indices in outputs for accumulated gradients.
             intermediate_size: Bytes of intermediates for a microbatch.
@@ -282,14 +276,14 @@ class ProfileWorker:
         output_sharding = compiled_output.output_sharding_proto
         donated_invars = (True,) * len(tot_donation) + (False,) * (
             len(avals) - len(tot_donation))
-        hlo_module = xc.XlaComputation(
-            compiled_output.model_proto).as_hlo_module()
+        hlo = compiled_output.hlo
+        hlo_module = hlo.get_module()
         if input_shardings is not None:
             hlo_module.set_spmd_parameters_shardings(
                 [xe.HloSharding(x) for x in input_shardings])
             hlo_module.set_spmd_output_sharding(xe.HloSharding(output_sharding))
         executable = PartialGradAccMeshDriverExecutable(
-            self.mesh, hlo_module, compiled_output.stage_plan, avals, out_avals,
+            self.mesh, hlo, compiled_output.stage_plan, avals, out_avals,
             donated_invars, output_acc_grad_indices)
 
         # Run profiling
@@ -356,7 +350,7 @@ class ProfileWorkerPool(BaseWorkerPoolWrapper):
 
 
 class HloCostModelProfileWorker:
-    """A ray actor to estimate the cost of HLO Proto based on cost model."""
+    """A ray actor to estimate the cost of WrappedHLO based on cost model."""
 
     def __init__(self, prof_result, num_devices, num_micro_batches):
         self.backend = xb.get_backend("gpu")
@@ -371,7 +365,7 @@ class HloCostModelProfileWorker:
         try:
             compiled = run_backend_compilation(
                 self.backend,
-                compiled_output.model_proto,
+                compiled_output.hlo,
                 compiled_output.stage_plan,
                 self.num_devices,
                 bypass_device_assignment_check=True)
@@ -687,9 +681,9 @@ def generate_stage_info(all_layers, selected_indices, donation_mapping,
                                                       new_outvars,
                                                       selected_donation_mapping)
 
-    hlo_module = jaxpr_to_hlo_module(name, merged, is_donated)
-    proto = hlo_module.as_serialized_hlo_module_proto()
-    compile_config = CompileConfig(proto, output_acc_grad_indices)
+    hlo = jaxpr_to_hlo(name, merged, is_donated)
+    # FIXME(yonghao): change those using this one
+    compile_config = CompileConfig(hlo, output_acc_grad_indices)
     stage_config = StageConfig(compile_config, profile_config, apply_info)
     return intermediate_vars, stage_config
 

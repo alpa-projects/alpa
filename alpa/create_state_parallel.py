@@ -2,7 +2,6 @@
 from collections import defaultdict, deque
 from typing import Sequence, Optional
 
-from jax._src.lib import xla_extension as xe
 from jax.core import Var
 from jax.interpreters import pxla
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
@@ -99,7 +98,7 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
         physical_mesh = executable.physical_mesh
 
         # Run sharding propagation
-        xe.set_hlo_module_output_shardings(hlo.get_module(), sharding_protos)
+        hlo.set_output_shardings(sharding_protos)
         hlo, stage_plan = run_auto_sharding_pass(
             hlo,
             physical_mesh.get_logical_mesh(

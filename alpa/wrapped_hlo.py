@@ -44,7 +44,15 @@ class WrappedHlo:
         return self.module.as_serialized_hlo_module_proto()
 
     def program_shape(self):
-        return self.get_module().program_shape()
+        return self.module.program_shape()
+
+    def set_input_shardings(self, sharding_protos):
+        assert self.is_sharding_annotated() or self.is_unoptimized()
+        xe.set_hlo_module_input_shardings(self.module, sharding_protos)
+
+    def set_output_shardings(self, sharding_protos):
+        assert self.is_sharding_annotated() or self.is_unoptimized()
+        xe.set_hlo_module_output_shardings(self.module, sharding_protos)
 
     def is_unoptimized(self):
         return self.status == HloStatus.UNOPTIMIZED

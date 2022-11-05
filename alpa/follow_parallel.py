@@ -1,7 +1,6 @@
 """Follow the parallelization strategy of another function."""
 import logging
 
-from jax._src.lib import xla_extension as xe
 from jax.core import ClosedJaxpr
 from jax.interpreters import partial_eval as pe
 from jax.tree_util import tree_leaves
@@ -58,7 +57,7 @@ def compile_follow_parallel_executable(fun, in_tree, out_tree_thunk,
 
         # Run sharding propagation
         physical_mesh = executable.physical_mesh
-        xe.set_hlo_module_input_shardings(hlo.get_module(), sharding_protos)
+        hlo.set_input_shardings(sharding_protos)
         hlo, stage_plan = run_auto_sharding_pass(
             hlo, physical_mesh.get_logical_mesh(), "single", 1,
             AutoShardingOption(enable_auto_sharding=False))

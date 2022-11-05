@@ -723,20 +723,20 @@ def generate_sharded_xla_computations_arguments(
             else:
                 sharding_protos.append(spec.sharding_proto())
             sharding_specs.append(spec)
-        xe.set_hlo_module_input_shardings(hlo.get_module(), sharding_protos)
+        hlo.set_input_shardings(sharding_protos)
 
     if output_sharding_dict:
         sharding_protos = [
             output_sharding_dict[x].sharding_proto() for x in outvars
         ]
-        xe.set_hlo_module_output_shardings(hlo.get_module(), sharding_protos)
+        hlo.set_output_shardings(sharding_protos)
 
     if stage_input_sharding:
         sharding_protos = [
             sharding_spec.sharding_proto()
             for sharding_spec in stage_input_sharding
         ]
-        xe.set_hlo_module_input_shardings(hlo.get_module(), sharding_protos)
+        hlo.set_input_shardings(sharding_protos)
 
     flops = xe.hlo_module_count_flop_dot_conv_only(hlo.get_module())
     return hlo, flops

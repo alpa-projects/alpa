@@ -5,7 +5,6 @@ import time
 from typing import Callable, Sequence, Optional
 
 from jax import linear_util as lu
-from jax._src.lib import xla_extension as xe
 from jax.core import gensym, AbstractValue, ClosedJaxpr
 from jax.interpreters import pxla
 from jax.tree_util import PyTreeDef

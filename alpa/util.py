@@ -10,7 +10,7 @@ import time
 from collections import OrderedDict
 from functools import partial, partialmethod
 import threading
-from typing import Iterable, Dict, Sequence, Any, Union, List
+from typing import Iterable, Dict, Sequence, Any, List
 from warnings import warn
 
 import flax

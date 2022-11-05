@@ -5,7 +5,7 @@ import logging
 from typing import Sequence, Any, Dict, Optional
 
 from jax import jit
-from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
+from jax._src.lib import xla_bridge as xb, xla_extension as xe
 from jax._src.util import partial, safe_map
 from jax._src import dispatch
 from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
@@ -332,8 +332,8 @@ class XlaShardedPipelineComputation(PipelineComputation):
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
         input_sharding_specs, output_sharding_specs = (
-            get_input_output_sharding_specs(hlo.get_module(), avals,
-                                            out_avals, num_devices,
+            get_input_output_sharding_specs(hlo.get_module(), avals, out_avals,
+                                            num_devices,
                                             stage_plan.logical_mesh_shape))
         self.input_sharding_specs = input_sharding_specs
         self.output_sharding_specs = output_sharding_specs
@@ -351,8 +351,8 @@ class XlaShardedPipelineComputation(PipelineComputation):
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
         mesh_executable = PartialGradAccMeshDriverExecutable(
-            mesh, hlo, self.stage_plan, avals, out_avals,
-            self.donated_invars, self.output_acc_grad_indices)
+            mesh, hlo, self.stage_plan, avals, out_avals, self.donated_invars,
+            self.output_acc_grad_indices)
         return mesh_executable.get_driver_callable()
 
     def get_hlo_text(self):

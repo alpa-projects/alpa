@@ -463,7 +463,7 @@ class PipeshardMeshWorkerExecuable:
             if isinstance(task_config, PartialGradWorkerExecutableConfig):
                 self.worker.put_executable(task_config.exec_uuid,
                                            PartialGradAccMeshWorkerExecutable,
-                                           task_config.hlo_proto,
+                                           task_config.hlo,
                                            task_config.stage_plan,
                                            task_config.donated_invars)
                 self.partial_grad_exec_uuids.add(task_config.exec_uuid)

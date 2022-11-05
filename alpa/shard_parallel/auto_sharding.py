@@ -187,13 +187,13 @@ def run_auto_sharding_pass(
       logical_mesh: The logical device mesh.
       return_mode: The mode of return value.
         The choices are {"single", "stages", "stage_and_hook_protos"}.
-        If it is "single", return a single HLO module, whose status is
+        If it is "single", return a single WrappedHlo, whose status is
           SPMD_PARTITIONED.
-        If it is "stages", return HLO modules of multiple pipeline stages,
+        If it is "stages", return WrappedHlo of multiple pipeline stages,
           whose statuses are SHARDING_ANNOTATED.
-        If it is "stages_and_hook", return HLO modules of multiple pipeline
+        If it is "stages_and_hook", return WrappedHlos of multiple pipeline
           stages and the hooked hlo sharding. The statuses of the returned
-          protos are SHARDING_ANNOTATED.
+          WrappedHlos are SHARDING_ANNOTATED.
       num_micro_batches: The number of micro batches
         if gradient accumulation is used. If this is set, the cost of all-reduce
         for gradient synchronization is divided by this number.

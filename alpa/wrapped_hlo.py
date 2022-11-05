@@ -1,12 +1,16 @@
+"""A class that wraps HloModule and records whether the module runs AutoSharding
+and SPMD Partitioner or not.
+"""
 from enum import Enum, auto
 from typing import Union
 
 from jax._src.lib import xla_extension as xe
 
+
 class HloStatus(Enum):
     """
     The status of an HloModule.
-    See also the docstring at the beginning of this file.
+    See also the docstring at the beginning of shard_parallel/auto_sharding.py.
     """
     UNOPTIMIZED = auto()
     SHARDING_ANNOTATED = auto()
@@ -15,8 +19,10 @@ class HloStatus(Enum):
 
 
 class WrappedHlo:
+    """Wrapped HloModule with HloStatus."""
 
-    def __init__(self, module: Union[xe.HloModule, xe.XlaComputation, bytes],
+    def __init__(self,
+                 module: Union[xe.HloModule, xe.XlaComputation, bytes],
                  status: HloStatus = HloStatus.UNOPTIMIZED):
         if isinstance(module, xe.HloModule):
             self.module = module

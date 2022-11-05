@@ -63,10 +63,9 @@ def compile_follow_parallel_executable(fun, in_tree, out_tree_thunk,
             hlo, physical_mesh.get_logical_mesh(), "single", 1,
             AutoShardingOption(enable_auto_sharding=False))
 
-        return NormalMeshDriverExecutable(physical_mesh, hlo, stage_plan,
-                                          avals, out_avals,
-                                          [False] * len(avals), static_argnums,
-                                          in_tree, out_tree)
+        return NormalMeshDriverExecutable(physical_mesh, hlo, stage_plan, avals,
+                                          out_avals, [False] * len(avals),
+                                          static_argnums, in_tree, out_tree)
     else:
         num_micro_batches = num_micro_batches or 1
 

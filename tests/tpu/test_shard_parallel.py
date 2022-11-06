@@ -37,11 +37,13 @@ class AutoShardingTpuMlpTest(AutoShardingMLPTest):
         global_config.backend = "tpu"
         super().setUp()
 
+
 class AutoShardingTpuMoeTest(AutoShardingMoETest):
 
     def setUp(self):
         global_config.backend = "tpu"
         super().setUp()
+
 
 def suite():
     suite = unittest.TestSuite()

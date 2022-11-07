@@ -9,7 +9,7 @@ from setuptools import setup, find_packages
 
 IS_WINDOWS = sys.platform == "win32"
 ROOT_DIR = os.path.dirname(__file__)
-HAS_CUDA = os.system("nvidia-smi > /dev/null 2>&1") == 0
+HAS_CUDA = True
 
 
 def get_cuda_version(cuda_home):

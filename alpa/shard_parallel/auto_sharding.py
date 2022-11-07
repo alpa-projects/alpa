@@ -381,7 +381,7 @@ def run_spmd_partitioner_pass(
       rewrite_grad_acc_indices: The indices of tensors in output that are
         gradients.
     """
-    assert hlo.is_sharding_annotated()
+    assert hlo.is_sharding_annotated(), f"{hlo.status}"
     compile_options = get_compile_options(
         num_replicas=1,
         num_partitions=num_devices,

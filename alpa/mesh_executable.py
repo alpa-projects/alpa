@@ -215,7 +215,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         self.exec_uuid = next_mesh_executable_uuid()
         self._set_executable(physical_mesh, hlo, stage_plan)
 
-        hlo = run_spmd_partitioner_pass(hlo, physical_mesh.num_devices)
+        if hlo.is_sharding_annotated():
+            hlo = run_spmd_partitioner_pass(hlo, physical_mesh.num_devices)
         # Read sharding specs
         self.input_sharding_specs, self.output_sharding_specs = (
             get_input_output_sharding_specs(hlo.get_module(), avals, out_avals,

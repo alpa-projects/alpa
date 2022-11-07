@@ -1,7 +1,6 @@
 """Code to wrap some NCCL API calls."""
 import numpy
 
-from alpa.collective.collective import nccl_available
 from alpa.collective.types import ReduceOp, torch_available
 from alpa.global_env import global_config
 
@@ -51,7 +50,7 @@ if torch_available():
     import torch
     import torch.utils.dlpack
 
-    if nccl_available():
+    if global_config.has_cuda:
         TORCH_NCCL_DTYPE_MAP = {
             # INT types
             torch.int: nccl.NCCL_INT,

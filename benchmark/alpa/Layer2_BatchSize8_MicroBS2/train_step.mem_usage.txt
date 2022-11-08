@@ -1,1 +1,0 @@
-total_allocation_size: 12.284 GB

@@ -58,7 +58,7 @@ perf_test_suite = {
         get_solution_case(gpt_specs["760M"], 128, 6, [[0, 1, 2], [3, 4, 5]],
                           [(1, 1)] * 2, [(1, 1)] * 2, [force_dp_dict] * 2),
     4:
-        get_solution_case(gpt_specs["1.3B"], 128, 6, [[0, 1, 2], [3, 4, 5]],
+        get_solution_case(gpt_specs["1.3B"], 256, 6, [[0, 1, 2], [3, 4, 5]],
                           [(1, 2)] * 2, [(2, 1)] * 2, [force_dp_dict] * 2),
     8:
         get_solution_case(gpt_specs["2.6B"], 128,

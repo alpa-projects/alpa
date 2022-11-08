@@ -1,27 +1,23 @@
 import logging
 from typing import Union, List
 
-import numpy as np
-import os
-
+import cupy
 import jax
 import jax.numpy as jnp
+import numpy as np
+import os
 import torch
 import tqdm
 from llm_serving.model import opt_model_1d
-import cupy
-
-from alpa.timer import timers
 from transformers import OPTForCausalLM, BloomForCausalLM
 from transformers.generation_utils import dataclass
-from examples.llm_serving.model.opt_utils import TransformerModelConfig
-from examples.llm_serving.model.wrapper import disable_torch_init, restore_torch_init, InferenceFuncOutput, \
-    InferenceFuncConfig, WrappedInferenceFunc
-from examples.llm_serving.model import opt_model
-from examples.llm_serving.model.opt_model_1d import IterationLevelInputPool, unpad, pad, custom_reshape_logits
-from examples.llm_serving.model.opt_utils import sync
-from alpa.collective.worker_nccl_util_cupy import jax_tensor_to_cupy
 
+from alpa.collective.worker_nccl_util_cupy import jax_tensor_to_cupy
+from alpa.timer import timers
+from examples.llm_serving.model import opt_model
+from examples.llm_serving.model.opt_model_1d import IterationLevelInputPoolV2, unpad, pad, custom_reshape_logits
+from examples.llm_serving.model.opt_utils import sync
+from examples.llm_serving.model.wrapper import disable_torch_init, restore_torch_init
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -45,7 +41,7 @@ class SequenceGenerator:
         self.pad = self.model_config.pad
 
     def generate(self,
-                 input: Union[IterationLevelInputPool, List[List[int]], np.ndarray],
+                 input: Union[IterationLevelInputPoolV2, List[List[int]], np.ndarray],
                  max_length=None,
                  max_new_tokens=None,
                  do_sample=False,
@@ -53,7 +49,7 @@ class SequenceGenerator:
         if max_length == None and max_new_tokens == None:
             raise RuntimeError("Please provide at least one of max_length and max_new_tokens.")
 
-        if isinstance(input, IterationLevelInputPool):
+        if isinstance(input, IterationLevelInputPoolV2):
             raise NotImplementedError()
         elif isinstance(input, (List, np.ndarray, torch.Tensor)):
             unpadded_input = unpad(input)
@@ -69,28 +65,25 @@ class SequenceGenerator:
                           max_length=None,
                           max_new_tokens=None,
                           do_sample=False):
-        input_pool = IterationLevelInputPool(self.input_pool_config,
-                                             self.model_config,
-                                             max_length=max_length,
-                                             max_new_tokens=max_new_tokens)
+        input_pool = IterationLevelInputPoolV2(self.input_pool_config,
+                                               self.model_config,
+                                               max_length=max_length,
+                                               max_new_tokens=max_new_tokens)
         input_pool.enter_prompts(input_ids)
         iteration = 0
         while not input_pool.is_finished():
             timers("enter").start(sync)
             input, input_index, position_ids, logit_positions = input_pool.next()
             timers("enter").suspend(sync)
-            # print(input_pool.cache.kv_caches_cupy[0][0][0:512, 0, 0])
-            os.environ["FT_INPUT_INDEX_ADDR"] = str(input_index.ctypes.data)
-            os.environ["FT_CACHE_INDEX_ADDR"] = str(input_pool.cache.kv_cache_ids.ctypes.data)
-            os.environ["FT_MAX_CACHE_LEN_PER_SEQ"] = str(input_pool.max_cache_per_seq)
+
             batch = {
                 "input_ids": input,
                 "position_ids": position_ids,
-                "cache": input_pool.cache.kv_caches
+                "cache": input_pool.cache
             }
             # compute
             timers("compute").start(sync)
-            logits, kv = self.executable(self.params, batch)
+            logits = self.executable(self.params, batch)
             timers("compute").suspend(sync)
 
             timers("generate").start(sync)
@@ -101,7 +94,7 @@ class SequenceGenerator:
             timers("generate").suspend(sync)
 
             timers("update").start(sync)
-            input_pool.update_cache(kv, generated_ids)
+            input_pool.update_cache(generated_ids)
             timers("update").suspend(sync)
             iteration += 1
 
@@ -140,14 +133,8 @@ def get_model(model_name: str,
                 max_cache_per_seq: int = 128,
                 # model parameters
                 dtype=jnp.float16,
-                torch_device: str = "cpu",
                 # Shared arguments with model.generate
-                do_sample: bool = False,
-                # num_beams: int = 1,
-                # num_return_sequences: int = 1,
-                # return_dict_in_generate: bool = True,
-                output_attentions: bool = False,
-                output_hidden_states: bool = False):
+                do_sample: bool = False):
     """Experimental 1D transformer implementation."""
     assert "opt-1d" in model_name, "are you sure you want to use the experimental 1D version?"
     name = model_name.split("/")[1].lower()
@@ -172,16 +159,7 @@ def get_model(model_name: str,
         assert os.path.exists(embed_weight), f"No such file or directory: '{embed_weight}'"
     # TODO(Hao): figure out the actual input size
     model_config = opt_model.get_config(name, dtype=dtype, max_seq_len=max_seq_len)
-    # transformer_config = TransformerModelConfig(
-    #     H=config.hidden_size,
-    #     L=config.num_hidden_layers,
-    #     n_head=config.n_head,
-    #     seq_len=config.max_seq_len,
-    #     vocab_size=config.vocab_size)
-    executable, params_aval = opt_model_1d.get_jax_executable(
-        model_config,
-        output_attentions=output_attentions,
-        output_hidden_states=output_hidden_states)
+    executable, params_aval = opt_model_1d.get_jax_executable(model_config)
 
     # load params
     # TODO(Hao): use the same func with 2D

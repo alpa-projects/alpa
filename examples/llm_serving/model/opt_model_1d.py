@@ -25,6 +25,9 @@ from alpa.collective.worker_nccl_util_cupy import jax_tensor_to_cupy
 from alpa.model.model_util import ModelOutput
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 from alpa.util import OrderedSet
+from alpa.timer import timers
+from examples.llm_serving.model.opt_utils import sync
+
 
 try:
     from ft_mha import fused_mmha, DecodingToken, init_cache_manager, \
@@ -1119,9 +1122,9 @@ class IterationLevelInputPoolV2:
         sentence_ids = self.next_sentence_id(len(input_sequences))
 
         def max_new_tokens(seq_len):
-            n = 0
+            n = 2048
             if self.max_length:
-                n = max(0, self.max_length - seq_len)
+                n = min(n, self.max_length - seq_len)
             if self.max_new_tokens:
                 n = min(n, self.max_new_tokens)
             return n
@@ -1185,7 +1188,9 @@ class IterationLevelInputPoolV2:
             i += 1
             logit_positions.append(i)
 
+        timers("prepare_inputs").start(sync)
         prepare_inputs([prompt.p for prompt in prompt_input], [prompt.p for prompt in decoding_input])
+        timers("prepare_inputs").suspend(sync)
         # return inputs
         return input, input_index, position_ids, logit_positions
 

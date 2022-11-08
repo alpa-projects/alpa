@@ -83,6 +83,7 @@ class AutoShardingTpuMoeTest(test_moe.AutoShardingMoETest):
     def test_moe_lm_data_parallel_reduce_scatter_zero_3(self):
         super().test_moe_lm_data_parallel_reduce_scatter_zero_3()
 
+
 def suite():
     suite = unittest.TestSuite()
     if not has_tpu():

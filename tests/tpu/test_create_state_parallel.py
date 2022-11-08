@@ -23,6 +23,7 @@ class TpuCreateStateTest(test_create_state.CreateStateTest):
     def test_pipeshard_parallel(self):
         super().test_pipeshard_parallel()
 
+
 def suite():
     suite = unittest.TestSuite()
     if not has_tpu():

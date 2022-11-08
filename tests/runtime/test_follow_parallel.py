@@ -64,12 +64,8 @@ class FollowParallelTest(unittest.TestCase):
             "y": jnp.ones((batch_size * 2, output_dim)),
         }
 
-        if isinstance(method, ShardParallel):
-            num_micro_batches = None
-            grad_fn = jax.grad
-        else:
-            num_micro_batches = 2
-            grad_fn = alpa.grad
+        grad_fn = jax.grad if method.num_micro_batches is None else alpa.grad
+        num_micro_batches = method.num_micro_batches
 
         state = create_state()
 

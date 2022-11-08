@@ -63,7 +63,7 @@ def get_pipeshard_parallel_method(benchmark_case: BenchmarkCase,
     parallel_args = benchmark_case.parallel_args
 
     if parallel_mode == "search":
-        assert isinstancen(parallel_args, SearchParallelArgs)
+        assert isinstance(parallel_args, SearchParallelArgs)
         (prefer_reduce_scatter, use_remat, num_auto_layers,
          auto_stage_option) = parallel_args
         add_manual_layer_marker = None

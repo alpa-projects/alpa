@@ -37,7 +37,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--cache-filename",
         type=str,
-        default="/home/ubuntu/efs/alpa/benchmark/alpa/tmp/hlo_op_cost_dict.pkl",
+        default="/build/benchmark/alpa/tmp/hlo_op_cost_dict.pkl",
         help="The filename of the temporary cache. This should be an "
         "absolute path on a network file system that can be accessed by "
         "ray workers on all nodes.")

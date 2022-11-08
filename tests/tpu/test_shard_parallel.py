@@ -57,6 +57,7 @@ class AutoShardingTpuMlpTest(test_mlp.AutoShardingMLPTest):
     def test_n_layer_mlp_data_parallel_reduce_scatter_zero_stage_3(self):
         super().test_n_layer_mlp_data_parallel_reduce_scatter_zero_stage_3()
 
+
 class AutoShardingTpuMoeTest(test_moe.AutoShardingMoETest):
 
     def setUp(self):

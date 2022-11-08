@@ -5,6 +5,7 @@ from jax.core import ClosedJaxpr
 from jax.interpreters import partial_eval as pe
 from jax.tree_util import tree_leaves
 
+from alpa.global_env import global_config
 from alpa.mesh_executable import (NormalMeshDriverExecutable,
                                   GradAccMeshDriverExecutable)
 from alpa.parallel_plan import PlacementSpec
@@ -33,6 +34,9 @@ def compile_follow_parallel_executable(fun, in_tree, out_tree_thunk,
     input_placement_specs = tree_leaves(input_placement_specs, is_leave)
 
     executable = src_func.get_last_executable()
+    if (not isinstance(executable, NormalMeshDriverExecutable) and
+            global_config.backend == "tpu"):
+        raise NotImplementedError(f"{type(executable)} is not supported in tpu")
     if isinstance(executable,
                   (NormalMeshDriverExecutable, GradAccMeshDriverExecutable)):
         if num_micro_batches != 1 and num_micro_batches is not None:

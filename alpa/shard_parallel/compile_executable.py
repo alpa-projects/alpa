@@ -13,6 +13,7 @@ from jax.lax import add_p, div_p
 from jax.tree_util import PyTreeDef
 
 from alpa.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh
+from alpa.global_env import global_config
 from alpa.mesh_executable import (NormalMeshDriverExecutable,
                                   GradAccMeshDriverExecutable)
 from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
@@ -75,6 +76,9 @@ def compile_shard_executable(
                                        physical_mesh, logical_mesh_choices,
                                        as_option, *avals)
     else:
+        if global_config.backend == "tpu":
+            raise NotImplementedError(
+                "Gradient accumulation for tpu is not supported")
         return shard_parallel_internal_gradient_accumulation(
             fun, in_tree, out_tree_thunk, static_argnums, donated_invars,
             batch_invars, physical_mesh, logical_mesh_choices,
@@ -116,6 +120,10 @@ def shard_parallel_internal(
     # Compile a XLA executable
     hlo, stage_plan = run_auto_sharding_pass(hlo, logical_mesh_choices[0],
                                              "single", 1, as_option)
+    # This is a walkaround because XLA GpuCompiler has some issue
+    if global_config.backend == "gpu":
+        hlo = run_spmd_partitioner_pass(hlo,
+                                        np.prod(logical_mesh_choices[0].shape))
 
     # Compile a mesh executable
     return NormalMeshDriverExecutable(physical_mesh,

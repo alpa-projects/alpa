@@ -210,6 +210,13 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         self.auto_sharding_option = stage_plan.auto_sharding_option
         self.auto_sharding_objective = stage_plan.auto_sharding_objective
 
+        # Send the executable to workers
+        self.fully_optimized_hlo_text = None
+        self.exec_uuid = next_mesh_executable_uuid()
+        self._set_executable(physical_mesh, hlo, stage_plan)
+
+        if hlo.is_sharding_annotated():
+            hlo = run_spmd_partitioner_pass(hlo, physical_mesh.num_devices)
         # Read sharding specs
         self.input_sharding_specs, self.output_sharding_specs = (
             get_input_output_sharding_specs(hlo.get_module(), avals, out_avals,
@@ -223,11 +230,6 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         ]
         self.outs_handler = physical_mesh.get_outputs_handler(
             out_avals, self.output_sharding_specs)
-
-        # Send the executable to workers
-        self.fully_optimized_hlo_text = None
-        self.exec_uuid = next_mesh_executable_uuid()
-        self._set_executable(physical_mesh, hlo, stage_plan)
 
         # Set up timers
         self.exec_timer_name = get_execution_timer_name(self.exec_uuid)

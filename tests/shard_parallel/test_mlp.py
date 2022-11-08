@@ -12,8 +12,8 @@ from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 import optax
 
 from alpa import (parallelize, LocalPhysicalDeviceMesh, AutoShardingOption,
-                  ShardParallel, DataParallel, Zero2Parallel, Zero3Parallel)
-from alpa.util import map_to_shape, count_communication_primitives
+                  ShardParallel, Zero2Parallel, Zero3Parallel)
+from alpa.util import count_communication_primitives
 
 
 def assert_close(x, y, atol=0.01):

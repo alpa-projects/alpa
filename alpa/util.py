@@ -1254,7 +1254,7 @@ def run_cmd(cmd: str):
 
 
 def list_gpu_info():
-    """List all gpu information by calling nvidia-sim."""
+    """List all gpu information by calling nvidia-smi."""
     ret = subprocess.getoutput("nvidia-smi -L")
     visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", None)
     if visible_devices:
@@ -1281,7 +1281,13 @@ def get_num_hosts_and_num_devices(args):
     else:
         if hasattr(args, "local") and args.local:
             num_hosts = 1
-            num_devices_per_host = list_gpu_info().count("UUID")
+            if alpa.global_config.backend == "gpu":
+                num_devices_per_host = list_gpu_info().count("UUID")
+            elif alpa.global_config.backend == "tpu":
+                num_devices_per_host = len(jax.devices("tpu"))
+            else:
+                raise ValueError(
+                    f"Unsupported backend: {alpa.global_config.backend}")
         else:
             ray.init(address="auto")
             num_hosts = len(ray.nodes())

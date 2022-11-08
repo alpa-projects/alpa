@@ -9,6 +9,7 @@ from setuptools import setup, find_packages
 
 IS_WINDOWS = sys.platform == "win32"
 ROOT_DIR = os.path.dirname(__file__)
+HAS_CUDA = os.system("nvidia-smi > /dev/null 2>&1") == 0
 
 
 def get_cuda_version(cuda_home):
@@ -91,10 +92,12 @@ install_require_list = [
     "numba",
 ]
 
-dev_require_list = [
-    f"cupy-cuda{get_cuda_version_str(no_dot=True)}", "yapf==0.32.0",
-    "pylint==2.14.0", "cmake", "pybind11"
-]
+dev_require_list = ["yapf==0.32.0", "pylint==2.14.0", "cmake", "pybind11"]
+
+if HAS_CUDA:
+    dev_require_list += [
+        f"cupy-cuda{get_cuda_version_str(no_dot=True)}",
+    ]
 
 doc_require_list = [
     "sphinx", "sphinx-rtd-theme", "sphinx-gallery", "matplotlib"
@@ -146,7 +149,8 @@ if __name__ == "__main__":
         ],
         keywords=("alpa distributed parallel machine-learning model-parallelism"
                   "gpt-3 deep-learning language-model python"),
-        packages=find_packages(exclude=["benchmark", "examples", "playground", "tests"]),
+        packages=find_packages(
+            exclude=["benchmark", "examples", "playground", "tests"]),
         python_requires='>=3.7',
         cmdclass={"install": InstallPlatlib},
         install_requires=install_require_list,

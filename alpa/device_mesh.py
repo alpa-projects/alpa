@@ -59,11 +59,12 @@ from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
 
 ray_worker = try_import_ray_worker()
 
-if global_config.nccl_mode == "cupy":
-    import alpa.collective.worker_nccl_util_cupy as worker_nccl_util
-else:
-    assert global_config.nccl_mode == "xla_extension"
-    import alpa.collective.worker_nccl_util_xla as worker_nccl_util
+if global_config.backend == "gpu" and global_config.has_cuda:
+    if global_config.nccl_mode == "cupy":
+        import alpa.collective.worker_nccl_util_cupy as worker_nccl_util
+    else:
+        assert global_config.nccl_mode == "xla_extension"
+        import alpa.collective.worker_nccl_util_xla as worker_nccl_util
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -126,8 +127,12 @@ class MeshHostWorker:
         self.distributed_client.connect()
         logger.debug(
             f"{host_id}: Success to connect to xla runtime at {server_address}")
-        self.backend = xla_client.make_gpu_client(self.distributed_client,
-                                                  node_id=host_id)
+        if global_config.backend == "gpu":
+            self.backend = xla_client.make_gpu_client(self.distributed_client,
+                                                      node_id=host_id)
+        else:
+            raise NotImplementedError(
+                f"backend {global_config.backend} is not supported")
         # Monkey patch the backend
         set_override_backend(self.backend)
         self.local_devices = self.backend.local_devices()
@@ -807,7 +812,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.device_strs = []
         self.operation_executables = {}
 
-        self.backend = xb.get_backend("gpu")
+        self.backend = xb.get_backend(global_config.backend)
 
         self.set_runtime_random_seed(global_config.runtime_random_seed)
 
@@ -2118,7 +2123,7 @@ class DeviceCluster:
         # Gather device info
         self.host_num_devices = []
         for host_info in self.host_info:
-            number = host_info["Resources"]["GPU"]
+            number = host_info["Resources"][global_config.ray_accelerator_name]
             assert number.is_integer()
             self.host_num_devices.append(int(number))
 

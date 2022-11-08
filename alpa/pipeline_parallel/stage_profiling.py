@@ -353,7 +353,7 @@ class HloCostModelProfileWorker:
     """A ray actor to estimate the cost of WrappedHLO based on cost model."""
 
     def __init__(self, prof_result, num_devices, num_micro_batches):
-        self.backend = xb.get_backend("gpu")
+        self.backend = xb.get_backend(global_config.backend)
         self.prof_result = prof_result
         self.num_devices = num_devices
         self.num_micro_batches = num_micro_batches

@@ -15,7 +15,8 @@ from transformers.generation_utils import dataclass
 from alpa.collective.worker_nccl_util_cupy import jax_tensor_to_cupy
 from alpa.timer import timers
 from examples.llm_serving.model import opt_model
-from examples.llm_serving.model.opt_model_1d import IterationLevelInputPoolV2, unpad, pad, custom_reshape_logits
+from examples.llm_serving.model.opt_model_1d import IterationLevelInputPool, unpad, \
+    pad, custom_reshape_logits
 from examples.llm_serving.model.opt_utils import sync
 from examples.llm_serving.model.wrapper import disable_torch_init, restore_torch_init
 
@@ -41,7 +42,7 @@ class SequenceGenerator:
         self.pad = self.model_config.pad
 
     def generate(self,
-                 input: Union[IterationLevelInputPoolV2, List[List[int]], np.ndarray],
+                 input: Union[IterationLevelInputPool, List[List[int]], np.ndarray],
                  max_length=None,
                  max_new_tokens=None,
                  do_sample=False,
@@ -49,7 +50,7 @@ class SequenceGenerator:
         if max_length == None and max_new_tokens == None:
             raise RuntimeError("Please provide at least one of max_length and max_new_tokens.")
 
-        if isinstance(input, IterationLevelInputPoolV2):
+        if isinstance(input, IterationLevelInputPool):
             raise NotImplementedError()
         elif isinstance(input, (List, np.ndarray, torch.Tensor)):
             unpadded_input = unpad(input)
@@ -65,10 +66,10 @@ class SequenceGenerator:
                           max_length=None,
                           max_new_tokens=None,
                           do_sample=False):
-        input_pool = IterationLevelInputPoolV2(self.input_pool_config,
-                                               self.model_config,
-                                               max_length=max_length,
-                                               max_new_tokens=max_new_tokens)
+        input_pool = IterationLevelInputPool(self.input_pool_config,
+                                             self.model_config,
+                                             max_length=max_length,
+                                             max_new_tokens=max_new_tokens)
         input_pool.enter_prompts(input_ids)
         iteration = 0
         while not input_pool.is_finished():
@@ -110,17 +111,6 @@ class SequenceGenerator:
         # for pos in positions:
         #     outputs.append(int(next_token[pos]))
         return outputs
-
-    @staticmethod
-    def _generate_greedy_v2(logits, positions):
-        src_indices = cupy.array(positions)
-        src_logits =  jax_tensor_to_cupy(logits)
-        dst_shape = (len(positions), 50272)
-        dst_logits = cupy.zeros(dst_shape, dtype=logits.dtype)
-        num_blocks = len(positions)
-        custom_reshape_logits[num_blocks, 1024](dst_logits.ravel(), src_logits.ravel(), src_indices)
-        next_token = cupy.asnumpy(cupy.argmax(dst_logits, axis=-1)).tolist()
-        return next_token
 
 
 def get_model(model_name: str,

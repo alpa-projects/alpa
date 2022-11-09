@@ -17,8 +17,8 @@ def main(args):
 
     generate_params = {
         "do_sample": args.do_sample,
-        # "max_new_tokens": 128,
-        "max_length": 128
+        "max_new_tokens": 128,
+        # "max_length": 128
     }
 
     # Load the model
@@ -41,7 +41,7 @@ def main(args):
         "GPT-3 is a large language model that is capable of"
     ]
     # prompts = prompts * 10
-    timer_names = ["enter", "compute", "generate", "update"]
+    timer_names = ["enter", "compute", "generate", "update", "prepare_inputs"]
 
     input_ids = tokenizer(prompts, return_tensors="np", padding="longest").input_ids
 
@@ -59,9 +59,10 @@ def main(args):
             timers(timer_name).reset()
 
         outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
-    if True:
+    if False:
         print("Outputs:\n" + 100 * '-')
         for i, output in enumerate(outputs):
+            print(output_ids[i])
             print(f"{i + 1}: {output}")
             print(100 * '-')
 

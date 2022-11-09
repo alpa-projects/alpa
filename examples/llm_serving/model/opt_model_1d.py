@@ -5,11 +5,9 @@ import time
 import logging
 
 import torch
-import warnings
 from dataclasses import dataclass
 from typing import Callable, Optional, Tuple, List, Union
 
-import cupyx.jit
 import flax
 import flax.linen as nn
 import jax
@@ -660,12 +658,6 @@ class IterationLevelInputPool:
     def update_cache(self, generated_ids):
         if self._current_batch is None:
             raise RuntimeError("There is no pending batch so update_cache should not be called.")
-
-        # we need to copy cache using one custom kernel, so we record the src and dst indices
-        src_indices = []
-        dst_indices = []
-        src_sentence_ids = []
-
         # check EOS, move finished sentences from wip to finished queue
         read_idx = 0
         for generated_id, p in zip(generated_ids, self._current_batch):
@@ -683,45 +675,15 @@ class IterationLevelInputPool:
                 self.done.add(p)
             elif p.status == PromptStatus.PROMPT:
                 # PROMPT -> DECODING
-                # p.init_cache(self.cache.take_slot())
-                # dst_indices.extend(list(range(p.cache_start_index, p.cache_end_index)))
-                # src_indices.extend(list(range(read_idx, read_idx + p.prompt_length)))
-                # assert (p.cache_end_index - p.cache_start_index) == p.prompt_length
-                src_sentence_ids.extend([p.sentence_id] * p.prompt_length)
                 p.add_token(generated_id)
                 self.wip.add(p)
                 read_idx += p.prompt_length
             elif p.status == PromptStatus.DECODING:
                 # DECODING -> DECODING
-                # src_indices.append(read_idx)
-                # dst_indices.append(p.cache_end_index)
-                src_sentence_ids.append(p.sentence_id)
                 p.add_token(generated_id)
                 read_idx += 1
             else:
                 raise RuntimeError(f"Prompt status: {p.status} should not appear here." )
-
-        # no cache writing task
-        # if len(src_indices) == 0:
-        #     logger.debug("All prompts have finished. Cache will be erased.")
-        #     self.cache.erase()
-        #     return
-
-        # update cache
-        # self.cache.update_cache(kv, src_indices, dst_indices, src_sentence_ids)
-
-        # reorg_dst_slots, reorg_src_slots = self.cache.get_continuation_plan()
-        # if len(reorg_dst_slots) > 0:
-        #     self.cache.continuize(reorg_dst_slots, reorg_src_slots)
-        #     # update the prompt that has been influenced
-        #     for dst_slot, src_slot in zip(reorg_dst_slots, reorg_src_slots):
-        #         for p in self.wip:
-        #             if p.cache_start_index == src_slot:
-        #                 p.cache_start_index = dst_slot
-        #                 break
-        #     # Note(Hao): the cache order must align with input order.
-        #     # so we have to sort self._current_batch based on the order of cache
-        #     self.wip = OrderedSet(sorted(self.wip, key=lambda x: x.cache_start_index, reverse=False))
 
     def get_results(self):
         """Return results sorted by their sentence id."""

@@ -1,26 +1,23 @@
 """Wrap models to make them compatible with huggingface's generator API."""
-from collections import defaultdict
-import os
 import time
+from collections import defaultdict
 from typing import Sequence, Any, Optional, List
-import warnings
 
-import alpa
-from alpa import timers
-from alpa.device_mesh import DistributedArray
-from alpa.mesh_executable import get_index_select_mesh_executable
 import jax
 import jax.numpy as jnp
 import numpy as np
+import os
 import torch
-from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
-from transformers import OPTForCausalLM, BloomForCausalLM, GPT2LMHeadModel
-from tqdm import tqdm
-
-from llm_serving.model import opt_model, bloom_model, opt_model_1d
+from llm_serving.model import opt_model, bloom_model
 from llm_serving.model.opt_utils import (TransformerModelConfig,
-                                         jax_index_select, is_power_of_two)
-from llm_serving.model.opt_model_1d import BatchLevelInputPool
+                                         jax_index_select)
+from tqdm import tqdm
+from transformers import OPTForCausalLM, BloomForCausalLM
+from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
+
+import alpa
+from alpa.device_mesh import DistributedArray
+from alpa.mesh_executable import get_index_select_mesh_executable
 
 
 @dataclass

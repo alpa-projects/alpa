@@ -490,7 +490,6 @@ class Prompt:
         self.input_ids = input_ids
         self.sentence_id = sentence_id
         self.status = PromptStatus.PROMPT
-        self.cache_start_index = None
         # states to be filled during generation
         self.generated_ids = []
         self.last_generated_id = None
@@ -508,9 +507,6 @@ class Prompt:
         self.status = PromptStatus.FINISHED
         self.generated_ids.append(finish_token_id)
         self.last_generated_id = finish_token_id
-
-    def init_cache(self, cache_index):
-        self.cache_start_index = cache_index
 
     def add_token(self, token_id):
         if self.status == PromptStatus.PROMPT:
@@ -559,17 +555,11 @@ class IterationLevelInputPool:
                  max_new_tokens=None):
         self.batch_size = input_pool_config.batch_size
         self.cache_size = input_pool_config.cache_size
-        self.max_cache_per_seq = input_pool_config.max_cache_per_seq
         self.model_config = model_config
         self.max_length = max_length
         self.max_new_tokens = max_new_tokens
 
-        if self.max_length and self.max_length > self.max_cache_per_seq:
-            warnings.warn("`max_length` is greater than `max_cache_per_seq`.")
-        if self.max_new_tokens and self.max_new_tokens > self.max_cache_per_seq:
-            warnings.warn("`max_new_tokens` is greater than `max_cache_per_seq`.")
-
-        # self.cache = Cache(self.cache_size, self.max_cache_per_seq, self.model_config)self
+        # Cache space is associated and owned with Pool.
         self.cache = jax.tree_map(jnp.array, init_cache_np(model_config, self.cache_size))
         init_cache_manager(cache_size=self.cache_size)
 
@@ -606,6 +596,7 @@ class IterationLevelInputPool:
             self.todo.put(p)
 
     def next(self):
+        """Get the inputs for the next iteration from the pool."""
         decoding_input = []
         # figure out WIP prompts and put their next token in a list
         for p in self.wip:

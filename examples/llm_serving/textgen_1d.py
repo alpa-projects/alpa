@@ -24,8 +24,7 @@ def main(args):
     # Load the model
     model = get_model(model_name=args.model,
                       path="~/opt_weights",
-                      cache_size=4096,
-                      max_cache_per_seq=256)
+                      cache_size=4096)
 
     prompts = [
         "Computer science is the study of computation and",

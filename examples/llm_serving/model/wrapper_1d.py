@@ -12,11 +12,10 @@ from llm_serving.model import opt_model_1d
 from transformers import OPTForCausalLM, BloomForCausalLM
 from transformers.generation_utils import dataclass
 
-from alpa.collective.worker_nccl_util_cupy import jax_tensor_to_cupy
 from alpa.timer import timers
 from examples.llm_serving.model import opt_model
 from examples.llm_serving.model.opt_model_1d import IterationLevelInputPool, unpad, \
-    pad, custom_reshape_logits
+    pad
 from examples.llm_serving.model.opt_utils import sync
 from examples.llm_serving.model.wrapper import disable_torch_init, restore_torch_init
 
@@ -29,7 +28,6 @@ class InputPoolConfig:
     """The config for iterative-level input pool."""
     batch_size: int = 512
     cache_size: int = 4096
-    max_cache_per_seq: int = 128
 
 
 class SequenceGenerator:
@@ -71,7 +69,6 @@ class SequenceGenerator:
                                              max_length=max_length,
                                              max_new_tokens=max_new_tokens)
         input_pool.enter_prompts(input_ids)
-        iteration = 0
         while not input_pool.is_finished():
             timers("enter").start(sync)
             input, input_index, position_ids, logit_positions = input_pool.next()
@@ -97,7 +94,6 @@ class SequenceGenerator:
             timers("update").start(sync)
             input_pool.update_cache(generated_ids)
             timers("update").suspend(sync)
-            iteration += 1
 
         ret = input_pool.get_results()
         padded_input = np.array(pad(ret))
@@ -120,7 +116,6 @@ def get_model(model_name: str,
                 batch_size: int = 256,
                 max_seq_len: int = 2048,
                 cache_size: int = 4096,
-                max_cache_per_seq: int = 128,
                 # model parameters
                 dtype=jnp.float16,
                 # Shared arguments with model.generate
@@ -157,8 +152,7 @@ def get_model(model_name: str,
     params = jax.tree_map(jnp.array, params)
 
     input_pool_config = InputPoolConfig(batch_size=batch_size,
-                                        cache_size=cache_size,
-                                        max_cache_per_seq=max_cache_per_seq)
+                                        cache_size=cache_size)
 
     return SequenceGenerator(executable, params, input_pool_config, model_config)
 

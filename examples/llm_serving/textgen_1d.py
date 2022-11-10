@@ -5,7 +5,7 @@ import time
 import numpy as np
 from transformers import AutoTokenizer
 
-from llm_serving.model.wrapper import get_model_1d
+from llm_serving.model.wrapper_1d import get_model
 from alpa.timer import timers
 
 
@@ -17,13 +17,15 @@ def main(args):
 
     generate_params = {
         "do_sample": args.do_sample,
+        "max_new_tokens": 128,
+        # "max_length": 128
     }
 
     # Load the model
-    model = get_model_1d(model_name=args.model,
-                         path="~/opt_weights")
+    model = get_model(model_name=args.model,
+                      path="~/opt_weights",
+                      cache_size=4096)
 
-    # Generate
     prompts = [
         "Computer science is the study of computation and",
         "Ion Stoica is a Romanian-American computer scientist specializing in",
@@ -37,16 +39,16 @@ def main(args):
         "Donald Trump is the president of",
         "GPT-3 is a large language model that is capable of"
     ]
+    # prompts = prompts * 10
+    timer_names = ["enter", "compute", "generate", "update", "prepare_inputs",
+                   "enter part 2", "enter part 3", "enter part 4"]
 
-    timer_names = ["enter", "compute", "update", "reshape"]
-    input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
+    input_ids = tokenizer(prompts, return_tensors="np", padding="longest").input_ids
 
     n_warmup = 10
     for i in range(n_warmup):
         tic = time.time()
-        output_ids = model.generate(input_ids=input_ids,
-                                    max_length=128,
-                                    # max_new_tokens=1024,
+        output_ids = model.generate(input_ids,
                                     **generate_params)
         elapsed = time.time() - tic
         for timer_name in timer_names:
@@ -56,13 +58,13 @@ def main(args):
         for timer_name in timer_names:
             timers(timer_name).reset()
 
-        # Print results
         outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
-        if False:
-            print("Outputs:\n" + 100 * '-')
-            for i, output in enumerate(outputs):
-                print(f"{i}: {output}")
-                print(100 * '-')
+    if False:
+        print("Outputs:\n" + 100 * '-')
+        for i, output in enumerate(outputs):
+            print(output_ids[i])
+            print(f"{i + 1}: {output}")
+            print(100 * '-')
 
 
 if __name__ == "__main__":
@@ -70,4 +72,5 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="alpa/opt-1d-125m")
     parser.add_argument('--do-sample', action='store_true')
     args = parser.parse_args()
+
     main(args)

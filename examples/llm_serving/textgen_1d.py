@@ -40,7 +40,8 @@ def main(args):
         "GPT-3 is a large language model that is capable of"
     ]
     # prompts = prompts * 10
-    timer_names = ["enter", "compute", "generate", "update", "prepare_inputs"]
+    timer_names = ["enter", "compute", "generate", "update", "prepare_inputs",
+                   "enter part 2", "enter part 3", "enter part 4"]
 
     input_ids = tokenizer(prompts, return_tensors="np", padding="longest").input_ids
 

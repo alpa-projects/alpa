@@ -595,22 +595,15 @@ class IterationLevelInputPool:
 
     def next(self):
         """Get the inputs for the next iteration from the pool."""
-        decoding_input = []
         # figure out WIP prompts and put their next token in a list
-        for p in self.wip:
-            assert p.status == PromptStatus.DECODING, \
-                "WIP queue must have all prompts in decoding status."
-            decoding_input.append(p)
-
-        # pop out new prompts, concat them into a list
+        decoding_input = list(self.wip)
+        # re-batch new prompts, concat them into a list
         prompt_input = []
         for i in range(self.num_vacant_sequence_slot):
             if self.todo.empty():
                 break
-            p = self.todo.get()
-            assert p.status == PromptStatus.PROMPT, \
-                "unfinished queue must have all prompts in PROMPT status. "
-            prompt_input.append(p)
+            # TODO(Hao): use can_allocate to check cache availability
+            prompt_input.append(self.todo.get())
 
         # make input: prompts must go first
         input = sum([p.input_ids for p in prompt_input], []) + [p.last_generated_id for p in decoding_input]
@@ -625,16 +618,17 @@ class IterationLevelInputPool:
         input_index = np.array(input_index + [0] * (self.batch_size - len(input_index)), dtype=np.int32)
 
         # make position ids
+
         position_ids = []
         for p in prompt_input:
             start_idx = 1 + self.pad + p.num_prev_tokens
-            position_ids.extend(list(range(start_idx, start_idx + p.prompt_length)))
+            position_ids.extend([i for i in range(start_idx, start_idx + p.prompt_length)])
         for p in decoding_input:
             start_idx = 1 + self.pad + p.num_prev_tokens
-            position_ids.extend(list(range(start_idx, start_idx + 1)))
+            position_ids.extend([start_idx])
         position_ids = np.array(position_ids +  [0] * (self.batch_size - len(position_ids)), dtype=np.int32)
 
-        # start prompts
+        # start prompts for recording time
         for p in prompt_input:
             p.start()
 
@@ -648,6 +642,7 @@ class IterationLevelInputPool:
         for _ in decoding_input:
             i += 1
             logit_positions.append(i)
+        timers("enter part 4").suspend()
 
         timers("prepare_inputs").start(sync)
         prepare_inputs([prompt.p for prompt in prompt_input], [prompt.p for prompt in decoding_input])
@@ -703,6 +698,7 @@ class IterationLevelInputPool:
     def num_vacant_sequence_slot(self):
         """Return the global vacancy."""
         # TODO(Hao): this is problematic because it does not check for cache availability
+        # TODO(Hao): this function is wrong
         return self.batch_size - len(self.wip)
         # return min(self.batch_size - len(self.wip), len(self.cache.vacancies))
 

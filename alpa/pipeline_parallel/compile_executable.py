@@ -59,6 +59,8 @@ def compile_pipeshard_executable(
         stage_input_shardings: Forcibly set sharding specs of input vars of
           each stage.
     """
+    if global_config.backend == "tpu":
+        raise NotImplementedError("Pipeshard Parallel for tpu is not supported")
     debug_compilation_time(None)
     name_base = f"{fun.__name__}_pipeshard_parallel"
 

@@ -188,7 +188,7 @@ def run_auto_sharding_pass(
       return_mode: The mode of return value.
         The choices are {"single", "stages", "stage_and_hook_protos"}.
         If it is "single", return a single WrappedHlo, whose status is
-          SPMD_PARTITIONED.
+          SHARDING_ANNOTATED.
         If it is "stages", return WrappedHlo of multiple pipeline stages,
           whose statuses are SHARDING_ANNOTATED.
         If it is "stages_and_hook", return WrappedHlos of multiple pipeline
@@ -343,7 +343,7 @@ def run_auto_sharding_pass(
         timers("auto-sharding").start()
         xe.run_auto_sharding(hlo.get_module(), compile_options)
         timers("auto-sharding").stop()
-    hlo.status = HloStatus.SPMD_PARTITIONED
+    hlo.status = HloStatus.SHARDING_ANNOTATED
 
     if multiple_stages:
         hlo_stage_names, hlo_stages = get_auto_sharded_hlo_stages()
@@ -381,7 +381,7 @@ def run_spmd_partitioner_pass(
       rewrite_grad_acc_indices: The indices of tensors in output that are
         gradients.
     """
-    assert hlo.is_sharding_annotated()
+    assert hlo.is_sharding_annotated(), f"{hlo.status}"
     compile_options = get_compile_options(
         num_replicas=1,
         num_partitions=num_devices,
@@ -419,12 +419,12 @@ def run_backend_compilation(backend: xe.Client,
       num_devices: The total number of devices.
       bypass_device_assignment_check: Whether to compile without exact devices.
     """
-    assert hlo.is_spmd_partitioned()
+    assert hlo.is_spmd_partitioned() or hlo.is_sharding_annotated()
     compile_options = get_compile_options(
         num_replicas=1,
         num_partitions=num_devices,
         device_assignment=np.arange(num_devices).reshape((1, -1)),
-        use_spmd_partitioning=False,
+        use_spmd_partitioning=hlo.is_sharding_annotated(),
         parameter_is_tupled_arguments=False,
         build_random_seed=stage_plan.build_random_seed)
 

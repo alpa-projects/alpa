@@ -26,6 +26,9 @@ class CreateStateTest(unittest.TestCase):
         batch_size = 8
         input_dim = output_dim = hidden_dim = 32
 
+        grad_fn = (jax.grad if isinstance(method, ShardParallel) and
+                   method.num_micro_batches is None else alpa.grad)
+
         class Model(nn.Module):
 
             @nn.compact
@@ -44,7 +47,7 @@ class CreateStateTest(unittest.TestCase):
                 out = state.apply_fn(params, batch["x"])
                 return jnp.mean((out - batch["y"])**2)
 
-            grads = alpa.grad(loss_func)(state.params)
+            grads = grad_fn(loss_func)(state.params)
             new_state = state.apply_gradients(grads=grads)
             return new_state
 

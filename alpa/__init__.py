@@ -1,5 +1,4 @@
 """Alpa is a system for training large-scale neural networks."""
-
 # Import all public packages
 from . import api
 from . import collective

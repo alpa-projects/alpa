@@ -44,6 +44,8 @@ def run_unittest_files(files, args):
             continue
         if not args.enable_slow_tests and filename in slow_testcases:
             continue
+        if args.run_tpu ^ ("tpu" in filename):
+            continue
 
         def func():
             ret = unittest.main(module=None, argv=["", "-vb"] + [filename])
@@ -98,6 +100,9 @@ if __name__ == "__main__":
                             type=str,
                             default="sorted",
                             choices=["sorted", "random", "reverse_sorted"])
+    arg_parser.add_argument("--run-tpu",
+                            action="store_true",
+                            help="Whether to run tests for tpus.")
     args = arg_parser.parse_args()
 
     files = glob.glob("**/test_*.py", recursive=True)

@@ -628,12 +628,7 @@ class IterationLevelInputPool:
             position_ids.extend([start_idx])
         position_ids = np.array(position_ids +  [0] * (self.batch_size - len(position_ids)), dtype=np.int32)
 
-        # start prompts for recording time
-        for p in prompt_input:
-            p.start()
-
         self._current_batch = prompt_input + decoding_input
-
         logit_positions = []
         i = -1
         for p in prompt_input:
@@ -642,27 +637,26 @@ class IterationLevelInputPool:
         for _ in decoding_input:
             i += 1
             logit_positions.append(i)
-        timers("enter part 4").suspend()
 
-        timers("prepare_inputs").start(sync)
+        # start prompts for recording time
+        for p in prompt_input:
+            p.start()
+
+        # Call prepare_inputs before every inference_step.
         prepare_inputs([prompt.p for prompt in prompt_input], [prompt.p for prompt in decoding_input])
-        timers("prepare_inputs").suspend(sync)
         # return inputs
         return input, input_index, position_ids, logit_positions
 
-    def update_cache(self, generated_ids):
+    def update(self, generated_ids):
+        """Update the pool after one iteration of inference."""
         if self._current_batch is None:
-            raise RuntimeError("There is no pending batch so update_cache should not be called.")
-        # check EOS, move finished sentences from wip to finished queue
-        read_idx = 0
+            raise RuntimeError("There is no pending batch so update() is unnecessary.")
         for generated_id, p in zip(generated_ids, self._current_batch):
+            # check EOS, move finished sentences from wip to finished queue
             if self.check_exit_condition(p, generated_id):
                 if p.status == PromptStatus.DECODING:
                     assert p in self.wip
                     self.wip.remove(p)
-                    read_idx += 1
-                if p.status == PromptStatus.PROMPT:
-                    read_idx += p.prompt_length
                 exit_reason = "EOS" if generated_id == self.eos else "reaching max length"
                 logger.debug(f"Prompt {p.sentence_id} exits because of {exit_reason}. ")
                 p.finish(generated_id)
@@ -672,11 +666,9 @@ class IterationLevelInputPool:
                 # PROMPT -> DECODING
                 p.add_token(generated_id)
                 self.wip.add(p)
-                read_idx += p.prompt_length
             elif p.status == PromptStatus.DECODING:
                 # DECODING -> DECODING
                 p.add_token(generated_id)
-                read_idx += 1
             else:
                 raise RuntimeError(f"Prompt status: {p.status} should not appear here." )
 

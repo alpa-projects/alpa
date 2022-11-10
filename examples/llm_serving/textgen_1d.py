@@ -40,8 +40,8 @@ def main(args):
         "GPT-3 is a large language model that is capable of"
     ]
     # prompts = prompts * 10
-    timer_names = ["enter", "compute", "generate", "update", "prepare_inputs",
-                   "enter part 2", "enter part 3", "enter part 4"]
+    # timer_names = ["enter", "compute", "generate", "update"]
+    timer_names = []
 
     input_ids = tokenizer(prompts, return_tensors="np", padding="longest").input_ids
 
@@ -59,7 +59,7 @@ def main(args):
             timers(timer_name).reset()
 
         outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
-    if False:
+    if True:
         print("Outputs:\n" + 100 * '-')
         for i, output in enumerate(outputs):
             print(output_ids[i])

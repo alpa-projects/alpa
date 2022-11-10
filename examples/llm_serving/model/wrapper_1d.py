@@ -70,9 +70,7 @@ class SequenceGenerator:
                                              max_new_tokens=max_new_tokens)
         input_pool.enter_prompts(input_ids)
         while not input_pool.is_finished():
-            timers("enter").start(sync)
             input, input_index, position_ids, logit_positions = input_pool.next()
-            timers("enter").suspend(sync)
 
             batch = {
                 "input_ids": input,
@@ -80,20 +78,14 @@ class SequenceGenerator:
                 "cache": input_pool.cache
             }
             # compute
-            timers("compute").start(sync)
             logits = self.executable(self.params, batch)
-            timers("compute").suspend(sync)
 
-            timers("generate").start(sync)
             if not do_sample:
                 generated_ids = self._generate_greedy(logits, logit_positions)
             else:
                 raise NotImplementedError()
-            timers("generate").suspend(sync)
 
-            timers("update").start(sync)
-            input_pool.update_cache(generated_ids)
-            timers("update").suspend(sync)
+            input_pool.update(generated_ids)
 
         ret = input_pool.get_results()
         padded_input = np.array(pad(ret))

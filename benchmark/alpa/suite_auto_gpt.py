@@ -55,11 +55,11 @@ perf_test_suite = {
         get_solution_case(gpt_specs["350M"], 512, 1, [[0]], [(1, 1)], [(1, 1)],
                           [{}]),
     2:
-        get_solution_case(gpt_specs["760M"], 128, 6, [[0, 1, 2], [3, 4, 5]],
-                          [(1, 1)] * 2, [(1, 1)] * 2, [force_dp_dict] * 2),
+        get_solution_case(gpt_specs["760M"], 64, 6, [[0, 1, 2], [3, 4, 5]],
+                          [[1, 1], [1, 1]], [[1, 1], [1, 1]], [{'force_batch_dim_to_mesh_dim': 0}, {}]),
     4:
-        get_solution_case(gpt_specs["1.3B"], 256, 6, [[0, 1, 2], [3, 4, 5]],
-                          [(1, 2)] * 2, [(2, 1)] * 2, [force_dp_dict] * 2),
+        get_solution_case(gpt_specs["1.3B"], 32, 6, [[0, 1, 2, 3, 4, 5]],
+                          [[1, 4]], [[4, 1]], [{'force_batch_dim_to_mesh_dim': 0}]),
     8:
         get_solution_case(gpt_specs["2.6B"], 128,
                           8, [[0, 1], [2, 3], [4, 5, 6, 7]], [(1, 2), (1, 2),

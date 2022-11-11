@@ -21,5 +21,5 @@ if __name__ == "__main__":
     print(list(prof_database.data.keys()))
     print()
 
-    mesh_result = prof_database.query("default", (2, 8))
+    mesh_result = prof_database.query("default", (1, 4))
     print(mesh_result)

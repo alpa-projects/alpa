@@ -24,6 +24,19 @@ GPTModelConfig = namedtuple(
     "GPTModelConfig",
     ["seq_len", "hidden_size", "num_layers", "num_heads", "vocab_size"])
 
+gpt_specs = {
+    #                      S，   H,   L,  head,   V,
+    "125M": GPTModelConfig(1024, 768, 12, 12, 51200),
+    "350M": GPTModelConfig(1024, 1024, 24, 16, 51200),
+    "760M": GPTModelConfig(1024, 1536, 24, 16, 51200),
+    "1.3B": GPTModelConfig(1024, 2048, 24, 32, 51200),
+    "2.6B": GPTModelConfig(1024, 2560, 32, 32, 51200),
+    "6.7B": GPTModelConfig(1024, 4096, 32, 32, 51200),
+    "15B": GPTModelConfig(1024, 5120, 48, 40, 51200),
+    "39B": GPTModelConfig(1024, 8192, 48, 64, 51200),
+    "76B": GPTModelConfig(1024, 10240, 60, 80, 51200),
+}
+
 
 benchmark_suites = {
     "gpt.tmp": suite_manual_gpt.tmp_suite,
@@ -53,7 +66,7 @@ def benchmark_suite(suite_name,
                     input_batch_size,
                     input_micro_batches,
                     reduce_scatter,
-                    dp,op,recomputation,
+                    dp,op,recomputation, change_gpt_layer,
                     exp_name="default",
                     niter=3,
                     shard_only=False,
@@ -82,9 +95,25 @@ def benchmark_suite(suite_name,
         
         if shard_only:
             assert dp*op == num_gpus, ("dp*op != num_gpus.")
+
+            if change_gpt_layer == True:
+                gpt_config = GPTModelConfig(1024, 4096, input_gpt_layer, 32, 51200)
+
+            else:
+                if num_gpus == 1:
+                    gpt_config = gpt_specs["350M"]
+                if num_gpus == 2:
+                    gpt_config = gpt_specs["760M"]
+                if num_gpus == 4:
+                    gpt_config = gpt_specs["1.3B"]
+                if num_gpus == 8:
+                    gpt_config = gpt_specs["2.6B"]
+                if num_gpus == 16:
+                    gpt_config = gpt_specs["6.7B"]     
+                               
             # B, model, NB, PM, (RS, Remat, 3D Config, FM)
             benchmark_case_new= BenchmarkCase(input_batch_size,
-                                      GPTModelConfig(1024, 4096, input_gpt_layer, 32, 51200),
+                                      gpt_config,
                                       input_micro_batches,
                                       "uniform",
                                       UniformParallelArgs(reduce_scatter, recomputation, dp, op, 1, True))
@@ -179,6 +208,9 @@ if __name__ == "__main__":
     parser.add_argument("--recomputation",
                         action="store_true",
                         help="remat = True.")
+    parser.add_argument("--change_gpt_layer",
+                        action="store_true",
+                        help="if change_gpt_layer = False, it will use the default gpt config")
     args = parser.parse_args()
 
     num_hosts, num_devices_per_host = get_num_hosts_and_num_devices(args)
@@ -186,7 +218,8 @@ if __name__ == "__main__":
     benchmark_suite(args.suite, num_hosts, num_devices_per_host,
                     args.num_gpt_layer, args.num_batch_size,
                     args.num_micro_batches,
-                    args.reduce_scatter,args.dp,args.op,args.recomputation,
+                    args.reduce_scatter,args.dp,args.op,
+                    args.recomputation, args.change_gpt_layer,
                     args.exp_name,
                     args.niter, args.shard_only, args.local,
                     args.profile_driver_time, args.disable_tqdm,

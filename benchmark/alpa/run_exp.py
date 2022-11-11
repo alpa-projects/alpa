@@ -24,6 +24,11 @@ def run_exp(cluster_settings, suite_name, benchmark_settings=None):
         benchmark_suite(suite_name,
                         num_hosts,
                         num_devices_per_host,
+                        input_gpt_layer=0,
+                        input_batch_size=0,
+                        input_micro_batches=0,
+                        reduce_scatter=0,
+                        dp=0,op=0,recomputation=0,
                         exp_name=f"{now}_{suite_name}_{num_gpus}_gpus",
                         disable_tqdm=True,
                         **benchmark_settings)
@@ -39,8 +44,8 @@ model_search_suites = {
         "profile_driver_time": True
     }),
 }
-cluster_settings = [(8, 8), (4, 8), (2, 8), (1, 8), (1, 4), (1, 2), (1, 1)]
-
+#cluster_settings = [(8, 8), (4, 8), (2, 8), (1, 8), (1, 4), (1, 2), (1, 1)]
+cluster_settings = [(2,1),(1, 1)]
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

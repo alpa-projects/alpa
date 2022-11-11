@@ -8,7 +8,7 @@ for ((k=0; k<${#dp[*]}; k=k+1)); do
         python benchmark.py --suite gpt.perf_test_fast_2d \
                     --shard-only --num-hosts 1 --num-devices-per-host 4 \
                     --num_gpt_layer 4 --num_batch_size 4 --num_micro_batches 1 \
-                    --dp ${dp[k]} --op ${op[k]}  --recomputation
+                    --dp ${dp[k]} --op ${op[k]}  --recomputation --change_gpt_layer
         
 done  
 
@@ -16,7 +16,7 @@ for ((k=0; k<${#dp[*]}; k=k+1)); do
         python benchmark.py --suite gpt.perf_test_fast_2d \
                     --shard-only --num-hosts 1 --num-devices-per-host 4 \
                     --num_gpt_layer 4 --num_batch_size 4 --num_micro_batches 1 \
-                    --dp ${dp[k]} --op ${op[k]} 
+                    --dp ${dp[k]} --op ${op[k]}  --change_gpt_layer
         
 done  
 

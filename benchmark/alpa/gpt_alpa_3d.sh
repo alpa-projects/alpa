@@ -2,8 +2,8 @@
 start_time=$(date +%s)
 # gpus=(1 2 4 8 8 16)
 # device=(1 1 1 1 2 1)
-gpus=(4)
-device=(1)
+gpus=(2)
+device=(1 1 1)
 
 
 for ((k=0; k<${#gpus[*]}; k=k+1)); do

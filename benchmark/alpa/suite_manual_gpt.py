@@ -50,6 +50,10 @@ perf_test_fast_2d_suite = {
         BenchmarkCase(8, GPTModelConfig(1024, 1024, 4, 32, 51200), 1, "uniform",
                       UniformParallelArgs(False, True, 1, 1, 1, True))
     ],
+    2: [
+        BenchmarkCase(4, GPTModelConfig(1024, 4096, 2, 32, 51200), 1, "uniform",
+                      UniformParallelArgs(False, True, 4, 1, 1, True))
+    ],
     4: [
         BenchmarkCase(4, GPTModelConfig(1024, 4096, 2, 32, 51200), 1, "uniform",
                       UniformParallelArgs(False, True, 4, 1, 1, True))

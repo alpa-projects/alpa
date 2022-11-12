@@ -92,7 +92,7 @@ class CodeGenConfig:
     num_pp_stages: int = None,
     # parallelize
     mark_boundary: bool = True
-    share_decoder_input_output_embed: bool = False
+    share_decoder_input_output_embed: bool = True
 
 
 # Copied from transformers.models.marian.modeling_flax_marian.create_sinusoidal_positions
@@ -106,44 +106,45 @@ def create_sinusoidal_positions(n_pos, dim):
     return jnp.array(out)
 
 # TODO(chris) refactor: change embeddings to follow rotary position embeddings
-class CodeGenEmbeddings(nn.Module):
-    """Construct the embeddings from word, position and token_type embeddings."""
+# class CodeGenEmbeddings(nn.Module):
+#     """Construct the embeddings from word, position and token_type embeddings."""
 
-    config: CodeGenConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
+#     config: CodeGenConfig
+#     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
-    def setup(self):
-        assert not self.config.use_stable_embedding
-        self.embed_scale = 1.0 if self.config.no_scale_embedding else math.sqrt(
-            self.config.hidden_size)
-        self.word_embeddings = nn.Embed(
-            self.config.vocab_size,
-            self.config.decoder_input_dim,
-            dtype=self.dtype,
-        )
-        assert self.config.max_seq_len is not None
-        assert self.config.decoder_learned_pos
-        self.position_embeddings = nn.Embed(
-            self.config.max_seq_len + self.config.pad + 1,
-            self.config.hidden_size,
-            dtype=self.dtype,
-        )
-        self.project_in_dim = nn.Dense(
-            self.config.hidden_size,
-            dtype=self.dtype,
-        ) if self.config.decoder_input_dim != self.config.hidden_size else None
+#     def setup(self):
+#         assert not self.config.use_stable_embedding
+#         self.embed_scale = 1.0 if self.config.no_scale_embedding else math.sqrt(
+#             self.config.hidden_size)
+#         self.word_embeddings = nn.Embed(
+#             self.config.vocab_size,
+#             self.config.hidden_size,
+#             embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
+#             dtype=self.dtype,
+#         )
+#         assert self.config.max_seq_len is not None
+#         assert self.config.decoder_learned_pos
+#         self.position_embeddings = nn.Embed(
+#             self.config.max_seq_len + self.config.pad + 1,
+#             self.config.hidden_size,
+#             embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
+#             dtype=self.dtype,
+#         )
+#         self.project_in_dim = nn.Dense(
+#             self.config.hidden_size,
+#             dtype=self.dtype,
+#         ) if self.config.decoder_input_dim != self.config.hidden_size else None
 
-    def __call__(self, input_ids, position_ids):
-        # Embed
-        inputs_embeds = self.embed_scale * self.word_embeddings(
-            input_ids.astype("i4"))
-        if self.project_in_dim is not None:
-            inputs_embeds = self.project_in_dim(inputs_embeds)
-        position_embeds = self.position_embeddings(position_ids.astype("i4"))
+#     def __call__(self, input_ids, position_ids):
+#         # Embed
+#         inputs_embeds = self.embed_scale * self.word_embeddings(input_ids.astype("i4"))
+#         if self.project_in_dim is not None:
+#             inputs_embeds = self.project_in_dim(inputs_embeds)
+#         position_embeds = self.position_embeddings(position_ids.astype("i4"))
 
-        # Sum all embeddings
-        hidden_states = inputs_embeds + position_embeds
-        return hidden_states
+#         # Sum all embeddings
+#         hidden_states = inputs_embeds + position_embeds
+#         return hidden_states
 
 
 class CodeGenAttention(nn.Module):
@@ -459,7 +460,15 @@ class CodeGenTransformerModule(nn.Module):
     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
-        self.embeddings = CodeGenEmbeddings(self.config, dtype=self.dtype)
+        embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range)
+
+        self.word_embeddings = nn.Embed(
+            self.config.vocab_size,
+            self.config.hidden_size,
+            embedding_init=embedding_init,
+            dtype=self.dtype
+        )
+
         self.embed_positions = create_sinusoidal_positions(
             self.config.max_seq_len, self.config.hidden_size // self.config.n_head
         )
@@ -478,7 +487,7 @@ class CodeGenTransformerModule(nn.Module):
         attention_cache=None,
         attention_mask=None
     ):
-        hidden_states = self.embeddings(input_ids, position_ids)
+        hidden_states = self.word_embeddings(input_ids)
 
         sinusoidal_pos = self.embed_positions[: hidden_states.shape[1], :]
 
@@ -714,7 +723,7 @@ def load_params_np(params, path, config, dummy=False):
     load_param("params.transformers.layer_norm.bias", load_array("ln_f.bias"))
     # TODO(chris) check: do we need this - what does this correspond to?
     # load_param("params.transformers.position_embeddings", load_array("wte.weight"))
-    load_param("params.transformers.embeddings.word_embeddings.embedding", load_array("wte.weight"))
+    load_param("params.transformers.word_embeddings.embedding", load_array("wte.weight"))
 
     for i in tqdm(range(config.num_hidden_layers)):
         param_prefix = f"params.transformers.encoder.{i}."
@@ -728,9 +737,6 @@ def load_params_np(params, path, config, dummy=False):
             load_array(load_prefix + "attn.qkv_proj.weight").transpose())
 
         # TODO(chris) check: do we need this - what does this correspond to?
-        # load_param(
-        #     param_prefix + "attention.self.out_proj.kernel",
-        #     np.transpose(load_array(load_prefix + "attn.out_proj.weight")))
         load_param(param_prefix + "attention.layer_norm.scale",
                    load_array(load_prefix + "ln_1.weight"))
         load_param(param_prefix + "attention.layer_norm.bias",

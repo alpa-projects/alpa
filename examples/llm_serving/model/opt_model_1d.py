@@ -26,8 +26,8 @@ from examples.llm_serving.model.opt_utils import sync
 
 
 try:
-    from ft_mha import fused_mmha, DecodingToken, init_cache_manager, \
-        prepare_inputs, get_curr_step, get_max_step, free_cache
+    from ft_mha import fused_mmha, init_cache_manager, \
+        prepare_inputs, free_cache, can_allocate
     from ft_mha import Prompt as PromptInternal, DecodingToken as DecodingTokenInternal
 except ImportError:
     raise RuntimeError("Please install ft_mha to use 1D OPT model.")
@@ -598,12 +598,21 @@ class IterationLevelInputPool:
         # figure out WIP prompts and put their next token in a list
         decoding_input = list(self.wip)
         # re-batch new prompts, concat them into a list
+
         prompt_input = []
-        for i in range(self.num_vacant_sequence_slot):
-            if self.todo.empty():
+        proposals = []
+        batch_availability = self.batch_size - len(decoding_input)
+        while not self.todo.empty():
+            proposals.append(self.todo.queue[0])
+            proposals_length = [p.prompt_length for p in proposals]
+            num_new_tokens = sum(proposals_length)
+            # now we check if we can put this prompt into batch
+            if batch_availability < num_new_tokens:
                 break
-            # TODO(Hao): use can_allocate to check cache availability
+            if not can_allocate(proposals_length):
+                break
             prompt_input.append(self.todo.get())
+        logger.debug(f"In this iteration {len(prompt_input)} new prompts enter.")
 
         # make input: prompts must go first
         input = sum([p.input_ids for p in prompt_input], []) + [p.last_generated_id for p in decoding_input]
@@ -685,14 +694,6 @@ class IterationLevelInputPool:
             ret = list(range(counter, counter + number))
         self._sentence_id_counter = (counter + number) % (1 << 60)
         return ret
-
-    @property
-    def num_vacant_sequence_slot(self):
-        """Return the global vacancy."""
-        # TODO(Hao): this is problematic because it does not check for cache availability
-        # TODO(Hao): this function is wrong
-        return self.batch_size - len(self.wip)
-        # return min(self.batch_size - len(self.wip), len(self.cache.vacancies))
 
     def check_exit_condition(self, prompt, generated_id):
         """Check Exit condition: reaching EOS or reaching max length."""

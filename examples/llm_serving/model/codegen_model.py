@@ -160,8 +160,11 @@ class CodeGenAttention(nn.Module):
         self.qkv_combined = nn.Dense(
             self.config.hidden_size * 3,
             dtype=self.dtype,
+            use_bias = False
         )
         
+        self.out_proj = nn.Dense(self.config.hidden_size, dtype =self.dtype, use_bias = False)
+
         self.rotary_dim = self.config.rotary_dim
 
     def __call__(self,
@@ -255,6 +258,8 @@ class CodeGenAttention(nn.Module):
         attn_output = jnp.einsum("...hqk,...khd->...qhd", attn_weights,
                                  value_states)
         attn_output = attn_output.reshape(attn_output.shape[:2] + (-1,))
+
+        attn_output = self.out_proj(attn_output)
 
         outputs = (attn_output, attention_cache,
                    attn_weights) if output_attentions else (attn_output,
@@ -703,6 +708,7 @@ def load_params_np(params, path, config, dummy=False):
             else:
                 param_dict = param_dict[key]
 
+    print(params)
     params = params.unfreeze()
     load_param("params.transformers.layer_norm.scale", load_array("ln_f.weight"))
     load_param("params.transformers.layer_norm.bias", load_array("ln_f.bias"))
@@ -715,13 +721,16 @@ def load_params_np(params, path, config, dummy=False):
         load_prefix = f"h.{i}."
         # Attention weights
         load_param(
+            param_prefix + "attention.self.out_proj.kernel",
+            load_array(load_prefix + "attn.out_proj.weight").transpose())
+        load_param(
             param_prefix + "attention.self.qkv_combined.kernel",
             load_array(load_prefix + "attn.qkv_proj.weight").transpose())
 
         # TODO(chris) check: do we need this - what does this correspond to?
         # load_param(
-            # param_prefix + "attention.self.out_proj.kernel",
-            # np.transpose(load_array(load_prefix + "attn.out_proj.weight")))
+        #     param_prefix + "attention.self.out_proj.kernel",
+        #     np.transpose(load_array(load_prefix + "attn.out_proj.weight")))
         load_param(param_prefix + "attention.layer_norm.scale",
                    load_array(load_prefix + "ln_1.weight"))
         load_param(param_prefix + "attention.layer_norm.bias",
@@ -735,6 +744,14 @@ def load_params_np(params, path, config, dummy=False):
         load_param(param_prefix + "attention.mlp.fc_out.bias",
                    load_array(load_prefix + "mlp.fc_out.bias"))
         load_param(param_prefix + "attention.mlp.fc_out.kernel",
+                   load_array(load_prefix + "mlp.fc_out.weight").transpose())
+        load_param(param_prefix + "mlp.fc_in.kernel",
+                   load_array(load_prefix + "mlp.fc_in.weight").transpose())
+        load_param(param_prefix + "mlp.fc_in.bias",
+                   np.transpose(load_array(load_prefix + "mlp.fc_in.bias")))
+        load_param(param_prefix + "mlp.fc_out.bias",
+                   load_array(load_prefix + "mlp.fc_out.bias"))
+        load_param(param_prefix + "mlp.fc_out.kernel",
                    load_array(load_prefix + "mlp.fc_out.weight").transpose())
 
     return flax.core.freeze(params)

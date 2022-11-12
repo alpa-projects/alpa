@@ -437,6 +437,7 @@ def get_alpa_model(model_name: str,
         # load params
         params = m.load_params_np(params_aval, path, config, dummy)
         init_cache = m.init_cache_np(config, batch_size=batch_size)
+        print(params)
         params, init_cache = jax.tree_map(jnp.array, (params, init_cache))
     elif "alpa" in model_name:
         if "opt" in model_name:

@@ -1,0 +1,80 @@
+Working on case: BenchmarkCase(batch_size=1024, model_config=GPTModelConfig(seq_len=1024, hidden_size=4096, num_layers=32, num_heads=32, vocab_size=51200), num_micro_batches=512, parallel_mode='uniform', parallel_args=UniformParallelArgs(prefer_reduce_scatter=True, use_remat=True, dp=1, op=16, pp=1, force_batch_dim_mapping=True))
+ - Setup device mesh: 0.00 s
+ - Prepare input: 0.06 s
+ - Create train state: 6.72 s
+ - Compile (driver): 63.83 s
+ - Compile (workers): 29.39 s
+#total: 196, #all-reduce: 196, #all-gather: 0, #reduce-scatter: 0, #all-to-all: 0
+alloc_mem: 6.41 GB
+Iteration 0 ...
+Iteration 1 ...
+Iteration 2 ...
+ - Benchmark: 395.95 s
+Type: gpt  Model Config: GPTModelConfig(seq_len=1024, hidden_size=4096, num_layers=32, num_heads=32, vocab_size=51200)  #Microbatch: 512  #GPU: 16  Parallel Config: UniformParallelArgs(prefer_reduce_scatter=True, use_remat=True, dp=1, op=16, pp=1, force_batch_dim_mapping=True)  Mean Time (s): 109.599  Std Time (s): 0.091  #Params (Billion): 6.654B  TFLOPs: 32.86  Peak Mem (GB): 7.871  Metadata: {'ilp_objective': '610277300.97'}  
+Working on case: BenchmarkCase(batch_size=1024, model_config=GPTModelConfig(seq_len=1024, hidden_size=4096, num_layers=32, num_heads=32, vocab_size=51200), num_micro_batches=128, parallel_mode='uniform', parallel_args=UniformParallelArgs(prefer_reduce_scatter=True, use_remat=True, dp=1, op=16, pp=1, force_batch_dim_mapping=True))
+ - Setup device mesh: 0.00 s
+ - Prepare input: 0.05 s
+ - Create train state: 6.75 s
+ - Compile (driver): 62.85 s
+ - Compile (workers): 33.69 s
+#total: 196, #all-reduce: 196, #all-gather: 0, #reduce-scatter: 0, #all-to-all: 0
+alloc_mem: 6.41 GB
+Iteration 0 ...
+Iteration 1 ...
+Iteration 2 ...
+ - Benchmark: 336.79 s
+Type: gpt  Model Config: GPTModelConfig(seq_len=1024, hidden_size=4096, num_layers=32, num_heads=32, vocab_size=51200)  #Microbatch: 128  #GPU: 16  Parallel Config: UniformParallelArgs(prefer_reduce_scatter=True, use_remat=True, dp=1, op=16, pp=1, force_batch_dim_mapping=True)  Mean Time (s): 89.976  Std Time (s): 0.013  #Params (Billion): 6.654B  TFLOPs: 40.02  Peak Mem (GB): 11.105  Metadata: {'ilp_objective': '2441100212.97'}  
+Working on case: BenchmarkCase(batch_size=1024, model_config=GPTModelConfig(seq_len=1024, hidden_size=4096, num_layers=32, num_heads=32, vocab_size=51200), num_micro_batches=64, parallel_mode='uniform', parallel_args=UniformParallelArgs(prefer_reduce_scatter=True, use_remat=True, dp=1, op=16, pp=1, force_batch_dim_mapping=True))
+ - Setup device mesh: 0.00 s
+ - Prepare input: 0.05 s
+ - Create train state: 6.72 s
+ - Compile (driver): 66.04 s
+ - Compile (workers): 39.65 s
+#total: 196, #all-reduce: 196, #all-gather: 0, #reduce-scatter: 0, #all-to-all: 0
+alloc_mem: 10.94 GB
+Iteration 0 ...
+Iteration 1 ...
+Iteration 2 ...
+ - Benchmark: 324.67 s
+Type: gpt  Model Config: GPTModelConfig(seq_len=1024, hidden_size=4096, num_layers=32, num_heads=32, vocab_size=51200)  #Microbatch: 64  #GPU: 16  Parallel Config: UniformParallelArgs(prefer_reduce_scatter=True, use_remat=True, dp=1, op=16, pp=1, force_batch_dim_mapping=True)  Mean Time (s): 86.141  Std Time (s): 0.017  #Params (Billion): 6.654B  TFLOPs: 41.80  Peak Mem (GB): 15.768  Metadata: {'ilp_objective': '4882197428.97'}  
+Working on case: BenchmarkCase(batch_size=1024, model_config=GPTModelConfig(seq_len=1024, hidden_size=4096, num_layers=32, num_heads=32, vocab_size=51200), num_micro_batches=32, parallel_mode='uniform', parallel_args=UniformParallelArgs(prefer_reduce_scatter=True, use_remat=True, dp=1, op=16, pp=1, force_batch_dim_mapping=True))
+ - Setup device mesh: 0.00 s
+ - Prepare input: 0.05 s
+ - Create train state: 6.97 s
+ - Compile (driver): 65.21 s
+ - Compile (workers): 45.06 s
+#total: 196, #all-reduce: 196, #all-gather: 0, #reduce-scatter: 0, #all-to-all: 0
+alloc_mem: 20.26 GB
+Iteration 0 ...
+Iteration 1 ...
+Iteration 2 ...
+ - Benchmark: 322.07 s
+Type: gpt  Model Config: GPTModelConfig(seq_len=1024, hidden_size=4096, num_layers=32, num_heads=32, vocab_size=51200)  #Microbatch: 32  #GPU: 16  Parallel Config: UniformParallelArgs(prefer_reduce_scatter=True, use_remat=True, dp=1, op=16, pp=1, force_batch_dim_mapping=True)  Mean Time (s): 84.162  Std Time (s): 0.032  #Params (Billion): 6.654B  TFLOPs: 42.79  Peak Mem (GB): 25.089  Metadata: {'ilp_objective': '9764391860.97'}  
+running spends 30min 52s
+Working on case: BenchmarkCase(batch_size=1024, model_config=GPTModelConfig(seq_len=1024, hidden_size=2560, num_layers=32, num_heads=32, vocab_size=51200), num_micro_batches=32, parallel_mode='uniform', parallel_args=UniformParallelArgs(prefer_reduce_scatter=True, use_remat=True, dp=1, op=8, pp=1, force_batch_dim_mapping=True))
+ - Setup device mesh: 0.00 s
+ - Prepare input: 0.05 s
+ - Create train state: 6.75 s
+ - Compile (driver): 65.61 s
+ - Compile (workers): 52.93 s
+#total: 196, #all-reduce: 196, #all-gather: 0, #reduce-scatter: 0, #all-to-all: 0
+alloc_mem: 14.94 GB
+Iteration 0 ...
+Iteration 1 ...
+Iteration 2 ...
+ - Benchmark: 227.82 s
+Type: gpt  Model Config: GPTModelConfig(seq_len=1024, hidden_size=2560, num_layers=32, num_heads=32, vocab_size=51200)  #Microbatch: 32  #GPU: 8  Parallel Config: UniformParallelArgs(prefer_reduce_scatter=True, use_remat=True, dp=1, op=8, pp=1, force_batch_dim_mapping=True)  Mean Time (s): 67.496  Std Time (s): 0.004  #Params (Billion): 2.649B  TFLOPs: 43.23  Peak Mem (GB): 18.848  Metadata: {'ilp_objective': '5695913704.97'}  
+Working on case: BenchmarkCase(batch_size=1024, model_config=GPTModelConfig(seq_len=1024, hidden_size=2560, num_layers=32, num_heads=32, vocab_size=51200), num_micro_batches=16, parallel_mode='uniform', parallel_args=UniformParallelArgs(prefer_reduce_scatter=True, use_remat=True, dp=1, op=8, pp=1, force_batch_dim_mapping=True))
+ - Setup device mesh: 0.00 s
+ - Prepare input: 0.05 s
+ - Create train state: 6.69 s
+ - Compile (driver): 63.90 s
+ - Compile (workers): 72.94 s
+#total: 196, #all-reduce: 196, #all-gather: 0, #reduce-scatter: 0, #all-to-all: 0
+alloc_mem: 28.56 GB
+Iteration 0 ...
+Iteration 1 ...
+Iteration 2 ...
+ - Benchmark: 23.87 s
+Type: gpt  Model Config: GPTModelConfig(seq_len=1024, hidden_size=2560, num_layers=32, num_heads=32, vocab_size=51200)  #Microbatch: 16  #GPU: 8  Parallel Config: UniformParallelArgs(prefer_reduce_scatter=True, use_remat=True, dp=1, op=8, pp=1, force_batch_dim_mapping=True)  Mean Time (s): nan  Std Time (s): nan  #Params (Billion): 2.649B  TFLOPs: nan  Peak Mem (GB): 28.558  Metadata: {'ilp_objective': '11391824411.97'}  
+running spends 9min 1s

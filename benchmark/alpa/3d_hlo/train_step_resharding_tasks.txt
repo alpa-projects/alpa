@@ -1,0 +1,32 @@
+ReshardingTask(shape: (4, 1024, 4096), mesh_id: 0->1,
+ShardingSpec((Chunked(4), NoSharding(), NoSharding()), (ShardedAxis(axis=0),)) ->
+ShardingSpec((Chunked(2), NoSharding(), NoSharding()), (ShardedAxis(axis=0),)))
+
+ReshardingTask(shape: (4, 1024, 4096), mesh_id: 1->0,
+ShardingSpec((Chunked(2), NoSharding(), NoSharding()), (ShardedAxis(axis=0),)) ->
+ShardingSpec((Chunked(4), NoSharding(), NoSharding()), (ShardedAxis(axis=0),)))
+
+ReshardingTask(shape: (4, 1024, 4096), mesh_id: 1->2,
+ShardingSpec((Chunked(2), NoSharding(), NoSharding()), (ShardedAxis(axis=0),)) ->
+ShardingSpec((Chunked(4), NoSharding(), NoSharding()), (ShardedAxis(axis=0),)))
+
+ReshardingTask(shape: (4, 1024, 4096), mesh_id: 2->1,
+ShardingSpec((Chunked(4), NoSharding(), NoSharding()), (ShardedAxis(axis=0),)) ->
+ShardingSpec((Chunked(2), NoSharding(), NoSharding()), (ShardedAxis(axis=0),)))
+
+ReshardingTask(shape: (4, 1024, 4096), mesh_id: 2->3,
+ShardingSpec((Chunked(4), NoSharding(), NoSharding()), (ShardedAxis(axis=0),)) ->
+ShardingSpec((Chunked(4), NoSharding(), NoSharding()), (ShardedAxis(axis=0),)))
+
+ReshardingTask(shape: (4, 1024, 4096), mesh_id: 3->2,
+ShardingSpec((Chunked(4), NoSharding(), NoSharding()), (ShardedAxis(axis=0),)) ->
+ShardingSpec((Chunked(4), NoSharding(), NoSharding()), (ShardedAxis(axis=0),)))
+
+ReshardingTask(shape: (4, 1024, 4096), mesh_id: 3->4,
+ShardingSpec((Chunked(4), NoSharding(), NoSharding()), (ShardedAxis(axis=0),)) ->
+ShardingSpec((Chunked(2), NoSharding(), NoSharding()), (ShardedAxis(axis=0),)))
+
+ReshardingTask(shape: (4, 1024, 4096), mesh_id: 4->3,
+ShardingSpec((Chunked(2), NoSharding(), NoSharding()), (ShardedAxis(axis=0),)) ->
+ShardingSpec((Chunked(4), NoSharding(), NoSharding()), (ShardedAxis(axis=0),)))
+

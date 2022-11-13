@@ -106,45 +106,40 @@ def create_sinusoidal_positions(n_pos, dim):
     return jnp.array(out)
 
 # TODO(chris) refactor: change embeddings to follow rotary position embeddings
-# class CodeGenEmbeddings(nn.Module):
-#     """Construct the embeddings from word, position and token_type embeddings."""
+class CodeGenEmbeddings(nn.Module):
+    """Construct the embeddings from word, position and token_type embeddings."""
 
-#     config: CodeGenConfig
-#     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
+    config: CodeGenConfig
+    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
-#     def setup(self):
-#         assert not self.config.use_stable_embedding
-#         self.embed_scale = 1.0 if self.config.no_scale_embedding else math.sqrt(
-#             self.config.hidden_size)
-#         self.word_embeddings = nn.Embed(
-#             self.config.vocab_size,
-#             self.config.hidden_size,
-#             embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
-#             dtype=self.dtype,
-#         )
-#         assert self.config.max_seq_len is not None
-#         assert self.config.decoder_learned_pos
-#         self.position_embeddings = nn.Embed(
-#             self.config.max_seq_len + self.config.pad + 1,
-#             self.config.hidden_size,
-#             embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
-#             dtype=self.dtype,
-#         )
-#         self.project_in_dim = nn.Dense(
-#             self.config.hidden_size,
-#             dtype=self.dtype,
-#         ) if self.config.decoder_input_dim != self.config.hidden_size else None
+    def setup(self):
+        self.word_embeddings = nn.Embed(
+            self.config.vocab_size,
+            self.config.hidden_size,
+            embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
+            dtype=self.dtype,
+        )
 
-#     def __call__(self, input_ids, position_ids):
-#         # Embed
-#         inputs_embeds = self.embed_scale * self.word_embeddings(input_ids.astype("i4"))
-#         if self.project_in_dim is not None:
-#             inputs_embeds = self.project_in_dim(inputs_embeds)
-#         position_embeds = self.position_embeddings(position_ids.astype("i4"))
+        self.token_type_embeddings = nn.Embed(
+            self.config.vocab_size,
+            self.config.hidden_size,
+            embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
+            dtype=self.dtype,
+        )
 
-#         # Sum all embeddings
-#         hidden_states = inputs_embeds + position_embeds
-#         return hidden_states
+        self.LayerNorm = nn.LayerNorm(epsilon=self.config.layer_norm_eps, dtype=self.dtype)
+
+    def __call__(self, input_ids, token_type_ids):
+        # Set embeddings
+        inputs_embeds = self.word_embeddings(input_ids.astype("i4"))
+        token_type_embeddings = self.token_type_embeddings(token_type_ids.astype("i4"))
+
+        # Sum all embeddings
+        hidden_states = inputs_embeds + token_type_embeddings
+
+        # Layer norm
+        hidden_states = self.LayerNorm(hidden_states)
+        return hidden_states
 
 
 class CodeGenAttention(nn.Module):
@@ -460,14 +455,7 @@ class CodeGenTransformerModule(nn.Module):
     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
-        embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range)
-
-        self.word_embeddings = nn.Embed(
-            self.config.vocab_size,
-            self.config.hidden_size,
-            embedding_init=embedding_init,
-            dtype=self.dtype
-        )
+        self.embeddings = CodeGenEmbeddings(self.config, dtype=self.dtype)
 
         self.embed_positions = create_sinusoidal_positions(
             self.config.max_seq_len, self.config.hidden_size // self.config.n_head
@@ -480,14 +468,14 @@ class CodeGenTransformerModule(nn.Module):
     def __call__(
         self,
         input_ids,
-        position_ids,
+        token_type_ids,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
         attention_cache=None,
         attention_mask=None
     ):
-        hidden_states = self.word_embeddings(input_ids)
+        hidden_states = self.embeddings(input_ids, token_type_ids, attention_mask)
 
         sinusoidal_pos = self.embed_positions[: hidden_states.shape[1], :]
 
@@ -539,7 +527,7 @@ class CodeGenForLMModule(nn.Module):
     def __call__(
         self,
         input_ids,
-        position_ids,
+        token_type_ids,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
@@ -549,7 +537,7 @@ class CodeGenForLMModule(nn.Module):
         # Model
         outputs = self.transformers(
             input_ids,
-            position_ids,
+            token_type_ids,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
@@ -622,8 +610,8 @@ def init_model_aval(config):
     model = CodeGenForLMModule(config, dtype=config.dtype)
     rngkey = jax.core.ShapedArray((2,), jnp.uint32)
     input_ids = jax.core.ShapedArray((1, 128), jnp.int32)
-    position_ids = jax.core.ShapedArray((1, 128), jnp.int32)
-    params = jax.eval_shape(model.init, rngkey, input_ids, position_ids)
+    token_type_ids = jax.core.ShapedArray((1, 128), jnp.int32)
+    params = jax.eval_shape(model.init, rngkey, input_ids, token_type_ids)
     params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, config.dtype),
                           params)
     return model, params
@@ -682,7 +670,7 @@ def build_position_ids(input_ids, padding_idx):
 
 
 def inference_step_no_cache(params, batch, apply_func):
-    logits = apply_func(params, batch["input_ids"], batch["position_ids"])[0]
+    logits = apply_func(params, batch["input_ids"], batch["token_type_ids"])[0]
     return logits
 
 
@@ -774,7 +762,7 @@ def get_jax_executable(config: CodeGenConfig,
     def inference_step(params, batch):
         output = model.apply(params,
                              batch["input_ids"],
-                             batch["position_ids"],
+                             batch["token_type_ids"],
                              attention_cache=batch["cache"],
                              attention_mask=batch["mask"],
                              output_attentions=output_attentions,
@@ -818,7 +806,7 @@ def get_pipeshard_executable(config: CodeGenConfig,
             output = model.apply(
                 params,
                 batch["input_ids"],
-                batch["position_ids"],
+                batch["token_type_ids"],
                 attention_cache=batch["cache"],
                 attention_mask=batch["mask"],
                 output_attentions=output_attentions,
@@ -839,7 +827,7 @@ def get_pipeshard_executable(config: CodeGenConfig,
                 params, {
                     "input_ids":
                         jax.core.ShapedArray((batch_size, 1), jnp.int32),
-                    "position_ids":
+                    "token_type_ids":
                         jax.core.ShapedArray((batch_size, 1), jnp.int32),
                     "cache":
                         cache,
@@ -869,7 +857,7 @@ def get_pipeshard_executable(config: CodeGenConfig,
                         "input_ids":
                             jax.core.ShapedArray(
                                 (batch_size, seq_len), jnp.int32),
-                        "position_ids":
+                        "token_type_ids":
                             jax.core.ShapedArray(
                                 (batch_size, seq_len), jnp.int32),
                         "cache":
@@ -889,7 +877,7 @@ def get_pipeshard_executable(config: CodeGenConfig,
             output = model.apply(
                 params,
                 batch["input_ids"],
-                batch["position_ids"],
+                batch["token_type_ids"],
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states)
             return output
@@ -902,7 +890,7 @@ def get_pipeshard_executable(config: CodeGenConfig,
                 "input_ids":
                     jax.core.ShapedArray(
                         (batch_size, seq_len), jnp.int32),
-                "position_ids":
+                "token_type_ids":
                     jax.core.ShapedArray(
                         (batch_size, seq_len), jnp.int32),
             })

@@ -584,7 +584,6 @@ def init_model_aval(config):
     params = jax.eval_shape(model.init, rngkey, input_ids, attention_mask=attention_mask)
     params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, config.dtype),
                           params)
-    print(params)
     return model, params
 
 

@@ -52,20 +52,8 @@ class CodeGenLMOutput(ModelOutput):
 # TODO(chris): figure out which config params need to be pruned
 @dataclass(frozen=True)
 class CodeGenConfig:
-    # Inherited from CodeGen
-    # num_hidden_layers: int = 20
-    # max_seq_len: int = 2048
-    # hidden_size: int = 768
-    # n_head: int = 12
-    # decoder_input_dim: int = 768
-    # decoder_ffn_embed_dim: int = 3072
     pad: int = 1
-    # activation_fn: str = 'relu'
-    # dtype: any = jnp.float16
-    # use_stable_embedding: bool = False
-    # no_scale_embedding: bool = True
     decoder_learned_pos: bool = True
-    # share_decoder_input_output_embed: bool = True
     vocab_size: int = 50400
     max_seq_len: int = 2048
     n_ctx: int = 2048
@@ -136,9 +124,7 @@ class CodeGenEmbeddings(nn.Module):
 
         # Sum all embeddings
         hidden_states = inputs_embeds + token_type_embeddings
-
-        # Layer norm
-        hidden_states = self.LayerNorm(hidden_states)
+        
         return hidden_states
 
 
@@ -390,7 +376,7 @@ class CodeGenTransformerLayerCollection(nn.Module):
     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
-        self.layers = [
+        self.layers = [ 
             CodeGenTransformerLayer(self.config, name=str(i), dtype=self.dtype)
             for i in range(self.config.num_hidden_layers)
         ]
@@ -475,7 +461,7 @@ class CodeGenTransformerModule(nn.Module):
         attention_cache=None,
         attention_mask=None
     ):
-        hidden_states = self.embeddings(input_ids, token_type_ids, attention_mask)
+        hidden_states = self.embeddings(input_ids, token_type_ids)
 
         sinusoidal_pos = self.embed_positions[: hidden_states.shape[1], :]
 
@@ -662,13 +648,6 @@ def init_cache_np(config, batch_size):
         all_cache.append(layer_cache)
     return tuple(all_cache)
 
-
-def build_position_ids(input_ids, padding_idx):
-    mask = (input_ids != padding_idx).astype(np.int32)
-    position_ids = np.cumsum(mask, axis=1).astype(np.int32) * mask + padding_idx
-    return position_ids
-
-
 def inference_step_no_cache(params, batch, apply_func):
     logits = apply_func(params, batch["input_ids"], batch["token_type_ids"])[0]
     return logits
@@ -710,8 +689,8 @@ def load_params_np(params, path, config, dummy=False):
     load_param("params.transformers.layer_norm.scale", load_array("ln_f.weight"))
     load_param("params.transformers.layer_norm.bias", load_array("ln_f.bias"))
     # TODO(chris) check: do we need this - what does this correspond to?
-    # load_param("params.transformers.position_embeddings", load_array("wte.weight"))
-    load_param("params.transformers.word_embeddings.embedding", load_array("wte.weight"))
+    load_param("params.transformers.embeddings.token_type_embeddings.embedding", load_array("wte.weight"))
+    load_param("params.transformers.embeddings.word_embeddings.embedding", load_array("wte.weight"))
 
     for i in tqdm(range(config.num_hidden_layers)):
         param_prefix = f"params.transformers.encoder.{i}."

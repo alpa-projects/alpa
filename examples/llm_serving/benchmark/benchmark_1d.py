@@ -26,6 +26,20 @@ input_id_list = [
 ]
 
 
+def synthesize_inputs(low=32, high=512, n_prompt=256):
+    vocab_size = 50272
+    ret = []
+    prompt_length = np.random.randint(low, high, (n_prompt,))
+    for i in range(n_prompt):
+        p = np.random.randint(low=4, high=vocab_size, size=prompt_length[i]).tolist()
+        ret.append(p)
+    min_length = min(len(p) for p in ret)
+    max_length = max(len(p) for p in ret)
+    mean_length = sum(len(p) for p in ret) / len(ret)
+    print(f"- Synthetic dataset, size {len(ret)}, min {min_length}, max {max_length}, mean {mean_length}")
+    return ret
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="opt-1.3b")
@@ -33,10 +47,13 @@ if __name__ == "__main__":
     parser.add_argument("--path", type=str, default="~/opt_weights/")
     parser.add_argument("--n-warmup", type=int, default=2)
     parser.add_argument("--n-iter", type=int, default=3)
-    parser.add_argument("--n-prompt", type=int, default=240)
+    parser.add_argument("--n-prompt", type=int, default=8)
+    parser.add_argument("--use-synthetic", action="store_true")
+    parser.add_argument("--low", type=int, default=16)
+    parser.add_argument("--high", type=int, default=128)
     parser.add_argument("--batch-size-2d", type=int, default=4)
-    parser.add_argument("--batch-size-1d", type=int, default=64)
-    parser.add_argument("--cache-size", type=int, default=4096 * 5)
+    parser.add_argument("--batch-size-1d", type=int, default=256)
+    parser.add_argument("--cache-size", type=int, default=4096 * 8)
     parser.add_argument("--max-new-tokens", type=int, default=128)
     parser.add_argument("--tail-percentage", type=float, default=10)
     parser.add_argument("--verbose", action="store_true")
@@ -52,7 +69,10 @@ if __name__ == "__main__":
             ret = ret[:args.n_prompt]
         return ret
 
-    input = extend_input(input_id_list)
+    if not args.use_synthetic:
+        input = extend_input(input_id_list)
+    else:
+        input = synthesize_inputs(low=args.low, high=args.high, n_prompt=args.n_prompt)
     n_batch_2d = math.ceil(len(input) / float(args.batch_size_2d))
 
     def runner_2d(model, input):
@@ -94,15 +114,15 @@ if __name__ == "__main__":
 
     def benchmark(model, runner, input):
         for i in range(args.n_warmup):
-            if args.verbose:
-                print(f"  Warm-up iter {i}")
+            print(f"  Warm-up iter {i}")
             runner(model, input)
         latencies = np.zeros((args.n_iter, len(input)), dtype=float)
         total_times = []
         for i in range(args.n_iter):
             latency, total_time, output = runner(model, input)
+            print(f"  Benchmark iter {i}")
             if args.verbose:
-                print(f"  Benchmark iter {i}: {latency}")
+                print(f"  {latency}")
             latencies[i, :] = latency
             total_times.append(total_time)
         mean_latency = np.mean(latencies, axis=0)

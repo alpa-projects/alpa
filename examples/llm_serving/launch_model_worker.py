@@ -361,7 +361,7 @@ if __name__ == "__main__":
         controller = ray.get_actor(CONTROLLER_NAME)
     except ValueError:
         controller = run_controller(args.host, ALPA_SERVE_PORT, "/",
-                                    args.ssl_keyfile, args.ssl_certfile)
+                                    ssl_keyfile=args.ssl_keyfile, ssl_certfile=args.ssl_certfile)
 
     group_id = 0
     controller.launch_mesh_group_manager.remote(group_id)

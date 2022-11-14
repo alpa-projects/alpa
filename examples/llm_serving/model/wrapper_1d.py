@@ -101,7 +101,7 @@ class SequenceGenerator:
 
         ret = input_pool.get_results()
         padded_input = np.array(pad(ret))
-        latency = [p.latency for p in input_pool.done]
+        latency = input_pool.get_latency()
         return padded_input, latency
 
     @staticmethod

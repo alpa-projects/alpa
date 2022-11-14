@@ -25,7 +25,7 @@ def main(args):
     # Load the model
     model = get_model(model_name=args.model,
                       path="~/opt_weights",
-                      batch_size=256,
+                      batch_size=32,
                       cache_size=4096)
 
     prompts = [
@@ -37,9 +37,9 @@ def main(args):
         "Paris is the capital city of",
         "Which country has the most population?",
         "What do you think about the future of Cryptocurrency?",
-        # "What do you think about the meaning of life?",
-        # "Donald Trump is the president of",
-        # "GPT-3 is a large language model that is capable of"
+        "What do you think about the meaning of life?",
+        "Donald Trump is the president of",
+        "GPT-3 is a large language model that is capable of"
     ]
 
     input_ids = tokenizer(prompts, return_tensors="np", padding="longest").input_ids

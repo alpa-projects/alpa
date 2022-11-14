@@ -1,16 +1,13 @@
 import argparse
 import math
 import time
-
 import random
 
-import copy
 import numpy as np
+import torch
 
-from alpa.timer import timers
 from alpa.util import write_tsv
-from examples.llm_serving.generator import pad_batch
-from transformers import AutoTokenizer
+from llm_serving.generator import pad_batch
 from llm_serving.model.wrapper import get_model as get_model_2d
 from llm_serving.model.wrapper_1d import get_model as get_model_1d
 
@@ -36,31 +33,27 @@ if __name__ == "__main__":
     parser.add_argument("--path", type=str, default="~/opt_weights/")
     parser.add_argument("--n-warmup", type=int, default=2)
     parser.add_argument("--n-iter", type=int, default=3)
-    parser.add_argument("--n-prompt", type=int, default=10)
-    parser.add_argument("--batch-size-2d", type=int, default=8)
-    parser.add_argument("--batch-size-1d", type=int, default=128)
-    parser.add_argument("--cache-size", type=int, default=4096)
+    parser.add_argument("--n-prompt", type=int, default=240)
+    parser.add_argument("--batch-size-2d", type=int, default=4)
+    parser.add_argument("--batch-size-1d", type=int, default=64)
+    parser.add_argument("--cache-size", type=int, default=4096 * 5)
     parser.add_argument("--max-new-tokens", type=int, default=128)
-    parser.add_argument("--print-results", action="store_true")
+    parser.add_argument("--tail-percentage", type=float, default=10)
+    parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
     def extend_input(input_list):
-        if args.n_prompt < len(input_list):
+        if args.n_prompt <= len(input_list):
             ret = input_list[:args.n_prompt]
         else:
             factor = math.ceil(float(args.n_prompt) / float(len(input_list)))
             ret = input_list * factor
             random.shuffle(ret)
+            ret = ret[:args.n_prompt]
         return ret
 
-
-    tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b")
-    tokenizer.add_bos_token = False
-
     input = extend_input(input_id_list)
-    n_prompts = len(input)
-    n_batch_2d = math.ceil(float(n_prompts) / float(args.batch_size_2d))
-
+    n_batch_2d = math.ceil(len(input) / float(args.batch_size_2d))
 
     def runner_2d(model, input):
         output = []
@@ -73,8 +66,8 @@ if __name__ == "__main__":
             cur_batch = input[start_idx:end_idx]
 
             effective_num_seq = len(cur_batch)
-            if len(cur_batch) < args.batch_size_2d:
-                cur_batch = pad_batch(cur_batch, 1, args.batch_size_2d)
+            cur_batch = pad_batch(cur_batch, 1, args.batch_size_2d)
+            cur_batch = torch.from_numpy(np.array(cur_batch))
 
             tic = time.time()
             output_ids = model.generate(input_ids=cur_batch,
@@ -84,45 +77,36 @@ if __name__ == "__main__":
             batch_latency = toc - tic
             total_time += batch_latency
             latency.extend([batch_latency] * effective_num_seq)
-            output.extend(output_ids)
-
-        if args.print_results:
-            outputs = tokenizer.batch_decode(output, skip_special_tokens=True)
-            print("Outputs:\n" + 100 * '-')
-            for i, out in enumerate(outputs):
-                print(out[i])
-                print(f"{i + 1}: {out}")
-                print(100 * '-')
+            output.extend(output_ids[:effective_num_seq])
+            start_idx += args.batch_size_2d
 
         return latency, total_time, output
 
     def runner_1d(model, input):
-        output = []
-        latency = []
         tic = time.time()
-        output_ids = model.generate(input,
-                                    max_new_tokens=args.max_new_tokens,
-                                    do_sample=False)
+        output_ids, latency = model.generate(input,
+                                             max_new_tokens=args.max_new_tokens,
+                                             do_sample=False)
         toc = time.time()
         total_time = toc - tic
 
-        if args.print_results:
-            outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
-            print("Outputs:\n" + 100 * '-')
-            for i, output in enumerate(outputs):
-                print(output_ids[i])
-                print(f"{i + 1}: {output}")
-                print(100 * '-')
-        return latency, total_time, output
+        return latency, total_time, output_ids
 
     def benchmark(model, runner, input):
-        for _ in range(args.n_warmup):
+        for i in range(args.n_warmup):
+            if args.verbose:
+                print(f"  Warm-up iter {i}")
             runner(model, input)
-        latencies = np.zeros((args.n_iter, len(input)), dtype=np.float)
+        latencies = np.zeros((args.n_iter, len(input)), dtype=float)
+        total_times = []
         for i in range(args.n_iter):
-            latencies[i, :] = np.array(runner(model, input))
-        mean_latency = np.mean(latencies)
-        return mean_latency
+            latency, total_time, output = runner(model, input)
+            if args.verbose:
+                print(f"  Benchmark iter {i}: {latency}")
+            latencies[i, :] = latency
+            total_times.append(total_time)
+        mean_latency = np.mean(latencies, axis=0)
+        return mean_latency, sum(total_times) / args.n_iter, output
 
     def estimate_throughput(input, output, latency, total_time):
         req_per_sec = len(input) / total_time
@@ -132,8 +116,8 @@ if __name__ == "__main__":
 
     model_name_2d = args.backend + "/" + args.model
     model_2d = get_model_2d(model_name=model_name_2d,
-                         path="~/opt_weights",
-                         batch_size=args.batch_size_2d)
+                            path="~/opt_weights",
+                            batch_size=args.batch_size_2d)
 
     model_name_1d = "alpa/" + args.model.replace("-", "-1d-")
     model_1d = get_model_1d(model_name=model_name_1d,
@@ -141,31 +125,29 @@ if __name__ == "__main__":
                             batch_size=args.batch_size_1d,
                             cache_size=args.cache_size)
 
+    num_tail = int(args.tail_percentage / 100.0  * len(input))
+
+    print("- Benchmark 2D...")
     latency_2d, total_time_2d, output_2d = benchmark(model_2d, runner_2d, input)
-    latency_1d, total_time_1d, output_1d = benchmark(model_1d, runner_1d, input)
-
-    # Compare throughput
     rps_2d, tps_2d = estimate_throughput(input, output_2d, latency_2d, total_time_2d)
-    rps_1d, tps_1d = estimate_throughput(input, output_1d, latency_1d, total_time_1d)
-
-    # Compare latency
-    latency_diff = (latency_2d - latency_1d)
-    latency_improvement = latency_2d / latency_1d
-    mean_latency_1d = np.mean(latency_1d)
     mean_latency_2d = np.mean(latency_2d)
-    median_latency_1d = np.median(latency_1d)
-    median_latency_2d = np.median(latency_2d)
+    tail_latency_2d = np.mean(latency_2d[np.argsort(latency_2d)[-num_tail:]])
+
+    print("- Benchmark 1D...")
+    latency_1d, total_time_1d, output_1d = benchmark(model_1d, runner_1d, input)
+    rps_1d, tps_1d = estimate_throughput(input, output_1d, latency_1d, total_time_1d)
+    mean_latency_1d = np.mean(latency_1d)
+    tail_latency_1d = np.mean(latency_1d[np.argsort(latency_1d)[-num_tail:]])
 
     heads = [
-        "Model", "#Prompts", "batch size (2D)", "batch size (1D)", "Max new tokens",
-        "rps (2D)", "rps (1D)", "tps (2D)", "tps (1D)",
-        "mean latency (2D)", "mean latency (1D)", "median latency (2D)", "median latency (1D)"
+        "Model", "#Prompts", "BS (2D)", "BS (1D)", "Max new tokens",
+        "RPS (1D vs. 2D)", "TPS (1D vs. 2D)",
+        "Mean Latency (1D vs. 2D)", "Tail latency (1D vs. 2D)"
     ]
     values = [
         args.model, args.n_prompt, args.batch_size_2d, args.batch_size_1d, args.max_new_tokens,
-        rps_2d, rps_1d, tps_2d, tps_1d,
-        mean_latency_2d, mean_latency_1d, median_latency_2d, median_latency_1d
+        f"{rps_1d:.2f}/{rps_2d:.2f} ({rps_1d / rps_2d:.2f}x)", f"{tps_1d:.2f}/{tps_2d:.2f} ({tps_1d / tps_2d:.2f}x)",
+        f"{mean_latency_1d:.2f}/{mean_latency_2d:.2f} ({mean_latency_2d / mean_latency_1d:.1f}x)",
+        f"{tail_latency_1d:.2f}/{tail_latency_2d:.2f} ({tail_latency_2d / tail_latency_1d:.1f}x)"
     ]
     write_tsv(heads, values, "1d-vs-2d.tsv")
-
-

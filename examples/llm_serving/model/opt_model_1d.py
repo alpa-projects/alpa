@@ -686,6 +686,11 @@ class IterationLevelInputPool:
         sorted_results = sorted(self.done, key=lambda x: x.sentence_id, reverse=False)
         return [p.input_ids + p.generated_ids for p in sorted_results]
 
+    def get_latency(self):
+        """Return the latency of each prompt following their sequence id."""
+        sorted_results = sorted(self.done, key=lambda x: x.sentence_id, reverse=False)
+        return [p.latency for p in sorted_results]
+
     def next_sentence_id(self, number):
         counter = self._sentence_id_counter
         if number == 1:

@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Union, List
 
 import cupy
@@ -68,36 +69,40 @@ class SequenceGenerator:
                                              self.model_config,
                                              max_length=max_length,
                                              max_new_tokens=max_new_tokens)
+        iter = 0
         input_pool.enter_prompts(input_ids)
         while not input_pool.is_finished():
-            timers("enter").start(sync)
+            # tic = time.time()
             input, input_index, position_ids, logit_positions = input_pool.next()
-            timers("enter").suspend(sync)
-
+            # timers("enter").suspend(sync)
             batch = {
                 "input_ids": input,
                 "position_ids": position_ids,
                 "cache": input_pool.cache
             }
             # compute
-            timers("compute").start(sync)
+            # timers("compute").start(sync)
             logits = self.executable(self.params, batch)
-            timers("compute").suspend(sync)
+            # timers("compute").suspend(sync)
 
-            timers("generate").start(sync)
+            # timers("generate").start(sync)
             if not do_sample:
                 generated_ids = self._generate_greedy(logits, logit_positions)
             else:
                 raise NotImplementedError()
-            timers("generate").suspend(sync)
+            # timers("generate").suspend(sync)
 
-            timers("update").start(sync)
-            input_pool.update_cache(generated_ids)
-            timers("update").suspend(sync)
+            # timers("update").start(sync)
+            input_pool.update(generated_ids)
+            # timers("update").suspend(sync)
+            # elapsed = time.time() - tic
+            iter += 1
+            # print(f"Iter {iter} takes {elapsed}")
 
         ret = input_pool.get_results()
         padded_input = np.array(pad(ret))
-        return padded_input
+        latency = input_pool.get_latency()
+        return padded_input, latency
 
     @staticmethod
     def _generate_greedy(logits, positions):

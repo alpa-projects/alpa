@@ -26,8 +26,8 @@ from examples.llm_serving.model.opt_utils import sync
 
 
 try:
-    from ft_mha import fused_mmha, DecodingToken, init_cache_manager, \
-        prepare_inputs, get_curr_step, get_max_step, free_cache
+    from ft_mha import fused_mmha, init_cache_manager, \
+        prepare_inputs, free_cache, can_allocate
     from ft_mha import Prompt as PromptInternal, DecodingToken as DecodingTokenInternal
 except ImportError:
     raise RuntimeError("Please install ft_mha to use 1D OPT model.")
@@ -598,12 +598,21 @@ class IterationLevelInputPool:
         # figure out WIP prompts and put their next token in a list
         decoding_input = list(self.wip)
         # re-batch new prompts, concat them into a list
+
         prompt_input = []
-        for i in range(self.num_vacant_sequence_slot):
-            if self.todo.empty():
+        proposals = []
+        batch_availability = self.batch_size - len(decoding_input)
+        while not self.todo.empty():
+            proposals.append(self.todo.queue[0])
+            proposals_length = [p.prompt_length for p in proposals]
+            num_new_tokens = sum(proposals_length)
+            # now we check if we can put this prompt into batch
+            if batch_availability < num_new_tokens:
                 break
-            # TODO(Hao): use can_allocate to check cache availability
+            if not can_allocate(proposals_length):
+                break
             prompt_input.append(self.todo.get())
+        logger.debug(f"In this iteration {len(prompt_input)} new prompts enter.")
 
         # make input: prompts must go first
         input = sum([p.input_ids for p in prompt_input], []) + [p.last_generated_id for p in decoding_input]
@@ -628,12 +637,7 @@ class IterationLevelInputPool:
             position_ids.extend([start_idx])
         position_ids = np.array(position_ids +  [0] * (self.batch_size - len(position_ids)), dtype=np.int32)
 
-        # start prompts for recording time
-        for p in prompt_input:
-            p.start()
-
         self._current_batch = prompt_input + decoding_input
-
         logit_positions = []
         i = -1
         for p in prompt_input:
@@ -642,27 +646,26 @@ class IterationLevelInputPool:
         for _ in decoding_input:
             i += 1
             logit_positions.append(i)
-        timers("enter part 4").suspend()
 
-        timers("prepare_inputs").start(sync)
+        # start prompts for recording time
+        for p in prompt_input:
+            p.start()
+
+        # Call prepare_inputs before every inference_step.
         prepare_inputs([prompt.p for prompt in prompt_input], [prompt.p for prompt in decoding_input])
-        timers("prepare_inputs").suspend(sync)
         # return inputs
         return input, input_index, position_ids, logit_positions
 
-    def update_cache(self, generated_ids):
+    def update(self, generated_ids):
+        """Update the pool after one iteration of inference."""
         if self._current_batch is None:
-            raise RuntimeError("There is no pending batch so update_cache should not be called.")
-        # check EOS, move finished sentences from wip to finished queue
-        read_idx = 0
+            raise RuntimeError("There is no pending batch so update() is unnecessary.")
         for generated_id, p in zip(generated_ids, self._current_batch):
+            # check EOS, move finished sentences from wip to finished queue
             if self.check_exit_condition(p, generated_id):
                 if p.status == PromptStatus.DECODING:
                     assert p in self.wip
                     self.wip.remove(p)
-                    read_idx += 1
-                if p.status == PromptStatus.PROMPT:
-                    read_idx += p.prompt_length
                 exit_reason = "EOS" if generated_id == self.eos else "reaching max length"
                 logger.debug(f"Prompt {p.sentence_id} exits because of {exit_reason}. ")
                 p.finish(generated_id)
@@ -672,11 +675,9 @@ class IterationLevelInputPool:
                 # PROMPT -> DECODING
                 p.add_token(generated_id)
                 self.wip.add(p)
-                read_idx += p.prompt_length
             elif p.status == PromptStatus.DECODING:
                 # DECODING -> DECODING
                 p.add_token(generated_id)
-                read_idx += 1
             else:
                 raise RuntimeError(f"Prompt status: {p.status} should not appear here." )
 
@@ -684,6 +685,11 @@ class IterationLevelInputPool:
         """Return results sorted by their sentence id."""
         sorted_results = sorted(self.done, key=lambda x: x.sentence_id, reverse=False)
         return [p.input_ids + p.generated_ids for p in sorted_results]
+
+    def get_latency(self):
+        """Return the latency of each prompt following their sequence id."""
+        sorted_results = sorted(self.done, key=lambda x: x.sentence_id, reverse=False)
+        return [p.latency for p in sorted_results]
 
     def next_sentence_id(self, number):
         counter = self._sentence_id_counter
@@ -693,14 +699,6 @@ class IterationLevelInputPool:
             ret = list(range(counter, counter + number))
         self._sentence_id_counter = (counter + number) % (1 << 60)
         return ret
-
-    @property
-    def num_vacant_sequence_slot(self):
-        """Return the global vacancy."""
-        # TODO(Hao): this is problematic because it does not check for cache availability
-        # TODO(Hao): this function is wrong
-        return self.batch_size - len(self.wip)
-        # return min(self.batch_size - len(self.wip), len(self.cache.vacancies))
 
     def check_exit_condition(self, prompt, generated_id):
         """Check Exit condition: reaching EOS or reaching max length."""

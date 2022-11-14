@@ -6,6 +6,7 @@ import numpy as np
 from transformers import AutoTokenizer
 
 from llm_serving.model.wrapper_1d import get_model
+from llm_serving.model.opt_utils import sync
 from alpa.timer import timers
 
 
@@ -24,6 +25,7 @@ def main(args):
     # Load the model
     model = get_model(model_name=args.model,
                       path="~/opt_weights",
+                      batch_size=32,
                       cache_size=4096)
 
     prompts = [
@@ -39,24 +41,17 @@ def main(args):
         "Donald Trump is the president of",
         "GPT-3 is a large language model that is capable of"
     ]
-    # prompts = prompts * 10
-    timer_names = ["enter", "compute", "generate", "update", "prepare_inputs",
-                   "enter part 2", "enter part 3", "enter part 4"]
 
     input_ids = tokenizer(prompts, return_tensors="np", padding="longest").input_ids
 
     n_warmup = 10
     for i in range(n_warmup):
+        sync()
         tic = time.time()
-        output_ids = model.generate(input_ids,
-                                    **generate_params)
+        output_ids, latency = model.generate(input_ids, **generate_params)
+        sync()
         elapsed = time.time() - tic
-        for timer_name in timer_names:
-            timers(timer_name).stop()
-        print(f"- It takes {elapsed}")
-        timers.log(timer_names)
-        for timer_name in timer_names:
-            timers(timer_name).reset()
+        print(f"- It takes {elapsed}, latency: {latency}")
 
         outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
     if False:
@@ -69,7 +64,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="alpa/opt-1d-125m")
+    parser.add_argument("--model", type=str, default="alpa/opt-1d-1.3b")
     parser.add_argument('--do-sample', action='store_true')
     args = parser.parse_args()
 

@@ -42,7 +42,6 @@ def main(args):
     output_ids = model.generate(input_ids=input_ids,
                                 max_length=64,
                                 **generate_params)
-    print("Output ids:", output_ids)
     outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
     
     # Print results

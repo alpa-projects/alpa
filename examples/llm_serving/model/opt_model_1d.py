@@ -609,7 +609,7 @@ class IterationLevelInputPool:
             # now we check if we can put this prompt into batch
             if batch_availability < num_new_tokens:
                 break
-            if not can_allocate(proposals_length):
+            if not can_allocate([p.p.max_len for p in proposals]):
                 break
             prompt_input.append(self.todo.get())
         logger.debug(f"In this iteration {len(prompt_input)} new prompts enter.")

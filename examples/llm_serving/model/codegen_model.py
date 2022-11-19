@@ -13,6 +13,7 @@ from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
 from alpa.model.model_util import ModelOutput
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 import flax.linen as nn
+from flax.linen import combine_masks, dot_product_attention_weights, make_causal_mask
 import jax
 import flax
 from jax import lax
@@ -165,55 +166,72 @@ class CodeGenAttention(nn.Module):
         self.out_proj = nn.Dense(self.config.hidden_size, dtype =self.dtype, use_bias = False)
         self.resid_dropout = nn.Dropout(rate=self.config.resid_pdrop)
 
+        self.causal_mask = make_causal_mask(jnp.ones((1, self.config.max_seq_len), dtype="bool"), dtype="bool")
+
         self.rotary_dim = self.config.rotary_dim
         self.embed_positions = create_sinusoidal_positions(self.config.max_seq_len, self.config.hidden_size // self.config.n_head)
 
+    def _split_heads(self, hidden_states):
+        return hidden_states.reshape(hidden_states.shape[:2] + (self.num_heads, self.head_dim))
+
+    def _merge_heads(self, hidden_states):
+        return hidden_states.reshape(hidden_states.shape[:2] + (self.embed_dim,))
+
     def __call__(self,
                  hidden_states,
-                 sinusoidal_pos,
+                 position_ids,
                  output_attentions: bool = False,
                  attention_cache=None,
-                 attention_mask=None):
+                 attention_mask=None,
+                 deterministic:bool = True):
         head_dim = self.config.hidden_size // self.config.n_head
-
-        qkv_combined_states = self.qkv_combined(hidden_states)
-        qkv_combined_states = qkv_combined_states.reshape(
-            qkv_combined_states.shape[:2] + (-1, 3))
-        query_states, key_states, value_states = jnp.split(qkv_combined_states,
-                                                           3,
-                                                           axis=3)
-
-        # shape: [B, S, #head, head_dim]
-        query_states = query_states.reshape(hidden_states.shape[:2] + (
-            self.config.n_head, head_dim))
-        # shape: [B, S, #head, head_dim]
-        value_states = value_states.reshape(hidden_states.shape[:2] + (
-            self.config.n_head, head_dim))
-        # shape: [B, S, #head, head_dim]
-        key_states = key_states.reshape(hidden_states.shape[:2] +
-                                        (self.config.n_head,
-                                         head_dim))
         
-        batch_size = hidden_states.shape[0]
-        if attention_cache is None:
-            query_len, key_len = query_states.shape[1], key_states.shape[1]
-            assert query_len == key_len
-            # shape: [B, 1, S_max, S_max]
-            causal_mask = nn.make_causal_mask(
-                jnp.ones((batch_size, key_len)), dtype="bool")
-            # shape: [B, 1, 1, S_max]
-            input_mask = attention_mask
-            # shape: [B, 1, S_max, S_max]
-            mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
+        fused_qkv = self.qkv_combined(hidden_states)
+        fused_qkv = fused_qkv.reshape(fused_qkv.shape[:-1] + (self.num_heads, self.head_dim * 3))
+        query, key, value = jnp.split(fused_qkv, 3, axis=-1)
+        
+        query = self._split_heads(query)
+        key = self._split_heads(key)
+        value = self._split_heads(value)
+
+        sincos = jnp.take(self.embed_positions, position_ids, axis=0)
+        sincos = jnp.split(sincos, 2, axis=-1)
+        if self.rotary_dim is not None:
+            k_rot = key[:, :, :, : self.rotary_dim]
+            k_pass = key[:, :, :, self.rotary_dim :]
+
+            q_rot = query[:, :, :, : self.rotary_dim]
+            q_pass = query[:, :, :, self.rotary_dim :]
+
+            k_rot = apply_rotary_pos_emb(k_rot, sincos)
+            q_rot = apply_rotary_pos_emb(q_rot, sincos)
+
+            key = jnp.concatenate([k_rot, k_pass], axis=-1)
+            query = jnp.concatenate([q_rot, q_pass], axis=-1)
         else:
-            cache_key, cache_value, cache_index = attention_cache
-            cache_index_ = cache_index[0]
-            update_indices = (0, cache_index_, 0, 0)
-            # shape: [B, S_max, #head, head_dim]
-            key_states = lax.dynamic_update_slice(cache_key, key_states, update_indices)
-            # shape: [B, S_max, #head, head_dim]
-            value_states = lax.dynamic_update_slice(cache_value, value_states, update_indices)
-            query_len, key_len = query_states.shape[1], key_states.shape[1]
+            key = apply_rotary_pos_emb(key, sincos)
+            query = apply_rotary_pos_emb(query, sincos)
+
+        query_length, key_length = query.shape[1], key.shape[1]
+
+        batch_size = hidden_states.shape[0]
+
+        if attention_cache:
+            causal_attention_mask_shift = attention_cache[2][0]
+        else:
+            causal_attention_mask_shift = 0
+
+        if attention_cache is None:
+            causal_mask = self.causal_mask[:, :, :query_length, :key_length]
+        else:
+            #TODO(chris): verify this section actually works
+            max_decoder_length = attention_cache[0].shape[1]
+            query_length = query.shape[1]
+            causal_mask = jax.lax.dynamic_slice(
+                self.causal_mask,
+                (0, 0, causal_attention_mask_shift, 0),
+                (1, 1, query_length, max_decoder_length)
+            )
 
             # Handle a special kind of internal padding added by alpa.
             # Note that this kind of internal padding is different from
@@ -224,30 +242,54 @@ class CodeGenAttention(nn.Module):
             num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
             attention_mask = (attention_mask == 1)
 
-            attention_cache = key_states, value_states, cache_index + query_len - num_internal_pad
+        attention_mask = combine_masks(attention_mask, causal_mask)
 
-            # shape: [B, 1, S_max, S_max]
-            causal_mask = nn.make_causal_mask(
-                jnp.ones((batch_size, key_len)), dtype="bool")
-            # shape: [B, 1, S, S_max]
-            causal_mask = lax.dynamic_slice(causal_mask,
-                (0, 0, cache_index_, 0), (batch_size, 1, query_len, key_len))
-            # shape: [B, 1, 1, S_max]
-            input_mask = attention_mask
-            # shape: [B, 1, S, S_max]
-            mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
+        if attention_cache:
+            cache_key, cache_value, cache_index = attention_cache
+            *batch_dims, max_length, num_heads, depth_per_head = cache_key.shape
+            # update key, value caches with our new 1d spatial slices
+            cur_index = cache_index[0]
+            indices = (0, cur_index, 0, 0)
+            key = lax.dynamic_update_slice(cache_key, key, indices)
+            value = lax.dynamic_update_slice(cache_value, value, indices)
+            cache_key = key
+            cache_value = value
+            num_updated_cache_vectors = query.shape[1]
+            # A line added from bloom_model
+            attention_cache = key, value, cache_index + num_updated_cache_vectors - num_internal_pad
+            # causal mask for cached decoder self-attention: our single query position should only attend to those key positions that have already been generated and cached, not the remaining zero elements.
+            pad_mask = jnp.broadcast_to(
+                jnp.arange(max_length) < cur_index + num_updated_cache_vectors,
+                tuple(batch_dims) + (1, num_updated_cache_vectors, max_length),
+            )
+            attention_mask = combine_masks(pad_mask, attention_mask)
 
-        attn_weights = nn.attention.dot_product_attention_weights(
-            query_states,
-            key_states,
-            mask=mask,
+        dropout_rng = None
+        if not deterministic and self.config.attention_dropout > 0.0:
+            dropout_rng = self.make_rng("dropout")
+
+        # transform boolean mask into float mask
+        mask_value = jnp.finfo(self.dtype).min
+        attention_bias = lax.select(
+            attention_mask > 0,
+            jnp.full(attention_mask.shape, 0.0).astype(self.dtype),
+            jnp.full(attention_mask.shape, mask_value).astype(self.dtype),
+        )
+
+        attn_weights = dot_product_attention_weights(
+            query,
+            key,
+            bias=attention_bias,
+            dropout_rng=dropout_rng,
+            dropout_rate=self.config.attn_pdrop,
+            deterministic=deterministic,
             dtype=self.dtype,
             precision=None,
         )
 
         attn_output = jnp.einsum("...hqk,...khd->...qhd", attn_weights,
-                                 value_states)
-        attn_output = attn_output.reshape(attn_output.shape[:2] + (-1,))
+                                 value)
+        attn_output = self._merge_heads(attn_output)
         attn_output = self.out_proj(attn_output)
         attn_output = self.resid_dropout(attn_output)
 
@@ -255,28 +297,6 @@ class CodeGenAttention(nn.Module):
                    attn_weights) if output_attentions else (attn_output,
                                                             attention_cache)
         return outputs
-
-
-        
-    # taken from https://github.com/huggingface/transformers/blob/80367cd1fb6d36ca6bdd99b70586aab4ffae1ae1/src/transformers/models/roformer/modeling_flax_roformer.py#L275
-    @staticmethod
-    def apply_rotary_position_embeddings(sinusoidal_pos, query_layer, key_layer, value_layer=None):
-        sin, cos = sinusoidal_pos.split(2, axis=-1)
-        sin_pos = jnp.stack([sin, sin], axis=-1).reshape(sinusoidal_pos.shape)
-        cos_pos = jnp.stack([cos, cos], axis=-1).reshape(sinusoidal_pos.shape)
-
-        def rotate_layer(layer, sin_pos, cos_pos):
-            rotate_half_layer = jnp.stack([-layer[..., 1::2], layer[..., ::2]], axis=-1).reshape(layer.shape)
-            rotary_matrix_cos = jnp.einsum("bslh,...sh->bslh", layer, cos_pos)
-            rotary_matrix_sin = jnp.einsum("bslh,...sh->bslh", rotate_half_layer, sin_pos)
-            return rotary_matrix_cos + rotary_matrix_sin
-
-        query_layer = rotate_layer(query_layer, sin_pos, cos_pos)
-        key_layer = rotate_layer(key_layer, sin_pos, cos_pos)
-        if value_layer is not None:
-            value_layer = rotate_layer(value_layer, sin_pos, cos_pos)
-            return query_layer, key_layer, value_layer
-        return query_layer, key_layer
 
 
 class CodeGenBlock(nn.Module):

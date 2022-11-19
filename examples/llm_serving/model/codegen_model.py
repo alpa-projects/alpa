@@ -157,6 +157,8 @@ class CodeGenAttention(nn.Module):
                 f"multiple of `n_head`: {self.config.n_head}"
             )
 
+        self.head_dim = self.config.hidden_size // self.config.n_head
+
         self.qkv_combined = nn.Dense(
             self.config.hidden_size * 3,
             dtype=self.dtype,
@@ -172,7 +174,7 @@ class CodeGenAttention(nn.Module):
         self.embed_positions = create_sinusoidal_positions(self.config.max_seq_len, self.config.hidden_size // self.config.n_head)
 
     def _split_heads(self, hidden_states):
-        return hidden_states.reshape(hidden_states.shape[:2] + (self.num_heads, self.head_dim))
+        return hidden_states.reshape(hidden_states.shape[:2] + (self.config.n_head, self.head_dim))
 
     def _merge_heads(self, hidden_states):
         return hidden_states.reshape(hidden_states.shape[:2] + (self.embed_dim,))
@@ -184,10 +186,9 @@ class CodeGenAttention(nn.Module):
                  attention_cache=None,
                  attention_mask=None,
                  deterministic:bool = True):
-        head_dim = self.config.hidden_size // self.config.n_head
-        
+
         fused_qkv = self.qkv_combined(hidden_states)
-        fused_qkv = fused_qkv.reshape(fused_qkv.shape[:-1] + (self.num_heads, self.head_dim * 3))
+        fused_qkv = fused_qkv.reshape(fused_qkv.shape[:-1] + (self.config.n_head, self.head_dim * 3))
         query, key, value = jnp.split(fused_qkv, 3, axis=-1)
         
         query = self._split_heads(query)
@@ -314,7 +315,7 @@ class CodeGenBlock(nn.Module):
 
     def __call__(self,
                  hidden_states,
-                 sinusoidal_pos,
+                 position_ids = None,
                  deterministic: bool = True,
                  output_attentions: bool = False,
                  attention_cache=None,
@@ -322,7 +323,7 @@ class CodeGenBlock(nn.Module):
         residual = hidden_states
         hidden_states = self.layer_norm(hidden_states)
         attn_outputs = self.self(hidden_states,
-                                 sinusoidal_pos=sinusoidal_pos,
+                                 position_ids=position_ids,
                                  output_attentions=output_attentions,
                                  attention_cache=attention_cache,
                                  attention_mask=attention_mask)
@@ -341,7 +342,6 @@ class CodeGenBlock(nn.Module):
 
 class CodeGenMLP(nn.Module):
     config: CodeGenConfig
-    intermediate_size: int
     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
@@ -380,13 +380,13 @@ class CodeGenTransformerLayer(nn.Module):
 
     def __call__(self,
                  hidden_states,
-                 sinusoidal_pos,
+                 position_ids=None,
                  output_attentions: bool = False,
                  attention_cache=None,
                  attention_mask=None):
 
         attention_outputs = self.attention(hidden_states,
-                                           sinusoidal_pos=sinusoidal_pos,
+                                           position_ids=position_ids,
                                            output_attentions=output_attentions,
                                            attention_cache=attention_cache,
                                            attention_mask=attention_mask)
@@ -415,7 +415,7 @@ class CodeGenTransformerLayerCollection(nn.Module):
     def __call__(
         self,
         hidden_states,
-        sinusoidal_pos,
+        position_ids=None,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
@@ -443,7 +443,7 @@ class CodeGenTransformerLayerCollection(nn.Module):
             if attention_cache is not None:
                 layer_attention_cache = attention_cache[i]
             layer_outputs = layer(hidden_states,
-                                  sinusoidal_pos=sinusoidal_pos,
+                                  position_ids=position_ids,
                                   output_attentions=output_attentions,
                                   attention_cache=layer_attention_cache,
                                   attention_mask=attention_mask)
@@ -472,32 +472,49 @@ class CodeGenTransformerModule(nn.Module):
     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
-        self.embeddings = CodeGenEmbeddings(self.config, dtype=self.dtype)
+        # self.embeddings = CodeGenEmbeddings(self.config, dtype=self.dtype)
+        self.wte = nn.Embed(
+            self.config.vocab_size,
+            self.config.hidden_size,
+            embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
+        )
+
+        self.drop = nn.Dropout(rate=self.config.embd_pdrop)
 
         self.encoder = CodeGenTransformerLayerCollection(self.config,
                                                      dtype=self.dtype)
+
         self.layer_norm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
                                            dtype=self.dtype)
 
     def __call__(
         self,
         input_ids,
-        token_type_ids,
+        position_ids=None,
+        token_type_ids=None,
+        deterministic:bool = True,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
         attention_cache=None,
         attention_mask=None
     ):
-        hidden_states = self.embeddings(input_ids, token_type_ids)
+        # hidden_states = self.embeddings(input_ids, token_type_ids)
+        input_embeds = self.wte(input_ids.astype("i4"))
+        
+        hidden_states = input_embeds
 
-        sinusoidal_pos = self.embed_positions[: hidden_states.shape[1], :]
+        if token_type_ids:
+            token_type_embeds = self.wte(token_type_ids.astype("i4"))
+            hidden_states = input_embeds + token_type_embeds
+        
+        hidden_states = self.drop(hidden_states, deterministic=deterministic)
 
         outputs = self.encoder(
             hidden_states,
+            position_ids=position_ids,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
-            sinusoidal_pos=sinusoidal_pos,
             return_dict=return_dict,
             attention_cache=attention_cache,
             attention_mask=attention_mask
@@ -541,7 +558,8 @@ class CodeGenForLMModule(nn.Module):
     def __call__(
         self,
         input_ids,
-        token_type_ids,
+        position_ids=None,
+        token_type_ids=None,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
@@ -624,8 +642,9 @@ def init_model_aval(config):
     model = CodeGenForLMModule(config, dtype=config.dtype)
     rngkey = jax.core.ShapedArray((2,), jnp.uint32)
     input_ids = jax.core.ShapedArray((1, 128), jnp.int32)
+    position_ids = jax.core.ShapedArray((1, 128), jnp.int32)
     token_type_ids = jax.core.ShapedArray((1, 128), jnp.int32)
-    params = jax.eval_shape(model.init, rngkey, input_ids, token_type_ids)
+    params = jax.eval_shape(model.init, rngkey, input_ids, token_type_ids, position_ids)
     params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, config.dtype),
                           params)
     return model, params
@@ -717,8 +736,7 @@ def load_params_np(params, path, config, dummy=False):
     load_param("params.transformers.layer_norm.scale", load_array("ln_f.weight"))
     load_param("params.transformers.layer_norm.bias", load_array("ln_f.bias"))
     # TODO(chris) check: do we need this - what does this correspond to?
-    load_param("params.transformers.embeddings.token_type_embeddings.embedding", load_array("wte.weight"))
-    load_param("params.transformers.embeddings.word_embeddings.embedding", load_array("wte.weight"))
+    load_param("params.transformers.wte.embedding", load_array("wte.weight"))
 
     for i in tqdm(range(config.num_hidden_layers)):
         param_prefix = f"params.transformers.encoder.{i}."

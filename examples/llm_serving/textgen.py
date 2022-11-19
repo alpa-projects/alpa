@@ -40,8 +40,6 @@ def main(args):
         "Today is a good day and I'd like to",
         "Computer Science studies the area of",
         "University of California Berkeley is a public university",
-        # "Create a function that prints hello world",
-        # "Create a function that solves the two sum problem"
     ]
     prompts = prompts[:args.n_prompts]
     input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids

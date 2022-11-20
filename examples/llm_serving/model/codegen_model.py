@@ -13,6 +13,7 @@ from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
 from alpa.model.model_util import ModelOutput
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
 import flax.linen as nn
+from flax.linen import combine_masks, dot_product_attention_weights, make_causal_mask
 import jax
 import flax
 from jax import lax
@@ -52,20 +53,8 @@ class CodeGenLMOutput(ModelOutput):
 # TODO(chris): figure out which config params need to be pruned
 @dataclass(frozen=True)
 class CodeGenConfig:
-    # Inherited from CodeGen
-    # num_hidden_layers: int = 20
-    # max_seq_len: int = 2048
-    # hidden_size: int = 768
-    # n_head: int = 12
-    # decoder_input_dim: int = 768
-    # decoder_ffn_embed_dim: int = 3072
     pad: int = 1
-    # activation_fn: str = 'relu'
-    # dtype: any = jnp.float16
-    # use_stable_embedding: bool = False
-    # no_scale_embedding: bool = True
     decoder_learned_pos: bool = True
-    # share_decoder_input_output_embed: bool = True
     vocab_size: int = 50400
     max_seq_len: int = 2048
     n_ctx: int = 2048
@@ -89,62 +78,38 @@ class CodeGenConfig:
     decoder_input_dim: int = 4096
     decoder_ffn_embed_dim: int = 16384
     dtype: any = jnp.float16
-    num_pp_stages: int = None,
+    num_pp_stages: int = None
+    tie_word_embeddings: bool = True
     # parallelize
     mark_boundary: bool = True
-    share_decoder_input_output_embed: bool = False
+    share_decoder_input_output_embed: bool = True
 
 
-# Copied from transformers.models.marian.modeling_flax_marian.create_sinusoidal_positions
-def create_sinusoidal_positions(n_pos, dim):
-    position_enc = np.array([[pos / np.power(10000, 2 * (j // 2) / dim) for j in range(dim)] for pos in range(n_pos)])
+# Copied from transformers.models.gptj.modeling_flax_gptj.create_sinusoidal_positions
+def create_sinusoidal_positions(num_pos, dim):
+    inv_freq = 1.0 / (10000 ** (np.arange(0, dim, 2) / dim))
+    sinusoid_inp = np.einsum("i , j -> i j", np.arange(num_pos), inv_freq).astype("float32")
+    sin, cos = np.sin(sinusoid_inp), np.cos(sinusoid_inp)
+
     sentinel = dim // 2 + dim % 2
-    out = np.zeros_like(position_enc)
-    out[:, 0:sentinel] = np.sin(position_enc[:, 0::2])
-    out[:, sentinel:] = np.cos(position_enc[:, 1::2])
+    out = np.zeros((num_pos, dim))
+    out[:, 0:sentinel] = sin
+    out[:, sentinel:] = cos
 
-    return jnp.array(out)
+    return jnp.array(out, dtype=jnp.float16)
 
-# TODO(chris) refactor: change embeddings to follow rotary position embeddings
-class CodeGenEmbeddings(nn.Module):
-    """Construct the embeddings from word, position and token_type embeddings."""
+# Copied from transformers.models.gptj.modeling_flax_gptj.rotate_every_two
+def rotate_every_two(tensor):
+    rotate_half_tensor = jnp.stack((-tensor[:, :, :, 1::2], tensor[:, :, :, ::2]), axis=-1)
+    rotate_half_tensor = rotate_half_tensor.reshape(rotate_half_tensor.shape[:-2] + (-1,))
+    return rotate_half_tensor
 
-    config: CodeGenConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
-
-    def setup(self):
-        assert not self.config.use_stable_embedding
-        self.embed_scale = 1.0 if self.config.no_scale_embedding else math.sqrt(
-            self.config.hidden_size)
-        self.word_embeddings = nn.Embed(
-            self.config.vocab_size,
-            self.config.decoder_input_dim,
-            dtype=self.dtype,
-        )
-        assert self.config.max_seq_len is not None
-        assert self.config.decoder_learned_pos
-        self.position_embeddings = nn.Embed(
-            self.config.max_seq_len + self.config.pad + 1,
-            self.config.hidden_size,
-            dtype=self.dtype,
-        )
-        self.project_in_dim = nn.Dense(
-            self.config.hidden_size,
-            dtype=self.dtype,
-        ) if self.config.decoder_input_dim != self.config.hidden_size else None
-
-    def __call__(self, input_ids, position_ids):
-        # Embed
-        inputs_embeds = self.embed_scale * self.word_embeddings(
-            input_ids.astype("i4"))
-        if self.project_in_dim is not None:
-            inputs_embeds = self.project_in_dim(inputs_embeds)
-        position_embeds = self.position_embeddings(position_ids.astype("i4"))
-
-        # Sum all embeddings
-        hidden_states = inputs_embeds + position_embeds
-        return hidden_states
-
+# Copied from transformers.models.gptj.modeling_flax_gptj.apply_rotary_pos_emb
+def apply_rotary_pos_emb(tensor, sincos):
+    sin_pos, cos_pos = sincos
+    sin_pos = sin_pos[:, :, None, :].repeat(2, 3)
+    cos_pos = cos_pos[:, :, None, :].repeat(2, 3)
+    return (tensor * cos_pos) + (rotate_every_two(tensor) * sin_pos)
 
 class CodeGenAttention(nn.Module):
     config: CodeGenConfig
@@ -157,70 +122,86 @@ class CodeGenAttention(nn.Module):
                 f"multiple of `n_head`: {self.config.n_head}"
             )
 
+        self.embed_dim = self.config.hidden_size
+        self.head_dim = self.config.hidden_size // self.config.n_head
+        self.rotary_dim = self.config.rotary_dim
+
         self.qkv_combined = nn.Dense(
             self.config.hidden_size * 3,
             dtype=self.dtype,
+            use_bias=False
         )
         
-        self.rotary_dim = self.config.rotary_dim
+        self.out_proj = nn.Dense(self.config.hidden_size, dtype=self.dtype, use_bias = False)
+        self.resid_dropout = nn.Dropout(rate=self.config.resid_pdrop)
+
+        self.causal_mask = make_causal_mask(jnp.ones((1, self.config.max_seq_len), dtype="bool"), dtype="bool")
+
+        pos_embd_dim = self.rotary_dim or self.embed_dim
+        self.embed_positions = create_sinusoidal_positions(self.config.max_seq_len, pos_embd_dim)
+
+    def _split_heads(self, hidden_states):
+        return hidden_states.reshape(hidden_states.shape[:2] + (self.config.n_head, self.head_dim))
+
+    def _merge_heads(self, hidden_states):
+        return hidden_states.reshape(hidden_states.shape[:2] + (self.config.hidden_size,))
 
     def __call__(self,
                  hidden_states,
-                 sinusoidal_pos,
+                 position_ids,
                  output_attentions: bool = False,
                  attention_cache=None,
-                 attention_mask=None):
-        head_dim = self.config.hidden_size // self.config.n_head
+                 attention_mask=None,
+                 deterministic:bool = True):
 
-        qkv_combined_states = self.qkv_combined(hidden_states)
-        qkv_combined_states = qkv_combined_states.reshape(
-            qkv_combined_states.shape[:2] + (-1, 3))
-        query_states, key_states, value_states = jnp.split(qkv_combined_states,
-                                                           3,
-                                                           axis=3)
-
-        # shape: [B, S, #head, head_dim]
-        query_states = query_states.reshape(hidden_states.shape[:2] + (
-            self.config.n_head, head_dim))
-        # shape: [B, S, #head, head_dim]
-        value_states = value_states.reshape(hidden_states.shape[:2] + (
-            self.config.n_head, head_dim))
-        # shape: [B, S, #head, head_dim]
-        key_states = key_states.reshape(hidden_states.shape[:2] +
-                                        (self.config.n_head,
-                                         head_dim))
+        fused_qkv = self.qkv_combined(hidden_states)
+        fused_qkv = fused_qkv.reshape(fused_qkv.shape[:2] + (-1, 3))
+        query, key, value = jnp.split(fused_qkv,
+                                            3,
+                                            axis=3)
         
+        query = self._split_heads(query)
+        key = self._split_heads(key)
+        value = self._split_heads(value)
 
-        if sinusoidal_pos is not None:
-            if self.rotary_dim:
-                query_states, key_states, value_states = self.apply_rotary_position_embeddings(
-                    sinusoidal_pos, query_states, key_states, value_states
-                )
-            else:
-                query_states, key_states = self.apply_rotary_position_embeddings(
-                    sinusoidal_pos, query_states, key_states
-                )
+        sincos = jnp.take(self.embed_positions, position_ids, axis=0)
+        sincos = jnp.split(sincos, 2, axis=-1)
+        if self.rotary_dim is not None:
+            k_rot = key[:, :, :, : self.rotary_dim]
+            k_pass = key[:, :, :, self.rotary_dim :]
+
+            q_rot = query[:, :, :, : self.rotary_dim]
+            q_pass = query[:, :, :, self.rotary_dim :]
+
+            k_rot = apply_rotary_pos_emb(k_rot, sincos)
+            q_rot = apply_rotary_pos_emb(q_rot, sincos)
+
+            key = jnp.concatenate([k_rot, k_pass], axis=-1)
+            query = jnp.concatenate([q_rot, q_pass], axis=-1)
+        else:
+            key = apply_rotary_pos_emb(key, sincos)
+            query = apply_rotary_pos_emb(query, sincos)
+
+        query_length, key_length = query.shape[1], key.shape[1]
 
         batch_size = hidden_states.shape[0]
-        if attention_cache is None:
-            query_len, key_len = query_states.shape[1], key_states.shape[1]
-            assert query_len == key_len
-            # shape: [B, 1, S_max, S_max]
-            causal_mask = nn.make_causal_mask(
-                jnp.ones((batch_size, key_len)), dtype="bool")
-            # shape: [B, 1, 1, S_max]
-            input_mask = attention_mask
-            # shape: [B, 1, S_max, S_max]
-            mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
+
+        if attention_cache:
+            causal_attention_mask_shift = attention_cache[2][0]
         else:
-            cache_key, cache_value, cache_index = attention_cache
-            cache_index_ = cache_index[0]
-            update_indices = (0, cache_index_, 0, 0)
-            # shape: [B, S_max, #head, head_dim]
-            key_states = lax.dynamic_update_slice(cache_key, key_states, update_indices)
-            # shape: [B, S_max, #head, head_dim]
-            value_states = lax.dynamic_update_slice(cache_value, value_states, update_indices)
-            query_len, key_len = query_states.shape[1], key_states.shape[1]
+            causal_attention_mask_shift = 0
+
+        if attention_cache is None:
+            causal_mask = self.causal_mask[:, :, :query_length, :key_length]
+        else:
+            #TODO(chris): verify this section actually works
+            max_decoder_length = attention_cache[0].shape[1]
+            query_length = query.shape[1]
+            causal_mask = jax.lax.dynamic_slice(
+                self.causal_mask,
+                (0, 0, causal_attention_mask_shift, 0),
+                (1, 1, query_length, max_decoder_length)
+            )
 
             # Handle a special kind of internal padding added by alpa.
             # Note that this kind of internal padding is different from
@@ -231,30 +212,56 @@ class CodeGenAttention(nn.Module):
             num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
             attention_mask = (attention_mask == 1)
 
-            attention_cache = key_states, value_states, cache_index + query_len - num_internal_pad
+        attention_mask = combine_masks(attention_mask, causal_mask)
 
-            # shape: [B, 1, S_max, S_max]
-            causal_mask = nn.make_causal_mask(
-                jnp.ones((batch_size, key_len)), dtype="bool")
-            # shape: [B, 1, S, S_max]
-            causal_mask = lax.dynamic_slice(causal_mask,
-                (0, 0, cache_index_, 0), (batch_size, 1, query_len, key_len))
-            # shape: [B, 1, 1, S_max]
-            input_mask = attention_mask
-            # shape: [B, 1, S, S_max]
-            mask = nn.combine_masks(causal_mask, input_mask, dtype="bool")
+        if attention_cache:
+            cache_key, cache_value, cache_index = attention_cache
+            *batch_dims, max_length, num_heads, depth_per_head = cache_key.shape
+            # update key, value caches with our new 1d spatial slices
+            cur_index = cache_index[0]
+            indices = (0, cur_index, 0, 0)
+            key = lax.dynamic_update_slice(cache_key, key, indices)
+            value = lax.dynamic_update_slice(cache_value, value, indices)
+            cache_key = key
+            cache_value = value
+            num_updated_cache_vectors = query.shape[1]
+            # A line added from bloom_model
+            attention_cache = key, value, cache_index + num_updated_cache_vectors - num_internal_pad
+            # causal mask for cached decoder self-attention: our single query position should only attend to those key positions that have already been generated and cached, not the remaining zero elements.
+            pad_mask = jnp.broadcast_to(
+                jnp.arange(max_length) < cur_index + num_updated_cache_vectors,
+                tuple(batch_dims) + (1, num_updated_cache_vectors, max_length),
+            )
+            attention_mask = combine_masks(pad_mask, attention_mask)
 
-        attn_weights = nn.attention.dot_product_attention_weights(
-            query_states,
-            key_states,
-            mask=mask,
+        dropout_rng = None
+        if not deterministic and self.config.attention_dropout > 0.0:
+            dropout_rng = self.make_rng("dropout")
+
+        # transform boolean mask into float mask
+        mask_value = jnp.finfo(self.dtype).min
+        attention_bias = lax.select(
+            attention_mask > 0,
+            jnp.full(attention_mask.shape, 0.0).astype(self.dtype),
+            jnp.full(attention_mask.shape, mask_value).astype(self.dtype),
+        )
+
+        attn_weights = dot_product_attention_weights(
+            query,
+            key,
+            bias=attention_bias,
+            dropout_rng=dropout_rng,
+            dropout_rate=self.config.attn_pdrop,
+            deterministic=deterministic,
             dtype=self.dtype,
             precision=None,
         )
 
         attn_output = jnp.einsum("...hqk,...khd->...qhd", attn_weights,
-                                 value_states)
-        attn_output = attn_output.reshape(attn_output.shape[:2] + (-1,))
+                                 value)
+        attn_output = self._merge_heads(attn_output)
+        attn_output = self.out_proj(attn_output)
+        attn_output = self.resid_dropout(attn_output, deterministic=deterministic)
 
         outputs = (attn_output, attention_cache,
                    attn_weights) if output_attentions else (attn_output,
@@ -262,33 +269,14 @@ class CodeGenAttention(nn.Module):
         return outputs
 
 
-        
-    # taken from https://github.com/huggingface/transformers/blob/80367cd1fb6d36ca6bdd99b70586aab4ffae1ae1/src/transformers/models/roformer/modeling_flax_roformer.py#L275
-    @staticmethod
-    def apply_rotary_position_embeddings(sinusoidal_pos, query_layer, key_layer, value_layer=None):
-        sin, cos = sinusoidal_pos.split(2, axis=-1)
-        sin_pos = jnp.stack([sin, sin], axis=-1).reshape(sinusoidal_pos.shape)
-        cos_pos = jnp.stack([cos, cos], axis=-1).reshape(sinusoidal_pos.shape)
-
-        def rotate_layer(layer, sin_pos, cos_pos):
-            rotate_half_layer = jnp.stack([-layer[..., 1::2], layer[..., ::2]], axis=-1).reshape(layer.shape)
-            rotary_matrix_cos = jnp.einsum("bslh,...sh->bslh", layer, cos_pos)
-            rotary_matrix_sin = jnp.einsum("bslh,...sh->bslh", rotate_half_layer, sin_pos)
-            return rotary_matrix_cos + rotary_matrix_sin
-
-        query_layer = rotate_layer(query_layer, sin_pos, cos_pos)
-        key_layer = rotate_layer(key_layer, sin_pos, cos_pos)
-        if value_layer is not None:
-            value_layer = rotate_layer(value_layer, sin_pos, cos_pos)
-            return query_layer, key_layer, value_layer
-        return query_layer, key_layer
-
-
 class CodeGenBlock(nn.Module):
     config: CodeGenConfig
     dtype: jnp.dtype = jnp.float16
 
     def setup(self):
+        hidden_size = self.config.hidden_size
+        n_inner = self.config.n_inner if self.config.n_inner is not None else 4 * hidden_size
+
         self.self = CodeGenAttention(self.config, dtype=self.dtype)
         self.mlp = CodeGenMLP(self.config)
         self.layer_norm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
@@ -296,21 +284,22 @@ class CodeGenBlock(nn.Module):
 
     def __call__(self,
                  hidden_states,
-                 sinusoidal_pos,
+                 position_ids = None,
+                 deterministic: bool = True,
                  output_attentions: bool = False,
                  attention_cache=None,
                  attention_mask=None):
         residual = hidden_states
         hidden_states = self.layer_norm(hidden_states)
         attn_outputs = self.self(hidden_states,
-                                 sinusoidal_pos=sinusoidal_pos,
+                                 position_ids=position_ids,
                                  output_attentions=output_attentions,
                                  attention_cache=attention_cache,
                                  attention_mask=attention_mask)
         attn_output = attn_outputs[0]
         attention_cache = attn_outputs[1]
         
-        feed_forward_hidden_states = self.mlp(hidden_states)
+        feed_forward_hidden_states = self.mlp(hidden_states, deterministic=deterministic)
         hidden_states = hidden_states + feed_forward_hidden_states + residual
         outputs = (hidden_states, attention_cache)
 
@@ -329,18 +318,16 @@ class CodeGenMLP(nn.Module):
             self.config.decoder_ffn_embed_dim,
             dtype=self.dtype,
         )
-        self.act = ACT2FN[self.config.activation_fn]
         self.fc_out = nn.Dense(
             self.config.hidden_size,
             dtype=self.dtype,
         )
+        self.act = ACT2FN[self.config.activation_fn]
         self.dropout = nn.Dropout(self.config.resid_pdrop)
 
     def __call__(self,
                  hidden_states,
                  deterministic: bool = True):
-        residual = hidden_states
-        # TODO(chris): we are changing order here to follow codegen, double check this is correct
         hidden_states = self.fc_in(hidden_states)
         hidden_states = self.act(hidden_states)
         hidden_states = self.fc_out(hidden_states)
@@ -353,22 +340,18 @@ class CodeGenTransformerLayer(nn.Module):
     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
-        assert not getattr(self.config, "cross_self_attention", False)
-        assert not getattr(self.config, "scale_heads", False)
-        assert not getattr(self.config, "scale_attn", False)
-        assert not getattr(self.config, "scale_fc", False)
         self.attention = CodeGenBlock(self.config, dtype=self.dtype)
         self.mlp = CodeGenMLP(self.config, dtype=self.dtype)
 
     def __call__(self,
                  hidden_states,
-                 sinusoidal_pos,
+                 position_ids,
                  output_attentions: bool = False,
                  attention_cache=None,
                  attention_mask=None):
 
         attention_outputs = self.attention(hidden_states,
-                                           sinusoidal_pos=sinusoidal_pos,
+                                           position_ids=position_ids,
                                            output_attentions=output_attentions,
                                            attention_cache=attention_cache,
                                            attention_mask=attention_mask)
@@ -389,7 +372,7 @@ class CodeGenTransformerLayerCollection(nn.Module):
     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
-        self.layers = [
+        self.layers = [ 
             CodeGenTransformerLayer(self.config, name=str(i), dtype=self.dtype)
             for i in range(self.config.num_hidden_layers)
         ]
@@ -397,7 +380,7 @@ class CodeGenTransformerLayerCollection(nn.Module):
     def __call__(
         self,
         hidden_states,
-        sinusoidal_pos,
+        position_ids,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
@@ -425,7 +408,7 @@ class CodeGenTransformerLayerCollection(nn.Module):
             if attention_cache is not None:
                 layer_attention_cache = attention_cache[i]
             layer_outputs = layer(hidden_states,
-                                  sinusoidal_pos=sinusoidal_pos,
+                                  position_ids=position_ids,
                                   output_attentions=output_attentions,
                                   attention_cache=layer_attention_cache,
                                   attention_mask=attention_mask)
@@ -454,12 +437,17 @@ class CodeGenTransformerModule(nn.Module):
     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
-        self.embeddings = CodeGenEmbeddings(self.config, dtype=self.dtype)
-        self.embed_positions = create_sinusoidal_positions(
-            self.config.max_seq_len, self.config.hidden_size // self.config.n_head
+        self.wte = nn.Embed(
+            self.config.vocab_size,
+            self.config.hidden_size,
+            embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
         )
+
+        self.drop = nn.Dropout(rate=self.config.embd_pdrop)
+
         self.encoder = CodeGenTransformerLayerCollection(self.config,
                                                      dtype=self.dtype)
+
         self.layer_norm = nn.LayerNorm(epsilon=self.config.layer_norm_eps,
                                            dtype=self.dtype)
 
@@ -467,21 +455,29 @@ class CodeGenTransformerModule(nn.Module):
         self,
         input_ids,
         position_ids,
+        token_type_ids=None,
+        deterministic:bool = True,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
         attention_cache=None,
         attention_mask=None
     ):
-        hidden_states = self.embeddings(input_ids, position_ids)
+        input_embeds = self.wte(input_ids.astype("i4"))
+        
+        hidden_states = input_embeds
 
-        sinusoidal_pos = self.embed_positions[: hidden_states.shape[1], :]
+        if token_type_ids:
+            token_type_embeds = self.wte(token_type_ids.astype("i4"))
+            hidden_states = input_embeds + token_type_embeds
+        
+        hidden_states = self.drop(hidden_states, deterministic=deterministic)
 
         outputs = self.encoder(
             hidden_states,
+            position_ids=position_ids,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
-            sinusoidal_pos=sinusoidal_pos,
             return_dict=return_dict,
             attention_cache=attention_cache,
             attention_mask=attention_mask
@@ -510,22 +506,18 @@ class CodeGenForLMModule(nn.Module):
         self.transformers = CodeGenTransformerModule(config=self.config,
                                                  dtype=self.dtype)
 
-        self.project_out_dim = nn.Dense(
-            self.config.decoder_input_dim,
-            dtype=self.dtype,
-        ) if self.config.decoder_input_dim != self.config.hidden_size else None
-
-        if self.config.share_decoder_input_output_embed:
-            self.decoder = None
-        else:
-            self.decoder = nn.Dense(self.config.vocab_size,
-                                    dtype=self.dtype,
-                                    use_bias=False)
+        self.lm_head = nn.Dense(
+            self.config.vocab_size,
+            use_bias=False,
+            dtype=jnp.float32,
+            kernel_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
+        )
 
     def __call__(
         self,
         input_ids,
         position_ids,
+        token_type_ids=None,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
@@ -545,20 +537,11 @@ class CodeGenForLMModule(nn.Module):
 
         hidden_states = outputs[0]
 
-        if self.project_out_dim is not None:
-            hidden_states = self.project_out_dim(hidden_states)
-
-        if self.config.share_decoder_input_output_embed:
-            if self.dtype == jnp.float16:
-                shared_embedding = self.transformers.embeddings.word_embeddings.embedding_fp16
-            else:
-                shared_embedding = self.transformers.variables["params"][
-                    "embeddings"]["word_embeddings"]["embedding"]
-            assert self.decoder is None
-            logits = hidden_states @ shared_embedding.T
+        if self.config.tie_word_embeddings:
+            shared_kernel = self.transformers.variables["params"]["wte"]["embedding"].T
+            logits = self.lm_head.apply({"params": {"kernel": shared_kernel}}, hidden_states)
         else:
-            assert self.decoder is not None
-            logits = self.decoder(hidden_states)
+            logits = self.lm_head(hidden_states)
 
         # Compute the prediction scores
         if not return_dict:
@@ -609,7 +592,8 @@ def init_model_aval(config):
     rngkey = jax.core.ShapedArray((2,), jnp.uint32)
     input_ids = jax.core.ShapedArray((1, 128), jnp.int32)
     position_ids = jax.core.ShapedArray((1, 128), jnp.int32)
-    params = jax.eval_shape(model.init, rngkey, input_ids, position_ids)
+    token_type_ids = jax.core.ShapedArray((1, 128), jnp.int32)
+    params = jax.eval_shape(model.init, rngkey, input_ids, token_type_ids, position_ids)
     params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, config.dtype),
                           params)
     return model, params
@@ -660,15 +644,8 @@ def init_cache_np(config, batch_size):
         all_cache.append(layer_cache)
     return tuple(all_cache)
 
-
-def build_position_ids(input_ids, padding_idx):
-    mask = (input_ids != padding_idx).astype(np.int32)
-    position_ids = np.cumsum(mask, axis=1).astype(np.int32) * mask + padding_idx
-    return position_ids
-
-
 def inference_step_no_cache(params, batch, apply_func):
-    logits = apply_func(params, batch["input_ids"], batch["position_ids"])[0]
+    logits = apply_func(params, batch["input_ids"], batch["token_type_ids"])[0]
     return logits
 
 
@@ -706,22 +683,19 @@ def load_params_np(params, path, config, dummy=False):
     params = params.unfreeze()
     load_param("params.transformers.layer_norm.scale", load_array("ln_f.weight"))
     load_param("params.transformers.layer_norm.bias", load_array("ln_f.bias"))
-    # TODO(chris) check: do we need this - what does this correspond to?
-    # load_param("params.transformers.position_embeddings", load_array("wte.weight"))
-    load_param("params.transformers.embeddings.word_embeddings.embedding", load_array("wte.weight"))
+    load_param("params.transformers.wte.embedding", load_array("wte.weight"))
 
     for i in tqdm(range(config.num_hidden_layers)):
         param_prefix = f"params.transformers.encoder.{i}."
         load_prefix = f"h.{i}."
         # Attention weights
         load_param(
+            param_prefix + "attention.self.out_proj.kernel",
+            load_array(load_prefix + "attn.out_proj.weight").transpose())
+        load_param(
             param_prefix + "attention.self.qkv_combined.kernel",
             load_array(load_prefix + "attn.qkv_proj.weight").transpose())
 
-        # TODO(chris) check: do we need this - what does this correspond to?
-        # load_param(
-            # param_prefix + "attention.self.out_proj.kernel",
-            # np.transpose(load_array(load_prefix + "attn.out_proj.weight")))
         load_param(param_prefix + "attention.layer_norm.scale",
                    load_array(load_prefix + "ln_1.weight"))
         load_param(param_prefix + "attention.layer_norm.bias",
@@ -737,6 +711,16 @@ def load_params_np(params, path, config, dummy=False):
         load_param(param_prefix + "attention.mlp.fc_out.kernel",
                    load_array(load_prefix + "mlp.fc_out.weight").transpose())
 
+        #TODO(chris): added extra mlp fc_in and fc_out but confirm this is needed
+        load_param(param_prefix + "mlp.fc_in.kernel",
+                   load_array(load_prefix + "mlp.fc_in.weight").transpose())
+        load_param(param_prefix + "mlp.fc_in.bias",
+                   np.transpose(load_array(load_prefix + "mlp.fc_in.bias")))
+        load_param(param_prefix + "mlp.fc_out.bias",
+                   load_array(load_prefix + "mlp.fc_out.bias"))
+        load_param(param_prefix + "mlp.fc_out.kernel",
+                   load_array(load_prefix + "mlp.fc_out.weight").transpose())
+
     return flax.core.freeze(params)
 
 
@@ -750,8 +734,8 @@ def get_jax_executable(config: CodeGenConfig,
     @jax.jit
     def inference_step(params, batch):
         output = model.apply(params,
-                             batch["input_ids"],
-                             batch["position_ids"],
+                             input_ids=batch["input_ids"],
+                             position_ids=batch["position_ids"],
                              attention_cache=batch["cache"],
                              attention_mask=batch["mask"],
                              output_attentions=output_attentions,
@@ -818,6 +802,8 @@ def get_pipeshard_executable(config: CodeGenConfig,
                         jax.core.ShapedArray((batch_size, 1), jnp.int32),
                     "position_ids":
                         jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                    "token_type_ids":
+                        jax.core.ShapedArray((batch_size, 1), jnp.int32),
                     "cache":
                         cache,
                     "mask":
@@ -849,6 +835,9 @@ def get_pipeshard_executable(config: CodeGenConfig,
                         "position_ids":
                             jax.core.ShapedArray(
                                 (batch_size, seq_len), jnp.int32),
+                        "token_type_ids":
+                            jax.core.ShapedArray(
+                                (batch_size, seq_len), jnp.int32),
                         "cache":
                             cache,
                         "mask":
@@ -867,6 +856,7 @@ def get_pipeshard_executable(config: CodeGenConfig,
                 params,
                 batch["input_ids"],
                 batch["position_ids"],
+                batch["token_type_ids"],
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states)
             return output
@@ -880,6 +870,9 @@ def get_pipeshard_executable(config: CodeGenConfig,
                     jax.core.ShapedArray(
                         (batch_size, seq_len), jnp.int32),
                 "position_ids":
+                    jax.core.ShapedArray(
+                        (batch_size, seq_len), jnp.int32),
+                "token_type_ids":
                     jax.core.ShapedArray(
                         (batch_size, seq_len), jnp.int32),
             })

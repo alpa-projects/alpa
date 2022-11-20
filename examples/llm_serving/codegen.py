@@ -8,16 +8,7 @@ from llm_serving.model.wrapper import get_model
 
 def main(args):
     # Load the tokenizer.
-    if "opt" in args.model:
-        # We have to use the 30B version because other versions have some issues.
-        # The 30B version works for all OPT models.
-        tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b")
-        tokenizer.add_bos_token = False
-    elif "bloom" in args.model:
-        name = args.model.replace("alpa", "bigscience")\
-                         .replace("jax", "bigscience")
-        tokenizer = AutoTokenizer.from_pretrained(name)
-    elif "codegen" in args.model:
+    if "codegen" in args.model:
         name = args.model.replace("alpa", "Salesforce")\
                          .replace("jax", "Salesforce")
         tokenizer = AutoTokenizer.from_pretrained(name)
@@ -36,13 +27,14 @@ def main(args):
 
     # Generate
     prompts = [
-        "Paris is the capital city of",
-        "Today is a good day and I'd like to",
-        "Computer Science studies the area of",
-        "University of California Berkeley is a public university",
+        "Create a function that prints hello world",
+        "Create a function that solves the two sum problem",
+        "Create a function that solves the fibonacci sequence problem",
+        "Create a function that find the first five prime numbers"
     ]
     prompts = prompts[:args.n_prompts]
     input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
+
     output_ids = model.generate(input_ids=input_ids,
                                 max_length=64,
                                 **generate_params)

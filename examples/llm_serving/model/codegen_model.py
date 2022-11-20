@@ -96,7 +96,7 @@ def create_sinusoidal_positions(num_pos, dim):
     out[:, 0:sentinel] = sin
     out[:, sentinel:] = cos
 
-    return jnp.array(out)
+    return jnp.array(out, dtype=jnp.float16)
 
 # Copied from transformers.models.gptj.modeling_flax_gptj.rotate_every_two
 def rotate_every_two(tensor):
@@ -110,42 +110,6 @@ def apply_rotary_pos_emb(tensor, sincos):
     sin_pos = sin_pos[:, :, None, :].repeat(2, 3)
     cos_pos = cos_pos[:, :, None, :].repeat(2, 3)
     return (tensor * cos_pos) + (rotate_every_two(tensor) * sin_pos)
-
-# TODO(chris) refactor: change embeddings to follow rotary position embeddings
-class CodeGenEmbeddings(nn.Module):
-    """Construct the embeddings from word, position and token_type embeddings."""
-
-    config: CodeGenConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
-
-    def setup(self):
-        self.word_embeddings = nn.Embed(
-            self.config.vocab_size,
-            self.config.hidden_size,
-            embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
-            dtype=self.dtype,
-        )
-
-        self.token_type_embeddings = nn.Embed(
-            self.config.vocab_size,
-            self.config.hidden_size,
-            embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
-            dtype=self.dtype,
-        )
-
-        self.LayerNorm = nn.LayerNorm(epsilon=self.config.layer_norm_eps, dtype=self.dtype)
-
-    def __call__(self, input_ids, token_type_ids):
-        # Set embeddings
-        inputs_embeds = self.word_embeddings(input_ids.astype("i4"))
-
-        token_type_embeddings = self.token_type_embeddings(token_type_ids.astype("i4"))
-
-        # Sum all embeddings
-        hidden_states = inputs_embeds + token_type_embeddings
-        
-        return hidden_states
-
 
 class CodeGenAttention(nn.Module):
     config: CodeGenConfig
@@ -165,10 +129,10 @@ class CodeGenAttention(nn.Module):
         self.qkv_combined = nn.Dense(
             self.config.hidden_size * 3,
             dtype=self.dtype,
-            use_bias = False
+            use_bias=False
         )
         
-        self.out_proj = nn.Dense(self.config.hidden_size, dtype =self.dtype, use_bias = False)
+        self.out_proj = nn.Dense(self.config.hidden_size, dtype=self.dtype, use_bias = False)
         self.resid_dropout = nn.Dropout(rate=self.config.resid_pdrop)
 
         self.causal_mask = make_causal_mask(jnp.ones((1, self.config.max_seq_len), dtype="bool"), dtype="bool")
@@ -376,16 +340,12 @@ class CodeGenTransformerLayer(nn.Module):
     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
-        assert not getattr(self.config, "cross_self_attention", False)
-        assert not getattr(self.config, "scale_heads", False)
-        assert not getattr(self.config, "scale_attn", False)
-        assert not getattr(self.config, "scale_fc", False)
         self.attention = CodeGenBlock(self.config, dtype=self.dtype)
         self.mlp = CodeGenMLP(self.config, dtype=self.dtype)
 
     def __call__(self,
                  hidden_states,
-                 position_ids=None,
+                 position_ids,
                  output_attentions: bool = False,
                  attention_cache=None,
                  attention_mask=None):
@@ -420,7 +380,7 @@ class CodeGenTransformerLayerCollection(nn.Module):
     def __call__(
         self,
         hidden_states,
-        position_ids=None,
+        position_ids,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
@@ -477,7 +437,6 @@ class CodeGenTransformerModule(nn.Module):
     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
-        # self.embeddings = CodeGenEmbeddings(self.config, dtype=self.dtype)
         self.wte = nn.Embed(
             self.config.vocab_size,
             self.config.hidden_size,
@@ -495,7 +454,7 @@ class CodeGenTransformerModule(nn.Module):
     def __call__(
         self,
         input_ids,
-        position_ids=None,
+        position_ids,
         token_type_ids=None,
         deterministic:bool = True,
         output_attentions: bool = False,
@@ -504,7 +463,6 @@ class CodeGenTransformerModule(nn.Module):
         attention_cache=None,
         attention_mask=None
     ):
-        # hidden_states = self.embeddings(input_ids, token_type_ids)
         input_embeds = self.wte(input_ids.astype("i4"))
         
         hidden_states = input_embeds
@@ -558,7 +516,7 @@ class CodeGenForLMModule(nn.Module):
     def __call__(
         self,
         input_ids,
-        position_ids=None,
+        position_ids,
         token_type_ids=None,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
@@ -569,7 +527,7 @@ class CodeGenForLMModule(nn.Module):
         # Model
         outputs = self.transformers(
             input_ids,
-            token_type_ids,
+            position_ids,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
@@ -722,11 +680,9 @@ def load_params_np(params, path, config, dummy=False):
             else:
                 param_dict = param_dict[key]
 
-    print(params)
     params = params.unfreeze()
     load_param("params.transformers.layer_norm.scale", load_array("ln_f.weight"))
     load_param("params.transformers.layer_norm.bias", load_array("ln_f.bias"))
-    # TODO(chris) check: do we need this - what does this correspond to?
     load_param("params.transformers.wte.embedding", load_array("wte.weight"))
 
     for i in tqdm(range(config.num_hidden_layers)):
@@ -740,7 +696,6 @@ def load_params_np(params, path, config, dummy=False):
             param_prefix + "attention.self.qkv_combined.kernel",
             load_array(load_prefix + "attn.qkv_proj.weight").transpose())
 
-        # TODO(chris) check: do we need this - what does this correspond to?
         load_param(param_prefix + "attention.layer_norm.scale",
                    load_array(load_prefix + "ln_1.weight"))
         load_param(param_prefix + "attention.layer_norm.bias",
@@ -755,6 +710,8 @@ def load_params_np(params, path, config, dummy=False):
                    load_array(load_prefix + "mlp.fc_out.bias"))
         load_param(param_prefix + "attention.mlp.fc_out.kernel",
                    load_array(load_prefix + "mlp.fc_out.weight").transpose())
+
+        #TODO(chris): added extra mlp fc_in and fc_out but confirm this is needed
         load_param(param_prefix + "mlp.fc_in.kernel",
                    load_array(load_prefix + "mlp.fc_in.weight").transpose())
         load_param(param_prefix + "mlp.fc_in.bias",
@@ -777,9 +734,8 @@ def get_jax_executable(config: CodeGenConfig,
     @jax.jit
     def inference_step(params, batch):
         output = model.apply(params,
-                             batch["input_ids"],
-                             batch["position_ids"],
-                             batch["token_type_ids"],
+                             input_ids=batch["input_ids"],
+                             position_ids=batch["position_ids"],
                              attention_cache=batch["cache"],
                              attention_mask=batch["mask"],
                              output_attentions=output_attentions,
@@ -824,7 +780,6 @@ def get_pipeshard_executable(config: CodeGenConfig,
                 params,
                 batch["input_ids"],
                 batch["position_ids"],
-                batch["token_type_ids"],
                 attention_cache=batch["cache"],
                 attention_mask=batch["mask"],
                 output_attentions=output_attentions,

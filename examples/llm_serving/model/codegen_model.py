@@ -78,7 +78,8 @@ class CodeGenConfig:
     decoder_input_dim: int = 4096
     decoder_ffn_embed_dim: int = 16384
     dtype: any = jnp.float16
-    num_pp_stages: int = None,
+    num_pp_stages: int = None
+    tie_word_embeddings: bool = True
     # parallelize
     mark_boundary: bool = True
     share_decoder_input_output_embed: bool = True
@@ -157,7 +158,9 @@ class CodeGenAttention(nn.Module):
                 f"multiple of `n_head`: {self.config.n_head}"
             )
 
+        self.embed_dim = self.config.hidden_size
         self.head_dim = self.config.hidden_size // self.config.n_head
+        self.rotary_dim = self.config.rotary_dim
 
         self.qkv_combined = nn.Dense(
             self.config.hidden_size * 3,
@@ -170,14 +173,14 @@ class CodeGenAttention(nn.Module):
 
         self.causal_mask = make_causal_mask(jnp.ones((1, self.config.max_seq_len), dtype="bool"), dtype="bool")
 
-        self.rotary_dim = self.config.rotary_dim
-        self.embed_positions = create_sinusoidal_positions(self.config.max_seq_len, self.config.hidden_size // self.config.n_head)
+        pos_embd_dim = self.rotary_dim or self.embed_dim
+        self.embed_positions = create_sinusoidal_positions(self.config.max_seq_len, pos_embd_dim)
 
     def _split_heads(self, hidden_states):
         return hidden_states.reshape(hidden_states.shape[:2] + (self.config.n_head, self.head_dim))
 
     def _merge_heads(self, hidden_states):
-        return hidden_states.reshape(hidden_states.shape[:2] + (self.embed_dim,))
+        return hidden_states.reshape(hidden_states.shape[:2] + (self.config.hidden_size,))
 
     def __call__(self,
                  hidden_states,
@@ -188,8 +191,10 @@ class CodeGenAttention(nn.Module):
                  deterministic:bool = True):
 
         fused_qkv = self.qkv_combined(hidden_states)
-        fused_qkv = fused_qkv.reshape(fused_qkv.shape[:-1] + (self.config.n_head, self.head_dim * 3))
-        query, key, value = jnp.split(fused_qkv, 3, axis=-1)
+        fused_qkv = fused_qkv.reshape(fused_qkv.shape[:2] + (-1, 3))
+        query, key, value = jnp.split(fused_qkv,
+                                            3,
+                                            axis=3)
         
         query = self._split_heads(query)
         key = self._split_heads(key)
@@ -292,7 +297,7 @@ class CodeGenAttention(nn.Module):
                                  value)
         attn_output = self._merge_heads(attn_output)
         attn_output = self.out_proj(attn_output)
-        attn_output = self.resid_dropout(attn_output)
+        attn_output = self.resid_dropout(attn_output, deterministic=deterministic)
 
         outputs = (attn_output, attention_cache,
                    attn_weights) if output_attentions else (attn_output,
@@ -543,17 +548,12 @@ class CodeGenForLMModule(nn.Module):
         self.transformers = CodeGenTransformerModule(config=self.config,
                                                  dtype=self.dtype)
 
-        self.project_out_dim = nn.Dense(
-            self.config.decoder_input_dim,
-            dtype=self.dtype,
-        ) if self.config.decoder_input_dim != self.config.hidden_size else None
-
-        if self.config.share_decoder_input_output_embed:
-            self.decoder = None
-        else:
-            self.decoder = nn.Dense(self.config.vocab_size,
-                                    dtype=self.dtype,
-                                    use_bias=False)
+        self.lm_head = nn.Dense(
+            self.config.vocab_size,
+            use_bias=False,
+            dtype=jnp.float32,
+            kernel_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
+        )
 
     def __call__(
         self,
@@ -579,20 +579,11 @@ class CodeGenForLMModule(nn.Module):
 
         hidden_states = outputs[0]
 
-        if self.project_out_dim is not None:
-            hidden_states = self.project_out_dim(hidden_states)
-
-        if self.config.share_decoder_input_output_embed:
-            if self.dtype == jnp.float16:
-                shared_embedding = self.transformers.embeddings.word_embeddings.embedding_fp16
-            else:
-                shared_embedding = self.transformers.variables["params"][
-                    "embeddings"]["word_embeddings"]["embedding"]
-            assert self.decoder is None
-            logits = hidden_states @ shared_embedding.T
+        if self.config.tie_word_embeddings:
+            shared_kernel = self.transformers.variables["params"]["wte"]["embedding"].T
+            logits = self.lm_head.apply({"params": {"kernel": shared_kernel}}, hidden_states)
         else:
-            assert self.decoder is not None
-            logits = self.decoder(hidden_states)
+            logits = self.lm_head(hidden_states)
 
         # Compute the prediction scores
         if not return_dict:

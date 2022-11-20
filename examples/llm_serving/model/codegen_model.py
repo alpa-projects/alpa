@@ -560,7 +560,7 @@ def get_config(name, **kwargs):
         config = CodeGenConfig(
             max_seq_len=2048, num_hidden_layers=20, n_head=16,
             hidden_size=1024, decoder_input_dim=1024, decoder_ffn_embed_dim=1024 * 4,
-            rotary_dim=32, bos_token_id=1
+            rotary_dim=32, bos_token_id=1, vocab_size=51200
         )
     elif name == "codegen-2b-mono":
         config = CodeGenConfig(

@@ -27,10 +27,10 @@ def main(args):
 
     # Generate
     prompts = [
-        "Create a function that prints hello world",
-        "Create a function that solves the two sum problem",
-        "Create a function that solves the fibonacci sequence problem",
-        "Create a function that find the first five prime numbers"
+        "Create a function that prints hello world:\n",
+        "Create a function that solves the two sum problem:\n",
+        "Create a function that solves the fibonacci sequence problem:\n",
+        "Create a function that find the first five prime numbers:\n"
     ]
     prompts = prompts[:args.n_prompts]
     input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids

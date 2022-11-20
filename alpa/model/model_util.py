@@ -6,9 +6,8 @@ from typing import Any, Callable, Optional, Tuple, Optional, Union, Sequence
 
 from alpa.api import value_and_grad
 import flax
-from flax.optim import dynamic_scale as dynamic_scale_lib
-from flax.optim.dynamic_scale import DynamicScaleResult
-from flax.training import train_state
+from flax.training import train_state, dynamic_scale as dynamic_scale_lib
+from flax.training.dynamic_scale import DynamicScaleResult
 from flax.core.lift import pack
 from flax.linen.transforms import lift_transform
 from flax import struct

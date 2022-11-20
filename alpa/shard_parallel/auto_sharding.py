@@ -563,7 +563,7 @@ def hlo_sharding_to_sharding_spec(
     logical_mesh = LogicalDeviceMesh(
         None,
         np.arange(np.prod(logical_mesh_shape)).reshape(logical_mesh_shape))
-    proto = hlo_sharding.proto_tuple()
+    proto = hlo_sharding.to_proto()
     sharding_type, tuple_shardings = proto.type, proto.tuple_shardings
     if sharding_type == xc.OpSharding.Type.TUPLE:
         avals = aval

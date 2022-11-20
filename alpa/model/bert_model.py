@@ -6,7 +6,7 @@ from typing import Callable
 
 import numpy as np
 
-from flax import linen as nn, optim
+from flax import linen as nn
 import jax
 from jax import lax
 import jax.numpy as jnp

@@ -125,35 +125,23 @@ def remove_fold_in(key, data):
 rng_primitives = [lax.rng_uniform_p, rng_normal_p]
 
 # Monkey patch random generator to use the stateful random generator.
-backup_src_uniform = jax._src.random.uniform
 backup_random_uniform = jax.random.uniform
-backup_src_normal = jax._src.random.normal
 backup_random_normal = jax.random.normal
-backup_src_bernoulli = jax._src.random.bernoulli
 backup_random_bernoulli = jax.random.bernoulli
-backup_src_foldin = jax._src.random.fold_in
 backup_random_foldin = jax.random.fold_in
 
 
 def monkey_patch_random():
-    jax._src.random.uniform = fast_uniform
     jax.random.uniform = fast_uniform
-    jax._src.random.normal = fast_normal
     jax.random.normal = fast_normal
-    jax._src.random.bernoulli = fast_bernoulli
     jax.random.bernoulli = fast_bernoulli
-    jax._src.random.fold_in = remove_fold_in
     jax.random.fold_in = remove_fold_in
 
 
 def restore_random():
-    jax._src.random.uniform = backup_src_uniform
     jax.random.uniform = backup_random_uniform
-    jax._src.random.normal = backup_src_normal
     jax.random.normal = backup_random_normal
-    jax._src.random.bernoulli = backup_src_bernoulli
-    jax.random.bernoulli = backup_src_bernoulli
-    jax._src.random.fold_in = backup_src_foldin
+    jax.random.bernoulli = backup_random_bernoulli
     jax.random.fold_in = backup_random_foldin
 
 
@@ -213,13 +201,6 @@ def sharding_spec_setstate(self, state_tuple):
 setattr(pxla.ShardingSpec, "__getstate__", sharding_spec_getstate)
 setattr(pxla.ShardingSpec, "__setstate__", sharding_spec_setstate)
 
-# Monkey patch tree map to disable some warnings
-jax._src.tree_util.tree_multimap = jax._src.tree_util.tree_map
-jax.tree_multimap = jax._src.tree_util.tree_map
-jax.tree_map = jax._src.tree_util.tree_map
-jax.tree_leaves = jax._src.tree_util.tree_leaves
-jax.tree_flatten = jax._src.tree_util.tree_flatten
-jax.tree_unflatten = jax._src.tree_util.tree_unflatten
 
 ########################################
 ##### Monkey patch Flax

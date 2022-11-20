@@ -11,7 +11,6 @@ from jax._src.api import make_jaxpr
 from jax._src.tree_util import tree_unflatten
 from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun,
                       gensym, raise_to_shaped, get_aval)
-from jax.interpreters.partial_eval import remat_call_p
 
 from alpa.global_env import global_config
 from alpa.parallel_plan import PlacementSpec

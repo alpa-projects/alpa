@@ -38,7 +38,6 @@ from ray.util.placement_group import get_current_placement_group,\
     PlacementGroup
 import tqdm
 
-import alpa
 from alpa.global_env import global_config, is_worker
 from alpa.monkey_patch import (restore_random, monkey_patch_random,
                                rng_primitives)
@@ -74,7 +73,7 @@ def auto_static_argnums(args: Sequence[Any]):
         if isinstance(arg, (bool, int, float, str)):
             return True
 
-        if isinstance(arg, (flax.optim.base.Optimizer, train_state.TrainState)):
+        if isinstance(arg, train_state.TrainState):
             return False
 
         xs, _ = tree_flatten(arg)
@@ -93,7 +92,7 @@ def auto_donate_argnums(args: Sequence[Any]):
 
     def should_donate(x):
         # Always donate optimizer
-        if isinstance(x, (flax.optim.base.Optimizer, train_state.TrainState)):
+        if isinstance(x, train_state.TrainState):
             return True
         return False
 
@@ -339,6 +338,7 @@ def jaxpr_to_hlo(name: str,
     consts = closed_jaxpr.consts
     map(dispatch.prefetch,
         it.chain(consts, dispatch.jaxpr_literals(closed_jaxpr.jaxpr)))
+    backend = xb.get_backend(global_config.backend)
 
     # Convert jaxpr to XLA HLO
     tuple_args = False
@@ -352,7 +352,8 @@ def jaxpr_to_hlo(name: str,
         eff for eff in closed_jaxpr.effects if eff in core.ordered_effects
     ]
     lowering_result = mlir.lower_jaxpr_to_module(
-        name, closed_jaxpr, unordered_effects, ordered_effects, platform,
+        name, closed_jaxpr, unordered_effects, ordered_effects,
+        backend, backend.platform,
         mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars)
     xla_computation = xe.mlir.mlir_module_to_xla_computation(
         mlir.module_to_string(lowering_result.module),
@@ -918,7 +919,7 @@ def trace_jaxpr_with_micro_batch(fun: lu.WrappedFun,
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    closed_jaxpr = process_remat(closed_jaxpr)
+    #closed_jaxpr = process_remat(closed_jaxpr)
 
     # Restore jax.random to original stateless version
     restore_random()
@@ -1281,13 +1282,13 @@ def get_num_hosts_and_num_devices(args):
     else:
         if hasattr(args, "local") and args.local:
             num_hosts = 1
-            if alpa.global_config.backend == "gpu":
+            if global_config.backend == "gpu":
                 num_devices_per_host = list_gpu_info().count("UUID")
-            elif alpa.global_config.backend == "tpu":
+            elif global_config.backend == "tpu":
                 num_devices_per_host = len(jax.devices("tpu"))
             else:
                 raise ValueError(
-                    f"Unsupported backend: {alpa.global_config.backend}")
+                    f"Unsupported backend: {global_config.backend}")
         else:
             ray.init(address="auto")
             num_hosts = len(ray.nodes())

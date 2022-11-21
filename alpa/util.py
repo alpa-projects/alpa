@@ -338,7 +338,6 @@ def jaxpr_to_hlo(name: str,
     consts = closed_jaxpr.consts
     map(dispatch.prefetch,
         it.chain(consts, dispatch.jaxpr_literals(closed_jaxpr.jaxpr)))
-    backend = xb.get_backend(global_config.backend)
 
     # Convert jaxpr to XLA HLO
     tuple_args = False
@@ -353,7 +352,7 @@ def jaxpr_to_hlo(name: str,
     ]
     lowering_result = mlir.lower_jaxpr_to_module(
         name, closed_jaxpr, unordered_effects, ordered_effects,
-        backend, backend.platform,
+        None, platform,
         mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars)
     xla_computation = xe.mlir.mlir_module_to_xla_computation(
         mlir.module_to_string(lowering_result.module),

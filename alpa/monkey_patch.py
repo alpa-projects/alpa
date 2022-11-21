@@ -5,8 +5,9 @@ from functools import partial
 import numpy as np
 import jax
 from jax import core, lax, numpy as jnp
-from jax._src import dtypes
+from jax._src import dtypes, random as jax_src_random
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_bridge as jax_src_lib_xla_bridge
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib.xla_bridge import get_backend as default_get_backend
 from jax.core import Primitive
@@ -38,7 +39,8 @@ def override_get_backend(*args, **kwargs):
 
 
 if is_worker:
-    setattr(jax.lib.xla_bridge, "get_backend", override_get_backend)
+    jax_src_lib_xla_bridge.get_backend = override_get_backend
+    jax.lib.xla_bridge.get_backend = override_get_backend
 
 ########################################
 ##### Monkey patch Jax
@@ -151,6 +153,12 @@ def monkey_patch_random():
     jax.random.bernoulli = fast_bernoulli
     jax.random.fold_in = remove_fold_in
 
+    jax_src_random.uniform = fast_uniform
+    jax_src_random.truncated_normal = fast_truncated_normal
+    jax_src_random.normal = fast_normal
+    jax_src_random.bernoulli = fast_bernoulli
+    jax_src_random.fold_in = remove_fold_in
+
 
 def restore_random():
     jax.random.uniform = backup_random_uniform
@@ -158,6 +166,12 @@ def restore_random():
     jax.random.normal = backup_random_normal
     jax.random.bernoulli = backup_random_bernoulli
     jax.random.fold_in = backup_random_foldin
+
+    jax_src_random.uniform = backup_random_uniform
+    jax_src_random.truncated_normal = backup_random_truncated_normal
+    jax_src_random.normal = backup_random_normal
+    jax_src_random.bernoulli = backup_random_bernoulli
+    jax_src_random.fold_in = backup_random_foldin
 
 
 # Support using pickle on ShardingSpec
@@ -213,8 +227,8 @@ def sharding_spec_setstate(self, state_tuple):
     )
 
 
-setattr(pxla.ShardingSpec, "__getstate__", sharding_spec_getstate)
-setattr(pxla.ShardingSpec, "__setstate__", sharding_spec_setstate)
+pxla.ShardingSpec.__getstate__ = sharding_spec_getstate
+pxla.ShardingSpec.__setstate__ = sharding_spec_setstate
 
 
 ########################################
@@ -244,8 +258,8 @@ def embed_setup(self):
         self.embedding_fp16 = self.embedding.astype(jnp.float16)
 
 
-setattr(flax.linen.Embed, "setup", embed_setup)
-setattr(flax.linen.Embed, "__call__", embed_call_one_hot)
+flax.linen.Embed.setup = embed_setup
+flax.linen.Embed.__call__ = embed_call_one_hot
 
 
 # Monkey patch a new method "init_dummy" to flax's Module.
@@ -258,4 +272,4 @@ def init_dummy(self, *args, **kwargs):
                                   avals)
 
 
-setattr(flax.linen.module.Module, "init_dummy", init_dummy)
+flax.linen.module.Module.init_dummy = init_dummy

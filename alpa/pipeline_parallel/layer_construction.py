@@ -5,10 +5,9 @@ import logging
 from typing import Callable, Union, Sequence, Optional
 
 import numpy as np
-from jax import tree_flatten, lax
-from jax._src.api import _check_callable
-from jax._src.api import make_jaxpr
-from jax._src.tree_util import tree_unflatten
+from jax import lax
+from jax.tree_util import tree_flatten, tree_unflatten
+from jax._src.api import _check_callable, make_jaxpr
 from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun,
                       gensym, raise_to_shaped, get_aval)
 

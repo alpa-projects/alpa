@@ -8,6 +8,7 @@ import numpy as np
 from jax import lax
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src.api import _check_callable, make_jaxpr
+from jax._src.ad_checkpoint import remat_p
 from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun,
                       gensym, raise_to_shaped, get_aval)
 
@@ -268,12 +269,10 @@ def remat_sliced_eqns(origin_jaxpr, sliced_eqns):
         new_jaxpr = Jaxpr([], new_invars, jaxpr.jaxpr.outvars, jaxpr.jaxpr.eqns)
         ret_eqns.append([
             new_jaxpr_eqn(
-                new_invars, new_jaxpr.outvars, remat_call_p,
-                dict(concrete=False,
-                     differentiated=False,
-                     name=str(i),
-                     call_jaxpr=new_jaxpr,
+                new_invars, new_jaxpr.outvars, remat_p,
+                dict(jaxpr=new_jaxpr,
                      prevent_cse=True,
+                     differentiated=False,
                      policy=None))
         ])
     return ret_eqns

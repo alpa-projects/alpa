@@ -38,6 +38,7 @@ from ray.util.placement_group import get_current_placement_group,\
     PlacementGroup
 import tqdm
 
+from alpa import device_mesh
 from alpa.global_env import global_config, is_worker
 from alpa.monkey_patch import (restore_random, monkey_patch_random,
                                rng_primitives)
@@ -110,7 +111,6 @@ def abstractify_with_aval(x):
 
 def update_jax_platform(platform):
     """Update the jax backend platform."""
-    jax.config.update("jax_platforms", platform)
     jax.config.update("jax_platform_name", platform)
     xb.get_backend.cache_clear()
 
@@ -1606,7 +1606,7 @@ def retrieve_placement_group():
 
     # case 2:
     # Get the placement group created when alpa.init('ray')
-    global_cluster = alpa.device_mesh.global_cluster
+    global_cluster = device_mesh.global_cluster
     if global_cluster and global_cluster.placement_group:
         alpa_placement_group = global_cluster.placement_group
         return alpa_placement_group

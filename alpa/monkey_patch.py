@@ -38,7 +38,6 @@ def override_get_backend(*args, **kwargs):
 
 
 if is_worker:
-    setattr(jax._src.lib.xla_bridge, "get_backend", override_get_backend)
     setattr(jax.lib.xla_bridge, "get_backend", override_get_backend)
 
 ########################################
@@ -113,6 +112,19 @@ def fast_normal(key, shape=(), dtype=dtypes.float_, mu=0.0, sigma=1.0):
     return rng_normal(mu, sigma, shape.positional)
 
 
+def fast_truncated_normal(key, lower, upper, shape=None, dtype=dtypes.float_):
+    dtype = dtypes.canonicalize_dtype(dtype)
+    if shape is not None:
+        shape = core.as_named_shape(shape)
+    out = fast_normal(key, shape=shape, dtype=dtype)
+    lower = lax.convert_element_type(lower, dtype)
+    upper = lax.convert_element_type(upper, dtype)
+    return jnp.clip(
+        out,
+        lax.nextafter(lax.stop_gradient(lower), np.array(np.inf, dtype=dtype)),
+        lax.nextafter(lax.stop_gradient(upper), np.array(-np.inf, dtype=dtype)))
+
+
 def fast_bernoulli(key, p=np.float32(0.5), shape=None):
     dtype = dtypes.canonicalize_dtype(lax.dtype(p))
     return jax.random.uniform(key, shape, dtype) < p
@@ -126,6 +138,7 @@ rng_primitives = [lax.rng_uniform_p, rng_normal_p]
 
 # Monkey patch random generator to use the stateful random generator.
 backup_random_uniform = jax.random.uniform
+backup_random_truncated_normal = jax.random.truncated_normal
 backup_random_normal = jax.random.normal
 backup_random_bernoulli = jax.random.bernoulli
 backup_random_foldin = jax.random.fold_in
@@ -133,6 +146,7 @@ backup_random_foldin = jax.random.fold_in
 
 def monkey_patch_random():
     jax.random.uniform = fast_uniform
+    jax.random.truncated_normal = fast_truncated_normal
     jax.random.normal = fast_normal
     jax.random.bernoulli = fast_bernoulli
     jax.random.fold_in = remove_fold_in
@@ -140,6 +154,7 @@ def monkey_patch_random():
 
 def restore_random():
     jax.random.uniform = backup_random_uniform
+    jax.random.truncated_normal = backup_random_truncated_normal
     jax.random.normal = backup_random_normal
     jax.random.bernoulli = backup_random_bernoulli
     jax.random.fold_in = backup_random_foldin

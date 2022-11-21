@@ -7,6 +7,7 @@ from typing import Callable
 import numpy as np
 
 from flax import linen as nn
+from flax.linen import partitioning as nn_partitioning
 import jax
 from jax import lax
 import jax.numpy as jnp
@@ -18,6 +19,9 @@ from alpa.model.model_util import (FlaxBaseModelOutput,
                                    FlaxSequenceClassifierOutput, TrainState)
 from alpa.model.model_util import TrainState
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
+
+
+remat = nn_partitioning.remat
 
 
 class BertConfig:
@@ -84,7 +88,7 @@ class FlaxBertEmbeddings(nn.Module):
     def setup(self):
 
         if self.config.gradient_checkpointing:
-            trans_func = partial(nn.remat, concrete=True)
+            trans_func = remat
         else:
             trans_func = lambda x: x
 
@@ -158,7 +162,7 @@ class FlaxBertSelfAttention(nn.Module):
     def __call__(self,
                  hidden_states,
                  attention_mask,
-                 deterministic=True,
+                 deterministic: bool = True,
                  output_attentions: bool = False):
         head_dim = self.config.hidden_size // self.config.num_attention_heads
 
@@ -250,7 +254,7 @@ class FlaxBertAttention(nn.Module):
     def __call__(self,
                  hidden_states,
                  attention_mask,
-                 deterministic=True,
+                 deterministic: bool = True,
                  output_attentions: bool = False):
         # Attention mask comes in as attention_mask.shape == (*batch_sizes, kv_length)
         # FLAX expects: attention_mask.shape == (*batch_sizes, 1, 1, kv_length) such that it is broadcastable
@@ -330,15 +334,6 @@ class FlaxBertLayer(nn.Module):
                  attention_mask,
                  deterministic: bool = True,
                  output_attentions: bool = False):
-
-        if not isinstance(deterministic, bool):
-            # A temporary hack to walkaround the bug in flax.nn.remat
-            # Using `nn.remat(concrete=True)` works for regular use cases
-            # (e.g., train_step, init) but does not work for init_dummy.
-            # So we still need this hack.
-            deterministic = True
-            output_attentions = True
-
         attention_outputs = self.attention(hidden_states,
                                            attention_mask,
                                            deterministic=deterministic,
@@ -363,7 +358,7 @@ class FlaxBertLayerCollection(nn.Module):
 
     def setup(self):
         if self.config.gradient_checkpointing:
-            trans_func = partial(nn.remat, concrete=True)
+            trans_func = partial(remat, static_argnums=(2, 3))
         else:
             trans_func = lambda x: x
 
@@ -406,8 +401,8 @@ class FlaxBertLayerCollection(nn.Module):
 
             layer_outputs = layer(hidden_states,
                                   attention_mask,
-                                  deterministic=deterministic,
-                                  output_attentions=output_attentions)
+                                  deterministic,
+                                  output_attentions)
             hidden_states = layer_outputs[0]
 
             if output_attentions:

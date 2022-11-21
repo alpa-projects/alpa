@@ -4,7 +4,6 @@ import os
 import unittest
 
 from flax import linen as nn
-from flax import optim
 import jax
 import jax.numpy as jnp
 from jax.interpreters import pxla

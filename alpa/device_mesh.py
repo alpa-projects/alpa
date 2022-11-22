@@ -828,7 +828,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
             if is_batch_var:
                 micro_batches = jnp.split(arg, num_micro_batches)
                 bufs.append([
-                    pxla._shard_arg(x, self.devices, indices)
+                    pxla._shard_arg(x, self.devices, indices, None)
                     for x in micro_batches
                 ])
             else:
@@ -836,7 +836,8 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
                         arg.indices == indices):
                     bufs.append(arg.device_buffers)
                 else:
-                    bufs.append(pxla._shard_arg(arg, self.devices, indices))
+                    bufs.append(
+                        pxla._shard_arg(arg, self.devices, indices, None))
 
             if isinstance(arg, xe.DeviceArray) and donated:
                 arg.delete()

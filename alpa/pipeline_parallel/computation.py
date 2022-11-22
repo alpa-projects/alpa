@@ -191,7 +191,8 @@ class XlaPipelineComputation(PipelineComputation):
             result_handler,
             False,
             (),
-            kept_var_idx)
+            kept_var_idx,
+            False)
 
     def get_hlo_text(self):
         """Get the HLO text."""

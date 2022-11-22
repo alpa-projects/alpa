@@ -9,7 +9,6 @@ from typing import Callable, Optional, Tuple
 import numpy as np
 
 import flax.linen as nn
-from flax import optim
 import jax
 import jax.numpy as jnp
 

@@ -4,7 +4,7 @@ from jax._src.lib import xla_extension as xe
 
 __version__ = "1.0.0.dev0"
 
-minimal_alpa_jaxlib_version = (0, 1, 1)
+minimal_alpa_jaxlib_version = (0, 2, 2)
 
 
 def check_alpa_jaxlib_version():

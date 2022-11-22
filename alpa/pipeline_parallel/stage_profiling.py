@@ -108,9 +108,9 @@ def get_input_output_sharding_proto(hlo_module, num_devices):
     input_shardings = hlo_module.spmd_parameters_shardings()
     output_sharding = hlo_module.spmd_output_sharding()
     input_sharding_protos = [
-        x.proto_tuple().SerializeToString() for x in input_shardings
+        x.to_proto().SerializeToString() for x in input_shardings
     ]
-    output_sharding_proto = output_sharding.proto_tuple().SerializeToString()
+    output_sharding_proto = output_sharding.to_proto().SerializeToString()
     return input_sharding_protos, output_sharding_proto
 
 

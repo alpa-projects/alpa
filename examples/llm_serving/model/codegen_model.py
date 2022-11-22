@@ -334,46 +334,13 @@ class CodeGenMLP(nn.Module):
         hidden_states = self.dropout(hidden_states, deterministic=deterministic)
         return hidden_states
 
-
-class CodeGenTransformerLayer(nn.Module):
-    config: CodeGenConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
-
-    def setup(self):
-        self.attention = CodeGenBlock(self.config, dtype=self.dtype)
-        self.mlp = CodeGenMLP(self.config, dtype=self.dtype)
-
-    def __call__(self,
-                 hidden_states,
-                 position_ids,
-                 output_attentions: bool = False,
-                 attention_cache=None,
-                 attention_mask=None):
-
-        attention_outputs = self.attention(hidden_states,
-                                           position_ids=position_ids,
-                                           output_attentions=output_attentions,
-                                           attention_cache=attention_cache,
-                                           attention_mask=attention_mask)
-        attention_output = attention_outputs[0]
-        attention_cache = attention_outputs[1]
-
-        hidden_states = self.mlp(attention_output)
-
-        outputs = (hidden_states, attention_cache)
-
-        if output_attentions:
-            outputs += (attention_outputs[2],)
-        return outputs
-
-
 class CodeGenTransformerLayerCollection(nn.Module):
     config: CodeGenConfig
     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
         self.layers = [ 
-            CodeGenTransformerLayer(self.config, name=str(i), dtype=self.dtype)
+            CodeGenBlock(self.config, name=str(i), dtype=self.dtype)
             for i in range(self.config.num_hidden_layers)
         ]
 
@@ -467,9 +434,10 @@ class CodeGenTransformerModule(nn.Module):
         
         hidden_states = input_embeds
 
-        if token_type_ids:
-            token_type_embeds = self.wte(token_type_ids.astype("i4"))
-            hidden_states = input_embeds + token_type_embeds
+        # TODO(chris) investigate: I can't check whether token_type_ids is None because it requires a concrete value.
+        # if token_type_ids: 
+        # token_type_embeds = self.wte(token_type_ids.astype("i4"))
+        # hidden_states = input_embeds + token_type_embeds
         
         hidden_states = self.drop(hidden_states, deterministic=deterministic)
 
@@ -524,10 +492,14 @@ class CodeGenForLMModule(nn.Module):
         attention_cache=None,
         attention_mask=None
     ):
+        # if token_type_ids is None:
+        #     token_type_ids = jnp.zeros_like(input_ids, dtype="i4")
+
         # Model
         outputs = self.transformers(
-            input_ids,
-            position_ids,
+            input_ids=input_ids,
+            position_ids=position_ids,
+            # token_type_ids=token_type_ids,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
@@ -690,28 +662,18 @@ def load_params_np(params, path, config, dummy=False):
         load_prefix = f"h.{i}."
         # Attention weights
         load_param(
-            param_prefix + "attention.self.out_proj.kernel",
+            param_prefix + "self.out_proj.kernel",
             load_array(load_prefix + "attn.out_proj.weight").transpose())
         load_param(
-            param_prefix + "attention.self.qkv_combined.kernel",
+            param_prefix + "self.qkv_combined.kernel",
             load_array(load_prefix + "attn.qkv_proj.weight").transpose())
 
-        load_param(param_prefix + "attention.layer_norm.scale",
+        load_param(param_prefix + "layer_norm.scale",
                    load_array(load_prefix + "ln_1.weight"))
-        load_param(param_prefix + "attention.layer_norm.bias",
+        load_param(param_prefix + "layer_norm.bias",
                    load_array(load_prefix + "ln_1.bias"))
 
         # MLP weights
-        load_param(param_prefix + "attention.mlp.fc_in.kernel",
-                   load_array(load_prefix + "mlp.fc_in.weight").transpose())
-        load_param(param_prefix + "attention.mlp.fc_in.bias",
-                   np.transpose(load_array(load_prefix + "mlp.fc_in.bias")))
-        load_param(param_prefix + "attention.mlp.fc_out.bias",
-                   load_array(load_prefix + "mlp.fc_out.bias"))
-        load_param(param_prefix + "attention.mlp.fc_out.kernel",
-                   load_array(load_prefix + "mlp.fc_out.weight").transpose())
-
-        #TODO(chris): added extra mlp fc_in and fc_out but confirm this is needed
         load_param(param_prefix + "mlp.fc_in.kernel",
                    load_array(load_prefix + "mlp.fc_in.weight").transpose())
         load_param(param_prefix + "mlp.fc_in.bias",
@@ -733,6 +695,8 @@ def get_jax_executable(config: CodeGenConfig,
 
     @jax.jit
     def inference_step(params, batch):
+        # for k, v in batch.items():
+        #     print(k, ":", v , "\n")
         output = model.apply(params,
                              input_ids=batch["input_ids"],
                              position_ids=batch["position_ids"],

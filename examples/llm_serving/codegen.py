@@ -33,8 +33,9 @@ def main(args):
         "Create a function that find the first five prime numbers:\n"
     ]
     prompts = prompts[:args.n_prompts]
-    input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
 
+    input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
+    
     output_ids = model.generate(input_ids=input_ids,
                                 max_length=64,
                                 **generate_params)

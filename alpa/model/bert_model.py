@@ -7,7 +7,7 @@ from typing import Callable
 import numpy as np
 
 from flax import linen as nn
-from flax.linen import partitioning as nn_partitioning
+from flax.linen.partitioning import remat
 import jax
 from jax import lax
 import jax.numpy as jnp
@@ -19,9 +19,6 @@ from alpa.model.model_util import (FlaxBaseModelOutput,
                                    FlaxSequenceClassifierOutput, TrainState)
 from alpa.model.model_util import TrainState
 from alpa.pipeline_parallel.primitive_def import mark_pipeline_boundary
-
-
-remat = nn_partitioning.remat
 
 
 class BertConfig:

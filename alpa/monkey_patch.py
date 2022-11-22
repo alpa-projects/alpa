@@ -230,7 +230,6 @@ def sharding_spec_setstate(self, state_tuple):
 pxla.ShardingSpec.__getstate__ = sharding_spec_getstate
 pxla.ShardingSpec.__setstate__ = sharding_spec_setstate
 
-
 ########################################
 ##### Monkey patch Flax
 ########################################

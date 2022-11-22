@@ -264,7 +264,7 @@ def remat_sliced_eqns(origin_jaxpr, sliced_eqns):
     ret_eqns = []
 
     sliced_jaxprs = slices_to_jaxpr(origin_jaxpr, sliced_eqns)
-    for i, jaxpr in enumerate(sliced_jaxprs):
+    for jaxpr in sliced_jaxprs:
         new_invars = jaxpr.jaxpr.invars + jaxpr.jaxpr.constvars
         new_jaxpr = Jaxpr([], new_invars, jaxpr.jaxpr.outvars, jaxpr.jaxpr.eqns)
         ret_eqns.append([

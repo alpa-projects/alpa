@@ -74,7 +74,7 @@ class CreateStateTest(unittest.TestCase):
 
         if isinstance(method, ShardParallel):
             actual = tree_flatten(create_state.get_last_executable().
-                                      get_output_placement_specs())[0]
+                                  get_output_placement_specs())[0]
             expected = tree_flatten(
                 train_step.get_last_executable().get_input_placement_specs()
                 [0])[0]

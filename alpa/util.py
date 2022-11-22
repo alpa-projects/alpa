@@ -13,7 +13,6 @@ import threading
 from typing import Iterable, Dict, Sequence, Any, List
 from warnings import warn
 
-import flax
 from flax.training import train_state
 from flax.training.common_utils import stack_forest
 import jax
@@ -351,8 +350,7 @@ def jaxpr_to_hlo(name: str,
         eff for eff in closed_jaxpr.effects if eff in core.ordered_effects
     ]
     lowering_result = mlir.lower_jaxpr_to_module(
-        name, closed_jaxpr, unordered_effects, ordered_effects,
-        None, platform,
+        name, closed_jaxpr, unordered_effects, ordered_effects, None, platform,
         mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars)
     xla_computation = xe.mlir.mlir_module_to_xla_computation(
         mlir.module_to_string(lowering_result.module),

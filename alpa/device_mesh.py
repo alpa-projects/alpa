@@ -836,7 +836,8 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
                         arg.indices == indices):
                     bufs.append(arg.device_buffers)
                 else:
-                    bufs.append(pxla._shard_arg(arg, self.devices, indices, None))
+                    bufs.append(
+                        pxla._shard_arg(arg, self.devices, indices, None))
 
             if isinstance(arg, xe.DeviceArray) and donated:
                 arg.delete()

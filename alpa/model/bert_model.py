@@ -396,9 +396,7 @@ class FlaxBertLayerCollection(nn.Module):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
-            layer_outputs = layer(hidden_states,
-                                  attention_mask,
-                                  deterministic,
+            layer_outputs = layer(hidden_states, attention_mask, deterministic,
                                   output_attentions)
             hidden_states = layer_outputs[0]
 

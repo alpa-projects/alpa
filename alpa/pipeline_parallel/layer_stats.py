@@ -11,8 +11,8 @@ non_trivial_primitive = [lax.dot_general_p, lax.conv_general_dilated_p]
 
 def eqn_flops(eqn: JaxprEqn) -> float:
     """Get the FLOP of a jaxpr equation."""
-    if "call_jaxpr" in eqn.params:
-        return sum(eqn_flops(x) for x in eqn.params["call_jaxpr"].eqns)
+    if "jaxpr" in eqn.params:
+        return sum(eqn_flops(x) for x in eqn.params["jaxpr"].eqns)
 
     if eqn.primitive not in non_trivial_primitive:
         return 0
@@ -48,8 +48,8 @@ def cluster_edges_cost(start: List["JaxprEqn"], end: List["JaxprEqn"]):
 
 def heavy_count(eqn):
     """Check the number of heavy ops in the eqn."""
-    if "call_jaxpr" in eqn.params:
-        return sum(heavy_count(x) for x in eqn.params["call_jaxpr"].eqns)
+    if "jaxpr" in eqn.params:
+        return sum(heavy_count(x) for x in eqn.params["jaxpr"].eqns)
 
     if eqn.primitive not in non_trivial_primitive:
         return 0

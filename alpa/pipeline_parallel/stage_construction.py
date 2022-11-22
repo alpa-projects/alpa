@@ -210,7 +210,7 @@ def dp_2(
     best_solution = get_optimal_submeshes(best_s, f_argmin, num_devices,
                                           num_layers, submesh_sizes)
 
-    timers("stage-construction-dp").suspend()
+    timers("stage-construction-dp").stop()
     return best_cost, best_solution
 
 
@@ -318,7 +318,7 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices,
             best_solution = solution
         last_max_stage_cost = max_stage_cost
 
-    timers("stage-construction-dp").suspend()
+    timers("stage-construction-dp").stop()
     return best_cost, best_solution
 
 
@@ -430,7 +430,7 @@ def get_sliced_virtual_submeshes(virtual_mesh, submesh_shapes):
     submesh_sizes = [np.prod(submesh) for submesh in submesh_shapes]
     virtual_submeshes = [None] * len(submesh_shapes)
     assert sum(submesh_sizes) == virtual_mesh.num_devices
-    sorted_submesh_indices = np.argsort(submesh_sizes)
+    sorted_submesh_indices = np.argsort(submesh_sizes, kind="stable")
     current_host_id = 0
     current_device_id = 0
     for i in reversed(sorted_submesh_indices):
@@ -493,8 +493,9 @@ def cluster_layers_and_slice_mesh(
         default_as_option: The default auto-sharding option.
         stage_option: The options controling how to construct stages.
     """
-    inference_mode = (pipeline_schedule == "inference")
     timers("stage-construction").start()
+
+    inference_mode = (pipeline_schedule == "inference")
     if virtual_mesh.launched_physical_mesh_group is None:
         given_mesh = False
     else:
@@ -668,17 +669,11 @@ def cluster_layers_and_slice_mesh(
     else:
         autosharding_option_dicts = [{}] * len(sliced_meshes)
 
-    for name in [
-            "stage-construction", "stage-construction-dp",
-            "stage-construction-compilation", "stage-construction-profiling"
-    ]:
-        if name in timers.timers:
-            timers(name).stop()
-
     manual_stage_option = ManualStageOption(
         forward_stage_layer_ids, tuple(x.shape for x in sliced_meshes),
         logical_mesh_shapes, autosharding_option_dicts)
 
+    timers("stage-construction").stop()
     return stages, stage_to_mesh, sliced_meshes, manual_stage_option
 
 

@@ -1,67 +1,72 @@
 """Code to wrap some NCCL API calls."""
 import numpy
-try:
-    import cupy
-    from cupy.cuda import nccl
-    from cupy.cuda import Device  # pylint: disable=unused-import
-    from cupy.cuda.nccl import get_version
-    from cupy.cuda.nccl import get_build_version
-    from cupy.cuda.nccl import NcclCommunicator
-    from cupy.cuda.nccl import groupStart  # pylint: disable=unused-import
-    from cupy.cuda.nccl import groupEnd  # pylint: disable=unused-import
-except ImportError as error:
-    # pylint: disable=raise-missing-from
-    raise ImportError(
-        "Please install nccl library following the above instructions")
 
 from alpa.collective.types import ReduceOp, torch_available
+from alpa.global_env import global_config
 
-NCCL_REDUCE_OP_MAP = {
-    ReduceOp.SUM: nccl.NCCL_SUM,
-    ReduceOp.PRODUCT: nccl.NCCL_PROD,
-    ReduceOp.MIN: nccl.NCCL_MIN,
-    ReduceOp.MAX: nccl.NCCL_MAX,
-}
+if global_config.has_cuda:
+    try:
+        import cupy
+        from cupy.cuda import nccl
+        from cupy.cuda import Device  # pylint: disable=unused-import
+        from cupy.cuda.nccl import get_version
+        from cupy.cuda.nccl import get_build_version
+        from cupy.cuda.nccl import NcclCommunicator
+        from cupy.cuda.nccl import groupStart  # pylint: disable=unused-import
+        from cupy.cuda.nccl import groupEnd  # pylint: disable=unused-import
+    except ImportError:
+        # pylint: disable=raise-missing-from
+        raise ImportError(
+            "Please install nccl library following the above instructions")
 
-# cupy types are the same with numpy types
-NUMPY_NCCL_DTYPE_MAP = {
-    # INT types
-    numpy.int: nccl.NCCL_INT64,
-    numpy.uint8: nccl.NCCL_UINT8,
-    numpy.uint32: nccl.NCCL_UINT32,
-    numpy.uint64: nccl.NCCL_UINT64,
-    numpy.int8: nccl.NCCL_INT8,
-    numpy.int32: nccl.NCCL_INT32,
-    numpy.int64: nccl.NCCL_INT64,
-    # FLOAT types
-    numpy.half: nccl.NCCL_HALF,
-    # note that numpy.float is float64.
-    numpy.float: nccl.NCCL_FLOAT64,
-    numpy.float16: nccl.NCCL_FLOAT16,
-    numpy.float32: nccl.NCCL_FLOAT32,
-    numpy.float64: nccl.NCCL_FLOAT64,
-    numpy.double: nccl.NCCL_DOUBLE
-}
+    NCCL_REDUCE_OP_MAP = {
+        ReduceOp.SUM: nccl.NCCL_SUM,
+        ReduceOp.PRODUCT: nccl.NCCL_PROD,
+        ReduceOp.MIN: nccl.NCCL_MIN,
+        ReduceOp.MAX: nccl.NCCL_MAX,
+    }
+
+    # cupy types are the same with numpy types
+    NUMPY_NCCL_DTYPE_MAP = {
+        # INT types
+        numpy.int: nccl.NCCL_INT64,
+        numpy.uint8: nccl.NCCL_UINT8,
+        numpy.uint32: nccl.NCCL_UINT32,
+        numpy.uint64: nccl.NCCL_UINT64,
+        numpy.int8: nccl.NCCL_INT8,
+        numpy.int32: nccl.NCCL_INT32,
+        numpy.int64: nccl.NCCL_INT64,
+        # FLOAT types
+        numpy.half: nccl.NCCL_HALF,
+        # note that numpy.float is float64.
+        numpy.float: nccl.NCCL_FLOAT64,
+        numpy.float16: nccl.NCCL_FLOAT16,
+        numpy.float32: nccl.NCCL_FLOAT32,
+        numpy.float64: nccl.NCCL_FLOAT64,
+        numpy.double: nccl.NCCL_DOUBLE
+    }
 
 if torch_available():
     import torch
     import torch.utils.dlpack
-    TORCH_NCCL_DTYPE_MAP = {
-        # INT types
-        torch.int: nccl.NCCL_INT,
-        torch.uint8: nccl.NCCL_UINT8,
-        torch.int8: nccl.NCCL_INT8,
-        torch.int32: nccl.NCCL_INT32,
-        torch.int64: nccl.NCCL_INT64,
-        torch.long: nccl.NCCL_INT64,
-        # FLOAT types
-        torch.half: nccl.NCCL_HALF,
-        torch.float: nccl.NCCL_FLOAT,
-        torch.float16: nccl.NCCL_FLOAT16,
-        torch.float32: nccl.NCCL_FLOAT32,
-        torch.float64: nccl.NCCL_FLOAT64,
-        torch.double: nccl.NCCL_DOUBLE,
-    }
+
+    if global_config.has_cuda:
+        TORCH_NCCL_DTYPE_MAP = {
+            # INT types
+            torch.int: nccl.NCCL_INT,
+            torch.uint8: nccl.NCCL_UINT8,
+            torch.int8: nccl.NCCL_INT8,
+            torch.int32: nccl.NCCL_INT32,
+            torch.int64: nccl.NCCL_INT64,
+            torch.long: nccl.NCCL_INT64,
+            # FLOAT types
+            torch.half: nccl.NCCL_HALF,
+            torch.float: nccl.NCCL_FLOAT,
+            torch.float16: nccl.NCCL_FLOAT16,
+            torch.float32: nccl.NCCL_FLOAT32,
+            torch.float64: nccl.NCCL_FLOAT64,
+            torch.double: nccl.NCCL_DOUBLE,
+        }
 
     TORCH_NUMPY_DTYPE_MAP = {
         # INT types

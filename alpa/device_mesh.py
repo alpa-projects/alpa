@@ -18,6 +18,7 @@ manipulate meshes flexibly without allocating real resources during compilation
 time.
 """
 from abc import ABC, abstractmethod
+import asyncio
 from collections import defaultdict, namedtuple
 from collections.abc import Iterable
 import logging
@@ -50,7 +51,7 @@ from alpa.global_env import global_config
 from alpa.monkey_patch import set_override_backend
 from alpa.shard_parallel.auto_sharding import (LogicalDeviceMesh)
 from alpa.parallel_plan import PlacementSpec
-from alpa.timer import timers
+from alpa.timer import timers, tracer
 from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
                        update_jax_platform, is_ray_node_resource,
                        try_import_ray_worker, create_placement_group,
@@ -58,11 +59,12 @@ from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
 
 ray_worker = try_import_ray_worker()
 
-if global_config.nccl_mode == "cupy":
-    import alpa.collective.worker_nccl_util_cupy as worker_nccl_util
-else:
-    assert global_config.nccl_mode == "xla_extension"
-    import alpa.collective.worker_nccl_util_xla as worker_nccl_util
+if global_config.backend == "gpu" and global_config.has_cuda:
+    if global_config.nccl_mode == "cupy":
+        import alpa.collective.worker_nccl_util_cupy as worker_nccl_util
+    else:
+        assert global_config.nccl_mode == "xla_extension"
+        import alpa.collective.worker_nccl_util_xla as worker_nccl_util
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -125,8 +127,12 @@ class MeshHostWorker:
         self.distributed_client.connect()
         logger.debug(
             f"{host_id}: Success to connect to xla runtime at {server_address}")
-        self.backend = xla_client.make_gpu_client(self.distributed_client,
-                                                  node_id=host_id)
+        if global_config.backend == "gpu":
+            self.backend = xla_client.make_gpu_client(self.distributed_client,
+                                                      node_id=host_id)
+        else:
+            raise NotImplementedError(
+                f"backend {global_config.backend} is not supported")
         # Monkey patch the backend
         set_override_backend(self.backend)
         self.local_devices = self.backend.local_devices()
@@ -556,6 +562,10 @@ class MeshHostWorker:
     def reset_timer(name: str):
         timers(name).reset()
 
+    @staticmethod
+    def get_tracer():
+        return tracer
+
     def get_live_buffer_uuids(self):
         return list(self.buffers.keys())
 
@@ -757,6 +767,10 @@ class PhysicalDeviceMesh(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    def get_remote_tracer(self):
+        raise NotImplementedError()
+
+    @abstractmethod
     def get_memory_allocated(self):
         raise NotImplementedError()
 
@@ -798,7 +812,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.device_strs = []
         self.operation_executables = {}
 
-        self.backend = xb.get_backend("gpu")
+        self.backend = xb.get_backend(global_config.backend)
 
         self.set_runtime_random_seed(global_config.runtime_random_seed)
 
@@ -864,6 +878,9 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def reset_remote_timer(self, timer_name: str):
         timers(timer_name).reset()
+
+    def get_remote_tracer(self):
+        return tracer
 
     def get_memory_allocated(self):
         return max(d.memory_allocated() for d in self.devices)
@@ -1104,7 +1121,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             ary_refs: Union[List["RemoteArrayRef"], "RemoteArrayRef"],
             host_local_ids: Sequence[Sequence[Tuple[int, int]]] = None,
             batching=False,
-            asynchronize=False):
+            return_ray_ref=False):
         """
         Get values of remote buffers.
 
@@ -1163,7 +1180,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                         self.workers[host_id].get_buffers.remote(
                             ary_ref.uuid, local_id))
                 obj_refs.append(ary_obj_refs)
-            if asynchronize:
+            if return_ray_ref:
                 ret = obj_refs
             else:
                 ret = [ray.get(refs) for refs in obj_refs]
@@ -1327,6 +1344,9 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         for worker in self.workers:
             ray.get(worker.reset_timer.remote(timer_name))
 
+    def get_remote_tracer(self):
+        return ray.get(self.workers[0].get_tracer.remote())
+
     def get_memory_allocated(self):
         return max(
             ray.get([w.get_memory_allocated.remote() for w in self.workers]))
@@ -1370,17 +1390,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
 ########################################
 # Distributed Array and Buffers
 ########################################
-remote_buffer_counter = 0
-
-
-def next_array_uuids(number=1):
-    """Return the next uuid of a remote buffer."""
-    global remote_buffer_counter
-    ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
-    remote_buffer_counter = (remote_buffer_counter + number) % (1 << 60)
-    return ret
-
-
 class RemoteArrayRef:
     """
     A reference to all device buffers of a logical array.
@@ -1413,8 +1422,21 @@ class RemoteArrayRef:
             self.device_mesh.delete_remote_buffers((self,))
 
 
-def create_remote_array_refs(device_mesh, num=1):
-    ary_uuids = next_array_uuids(num)
+# The global buffer counter
+remote_buffer_counter = 0
+
+
+def next_array_uuids(number=1):
+    """Return the next uuid of a remote buffer."""
+    global remote_buffer_counter
+    ret = np.arange(remote_buffer_counter, remote_buffer_counter + number)
+    remote_buffer_counter = (remote_buffer_counter + number) % (1 << 60)
+    return ret
+
+
+def create_remote_array_refs(device_mesh, number=1):
+    """Create a list of remote array refs."""
+    ary_uuids = next_array_uuids(number)
     ary_refs = [RemoteArrayRef(device_mesh, uuid) for uuid in ary_uuids]
     return ary_refs, ary_uuids
 
@@ -1459,7 +1481,7 @@ class DistributedArray:
     def size(self):
         return np.prod(self.shape)
 
-    def get_remote_buffers_async(self):
+    def prefetch(self):
         # TODO (yinmin): Move this function out of DistributedArray
         #  and batch different requests. Also need to add another
         #  function to `ray.wait` for the remote references.
@@ -1477,6 +1499,21 @@ class DistributedArray:
 
     def flush(self):
         self._npy_value = None
+
+    async def to_np_async(self):
+        if self._npy_value is None:
+            npy_value = np.empty(self.aval.shape, self.aval.dtype)
+            if not self._fetched_np_buffers:
+                if not self._fetched_np_buffers_ref:
+                    self.prefetch()
+                fetched_np_buffers = await asyncio.gather(
+                    *self._fetched_np_buffers_ref)
+            else:
+                fetched_np_buffers = self._fetched_np_buffers
+            for ct, i in enumerate(self.one_replica_buffer_ids):
+                npy_value[self.indices[i]] = fetched_np_buffers[ct]
+            self._npy_value = npy_value
+        return self._npy_value
 
     ##### distributed save/load #####
     def save(self, ckpt_dir: str, local_cache_dir: Union[str, None] = None):
@@ -2001,6 +2038,14 @@ class PhysicalDeviceMeshGroup:
                 calls.append(worker.get_max_memory_allocated.remote())
         return max(ray.get(calls))
 
+    def get_max_memory_allocated_per_mesh(self):
+        """Get the maximal size of memory allocated for each mesh so far."""
+        return [mesh.get_max_memory_allocated() for mesh in self.meshes]
+
+    def reset_memory_stats(self):
+        for mesh in self.meshes:
+            mesh.reset_memory_stats()
+
     def destroy_collective_groups(self):
         for i in range(len(self)):
             for j in range(len(self)):
@@ -2078,7 +2123,7 @@ class DeviceCluster:
         # Gather device info
         self.host_num_devices = []
         for host_info in self.host_info:
-            number = host_info["Resources"]["GPU"]
+            number = host_info["Resources"][global_config.ray_accelerator_name]
             assert number.is_integer()
             self.host_num_devices.append(int(number))
 

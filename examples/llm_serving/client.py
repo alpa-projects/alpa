@@ -3,18 +3,24 @@ from typing import Dict, Optional, Union, Sequence
 
 import requests
 
-DEFAULT_URL = "https://opt.alpa.ai/"
+DEFAULT_URL = "https://opt.alpa.ai"
+
+headers = {"User-Agent": "Alpa Client"}
 
 
 class Client(object):
 
-    def __init__(self, url: Optional[str] = None, api_key: Optional[str] = None) -> None:
+    def __init__(self,
+                 url: Optional[str] = None,
+                 api_key: Optional[str] = None,
+                 default_model: str = "default") -> None:
         if url is None:
             url = DEFAULT_URL
 
         self.api_key = api_key
+        self.default_model = default_model
         self.completions_url = url + "/completions"
-        self.logprobs_url = url + "/completions"
+        self.logprobs_url = url + "/logprobs"
 
     def completions(
         self,
@@ -24,6 +30,7 @@ class Client(object):
         top_p: float = 1.0,
         temperature: float = 1.0,
         echo: bool = True,
+        model: Optional[str] = None,
     ) -> Dict:
         """
         Generation API.
@@ -39,6 +46,7 @@ class Client(object):
           echo: if true, returned text/tokens/scores includes the prompt.
         """
         pload = {
+            "model": model or self.default_model,
             "prompt": prompt,
             "min_tokens": min_tokens,
             "max_tokens": max_tokens,
@@ -47,31 +55,32 @@ class Client(object):
             "echo": echo,
             "api_key": self.api_key
         }
-        result = requests.post(self.completions_url, json=pload)
+        result = requests.post(self.completions_url, json=pload, headers=headers)
         return self.result_or_error(result)
 
     def logprobs(
         self,
         prompt: Union[str, Sequence[str], Sequence[int], Sequence[Sequence[int]]],
         top_k: int = 50,
-        cache_id: Optional = None) -> Dict:
+        cache_id: Optional = None,
+        model: Optional[str] = None) -> Dict:
         """Return the log probability of the next top-k tokens"""
         pload = {
+            "model": model or self.default_model,
             "prompt": prompt,
             "top_k": top_k,
-            "redirect_logprobs": True,
             "api_key": self.api_key
         }
         if cache_id:
             pload["cache_id"] = cache_id
-        result = requests.post(self.logprobs_url, json=pload)
+        result = requests.post(self.logprobs_url, json=pload, headers=headers)
         return self.result_or_error(result)
 
     def result_or_error(self, result):
         result = result.json()
-        if "error" in result:
+        if result.get("type", "") == "error":
             raise RuntimeError(
-                "".join(result["error"]["stacktrace"]) +
-                f'RuntimeError("{result["error"]["message"]}")')
+                result["stacktrace"] +
+                f'RuntimeError("{result["message"]}")')
         else:
             return result

@@ -7,7 +7,9 @@ class GlobalConfig:
 
     def __init__(self):
         ########## Options of device mesh ##########
+        self.backend = "gpu"
         # See https://jax.readthedocs.io/en/latest/gpu_memory_allocation.html
+        self.has_cuda = os.system("nvidia-smi > /dev/null 2>&1") == 0
         self.xla_client_mem_fraction = float(
             os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", 0.9))
         self.xla_gpu_autotune_level = 4
@@ -43,7 +45,7 @@ class GlobalConfig:
         self.always_donate_micro_batch_vars = True
 
         ########## Options of pipeline runtime ##########
-        self.pipeline_check_alive = True
+        self.pipeline_check_alive = False
         # Whether to sync before and after the executable for accurate internal
         # timer
         self.pipeline_sync_for_timer = False
@@ -64,11 +66,6 @@ class GlobalConfig:
         # "xla_extension"}
         self.nccl_mode = "cupy"
 
-        ########## Options of XLA compilation ##########
-        # Whether to use xla while instruction for preventing CSE in
-        # rematerialization
-        self.remat_using_while = False
-
         ########## Options of benchmark ##########
         # If true, the system is allowed to use dummy values during
         # tensor creation and copy to reduce the initialization and copy time.
@@ -82,6 +79,14 @@ class GlobalConfig:
         ########## Options of logging ##########
         self.print_compilation_time = False
         self.print_auto_layer_stats = False
+
+        # Whether to collect activity trace
+        self.collect_trace = False
+
+    @property
+    def ray_accelerator_name(self):
+        backend_to_ray = {"gpu": "GPU"}
+        return backend_to_ray[self.backend]
 
 
 global_config = GlobalConfig()

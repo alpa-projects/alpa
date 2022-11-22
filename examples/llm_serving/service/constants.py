@@ -1,15 +1,17 @@
 """Hyper params for serving Meta's OPT model."""
 
-MAX_SEQ_LEN = 1024
-MAX_BATCH_TOKENS = 3072
-BATCHING_TIMEOUT_MS = 2000
-LOGDIR = "weblogs"
-MAX_BS = 4
+# Alpa serve url
+ALPA_SERVE_PORT = 20001
+ALPA_SERVE_URL = f"window.location.protocol + '//' + window.location.hostname + ':{ALPA_SERVE_PORT}/completions'"
+#ALPA_SERVE_URL = f'"completions"'
 
-# Generation-related params
+# Generation params
 NUM_BEAMS = 1
 NUM_RETURN_SEQ = 1
 
-# Logprobs endpoint cache-related params
-LOGPROBS_PAST_CACHE_TIMEOUT = 60 * 10 # 10 minutes
-LOGPROBS_PAST_CACHE_SIZE_LIMIT = 4 # max sets of past_key_values to keep at a time in cache
+# Authentication params
+USE_RECAPTCHA = False
+KEYS_FILENAME = "/home/ubuntu/efs/alpa/examples/llm_serving/keys_file.json"
+
+# Logging params
+LOGDIR = "weblogs"

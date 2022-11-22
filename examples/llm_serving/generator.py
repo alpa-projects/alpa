@@ -7,15 +7,11 @@ from transformers import AutoTokenizer
 
 from llm_serving.model.wrapper import get_model
 from llm_serving.model.opt_utils import compute_gpt_tflops_inference_with_padding
-from llm_serving.service.constants import MAX_SEQ_LEN, MAX_BS
 from llm_serving.service.utils import build_logger
 
 
-logger = build_logger()
-
-
 class Generator:
-    """Alpa generator interface.
+    """The generator interface.
 
     This class wraps tokenizer and the langauge model.
     """
@@ -26,9 +22,12 @@ class Generator:
                  torch_device="cpu",
                  tokenizer_name=None,
                  add_bos_token=False,
+                 max_seq_len=1024,
+                 max_batch_size=4,
                  do_sample=False,
                  num_beams=1,
                  num_return_sequences=1):
+        self.logger = build_logger()
 
         # Model arguments
         self.model_name = model_name
@@ -37,11 +36,13 @@ class Generator:
         self.torch_device = torch_device
 
         # Tokenizer arguments
-        self.tokenizer_name = "facebook/opt-30b" if not tokenizer_name else tokenizer_name
+        self.tokenizer_name = tokenizer_name
         self.tokenizer = None
         self.add_bos_token = add_bos_token
 
         # Generation arguments
+        self.max_seq_len = max_seq_len
+        self.max_batch_size = max_batch_size
         self.do_sample = do_sample
         self.num_beams = num_beams
         self.num_return_sequences = num_return_sequences
@@ -60,24 +61,34 @@ class Generator:
         # Init model
         self.model_wrapper = get_model(self.model_name, self.path,
                                        torch_device=self.torch_device,
-                                       batch_size=MAX_BS,
+                                       batch_size=self.max_batch_size,
                                        encoder_chunk_sizes=[1, 64],
-                                       max_seq_len=MAX_SEQ_LEN,
+                                       max_seq_len=self.max_seq_len,
                                        num_beams=self.num_beams,
                                        num_return_sequences=self.num_return_sequences,
                                        do_sample=self.do_sample)
         load_time = time.time() - tic
 
         # Init tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
-        self.tokenizer.add_bos_token = False
+        if self.tokenizer_name:
+            self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
+        else:
+            if "opt" in self.model_name:
+                self.tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b")
+                self.tokenizer.add_bos_token = False
+            elif "bloom" in self.model_name:
+                tokenizer_name = self.model_name.replace("alpa", "bigscience")\
+                                                .replace("jax", "bigscience")
+                self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+            else:
+                self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
 
         if "alpa" in self.model_name:
             import alpa
             self.num_gpus = alpa.get_global_cluster().num_devices
         else:
             self.num_gpus = 1
-        logger.info(f"Loading model time: {load_time:.2f}")
+        self.logger.info(f"Loading model time: {load_time:.2f}")
 
     def encode(self, s: str):
         """Tokenize strings"""
@@ -113,9 +124,9 @@ class Generator:
         """
         start_time = time.time()
         total_inference_time = 0
-        batch_request_uuid = next_serve_batch_uuid()
+        batch_id = next_serve_batch_uuid()
         ori_bs = len(inputs)
-        logger.info(f"Batch {batch_request_uuid} begin. batch size: {ori_bs}")
+        self.logger.info(f"Generate begin. batch id: {batch_id}, batch size: {ori_bs}")
 
         # Check arguments
         assert best_of == self.num_beams, "model must be instantiated and used with the same num_beams"
@@ -125,10 +136,11 @@ class Generator:
         else:
             do_sample = self.do_sample
         # Resolve the max sequence length allowed from multiple sources
-        max_seq_len = min(MAX_SEQ_LEN, self.model_wrapper.transformer_config.seq_len)
+        max_seq_len = min(self.max_seq_len,
+                          self.model_wrapper.transformer_config.seq_len)
 
         # Pad the batch to a maximum batch size
-        input_ids = pad_batch(inputs, self.tokenizer.pad_token_id, MAX_BS)
+        input_ids = pad_batch(inputs, self.tokenizer.pad_token_id, self.max_batch_size)
         input_ids = torch.IntTensor(input_ids).to(self.torch_device)
         input_lens = [len(x) for x in inputs]
         batch_size = len(input_ids)
@@ -154,9 +166,9 @@ class Generator:
             "no_repeat_ngram_size": 8,
         }
 
-        logger.info(
-            f"Generate begin. batch uuid: {batch_request_uuid}, "
-            f"batch_size: {batch_size}, original bs: {ori_bs}, "
+        self.logger.info(
+            f"Call generate. batch id: {batch_id}, "
+            f"padded bs: {batch_size}, original bs: {ori_bs}, "
             f"generator_args: {generator_args}.")
 
         inference_start_time = time.time()
@@ -166,8 +178,6 @@ class Generator:
 
         tflops, speed, token_32_latency = self.estimate_performance(
             output_ids, inference_time)
-
-        logger.info(f"Generate end. batch uuid: {batch_request_uuid}")
 
         # Decode results to strings
         ret = []
@@ -184,12 +194,13 @@ class Generator:
                 tmp_ret.append(result)
             ret.append(tmp_ret)
 
-        logger.info(f"Batch {batch_request_uuid} end. batch size: {ori_bs}, "
-                    f"e2e latency: {time.time() - start_time:.2f} s, "
-                    f"inference latency: {inference_time:.2f} s, "
-                    f"speed: {speed:.2f} token/s, "
-                    f"32 token latency: {token_32_latency:.2f} s, "
-                    f"tflops: {tflops:.2f} TFLOPS")
+        self.logger.info(
+            f"Generate end. batch id: {batch_id}. batch size: {ori_bs}, "
+            f"e2e latency: {time.time() - start_time:.2f} s, "
+            f"inference latency: {inference_time:.2f} s, "
+            f"speed: {speed:.2f} token/s, "
+            f"32 token latency: {token_32_latency:.2f} s, "
+            f"tflops: {tflops:.2f} TFLOPS")
         return ret
 
     def forward(
@@ -198,17 +209,17 @@ class Generator:
         cache_id,
         pasts=None,
     ):
-        logger.info(f"Forward begin. cache_id: {cache_id}")
+        self.logger.info(f"Forward begin. cache_id: {cache_id}")
         time_start = time.time()
 
-        inputs = pad_batch(inputs, self.tokenizer.pad_token_id, MAX_BS)
+        inputs = pad_batch(inputs, self.tokenizer.pad_token_id, self.max_batch_size)
         input_ids = torch.IntTensor(inputs).to(self.torch_device)
 
         attention_mask = self.model_wrapper._prepare_attention_mask_for_generation(input_ids, pad_token_id=self.model_wrapper.config.pad_token_id, eos_token_id=self.model_wrapper.config.eos_token_id)
         model_inputs = self.model_wrapper.prepare_inputs_for_generation(input_ids, past=pasts[cache_id][1] if pasts is not None else None, attention_mask=attention_mask)
         output = self.model_wrapper(**model_inputs)
 
-        logger.info(f"Forward end. e2e latency: {time.time() - time_start:.2f}")
+        self.logger.info(f"Forward end. e2e latency: {time.time() - time_start:.2f}")
         return output
 
     def estimate_performance(self, output_ids, latency):
@@ -245,7 +256,7 @@ def pad_batch(inputs, pad_value, max_batch_size):
 
     # Pad to max_batch_size
     if bs < max_batch_size:
-        new_inputs.extend([[pad_value for _ in range(max_len)] for _ in range(MAX_BS - bs)])
+        new_inputs.extend([[pad_value for _ in range(max_len)] for _ in range(max_batch_size - bs)])
     return new_inputs
 
 

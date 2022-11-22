@@ -2,15 +2,13 @@
 
 import unittest
 
-from flax import linen as nn
 import jax
 import jax.numpy as jnp
-from jax.interpreters.pxla import Chunked, NoSharding, Replicated, ShardedAxis
 import numpy as np
 import optax
 
 from alpa import parallelize, ShardParallel, LocalPhysicalDeviceMesh, AutoShardingOption
-from alpa.util import map_to_shape, count_communication_primitives
+from alpa.util import count_communication_primitives
 from alpa.model.moe import FlaxMoELayer, FlaxMoEForLMModule, MoEConfig, TrainState
 
 from tests.shard_parallel.test_mlp import (assert_all_replicated, assert_close,

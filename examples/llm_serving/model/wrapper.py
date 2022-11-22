@@ -1,26 +1,23 @@
 """Wrap models to make them compatible with huggingface's generator API."""
-from collections import defaultdict
-import os
 import time
-from typing import Sequence, Any, Optional
-import warnings
+from collections import defaultdict
+from typing import Sequence, Any, Optional, List
 
-import alpa
-from alpa import timers
-from alpa.device_mesh import DistributedArray
-from alpa.mesh_executable import get_index_select_mesh_executable
 import jax
 import jax.numpy as jnp
 import numpy as np
+import os
 import torch
-from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
-from transformers import OPTForCausalLM, BloomForCausalLM, GPT2LMHeadModel
-from tqdm import tqdm
-
-from llm_serving.model import opt_model, bloom_model, opt_model_1d
+from llm_serving.model import opt_model, bloom_model
 from llm_serving.model.opt_utils import (TransformerModelConfig,
-                                         jax_index_select, is_power_of_two)
-from llm_serving.model.opt_model_1d import TransformerInputPool
+                                         jax_index_select)
+from tqdm import tqdm
+from transformers import OPTForCausalLM, BloomForCausalLM
+from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
+
+import alpa
+from alpa.device_mesh import DistributedArray
+from alpa.mesh_executable import get_index_select_mesh_executable
 
 
 @dataclass
@@ -34,7 +31,6 @@ class InferenceFuncOutput(ModelOutput):
 @dataclass
 class InferenceFuncConfig:
     """Implements a minimal config class for using huggingface's generator.
-
     Note: these parameters might be overwritten by model.generate(**kwargs).
     """
     bos_token_id: int = 0
@@ -46,6 +42,7 @@ class InferenceFuncConfig:
     num_return_sequences: int = 1
     pad_token_id: int = 1
     eos_token_id: int = 2
+    unk_token_id: int = 0
     output_scores: bool = False
     output_attentions: bool = False
     output_hidden_states: bool = False
@@ -65,6 +62,9 @@ class InferenceFuncConfig:
     top_p: int = 1.0
     typical_p: int = 1.0
     temperature: float = 1.0
+    suppress_tokens: Optional[List[int]] = None
+    begin_suppress_tokens: Optional[List[int]] = None
+    forced_decoder_ids: Optional[List[int]] = None
 
 
 class WrappedInferenceFunc(GenerationMixin):
@@ -211,11 +211,12 @@ def get_hf_model(model_name, device):
 
     inference_func_config = InferenceFuncConfig()
     for key in inference_func_config.__dataclass_fields__.keys():
-        setattr(inference_func_config, key, getattr(model.config, key))
-    if hasattr(model.config, "seq_length"):
-        seq_len = model.config.seq_length
-    else:
+        if hasattr(model.config, key):
+            setattr(inference_func_config, key, getattr(model.config, key))
+    if hasattr(model.config, "max_position_embeddings"):
         seq_len = model.config.max_position_embeddings
+    else:
+        seq_len = 2048
 
     transformer_config = TransformerModelConfig(
         H=model.config.hidden_size,
@@ -226,117 +227,6 @@ def get_hf_model(model_name, device):
     executable = None
     return WrappedInferenceFunc(inference_func, inference_func_config,
                                 executable, transformer_config)
-
-
-def get_model_1d(model_name: str,
-                 path: str,
-                 dummy: bool = False,
-                 # batch size, this batch is #tokens
-                 batch_size: int = 256,
-                 max_seq_len: int = 2048,
-                 cache_size: int = 4096,
-                 max_cache_per_seq: int = 128,
-                 # model parameters
-                 dtype=jnp.float16,
-                 torch_device: str = "cpu",
-                 # Shared arguments with model.generate
-                 do_sample: bool = False,
-                 num_beams: int = 1,
-                 num_return_sequences: int = 1,
-                 return_dict_in_generate: bool = True,
-                 output_attentions: bool = False,
-                 output_hidden_states: bool = False):
-    """Experimental 1D transformer implementation."""
-    assert "opt-1d" in model_name, "are you sure you want to use the experimental 1D version?"
-    name = model_name.split("/")[1].lower()
-    name = name.replace("-1d", "")
-    path = os.path.abspath(os.path.expanduser(os.path.join(path, f"{name}-np")))
-    if not dummy:
-        # Download weights if there is no cached weights.
-        if not os.path.exists(path):
-            if name in ["opt-175b"]:
-                raise ValueError(f"Cannot find cached weights under '{path}'. "
-                                  "Please follow the instructions to download "
-                                  "and convert weights manually. ")
-            print(f"Cannot find cached weights under '{path}'.")
-            download_weights(model_name.split("/")[1], path)
-
-        # Do some sanity check
-        assert os.path.exists(path), f"No such file or directory: '{path}'"
-        if "opt" in name:
-            embed_weight = os.path.join(path, "decoder.embed_tokens.weight")
-        elif "bloom" in name:
-            embed_weight = os.path.join(path, "word_embeddings.weight")
-        assert os.path.exists(embed_weight), f"No such file or directory: '{embed_weight}'"
-    # TODO(Hao): figure out the actual input size
-    config = opt_model.get_config(name, dtype=dtype, max_seq_len=max_seq_len)
-    transformer_config = TransformerModelConfig(
-        H=config.hidden_size,
-        L=config.num_hidden_layers,
-        n_head=config.n_head,
-        seq_len=config.max_seq_len,
-        vocab_size=config.vocab_size)
-    executable, params_aval = opt_model_1d.get_jax_executable(
-        config,
-        output_attentions=output_attentions,
-        output_hidden_states=output_hidden_states)
-
-    # load params
-    # TODO(Hao): use the same func with 2D
-    params = opt_model_1d.load_params_np(params_aval, path, config, dummy)
-    params = jax.tree_map(jnp.array, params)
-    input_pool = TransformerInputPool(config, batch_size=batch_size, cache_size=cache_size,
-                                      max_cache_per_seq=max_cache_per_seq)
-
-    def sync(device_id=0):
-        jax.devices()[device_id].synchronize_all_activity()
-        return
-
-    def inference_func(input_ids,
-                       past_key_values,
-                       attention_mask,
-                       output_attentions,
-                       output_hidden_states):
-        timers("enter").start(sync)
-        if input_ids.shape[1] > 1:
-            unpadded_input = input_pool.unpad(input_ids)
-            input, input_index, position_ids = input_pool.enter_prompts(unpadded_input)
-        else:
-            unpadded_input = input_ids.tolist()
-            input, input_index, position_ids = input_pool.enter_decoding(unpadded_input)
-        timers("enter").suspend(sync)
-
-        # set envvar
-        os.environ["FT_INPUT_INDEX_ADDR"] = str(input_index.ctypes.data)
-        os.environ["FT_CACHE_INDEX_ADDR"] = str(input_pool.kv_cache_ids.ctypes.data)
-        os.environ["FT_MAX_CACHE_LEN_PER_SEQ"] = str(input_pool.max_cache_per_seq)
-
-        batch = {
-            "input_ids": input,
-            "position_ids": position_ids,
-            "cache": input_pool.kv_caches
-        }
-        timers("compute").start(sync)
-        logits, kv = executable(params, batch)
-        timers("compute").suspend(sync)
-
-        timers("update").start(sync)
-        input_pool.update_cache(unpadded_input, kv)
-        input_pool.update_num_prev_tokens(unpadded_input)
-        timers("update").suspend(sync)
-
-        timers("reshape").start(sync)
-        logits = input_pool.reshape_logits(logits, unpadded_input, tuple(input_ids.shape))
-        # logits = input_pool.reshape_logits_legacy(logits, input_index, tuple(input_ids.shape))
-        logits_step = torch.from_numpy(logits).to(torch_device).float()
-        timers("reshape").suspend(sync)
-        return InferenceFuncOutput(logits_step, kv, None, None)
-
-    inference_func_config = InferenceFuncConfig()
-    return WrappedInferenceFunc(inference_func,
-                                inference_func_config,
-                                executable,
-                                transformer_config)
 
 
 def get_alpa_model(model_name: str,
@@ -405,10 +295,6 @@ def get_alpa_model(model_name: str,
             m = opt_model
         elif "bloom" in model_name:
             m = bloom_model
-            if any(x > 1 for x in encoder_chunk_sizes):
-                # TODO: support chunk size > 1
-                warnings.warn("encoder_chunk_size > 1 is not supported. Ignored.")
-                encoder_chunk_sizes = [1]
         config = m.get_config(name,
                               num_pp_stages=None,
                               mark_boundary=False,
@@ -435,10 +321,6 @@ def get_alpa_model(model_name: str,
             m = opt_model
         elif "bloom" in model_name:
             m = bloom_model
-            if any(x > 1 for x in encoder_chunk_sizes):
-                # TODO: support chunk size > 1
-                warnings.warn("encoder_chunk_size > 1 is not supported. Ignored.")
-                encoder_chunk_sizes = [1]
 
         alpa.init()
 
@@ -591,6 +473,11 @@ def get_alpa_model(model_name: str,
                                    output.hidden_states, output.attentions)
 
     inference_func_config = InferenceFuncConfig()
+    if "bloom" in model_name:
+        inference_func_config.bos_token_id = 1
+        inference_func_config.eos_token_id = 2
+        inference_func_config.pad_token_id = 3
+        inference_func_config.unk_token_id = 0
     return WrappedInferenceFunc(inference_func,
                                 inference_func_config,
                                 executables[1],
@@ -618,7 +505,6 @@ def get_model(model_name: str,
               output_attentions: bool = False,
               output_hidden_states: bool = False):
     """Get a model that is compatible with HuggingFace's generation API.
-
     Args:
         model_name: "facebook/opt-", or "alpa/opt-".
         path: The path to opt weights.

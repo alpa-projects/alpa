@@ -25,6 +25,7 @@ def benchmark_one_case_internal(model,
                                 num_hosts,
                                 num_devices_per_host,
                                 profile_driver_time=False,
+                                profile_stage_execution_time=False,
                                 shard_only=False,
                                 local=False,
                                 disable_tqdm=False):
@@ -74,6 +75,8 @@ def benchmark_one_case_internal(model,
 
     else:
         global_config.pipeline_sync_for_timer = True
+        if profile_stage_execution_time:
+            global_config.collect_trace = True
         init(cluster="ray")
 
         # Run benchmark
@@ -110,7 +113,8 @@ def benchmark_one_case_internal(model,
                 niter,
                 num_hosts,
                 num_devices_per_host,
-                profile_driver_time=profile_driver_time)
+                profile_driver_time=profile_driver_time,
+                profile_stage_execution_time=profile_stage_execution_time)
         else:
             raise ValueError(f"Invalid model: {model}")
 

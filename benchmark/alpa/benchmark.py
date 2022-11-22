@@ -46,6 +46,7 @@ def benchmark_suite(suite_name,
                     shard_only=False,
                     local=False,
                     profile_driver_time=False,
+                    profile_stage_execution_time=False,
                     disable_tqdm=False,
                     use_separate_process=True):
     num_gpus = num_hosts * num_devices_per_host
@@ -54,15 +55,14 @@ def benchmark_suite(suite_name,
         assert shard_only, ("Only shard-only mode is supported for execution "
                             "on local GPUs.")
 
-    assert num_gpus in benchmark_suites[suite_name], (
-        f"No available benchmark suite for {suite_name} on {num_gpus} GPUs")
+    if num_gpus not in benchmark_suites[suite_name]:
+        return
     suite = benchmark_suites[suite_name][num_gpus]
 
     os.makedirs("tmp", exist_ok=True)
 
     model_type = suite_name.split(".")[0]
-    date_str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    output_name = f"{model_type}_alpa_{exp_name}_{date_str}.tsv"
+    output_name = f"{exp_name}.tsv"
 
     # Run all cases
     for benchmark_case in suite:
@@ -72,16 +72,18 @@ def benchmark_suite(suite_name,
 
         # Run one case
         print("Working on case: {}".format(str(benchmark_case)))
-        result = benchmark_one_case(model_type,
-                                    benchmark_case,
-                                    niter,
-                                    num_hosts,
-                                    num_devices_per_host,
-                                    shard_only=shard_only,
-                                    local=local,
-                                    profile_driver_time=profile_driver_time,
-                                    disable_tqdm=disable_tqdm,
-                                    use_separate_process=use_separate_process)
+        result = benchmark_one_case(
+            model_type,
+            benchmark_case,
+            niter,
+            num_hosts,
+            num_devices_per_host,
+            shard_only=shard_only,
+            local=local,
+            profile_driver_time=profile_driver_time,
+            profile_stage_execution_time=profile_stage_execution_time,
+            disable_tqdm=disable_tqdm,
+            use_separate_process=use_separate_process)
 
         (parameter_count, peak_mem, latencies, tflops, metadata) = result
 
@@ -125,13 +127,18 @@ if __name__ == "__main__":
                         action="store_true",
                         help="Profile the execution time on the driver instead "
                         "of the workers.")
+    parser.add_argument(
+        "--profile-stage-execution-time",
+        action="store_true",
+        help="Profile the execution timestamps of each pipeline "
+        "stage")
     parser.add_argument("--no-separate-process",
                         action="store_false",
                         help="Do not launch separate processes for benchmark. "
                         "Errors in a single case will terminate this "
                         "script.",
                         dest="use_separate_process")
-    parser.add_argument("--exp_name", type=str, default="default")
+    parser.add_argument("--exp-name", type=str, default="default")
     parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
 
@@ -139,5 +146,5 @@ if __name__ == "__main__":
 
     benchmark_suite(args.suite, num_hosts, num_devices_per_host, args.exp_name,
                     args.niter, args.shard_only, args.local,
-                    args.profile_driver_time, args.disable_tqdm,
-                    args.use_separate_process)
+                    args.profile_driver_time, args.profile_stage_execution_time,
+                    args.disable_tqdm, args.use_separate_process)

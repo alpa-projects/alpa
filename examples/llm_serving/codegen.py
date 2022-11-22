@@ -27,7 +27,7 @@ def main(args):
 
     # Generate
     prompts = [
-        "Create a function that prints hello world:\n",
+        "def hello_world():\n",
         "Create a function that solves the two sum problem:\n",
         "Create a function that solves the fibonacci sequence problem:\n",
         "Create a function that find the first five prime numbers:\n"

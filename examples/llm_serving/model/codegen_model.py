@@ -154,15 +154,13 @@ class CodeGenAttention(nn.Module):
                  attention_mask=None,
                  deterministic:bool = True):
 
+        batch_size = hidden_states.shape[0]
+        seq_length = hidden_states.shape[1]
         fused_qkv = self.qkv_combined(hidden_states)
-        fused_qkv = fused_qkv.reshape(fused_qkv.shape[:2] + (-1, 3))
-        query, key, value = jnp.split(fused_qkv,
-                                            3,
-                                            axis=3)
-        
-        query = self._split_heads(query)
-        key = self._split_heads(key)
-        value = self._split_heads(value)
+        fused_qkv = fused_qkv.reshape(fused_qkv.shape[:-1] + (self.config.n_head, self.head_dim * 3))
+        query, key, value = jnp.split(fused_qkv, 3, axis=-1)
+        key_length = attention_mask.shape[-1]
+        causal_attention_mask = make_causal_mask(jnp.ones((batch_size, key_length)), dtype="bool")
 
         sincos = jnp.take(self.embed_positions, position_ids, axis=0)
         sincos = jnp.split(sincos, 2, axis=-1)
@@ -182,25 +180,19 @@ class CodeGenAttention(nn.Module):
             key = apply_rotary_pos_emb(key, sincos)
             query = apply_rotary_pos_emb(query, sincos)
 
-        query_length, key_length = query.shape[1], key.shape[1]
-
-        batch_size = hidden_states.shape[0]
-
+        # for fast decoding causal attention mask should be shifted
         if attention_cache:
             causal_attention_mask_shift = attention_cache[2][0]
         else:
             causal_attention_mask_shift = 0
 
-        if attention_cache is None:
-            causal_mask = self.causal_mask[:, :, :query_length, :key_length]
-        else:
+        if attention_cache is not None:
             #TODO(chris): verify this section actually works
             max_decoder_length = attention_cache[0].shape[1]
-            query_length = query.shape[1]
-            causal_mask = jax.lax.dynamic_slice(
-                self.causal_mask,
+            causal_attention_mask = jax.lax.dynamic_slice(
+                causal_attention_mask,
                 (0, 0, causal_attention_mask_shift, 0),
-                (1, 1, query_length, max_decoder_length)
+                (1, 1, seq_length, max_decoder_length)
             )
 
             # Handle a special kind of internal padding added by alpa.
@@ -212,7 +204,7 @@ class CodeGenAttention(nn.Module):
             num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
             attention_mask = (attention_mask == 1)
 
-        attention_mask = combine_masks(attention_mask, causal_mask)
+        attention_mask = combine_masks(attention_mask, causal_attention_mask)
 
         if attention_cache:
             cache_key, cache_value, cache_index = attention_cache
@@ -300,7 +292,7 @@ class CodeGenBlock(nn.Module):
         attention_cache = attn_outputs[1]
         
         feed_forward_hidden_states = self.mlp(hidden_states, deterministic=deterministic)
-        hidden_states = hidden_states + feed_forward_hidden_states + residual
+        hidden_states = attn_output + feed_forward_hidden_states + residual
         outputs = (hidden_states, attention_cache)
 
         if output_attentions:
@@ -314,13 +306,17 @@ class CodeGenMLP(nn.Module):
     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
+        kernel_init = jax.nn.initializers.normal(self.config.initializer_range)
+
         self.fc_in = nn.Dense(
-            self.config.decoder_ffn_embed_dim,
+            4 * self.config.hidden_size,
             dtype=self.dtype,
+            kernel_init=kernel_init
         )
         self.fc_out = nn.Dense(
             self.config.hidden_size,
             dtype=self.dtype,
+            kernel_init=kernel_init
         )
         self.act = ACT2FN[self.config.activation_fn]
         self.dropout = nn.Dropout(self.config.resid_pdrop)
@@ -557,15 +553,15 @@ def get_config(name, **kwargs):
 
     return dataclasses.replace(config, **kwargs)
 
-# TODO(chris): fix this to fit the same params as Codegen
 def init_model_aval(config):
     """Initialize model with parameters with abstract values (shape-only arrays)."""
     model = CodeGenForLMModule(config, dtype=config.dtype)
     rngkey = jax.core.ShapedArray((2,), jnp.uint32)
-    input_ids = jax.core.ShapedArray((1, 128), jnp.int32)
-    position_ids = jax.core.ShapedArray((1, 128), jnp.int32)
-    token_type_ids = jax.core.ShapedArray((1, 128), jnp.int32)
-    params = jax.eval_shape(model.init, rngkey, input_ids, token_type_ids, position_ids)
+    input_ids = jax.core.ShapedArray((1, 2), jnp.int32)
+    position_ids = jax.core.ShapedArray((1, 2), jnp.int32)
+    token_type_ids = jax.core.ShapedArray((1, 2), jnp.int32)
+    attention_mask = jax.core.ShapedArray((1, 1, 1, 2), jnp.int32)
+    params = jax.eval_shape(model.init, rngkey, input_ids, token_type_ids, position_ids, attention_mask=attention_mask)
     params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, config.dtype),
                           params)
     return model, params
@@ -695,8 +691,6 @@ def get_jax_executable(config: CodeGenConfig,
 
     @jax.jit
     def inference_step(params, batch):
-        # for k, v in batch.items():
-        #     print(k, ":", v , "\n")
         output = model.apply(params,
                              input_ids=batch["input_ids"],
                              position_ids=batch["position_ids"],

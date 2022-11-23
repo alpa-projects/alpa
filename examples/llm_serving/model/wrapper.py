@@ -73,7 +73,7 @@ class WrappedInferenceFunc(GenerationMixin):
     This class implements the minimal interface for using huggingface's generator.
     """
 
-    def __init__(self, inference_func, config, executable, transformer_config):
+    def __init__(self, inference_func, config, executable, transformer_config, device):
         self.inference_func = inference_func
         self.config = config
         self.main_input_name = "input_ids"
@@ -81,6 +81,7 @@ class WrappedInferenceFunc(GenerationMixin):
         self.transformer_config = transformer_config
         self.index_select_executables = {}
         self.cache_location = None
+        self.device = device
 
     def forward(self, attention_mask):
         # This function is never used
@@ -226,7 +227,7 @@ def get_hf_model(model_name, device):
         vocab_size=model.config.vocab_size)
     executable = None
     return WrappedInferenceFunc(inference_func, inference_func_config,
-                                executable, transformer_config)
+                                executable, transformer_config, torch.device(device))
 
 
 def get_alpa_model(model_name: str,
@@ -481,7 +482,8 @@ def get_alpa_model(model_name: str,
     return WrappedInferenceFunc(inference_func,
                                 inference_func_config,
                                 executables[1],
-                                transformer_config)
+                                transformer_config,
+                                torch.device(torch_device))
 
 
 def get_model(model_name: str,

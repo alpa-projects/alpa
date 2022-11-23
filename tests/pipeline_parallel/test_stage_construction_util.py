@@ -149,7 +149,7 @@ class StageConstructUtilTest(unittest.TestCase):
         return profile_results[stage_index]
 
     def test_1d_2d_results_the_same(self):
-        num_layers = 12
+        num_layers = 3
         num_microbatch = 2
         (closed_jaxpr, full_batch_closed_jaxpr,
          donated_invars) = self.create_bert_jaxpr_with_donation(
@@ -179,7 +179,7 @@ class StageConstructUtilTest(unittest.TestCase):
         max_stage_2d, (available_memory_2d, peak_memory_2d, initial_size_2d,
                        intermediate_size_2d) = get_max_n_succ_stages([profile_results_2d])
         max_stage_1d, (available_memory_1d, peak_memory_1d, initial_size_1d,
-                       intermediate_size_1d) = get_max_n_succ_stages([profile_results_1d])
+                       intermediate_size_1d) = get_max_n_succ_stages(profile_results_1d)
         print("max_stage_2d: ", max_stage_2d)
         print("max_stage_1d: ", max_stage_1d)
         print("available_memory_2d: ", available_memory_2d)

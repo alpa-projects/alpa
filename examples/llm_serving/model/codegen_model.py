@@ -24,6 +24,7 @@ import jaxlib.xla_extension as jax_xla
 import numpy as np
 import ray
 from tqdm import tqdm
+from llm_serving.model.opt_model import (init_cache_aval, init_mask_aval)
 
 ACT2FN = {
     "gelu": partial(nn.gelu, approximate=False),
@@ -80,9 +81,9 @@ class CodeGenConfig:
     dtype: any = jnp.float16
     num_pp_stages: int = None
     tie_word_embeddings: bool = True
+    use_cache: bool = True
     # parallelize
     mark_boundary: bool = True
-    share_decoder_input_output_embed: bool = True
 
 
 # Copied from transformers.models.gptj.modeling_flax_gptj.create_sinusoidal_positions
@@ -157,8 +158,29 @@ class CodeGenAttention(nn.Module):
         batch_size = hidden_states.shape[0]
         seq_length = hidden_states.shape[1]
         fused_qkv = self.qkv_combined(hidden_states)
-        fused_qkv = fused_qkv.reshape(fused_qkv.shape[:-1] + (self.config.n_head, self.head_dim * 3))
-        query, key, value = jnp.split(fused_qkv, 3, axis=-1)
+        # NOTE: previously used bloom implementation for split but does not seem correct
+        # fused_qkv = fused_qkv.reshape(fused_qkv.shape[:-1] + (self.config.n_head, self.head_dim * 3))
+        # print(fused_qkv.shape)
+        # # # shape is [batch_size, seq length, num_heads, head_dim]
+        # query, key, value = jnp.split(fused_qkv, 3, axis=-1)
+        # print("query shape:", query.shape)
+
+        # TODO(Chris) fix qkv_proj split issue: currently following gist to split up the qkv correctly https://gist.github.com/moyix/7896575befbe1b99162ccfec8d135566
+        mp_num = 4 # number of cores on their TPU I guess?
+        local_dim = self.head_dim * self.config.n_head // mp_num
+        print(fused_qkv.shape)
+        qkv_split = fused_qkv.reshape(fused_qkv.shape[:-1] + (mp_num, -1))
+        print(qkv_split.shape)
+        # Shape after is [batch_size, seq length, mp_num, embed_dim * 3 / 4]
+        query, value, key = jnp.split(qkv_split, 3, axis=-1)
+        print("query shape pre splitting: ", query.shape)
+
+        # Shape after is [batch_size, seq length, #head, head_dim]
+        query = self._split_heads(query)
+        key = self._split_heads(key)
+        value = self._split_heads(value)
+        print("query shape post splitting:", query.shape)
+
         key_length = attention_mask.shape[-1]
         causal_attention_mask = make_causal_mask(jnp.ones((batch_size, key_length)), dtype="bool")
 
@@ -186,7 +208,7 @@ class CodeGenAttention(nn.Module):
         else:
             causal_attention_mask_shift = 0
 
-        if attention_cache is not None:
+        if attention_cache:
             #TODO(chris): verify this section actually works
             max_decoder_length = attention_cache[0].shape[1]
             causal_attention_mask = jax.lax.dynamic_slice(
@@ -211,7 +233,7 @@ class CodeGenAttention(nn.Module):
             *batch_dims, max_length, num_heads, depth_per_head = cache_key.shape
             # update key, value caches with our new 1d spatial slices
             cur_index = cache_index[0]
-            indices = (0, cur_index, 0, 0)
+            indices = (0,) * len(batch_dims) + (cur_index, 0, 0)
             key = lax.dynamic_update_slice(cache_key, key, indices)
             value = lax.dynamic_update_slice(cache_value, value, indices)
             cache_key = key
@@ -249,8 +271,7 @@ class CodeGenAttention(nn.Module):
             precision=None,
         )
 
-        attn_output = jnp.einsum("...hqk,...khd->...qhd", attn_weights,
-                                 value)
+        attn_output = jnp.einsum("...hqk,...khd->...qhd", attn_weights, value)
         attn_output = self._merge_heads(attn_output)
         attn_output = self.out_proj(attn_output)
         attn_output = self.resid_dropout(attn_output, deterministic=deterministic)
@@ -404,6 +425,7 @@ class CodeGenTransformerModule(nn.Module):
             self.config.vocab_size,
             self.config.hidden_size,
             embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
+            dtype=self.dtype
         )
 
         self.drop = nn.Dropout(rate=self.config.embd_pdrop)
@@ -426,7 +448,7 @@ class CodeGenTransformerModule(nn.Module):
         attention_cache=None,
         attention_mask=None
     ):
-        input_embeds = self.wte(input_ids.astype("i4"))
+        input_embeds = self.wte(input_ids)
         
         hidden_states = input_embeds
 
@@ -464,7 +486,6 @@ class CodeGenTransformerModule(nn.Module):
 class CodeGenForLMModule(nn.Module):
     config: CodeGenConfig
     dtype: jnp.dtype = jnp.float16
-    bias_init: Callable[..., jnp.ndarray] = jax.nn.initializers.zeros
 
     def setup(self):
         self.transformers = CodeGenTransformerModule(config=self.config,
@@ -489,7 +510,7 @@ class CodeGenForLMModule(nn.Module):
         attention_mask=None
     ):
         # if token_type_ids is None:
-        #     token_type_ids = jnp.zeros_like(input_ids, dtype="i4")
+        #     token_type_ids = jnp.ones_like(input_ids, dtype="i4")
 
         # Model
         outputs = self.transformers(
@@ -566,33 +587,6 @@ def init_model_aval(config):
                           params)
     return model, params
 
-
-def init_cache_aval(config, batch_size):
-    """Initialize cache with abstract values (shape-only arrays)."""
-    dtype = config.dtype
-    head_dim = config.hidden_size // config.n_head
-
-    all_cache = []
-    for _ in range(config.num_hidden_layers):
-        layer_cache = (
-            jax.core.ShapedArray((batch_size, config.max_seq_len,
-                                  config.n_head, head_dim),
-                                 dtype),
-            jax.core.ShapedArray((batch_size, config.max_seq_len,
-                                  config.n_head, head_dim),
-                                 dtype),
-            jax.core.ShapedArray((batch_size,), jnp.int32),
-        )
-        all_cache.append(layer_cache)
-    return tuple(all_cache)
-
-
-def init_mask_aval(config, batch_size):
-    """Initialize attention mask with abstract values (shape-only arrays)."""
-    mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_seq_len), dtype=np.int8)
-    return mask
-
-
 def init_cache_np(config, batch_size):
     """Init cache with numpy arrays."""
     np_dtype = np.float32 if config.dtype == jnp.float32 else np.float16
@@ -613,7 +607,7 @@ def init_cache_np(config, batch_size):
     return tuple(all_cache)
 
 def inference_step_no_cache(params, batch, apply_func):
-    logits = apply_func(params, batch["input_ids"], batch["token_type_ids"])[0]
+    logits = apply_func(params, batch["input_ids"], batch["position_ids"])[0]
     return logits
 
 
@@ -631,6 +625,7 @@ def load_params_np(params, path, config, dummy=False):
         param_dict = params
         param_keys = param_key.split('.')
         for i, key in enumerate(param_keys):
+            # print(key, ":", param_dict[key].shape)
             if i == len(param_keys) - 1:
                 if dummy:
                     param_dict[key] = jax.core.ShapedArray(
@@ -680,7 +675,6 @@ def load_params_np(params, path, config, dummy=False):
                    load_array(load_prefix + "mlp.fc_out.weight").transpose())
 
     return flax.core.freeze(params)
-
 
 def get_jax_executable(config: CodeGenConfig,
                        encoder_chunk_sizes: Sequence[int],
@@ -760,8 +754,6 @@ def get_pipeshard_executable(config: CodeGenConfig,
                         jax.core.ShapedArray((batch_size, 1), jnp.int32),
                     "position_ids":
                         jax.core.ShapedArray((batch_size, 1), jnp.int32),
-                    "token_type_ids":
-                        jax.core.ShapedArray((batch_size, 1), jnp.int32),
                     "cache":
                         cache,
                     "mask":
@@ -791,9 +783,6 @@ def get_pipeshard_executable(config: CodeGenConfig,
                             jax.core.ShapedArray(
                                 (batch_size, seq_len), jnp.int32),
                         "position_ids":
-                            jax.core.ShapedArray(
-                                (batch_size, seq_len), jnp.int32),
-                        "token_type_ids":
                             jax.core.ShapedArray(
                                 (batch_size, seq_len), jnp.int32),
                         "cache":

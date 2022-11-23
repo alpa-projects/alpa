@@ -2286,8 +2286,7 @@ def init_global_cluster(cluster: str,
                      ignore_reinit_error=True,
                      namespace=namespace)
         update_jax_platform("cpu")
-        global_cluster = DeviceCluster(num_nodes, num_devices_per_node,
-                                       namespace)
+        global_cluster = DeviceCluster(num_nodes, num_devices_per_node)
         global_virtual_physical_mesh = (
             global_cluster.get_virtual_physical_mesh())
 

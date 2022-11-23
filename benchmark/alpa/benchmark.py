@@ -14,6 +14,7 @@ import suite_auto_gpt
 import suite_auto_moe
 import suite_manual_gpt
 import suite_manual_moe
+import suite_unet
 import suite_wresnet
 import suite_inference_gpt
 
@@ -32,6 +33,8 @@ benchmark_suites = {
     "moe.perf_test_fast_2d": suite_manual_moe.perf_test_fast_2d_suite,
     "moe.perf_test_auto": suite_auto_moe.perf_test_suite,
     "moe.grid_search_auto": suite_auto_moe.grid_search_suite,
+    "unet.perf_test_auto": suite_unet.perf_test_auto_suite,
+    "unet.grid_search_auto": suite_unet.grid_search_auto_suite,
     "wresnet.perf_test_2d": suite_wresnet.perf_test_2d_suite,
     "wresnet.perf_test_auto": suite_wresnet.perf_test_auto_suite,
     "wresnet.grid_search_auto": suite_wresnet.grid_search_auto_suite,
@@ -70,7 +73,6 @@ def benchmark_suite(suite_name,
         num_micro_batches = benchmark_case.num_micro_batches
         parallel_args = benchmark_case.parallel_args
 
-        # niter = 1
         # Run one case
         print("Working on case: {}".format(str(benchmark_case)))
         result = benchmark_one_case(

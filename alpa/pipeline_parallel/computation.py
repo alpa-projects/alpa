@@ -125,6 +125,28 @@ class JaxPipelineComputation(PipelineComputation):
                    consts_dir=dict(
                        zip(closed_jaxpr.jaxpr.constvars, closed_jaxpr.consts)))
 
+    def outvars_def_order(self):
+        """
+        Get the order of outvars by when they are defined in the jaxpr. This may
+        be not accurate because XLA optimizations may reorder it, but we only
+        focus on the order of activations which have data dependency so it's ok.
+        """
+        outvars = self.outvars
+        assert self.eqns[-1].primitive is pipeline_p
+        assert tuple(self.eqns[-1].outvars) == tuple(outvars)
+        pre_marker_vars = self.eqns[-1].invars
+        pre_marker_vars = {v: idx for idx, v in enumerate(pre_marker_vars)}
+        final_order = []
+        for inv in self.invars:
+            if inv in pre_marker_vars:
+                final_order.append(pre_marker_vars[inv])
+        for eqn in self.eqns:
+            for var in eqn.outvars:
+                if not isinstance(var, DropVar) and var in pre_marker_vars:
+                    final_order.append(pre_marker_vars[var])
+        assert len(final_order) == len(outvars)
+        return [outvars[idx] for idx in final_order]
+
 
 @dataclass
 class XlaPipelineComputation(PipelineComputation):

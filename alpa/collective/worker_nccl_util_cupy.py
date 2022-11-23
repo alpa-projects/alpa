@@ -16,8 +16,6 @@ from alpa.util import (jax_tensor_set, jax_tensor_index,
                        is_continuous_subset, infer_offset_and_n_elements,
                        mark_event, synchronize_one_event)
 
-from alpa.pipeline_parallel.xla_custom_call_marker import dummy_compute_on_default_stream
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -42,13 +40,10 @@ def send_tile(worker, uuid: int, device_id: int, offset: Sequence[slice],
     """
     buffer = worker.buffers[uuid][device_id]
     tensor_shape = buffer.shape
-    # print(1)
     if is_continuous_subset(offset, tensor_shape):
         # fast path, two cases: (1) same shape, (2) continuous subset.
         slice_shape = tuple(ind.stop - ind.start for ind in offset)
         to_send = xla_buffer_to_cupy(buffer)
-        # print(2)
-        # worker.sync_all()
         if slice_shape == tensor_shape:
             col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
         else:
@@ -58,10 +53,7 @@ def send_tile(worker, uuid: int, device_id: int, offset: Sequence[slice],
                               dst_gpu_idx,
                               group_name,
                               n_elements=n_elements)
-        # worker.sync_all()
     else:
-        # print(3)
-        # worker.sync_all()
         # slower path, because of indexing.
         logger.debug("Send goes along the slowest path. "
                      "If this is for transformers, please check the resharding "
@@ -71,9 +63,8 @@ def send_tile(worker, uuid: int, device_id: int, offset: Sequence[slice],
         src_buffer = jax_tensor_index(xla_buffer_to_jax_tensor(buffer),
                                       start_indices, slice_sizes)
         to_send = jax_tensor_to_cupy(src_buffer)
-        # worker.sync_all()
         col.send_multigpu(to_send, dst_rank, dst_gpu_idx, group_name)
-        # worker.sync_all()
+
 
 def recv_tile(worker, uuid: int, device_id: int,
               indices_in_dst_tile: Sequence[slice], src_rank: int,
@@ -97,13 +88,8 @@ def recv_tile(worker, uuid: int, device_id: int,
     tensor_shape = buffer.shape
     slice_shape = tuple(ind.stop - ind.start for ind in indices_in_dst_tile)
     is_bool = buffer.dtype == np.bool_
-    # print(-1)
     if is_continuous_subset(indices_in_dst_tile, tensor_shape):
-        # print(-2)
-        # worker.sync_all()
-        print(device_id, indices_in_dst_tile)
         to_recv = xla_buffer_to_cupy(buffer, take_ownership=True)
-        # worker.sync_all()
         if slice_shape == tensor_shape:
             col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
         else:
@@ -113,16 +99,7 @@ def recv_tile(worker, uuid: int, device_id: int,
                               src_gpu_idx,
                               group_name,
                               n_elements=n_elements)
-        # worker.sync_all()
-        # dummy_compute_on_default_stream()
-        # recv_stream = col.get_stream(group_name, device_id, True)
-        # event = mark_event(recv_stream, device_id)
-        # working_stream = xe.fetch_working_streams_from_pyclient(worker.backend)[device_id]å
-        # synchronize_one_event(event, working_stream)
         new_buffer = cupy_to_xla_buffer(to_recv)
-        # dummy_compute_on_default_stream()
-        # worker.local_devices[device_id].synchronize_all_activity()å
-        # worker.sync_all()
     else:
         # The following call will allocate memory and cause a few H2D and
         # D2D kernels.
@@ -130,20 +107,15 @@ def recv_tile(worker, uuid: int, device_id: int,
         logger.debug("Recv goes along the slowest path. "
                      "If this is for transformers, please check the resharding "
                      "specs.")
-        # print(-3)
-        # worker.sync_all()
         tmp_buffer = device_put(jnp.ones(slice_shape, dtype=buffer.dtype),
                                 worker.local_devices[device_id])
         to_recv = jax_tensor_to_cupy(tmp_buffer, take_ownership=True)
-        # worker.sync_all()
         col.recv_multigpu(to_recv, src_rank, src_gpu_idx, group_name)
         
         recv_stream = col.get_stream(group_name, device_id, True)
         event = mark_event(recv_stream, device_id)
         working_stream = xe.fetch_working_streams_from_pyclient(worker.backend)[device_id]
         synchronize_one_event(event, working_stream)
-        
-        # worker.sync_all()
 
         recv_tensor = cupy_to_jax_tensor(to_recv)
         start_indices = tuple(

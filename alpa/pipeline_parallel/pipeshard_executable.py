@@ -30,7 +30,6 @@ from alpa.pipeline_parallel.runtime_emitter import (
 from alpa.shard_parallel.auto_sharding import HloStatus
 from alpa.timer import timers, tracer
 from alpa.util import OrderedSet
-from alpa.pipeline_parallel.xla_custom_call_marker import dummy_compute_on_default_stream
 
 traceback_util.register_exclusion(__file__)
 
@@ -102,7 +101,7 @@ class PipeshardDriverExecutable:
         if global_config.eagerly_create_communicators:
             for task in self.resharding_tasks:
                 task.create_resharding_communicators()
-        
+
         self.instruction_lists = pipeshard_config.instruction_lists
         # self.optimize_instructions_order()
         
@@ -111,10 +110,6 @@ class PipeshardDriverExecutable:
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
             mesh_grad_uuids = pipeshard_config.grad_uuids[mesh_idx]
             for worker in physical_mesh.workers:
-                # print(mesh_idx, " : ")
-                # for instruction in pipeshard_config.instruction_lists[worker]:
-                #     print(f"next instruction: {instruction}, inputs {instruction.input_uuids}, outputs {instruction.output_uuids}")
-                # print("_"*10)
                 acc_grad_local_uuids = []
                 if len(mesh_grad_uuids) > 0:
                     acc_grad_local_uuids = mesh_grad_uuids
@@ -128,7 +123,6 @@ class PipeshardDriverExecutable:
                 worker.put_executable.remote(self.exec_uuid,
                                              PipeshardMeshWorkerExecuable,
                                              *args)
-        # exit(-1)
 
     def profile_instructions(self):
         """
@@ -488,9 +482,7 @@ class PipeshardMeshWorkerExecuable:
             if isinstance(task_config, PartialGradWorkerExecutableConfig):
                 self.worker.put_executable(task_config.exec_uuid,
                                            PartialGradAccMeshWorkerExecutable,
-                                           task_config.hlo,
-                                           task_config.stage_plan,
-                                           task_config.donated_invars)
+                                           *task_config[1:])
                 self.partial_grad_exec_uuids.add(task_config.exec_uuid)
             elif isinstance(task_config, MemZeroWorkerExecutableConfig):
                 assert len(self.acc_grad_buffers) == 0
@@ -536,18 +528,11 @@ class PipeshardMeshWorkerExecuable:
             if global_config.enable_overlapping:
                 buffers_done_events[local_id] = self.global_buffers_done_events[global_id]
         # add preallocated buffers for gradient accumulation
-        # print("input_global_uuids", input_global_uuids, flush=True)
-        # print("input_local_uuids", self.input_local_uuids, flush=True)
-        # print("buffers.keys", self.worker.buffers.keys(), flush=True)
-        # print("buffers.keys", self.worker.buffers_done_events.keys(), flush=True)
-        # print("output_global_uuids", output_global_uuids, flush=True)
         buffers.update(self.acc_grad_buffers)
         # donate invars
         for global_id, donate in zip(input_global_uuids, self.donate_invars):
             if donate:
-                # print("delete global_id: ", global_id)
                 self.worker.delete_buffers(global_id)
-                
         # load the local env
         self.worker.buffers = buffers
         if global_config.enable_overlapping:
@@ -593,15 +578,10 @@ class PipeshardMeshWorkerExecuable:
                 self.worker.run_resharding_recv_task(
                     instruction.task_uuid, instruction.output_uuids[0],
                     instruction.opaques["set_empty_buffer"])
-                # self.worker.sync_all()
-                # dummy_compute_on_default_stream()
                 # TODO(lmzheng): move this to run_resharding_recv_task
                 if instruction.opaques["allgather_uuid"] is not None:
-                    # print("allgather")
                     task_uuid = instruction.opaques["allgather_uuid"]
                     ary_uuid = instruction.output_uuids[0]
-                    # self.worker.sync_all()
-
                     self.worker.run_executable(task_uuid, [ary_uuid],
                                                [ary_uuid], False, False)
             elif instruction.opcode == PipelineInstType.BROADCAST:
@@ -632,8 +612,7 @@ class PipeshardMeshWorkerExecuable:
         buffers.clear()
         if global_config.enable_overlapping:
             self.worker.buffers_done_events = self.global_buffers_done_events
-            buffers_done_events.clear() # TODO(hexu): should I clear it here? 
-            # xe.reset_events()
+            buffers_done_events.clear() # TODO(hexu): should I clear it here?
 
 
     def profile_with_dummy_inputs(self):

@@ -29,7 +29,6 @@ def set_override_backend(backend):
     """Enable the JAX backend monkey patch."""
     global override_backend
     override_backend = backend
-    # print(override_backend)
 
 
 def override_get_backend(*args, **kwargs):

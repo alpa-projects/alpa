@@ -93,9 +93,11 @@ class XLANCCLGroup(BaseGroup):
         comms = self._get_nccl_broadcast_communicator(
             key, broadcast_options.world_size, broadcast_options.devices_ids,
             broadcast_options.devices_global_rank)
+        is_receiver = broadcast_options.devices_global_rank[0] != 0
         xe.nccl_broadcast_partial_gpus(comms, tensors,
                                        broadcast_options.local_start_pos_list,
-                                       broadcast_options.n_elements, root_rank)
+                                       broadcast_options.n_elements, root_rank,
+                                       is_receiver)
 
     def _get_nccl_broadcast_communicator(self,
                                          comm_key,
@@ -152,9 +154,13 @@ class XLANCCLGroup(BaseGroup):
                         "destroyed.")
                     rendezvous.destroy_store()
 
+        streams = [[self.output_xla_cuda_streams[gpu_idx],
+                    self.input_xla_cuda_streams[gpu_idx]]
+                   for gpu_idx in devices_ids]
         comms = xe.nccl_create_communicators(world_size, devices_global_rank,
                                              devices_ids, nccl_uid,
-                                             ENV.NCCL_USE_MULTISTREAM.val)
+                                             global_config.enable_overlapping,
+                                             streams)
         self._dev_comm_map[comm_key] = comms
         return comms
 

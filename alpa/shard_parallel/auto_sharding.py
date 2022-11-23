@@ -409,7 +409,8 @@ def run_backend_compilation(backend: xe.Client,
                             hlo: WrappedHlo,
                             stage_plan: StagePlan,
                             num_devices: int,
-                            bypass_device_assignment_check: bool = False):
+                            bypass_device_assignment_check: bool = False,
+                            overlap_dep_options = None):
     """Compile a spmd partitioned Hlo Module to an XLA executable.
 
     Args:
@@ -440,7 +441,12 @@ def run_backend_compilation(backend: xe.Client,
                 stage_plan.all_reduce_threshold,
             "done-event::enable":
                 global_config.enable_overlapping,
-            # TODO(hexu): do I use it in a right way?
+            "reorder-backend::enable":
+                overlap_dep_options is not None,
+            "reorder-backend::overlap_size":
+                overlap_dep_options[0] if overlap_dep_options else 0,
+            "reorder-backend::output_indices":
+                overlap_dep_options[1] if overlap_dep_options else tuple(),
     }):
         compiled = backend.compile(hlo.get_computation(), compile_options)
 

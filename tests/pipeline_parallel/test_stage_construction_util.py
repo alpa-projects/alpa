@@ -16,7 +16,8 @@ from alpa.pipeline_parallel.stage_profiling import (generate_stage_info,
                                                     distributed_profile_on_mesh,
                                                     get_max_n_succ_stages)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption
-from alpa.testing import get_bert_layer_train_state_and_step
+from alpa.testing import (get_bert_layer_train_state_and_step,
+                          get_mlp_train_state_and_step)
 from alpa.util import GradFuncTransformContext
 
 
@@ -40,8 +41,7 @@ class StageConstructUtilTest(unittest.TestCase):
 
     def create_bert_jaxpr_with_donation(self,
                                         num_layers,
-                                        num_microbatch,
-                                        use_remat=True):
+                                        num_microbatch):
         batch_size = 16
         state, batch, _ = get_bert_layer_train_state_and_step(
             batch_size=batch_size,
@@ -66,9 +66,32 @@ class StageConstructUtilTest(unittest.TestCase):
             new_state = state.apply_gradients(grads=grads)
             return new_state
 
+        return self.compile_train_step(train_step, state, batch, micro_batch)
+
+    def create_mlp_jaxpr(self, num_microbatch):
+        batch_size = 16
+        state, batch, train_step = get_mlp_train_state_and_step(
+            batch_size=batch_size,
+            num_layers=4,
+            use_bias=False,
+            add_manual_pipeline_marker=True
+        )
+
+        def train_step(state, batch):
+            def loss_func(params):
+                out = state.apply_fn(params, batch["x"])
+                return jnp.mean((out - batch["y"]) ** 2)
+
+            grads = grad(loss_func)(state.params)
+            new_state = state.apply_gradients(grads=grads)
+            return new_state
+
         microbatch_size = batch_size // num_microbatch
         micro_batch = {k: v[:microbatch_size] for k, v in batch.items()}
+        return self.compile_train_step(train_step, state, batch, micro_batch)
 
+    def compile_train_step(self, train_step, state, batch, micro_batch,
+                           use_remat=True):
         # Compile
         with GradFuncTransformContext(ManualLayerOption(use_remat).transform):
             closed_jaxpr, output_tree = make_jaxpr(train_step,
@@ -110,7 +133,8 @@ class StageConstructUtilTest(unittest.TestCase):
                                 apply_grad_global_info, num_micro_batches,
                                 start_index, end_index):
         virtual_mesh = get_global_virtual_physical_mesh()
-        submesh = (virtual_mesh.num_hosts, virtual_mesh.num_devices_per_host)
+        # submesh = (virtual_mesh.num_hosts, virtual_mesh.num_devices_per_host)
+        submesh = (1, 1)
         virtual_submesh = virtual_mesh.slice_2d(tuple(range(
             submesh[0])), (tuple(range(submesh[1])),) * submesh[0])
         auto_sharding_config = get_one_submesh_autosharding_config_choices(
@@ -149,31 +173,44 @@ class StageConstructUtilTest(unittest.TestCase):
         return profile_results[stage_index]
 
     def test_1d_2d_results_the_same(self):
-        num_layers = 3
         num_microbatch = 2
+        # num_layers = 3
+        # (closed_jaxpr, full_batch_closed_jaxpr,
+        #  donated_invars) = self.create_bert_jaxpr_with_donation(
+        #      num_layers, num_microbatch)
+        num_layers = 2
         (closed_jaxpr, full_batch_closed_jaxpr,
-         donated_invars) = self.create_bert_jaxpr_with_donation(
-             num_layers, num_microbatch)
+         donated_invars) = self.create_mlp_jaxpr(num_microbatch)
         (closed_jaxpr, global_outvars, jax_pipeline_layers, apply_grad_jaxpr,
          microbatch_bound, reduction_vector, post_microbatch_bound,
          accumulator_mapping, acc_grad_outvars, jax_apply_layers,
          apply_grad_global_info) = self.pre_process_jaxpr(
              closed_jaxpr, full_batch_closed_jaxpr, num_microbatch,
              donated_invars)
+        print("-" * 100)
+        print(closed_jaxpr)
+        print("-" * 100)
 
         # 2D
+        print("-" * 100)
         profile_results_2d = self.generate_profile_result(
             jax_pipeline_layers, accumulator_mapping, acc_grad_outvars,
             jax_apply_layers, apply_grad_global_info, num_microbatch, 0,
             num_layers - 1)
-
+        print(profile_results_2d)
+        print("-" * 100)
         # 1D
+        print("-" * 100)
         profile_results_1d = []
         for layer_idx in range(num_layers):
-            profile_results_1d.append(self.generate_profile_result(
+            result = self.generate_profile_result(
                 jax_pipeline_layers, accumulator_mapping, acc_grad_outvars,
                 jax_apply_layers, apply_grad_global_info, num_microbatch,
-                layer_idx, layer_idx))
+                layer_idx, layer_idx)
+            profile_results_1d.append(result)
+            print(result)
+            print("-" * 50)
+        print("-" * 100)
 
         # Compare
         max_stage_2d, (available_memory_2d, peak_memory_2d, initial_size_2d,

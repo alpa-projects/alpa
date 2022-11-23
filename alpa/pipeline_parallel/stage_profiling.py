@@ -740,7 +740,9 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
             if invar not in env:
                 env[invar] = size
             else:
-                assert env[invar] == size
+                # env[invar] and size might be different because of different
+                # sharding specs. We take the max for estimation.
+                env[invar] = max(env[invar], size)
             if donated:
                 del env[invar]
         for outvar, size in zip(module_result.outvar_names,
@@ -762,7 +764,7 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
         if stage_no == n_stages - 1:
             # Record the variables that are not eliminated at the end of the
             # last forward module.
-            intermediate_size = total_env_size
+            intermediate_size = sum(env.values())
     for var in required_outvars:
         del env[var]
 

@@ -104,7 +104,7 @@ class StageConstructUtilTest(unittest.TestCase):
 
         return (closed_jaxpr, global_outvars, jax_pipeline_layers,
                 apply_grad_jaxpr, microbatch_bound, reduction_vector,
-                post_microbatch_bound, accumulator_mapping, acc_grad_invars,
+                post_microbatch_bound, accumulator_mapping,
                 acc_grad_outvars, jax_apply_layers, apply_grad_global_info)
 
     def generate_profile_result(self, jax_pipeline_layers, accumulator_mapping,
@@ -114,7 +114,7 @@ class StageConstructUtilTest(unittest.TestCase):
         virtual_mesh = get_global_virtual_physical_mesh()
         submesh = (virtual_mesh.num_hosts, virtual_mesh.num_devices_per_host)
         virtual_submesh = virtual_mesh.slice_2d(tuple(range(
-            submesh[0])), (tuple(range(submesh[1])),) * submesh[1])
+            submesh[0])), (tuple(range(submesh[1])),) * submesh[0])
         auto_sharding_config = get_one_submesh_autosharding_config_choices(
             virtual_submesh, "same_as_physical", batch_size=None)[0]
 
@@ -158,7 +158,7 @@ class StageConstructUtilTest(unittest.TestCase):
              num_layers, num_microbatch)
         (closed_jaxpr, global_outvars, jax_pipeline_layers, apply_grad_jaxpr,
          microbatch_bound, reduction_vector, post_microbatch_bound,
-         accumulator_mapping, acc_grad_invars, acc_grad_outvars,
+         accumulator_mapping, acc_grad_outvars,
          jax_apply_layers, apply_grad_global_info) = self.pre_process_jaxpr(
              closed_jaxpr, full_batch_closed_jaxpr, num_microbatch,
              donated_invars)

@@ -66,12 +66,15 @@ class StageConstructUtilTest(unittest.TestCase):
             new_state = state.apply_gradients(grads=grads)
             return new_state
 
+        microbatch_size = batch_size // num_microbatch
+        micro_batch = {k: v[:microbatch_size] for k, v in batch.items()}
         return self.compile_train_step(train_step, state, batch, micro_batch)
 
     def create_mlp_jaxpr(self, num_microbatch):
         batch_size = 16
         state, batch, train_step = get_mlp_train_state_and_step(
             batch_size=batch_size,
+            hidden_size=512,
             num_layers=4,
             use_bias=False,
             add_manual_pipeline_marker=True

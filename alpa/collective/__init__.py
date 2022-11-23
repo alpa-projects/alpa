@@ -6,16 +6,16 @@ from alpa.collective.collective import (
     get_collective_group_size, allreduce, allreduce_multigpu, barrier, reduce,
     reduce_multigpu, broadcast, broadcast_partialgpu, broadcast_multigpu,
     allgather, allgather_multigpu, reducescatter, reducescatter_multigpu, send,
-    send_multigpu, recv, recv_multigpu, check_and_get_group, initialize_streams_for_groups,
-    get_participated_streams, get_all_streams, get_stream)
+    send_multigpu, recv, recv_multigpu, check_and_get_group, record_events,
+    wait_events, comm_wait_compute, compute_wait_comm)
 
 __all__ = [
     "nccl_available", "gloo_available", "is_group_initialized",
     "init_collective_group", "destroy_collective_group",
     "create_collective_group", "get_rank", "get_collective_group_size",
     "allreduce", "allreduce_multigpu", "barrier", "reduce", "reduce_multigpu",
-    "broadcast", "broadcast_multigpu", "allgather", "allgather_multigpu",
-    "reducescatter", "reducescatter_multigpu", "send", "send_multigpu", "recv",
-    "recv_multigpu", "check_and_get_group", "initialize_streams_for_groups", "get_participated_streams",
-    "get_all_streams", "get_stream"
+    "broadcast", "broadcast_partialgpu", "broadcast_multigpu", "allgather",
+    "allgather_multigpu", "reducescatter", "reducescatter_multigpu", "send",
+    "send_multigpu", "recv", "recv_multigpu", "check_and_get_group",
+    "record_events", "wait_events", "comm_wait_compute", "compute_wait_comm"
 ]

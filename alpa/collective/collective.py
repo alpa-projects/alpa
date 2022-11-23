@@ -126,16 +126,9 @@ class GroupManager:
         except ValueError:
             pass
 
-    def initialize_streams_for_groups(self, backend):
-        for name, group in self._name_group_map.items():
-            print(name)
-            group.initialize_streams(backend)
-
 
 _group_mgr = GroupManager()
 
-def initialize_streams_for_groups(backend):
-    _group_mgr.initialize_streams_for_groups(backend)
 
 def is_group_initialized(group_name):
     """Check if the group is initialized in this process by the group name."""
@@ -771,6 +764,26 @@ def _check_and_get_group(group_name):
 check_and_get_group = _check_and_get_group
 
 
+def record_events(group_name, uuids, num_devices, is_send):
+    g = _check_and_get_group(group_name)
+    g.record_events(uuids, num_devices, is_send)
+
+
+def wait_events(group_name, uuids, num_devices, is_send):
+    g = _check_and_get_group(group_name)
+    g.wait_events(uuids, num_devices, is_send)
+
+
+def comm_wait_compute(group_name, is_send, is_compute, device_id):
+    g = _check_and_get_group(group_name)
+    g.comm_wait_compute(is_send, is_compute, device_id)
+
+
+def compute_wait_comm(group_name, is_send, is_compute, device_id):
+    g = _check_and_get_group(group_name)
+    g.compute_wait_comm(is_send, is_compute, device_id)
+
+
 def _check_single_tensor_input(tensor):
     """Check if the tensor is with a supported type."""
     if isinstance(tensor, (np.ndarray, xe.DeviceArray)):
@@ -844,33 +857,3 @@ def _check_root_tensor_valid(length, root_tensor):
     if root_tensor >= length:
         raise ValueError(f"root_tensor '{root_tensor}' is greater "
                          f"than the number of GPUs: '{length}'")
-
-def get_participated_streams(participated_devices,
-                             input_or_output_streams,
-                             group_name):
-    """get working streams for participated devices.
-
-    Args:
-        participated_devices: participated devices ids.
-        input_or_output_streams(List[bool]): True means input
-            stream, otherwise output stream
-
-    Returns:
-        None
-    """
-    g = _check_and_get_group(group_name)
-    participated_streams = []
-    for device, is_input in zip(participated_devices, input_or_output_streams):
-        participated_streams.append(g.input_xla_cuda_streams[device]
-                                    if is_input else g.output_xla_cuda_streams[device])
-    # print(participated_streams)
-    return participated_streams
-
-def get_all_streams(group_name):
-    g = _check_and_get_group(group_name)
-    participated_streams = list(g.input_xla_cuda_streams.values()) + list(g.input_xla_cuda_streams.values())
-    return participated_streams
-
-def get_stream(group_name, device_id, is_input):
-    g = _check_and_get_group(group_name)
-    return g.input_xla_cuda_streams[device_id] if is_input else g.input_xla_cuda_streams[device_id]

@@ -139,37 +139,58 @@ def _get_delayed_eqns(compute_eqns, layer_invars, pipeline_outvars, gensym_fn):
     grad(weight) depends on grad(x) and is in the acc_grad period, so we cannot
     delay it to the apply_grad period.
     """
-    # TODO(yonghao): handle unused vars
     cross_layer_grad_eqns = []
     new_compute_eqns = []
     moved_to_layer_eqns = []
 
     marked_vars = set()
+    used_vars = set()
+    out_marker = True
     for eqn in reversed(compute_eqns):
         invars = _filter_literal(eqn.invars)
         outvars = _filter_droped(eqn.outvars)
+        used_outvars = used_vars.intersection(outvars)
         if eqn.primitive is pipeline_p:
             # invars of a pipeline end marker is marked
             if eqn.params['mark_type'] == 'end':
                 marked_vars.update(invars)
-            new_compute_eqns.append(eqn)
-        elif marked_vars.issuperset(outvars):
-            # eqn is marked if all outvars are marked, then mark its invars.
-            marked_vars.update(invars)
+                out_marker = False
+            else:
+                out_marker = True
             new_compute_eqns.append(eqn)
         else:
-            assert not marked_vars.intersection(
-                outvars), f"'{eqn}' is partially marked."
-            if layer_invars.intersection(outvars):
-                # move the marked var to the latest stage producing some of its
-                # invars.
-                moved_to_layer_eqns.append(eqn)
-                # update layer invars and marked vars.
-                layer_invars.update(invars)
-                marked_vars.update(outvars)
-            else:
+            # we don't want to do dce here, because it may make its operand be
+            # considered as cross layer grad, and then moved across microbatch
+            # boundary, which is harder to analyze.
+            if not len(outvars) and out_marker:
+                continue
+            # only if an eqn is not used and OUT MARKER does it moved after
+            # microbatch boundary. Those inside a microbatch boundary is handled
+            # by later DCE.
+            elif not used_outvars and out_marker:
                 cross_layer_grad_eqns.append(eqn)
+                continue
+            elif marked_vars.issuperset(used_outvars):
+                # eqn is marked if all outvars are marked, then mark its invars.
+                marked_vars.update(invars)
+                new_compute_eqns.append(eqn)
+            else:
+                assert not marked_vars.intersection(
+                    outvars), f"'{eqn}' is partially marked."
+                if layer_invars.intersection(outvars):
+                    # move the marked var to the latest stage producing some of
+                    # its invars.
+                    moved_to_layer_eqns.append(eqn)
+                    # update layer invars and marked vars.
+                    layer_invars.update(invars)
+                    marked_vars.update(outvars)
+                else:
+                    cross_layer_grad_eqns.append(eqn)
+                    continue
+        used_vars.update(invars)
+
     new_compute_eqns = list(reversed(new_compute_eqns))
+    cross_layer_grad_eqns = list(reversed(cross_layer_grad_eqns))
     eqn_moved_to = {}
     for eqn in reversed(moved_to_layer_eqns):
         invars = _filter_literal(eqn.invars)

@@ -53,7 +53,7 @@ class PipelineInstruction:
     output_uuids: Optional[np.ndarray]
     opaques: Optional[Dict[str, Any]]
     info: str
-    print_uuids: bool = True
+    print_uuids: bool = False
 
     @classmethod
     def run(cls, task_uuid, input_uuids, output_uuids, kwargs, info=""):  # noqa
@@ -113,7 +113,7 @@ class PipelineInstruction:
                    output_uuids=None,
                    opaques=None,
                    info=info,
-                   print_uuids=True)
+                   print_uuids=False)
 
     def __str__(self):
         ret = ""
@@ -385,25 +385,6 @@ class PipelineInstEmitter:
                 self.mesh_group.establish_nccl_group(i, j, instantiate=False)
         return device_str_groups
 
-    def _profile_instructions(self, instruction_lists, executable_config_lists):
-        """
-            return a dictionary in which the key is worker, 
-            the value is the time cost for each instruction for this worker. 
-        """
-        instruction_costs = {}
-        for worker, insts in self.instruction_lists.items():
-            instruction_costs[worker] = []
-        pass
-        # TODO(hexu): finish this
-        return instruction_costs
-
-    def _optimize_instructions_order(self, instruction_lists,
-                                     executable_config_lists):
-        instruction_costs = self._profile_instructions(instruction_lists,
-                                                       executable_config_lists)
-
-        pass
-
     def compile(self):
         """Compile pipeline instructions and executables for workers."""
         num_mesh = len(self.mesh_group)
@@ -436,7 +417,6 @@ class PipelineInstEmitter:
             self._compile_exec_one_tick(sched, donation_mapping,
                                         instruction_lists, executable_uuids,
                                         executable_config_lists)
-        # self._optimize_instructions_order(instruction_lists, executable_config_lists)
 
         # Compile concate
         self._compile_concate(instruction_lists, executable_config_lists)
@@ -519,11 +499,6 @@ class PipelineInstEmitter:
             src_idx, src_uuid = list(
                 self.env.get_var_meshes(invar, batch_idx).items())[0]
             resharding_task = self._resharding_tasks[src_idx][mesh_idx][var_key]
-
-            # self.mesh_instructions[src_idx].append(("resharding", resharding_task))
-            # self.mesh_instructions_interval[src_idx].append({worker:[-1,-1] for worker in src_idx.worker})
-            # TODO(hexu): finish this.
-
             if global_config.resharding_mode == "send_recv":
                 self._compile_resharding_task(src_uuid, resharding_task,
                                               recv_uuid, comm_lists)

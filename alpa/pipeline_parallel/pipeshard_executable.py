@@ -7,11 +7,14 @@ import time
 from typing import Optional, Sequence
 
 from jax._src import traceback_util
+from jax._src.lib import xla_extension as xe
 from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves, PyTreeDef
 import numpy as np
 import ray.exceptions
 
-from alpa.device_mesh import MeshHostWorker, RemoteArrayRef, create_and_record_cross_mesh_collective_communicators, next_array_uuids
+from alpa.device_mesh import (
+    MeshHostWorker, RemoteArrayRef,
+    create_and_record_cross_mesh_collective_communicators, next_array_uuids)
 from alpa.global_env import global_config
 from alpa.device_mesh import PhysicalDeviceMeshGroup
 from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
@@ -102,9 +105,6 @@ class PipeshardDriverExecutable:
             for task in self.resharding_tasks:
                 task.create_resharding_communicators()
 
-        self.instruction_lists = pipeshard_config.instruction_lists
-        # self.optimize_instructions_order()
-        
         self.exec_uuid = next_mesh_executable_uuid()
         # Create a PipeshardMeshWorkerExecuable for each MeshHostWorker
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
@@ -123,21 +123,6 @@ class PipeshardDriverExecutable:
                 worker.put_executable.remote(self.exec_uuid,
                                              PipeshardMeshWorkerExecuable,
                                              *args)
-
-    def profile_instructions(self):
-        """
-            return a dictionary in which the key is worker, 
-            the value is the time cost for each instruction for this worker. 
-        """
-        self.instruction_costs = {}
-        for worker, insts in self.instruction_lists.items():
-            self.instruction_costs[worker] = []
-        pass 
-        # TODO(hexu): finish this
-
-    def optimize_instructions_order(self):
-        
-        pass
 
     ##### Compilation Related Functions #####
     def _instantiate_nccl_groups(self, device_str_groups):
@@ -465,7 +450,6 @@ class PipeshardMeshWorkerExecuable:
         # Buffer management
         self.worker = worker
         self.global_buffers = worker.buffers
-        self.global_buffers_done_events = worker.buffers_done_events
         self.acc_grad_buffers = {}
         self.acc_in_uuids = acc_local_uuids
         self.acc_out_uuids = acc_out_uuids
@@ -521,12 +505,10 @@ class PipeshardMeshWorkerExecuable:
         # create a local buffer environment
         assert len(self.input_local_uuids) == len(input_global_uuids)
         buffers = {}
-        buffers_done_events = {}
         for local_id, global_id in zip(self.input_local_uuids,
                                        input_global_uuids):
             buffers[local_id] = self.global_buffers[global_id]
-            if global_config.enable_overlapping:
-                buffers_done_events[local_id] = self.global_buffers_done_events[global_id]
+        xe.reset_event_context(self.worker.backend)
         # add preallocated buffers for gradient accumulation
         buffers.update(self.acc_grad_buffers)
         # donate invars
@@ -535,8 +517,6 @@ class PipeshardMeshWorkerExecuable:
                 self.worker.delete_buffers(global_id)
         # load the local env
         self.worker.buffers = buffers
-        if global_config.enable_overlapping:
-            self.worker.buffers_done_events = buffers_done_events
         sync_func = self.worker.sync if sync_for_timer else None
 
         # Setup tracer
@@ -565,7 +545,6 @@ class PipeshardMeshWorkerExecuable:
 
             if instruction.opcode == PipelineInstType.RUN:
                 log_run_begin(instruction.info, sync_func=sync_func)
-
                 self.worker.run_executable(instruction.task_uuid,
                                            instruction.input_uuids,
                                            instruction.output_uuids,
@@ -599,8 +578,6 @@ class PipeshardMeshWorkerExecuable:
         for local_id, global_id in zip(self.output_local_uuids,
                                        output_global_uuids):
             self.global_buffers[global_id] = buffers[local_id]
-            if global_config.enable_overlapping:
-                self.global_buffers_done_events[global_id] = buffers_done_events[local_id]
         # now acc_grad_buffers are those after grad acc, before apply grad
         # with memzero. These buffers are reused in the next iteration.
         # TODO(yonghao): never donate them
@@ -610,9 +587,7 @@ class PipeshardMeshWorkerExecuable:
         # restore global environment
         self.worker.buffers = self.global_buffers
         buffers.clear()
-        if global_config.enable_overlapping:
-            self.worker.buffers_done_events = self.global_buffers_done_events
-            buffers_done_events.clear() # TODO(hexu): should I clear it here?
+        xe.reset_event_context(self.worker.backend)
 
 
     def profile_with_dummy_inputs(self):

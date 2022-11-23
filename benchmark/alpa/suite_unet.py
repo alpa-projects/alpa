@@ -7,16 +7,16 @@ from benchmark_parallel_utils import (BenchmarkCase, SearchParallelArgs,
 
 UNetModelConfig = namedtuple(
     "UNetModelConfig",
-    ["image_size", "channel_size", "block_cnt", "dtype"])
+    ["image_size", "channel_size", "block_cnt", "dtype", "num_layers"])
 
 # block cnt->manual layers: {4: 13, }
 unet_specs = {
     # #Params: sample size, first channel's size, block cnt, dtype
-    "470M": UNetModelConfig(32, 320, 4, np.float32),
-    "1B": UNetModelConfig(32, 480, 4, np.float32),
-    "1.2B": UNetModelConfig(32, 512, 4, np.float32),
-    "1.8B": UNetModelConfig(32, 640, 4, np.float32),
-    "2B": UNetModelConfig(32, 672, 4, np.float32),
+    "470M": UNetModelConfig(32, 320, 4, np.float32, 13),
+    "1B": UNetModelConfig(32, 480, 4, np.float32, 13),
+    "1.2B": UNetModelConfig(32, 512, 4, np.float32, 13),
+    "1.8B": UNetModelConfig(32, 640, 4, np.float32, 13),
+    "2B": UNetModelConfig(32, 672, 4, np.float32, 13),
 }
 
 prefer_reduce_scatter = False

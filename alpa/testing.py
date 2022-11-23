@@ -332,7 +332,7 @@ class PipelineBasicTest(unittest.TestCase):
         if do_numerical_test:
             expected_new_state = None
             actual_new_state = None
-            for i in range(5):
+            for i in range(1):
                 if i > 0:
                     state = expected_new_state
                 expected_new_state, expected_val = serial_train_step(

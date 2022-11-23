@@ -103,7 +103,7 @@ def prepare_unet_input_and_model(benchmark_case):
     print_used_time(None)
     # Model configs
     (batch_size, model_config, _, _, _) = benchmark_case
-    (image_size, channel_size, block_cnt, dtype) = model_config
+    (image_size, channel_size, block_cnt, dtype, _) = model_config
     in_channels = 3
     out_channels = 4
 
@@ -172,6 +172,7 @@ def benchmark_unet_3d_internal(benchmark_case,
         allow_mixed_mesh_shape=allow_mixed_mesh_shape,
         pipeline_schedule=pipeline_schedule)
     method: alpa.parallel_method.PipeshardParallel
+    # The operator clustering for unet is not sufficient
     method.layer_option = ManualLayerOption(remat_layer=True)
 
     use_grad_acc = benchmark_case.num_micro_batches > 1

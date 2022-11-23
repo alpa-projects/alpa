@@ -547,11 +547,6 @@ class SymbolicBroadcastReshardingTask(ReshardingTask):
                         group_name, config.comm_key, world_size,
                         devices_info["device_ids"],
                         devices_info["global_ranks"], nccl_uid))
-                task_dones.append(
-                    worker.init_broadcast_communicator.remote(
-                        group_name, config.comm_key, world_size,
-                        devices_info["device_ids"],
-                        devices_info["global_ranks"], nccl_uid))
             ray.get(task_dones)
 
     def __str__(self):

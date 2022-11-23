@@ -772,7 +772,8 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
                     max(intermediate_size, 1e-8) - 1)
     max_stage = min(max(-1, max_stage), INFINITY_N_STAGES)
 
-    return max_stage
+    return max_stage, (available_memory, peak_memory, initial_size,
+                       intermediate_size)
 
 
 def interpret_profile_result_2d(profile_results: Dict[Tuple[int, ...],
@@ -796,7 +797,8 @@ def interpret_profile_result_2d(profile_results: Dict[Tuple[int, ...],
         all_compute_cost[index] = sum(
             result.compute_cost
             for result in profile_result.module_profile_results)
-        all_max_n_succ_stages[index] = get_max_n_succ_stages([profile_result])
+        all_max_n_succ_stages[index], _ = get_max_n_succ_stages(
+            [profile_result])
 
     return all_compute_cost, all_max_n_succ_stages
 
@@ -856,9 +858,9 @@ def interpret_profile_result_1d(profile_results: Dict[Tuple[int, ...],
                             result.compute_cost
                             for profile_result in selected_profile_results
                             for result in profile_result.module_profile_results)
-                    all_max_n_succ_stages[start, end, submesh_choice,
-                                          config_idx] = get_max_n_succ_stages(
-                                              selected_profile_results)
+                    (all_max_n_succ_stages[start, end, submesh_choice,
+                                           config_idx],
+                     _) = get_max_n_succ_stages(selected_profile_results)
     return all_compute_cost, all_max_n_succ_stages
 
 

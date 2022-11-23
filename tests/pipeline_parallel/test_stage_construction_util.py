@@ -12,14 +12,12 @@ from alpa.pipeline_parallel.stage_construction import (
 from alpa.pipeline_parallel.compile_executable import (
     split_and_process_layers, slice_apply_grad_for_stage_construction)
 from alpa.pipeline_parallel.layer_construction import ManualLayerOption
-from alpa.pipeline_parallel.stage_profiling import (ApplyGradConfig,
-                                                    CompileConfig,
-                                                    ProfileConfig,
-                                                    generate_stage_info,
-                                                    distributed_profile_on_mesh)
+from alpa.pipeline_parallel.stage_profiling import (generate_stage_info,
+                                                    distributed_profile_on_mesh,
+                                                    get_max_n_succ_stages)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption
 from alpa.testing import get_bert_layer_train_state_and_step
-from alpa.util import OrderedSet, GradFuncTransformContext
+from alpa.util import GradFuncTransformContext
 
 
 def _aval_key(a):
@@ -104,8 +102,8 @@ class StageConstructUtilTest(unittest.TestCase):
 
         return (closed_jaxpr, global_outvars, jax_pipeline_layers,
                 apply_grad_jaxpr, microbatch_bound, reduction_vector,
-                post_microbatch_bound, accumulator_mapping,
-                acc_grad_outvars, jax_apply_layers, apply_grad_global_info)
+                post_microbatch_bound, accumulator_mapping, acc_grad_outvars,
+                jax_apply_layers, apply_grad_global_info)
 
     def generate_profile_result(self, jax_pipeline_layers, accumulator_mapping,
                                 acc_grad_outvars, jax_apply_layers,
@@ -151,24 +149,48 @@ class StageConstructUtilTest(unittest.TestCase):
         return profile_results[stage_index]
 
     def test_1d_2d_results_the_same(self):
-        num_layers = 2
+        num_layers = 12
         num_microbatch = 2
         (closed_jaxpr, full_batch_closed_jaxpr,
          donated_invars) = self.create_bert_jaxpr_with_donation(
              num_layers, num_microbatch)
         (closed_jaxpr, global_outvars, jax_pipeline_layers, apply_grad_jaxpr,
          microbatch_bound, reduction_vector, post_microbatch_bound,
-         accumulator_mapping, acc_grad_outvars,
-         jax_apply_layers, apply_grad_global_info) = self.pre_process_jaxpr(
+         accumulator_mapping, acc_grad_outvars, jax_apply_layers,
+         apply_grad_global_info) = self.pre_process_jaxpr(
              closed_jaxpr, full_batch_closed_jaxpr, num_microbatch,
              donated_invars)
 
-        profile_results = self.generate_profile_result(
+        # 2D
+        profile_results_2d = self.generate_profile_result(
             jax_pipeline_layers, accumulator_mapping, acc_grad_outvars,
             jax_apply_layers, apply_grad_global_info, num_microbatch, 0,
             num_layers - 1)
 
-        print(profile_results)
+        # 1D
+        profile_results_1d = []
+        for layer_idx in range(num_layers):
+            profile_results_1d.append(self.generate_profile_result(
+                jax_pipeline_layers, accumulator_mapping, acc_grad_outvars,
+                jax_apply_layers, apply_grad_global_info, num_microbatch,
+                layer_idx, layer_idx))
+
+        # Compare
+        max_stage_2d, (available_memory_2d, peak_memory_2d, initial_size_2d,
+                       intermediate_size_2d) = get_max_n_succ_stages([profile_results_2d])
+        max_stage_1d, (available_memory_1d, peak_memory_1d, initial_size_1d,
+                       intermediate_size_1d) = get_max_n_succ_stages([profile_results_1d])
+        print("max_stage_2d: ", max_stage_2d)
+        print("max_stage_1d: ", max_stage_1d)
+        print("available_memory_2d: ", available_memory_2d)
+        print("available_memory_1d: ", available_memory_1d)
+        print("peak_memory_2d: ", peak_memory_2d)
+        print("peak_memory_1d: ", peak_memory_1d)
+        print("initial_size_2d: ", initial_size_2d)
+        print("initial_size_1d: ", initial_size_1d)
+        print("intermediate_size_2d: ", intermediate_size_2d)
+        print("intermediate_size_1d: ", intermediate_size_1d)
+
 
 
 def suite():

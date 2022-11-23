@@ -2275,7 +2275,7 @@ global_virtual_physical_mesh: VirtualPhysicalMesh = None
 def init_global_cluster(cluster: str,
                         num_nodes: Optional[int] = None,
                         num_devices_per_node: Optional[int] = None,
-                        namespace: Optional[str] = None):
+                        namespace: str = "alpa_ray_space"):
     global global_cluster, global_physical_mesh, global_virtual_physical_mesh
 
     if cluster == "local":

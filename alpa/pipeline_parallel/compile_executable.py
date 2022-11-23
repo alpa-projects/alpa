@@ -129,53 +129,22 @@ def compile_pipeshard_executable_internal(
           each stage.
     """
     global_invars = closed_jaxpr.jaxpr.invars
-    global_outvars = closed_jaxpr.jaxpr.outvars
     gensym_func = gensym([closed_jaxpr.jaxpr])
-
-    # Split the jaxpr into compute_grad and apply_grad
     inference_mode = (pipeline_schedule == "inference")
-    (closed_jaxpr, compute_grad_jaxpr, apply_grad_jaxpr,
-     microbatch_bound) = split_compute_grad_and_apply_grad(
-         closed_jaxpr, gensym_func, num_microbatch, inference_mode)
 
-    # Transform compute_grad to accumulate_grad
-    # FIXME(yonghao): use apply grad jaxpr returned by this function
-    (reduction_vector, post_microbatch_bound,
-     _) = _get_full_batch_apply_grad(full_batch_closed_jaxpr, microbatch_bound,
-                                     num_microbatch, inference_mode)
-    (acc_grad_jaxpr, microbatch_bound,
-     accumulator_mapping) = compute_grad_to_accumulate_grad(
-         compute_grad_jaxpr, microbatch_bound, reduction_vector, gensym_func,
-         num_microbatch)
+    (closed_jaxpr, global_outvars, jax_pipeline_layers, apply_grad_jaxpr,
+     microbatch_bound, reduction_vector, post_microbatch_bound,
+     accumulator_mapping, acc_grad_outvars) = (split_and_process_layers(
+         closed_jaxpr, full_batch_closed_jaxpr, num_microbatch, inference_mode,
+         gensym_func))
 
-    # Slice the jaxpr into layers
-    acc_grad_invars = acc_grad_jaxpr.jaxpr.invars
-    acc_grad_outvars = acc_grad_jaxpr.jaxpr.outvars
-
-    jax_pipeline_layers = slice_closed_jaxpr_by_full_pipeline_marks(
-        acc_grad_jaxpr)
-    if not inference_mode:
-        jax_pipeline_layers = (
-            mark_missing_vars_in_backward_computation_pipeline_marks(
-                jax_pipeline_layers, acc_grad_invars, acc_grad_outvars,
-                gensym_func))
-    # TODO(yonghao): remove this pass. we can clear these vars when rewriting
-    # compute grad to accumulate grad
-    jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
-
-    # Add compute mean and slice apply-grad stages
-    # FIXME (zhuohan): get_mean only works when we use jax.mean to
-    #                  calculate loss. It will fail if we use sum.
-    apply_grad_jaxpr, global_outvars = apply_grad_get_mean(
-        apply_grad_jaxpr, global_outvars, microbatch_bound.outvars, gensym_func,
-        num_microbatch, reduction_vector)
+    debug_compilation_time("jaxpr operations")
 
     (jax_apply_layers,
-     apply_grad_global_info) = _slice_apply_grad_for_stage_construction(
+     apply_grad_global_info) = slice_apply_grad_for_stage_construction(
          jax_pipeline_layers, apply_grad_jaxpr, microbatch_bound, global_invars,
          global_outvars, donated_invars, accumulator_mapping, gensym_func,
          inference_mode)
-    debug_compilation_time("jaxpr operations")
 
     # Construct pipeline stages by merging layers
     (jax_pipeline_stages, stage_to_mesh, sliced_virtual_meshes,
@@ -276,6 +245,62 @@ def compile_pipeshard_executable_internal(
 
     debug_compilation_time("runtime emitter")
     return pipeshard_config
+
+
+def split_and_process_layers(closed_jaxpr, full_batch_closed_jaxpr,
+                             num_microbatch, inference_mode, gensym_func):
+    """Split and process the input jaxpr with the following steps:
+
+    1. Split the jaxpr into the compute grad part and the apply grad part.
+    2. Transform the compute grad jaxpr to a accumulate grad jaxpr.
+    3. Split the accumulate grad jaxpr into forward and backward pipeline
+       layers.
+    4. Divide the accumulated gradient by the number of microbatches at the
+       start of accumulate gradient.
+
+    """
+    global_outvars = closed_jaxpr.jaxpr.outvars
+
+    # Split the jaxpr into compute_grad and apply_grad
+    (closed_jaxpr, compute_grad_jaxpr, apply_grad_jaxpr,
+     microbatch_bound) = split_compute_grad_and_apply_grad(
+         closed_jaxpr, gensym_func, num_microbatch, inference_mode)
+
+    # Transform compute_grad to accumulate_grad
+    # FIXME(yonghao): use apply grad jaxpr returned by this function
+    (reduction_vector, post_microbatch_bound,
+     _) = _get_full_batch_apply_grad(full_batch_closed_jaxpr, microbatch_bound,
+                                     num_microbatch, inference_mode)
+    (acc_grad_jaxpr, microbatch_bound,
+     accumulator_mapping) = compute_grad_to_accumulate_grad(
+         compute_grad_jaxpr, microbatch_bound, reduction_vector, gensym_func,
+         num_microbatch)
+
+    # Slice the jaxpr into layers
+    acc_grad_invars = acc_grad_jaxpr.jaxpr.invars
+    acc_grad_outvars = acc_grad_jaxpr.jaxpr.outvars
+
+    jax_pipeline_layers = slice_closed_jaxpr_by_full_pipeline_marks(
+        acc_grad_jaxpr)
+    if not inference_mode:
+        jax_pipeline_layers = (
+            mark_missing_vars_in_backward_computation_pipeline_marks(
+                jax_pipeline_layers, acc_grad_invars, acc_grad_outvars,
+                gensym_func))
+    # TODO(yonghao): remove this pass. we can clear these vars when rewriting
+    #   compute grad to accumulate grad
+    jax_pipeline_layers = pipeline_dce(jax_pipeline_layers, acc_grad_outvars)
+
+    # Add compute mean and slice apply-grad stages
+    # FIXME (zhuohan): get_mean only works when we use jax.mean to
+    #                  calculate loss. It will fail if we use sum.
+    apply_grad_jaxpr, global_outvars = apply_grad_get_mean(
+        apply_grad_jaxpr, global_outvars, microbatch_bound.outvars, gensym_func,
+        num_microbatch, reduction_vector)
+
+    return (closed_jaxpr, global_outvars, jax_pipeline_layers, apply_grad_jaxpr,
+            microbatch_bound, reduction_vector, post_microbatch_bound,
+            accumulator_mapping, acc_grad_outvars)
 
 
 def shard_each_stage(jax_all_stages, virtual_meshes, schedule, num_meshes,
@@ -380,11 +405,11 @@ def shard_each_stage(jax_all_stages, virtual_meshes, schedule, num_meshes,
     return xla_stages, total_flops
 
 
-def _slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
-                                             microbatch_bound, global_invars,
-                                             global_outvars, donated_invars,
-                                             accumulator_mapping, gensym_func,
-                                             inference_mode):
+def slice_apply_grad_for_stage_construction(pipeline_layers, apply_grad_jaxpr,
+                                            microbatch_bound, global_invars,
+                                            global_outvars, donated_invars,
+                                            accumulator_mapping, gensym_func,
+                                            inference_mode):
     if inference_mode:
         num_layers = len(pipeline_layers)
         num_mesh = num_layers

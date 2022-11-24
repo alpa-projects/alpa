@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import optax
 import ray
 
-from alpa import init, parallelize, PipeshardParallel, get_global_physical_mesh
+from alpa import init, parallelize, PipeshardParallel
 from alpa.model.model_util import TrainState
 from alpa.parallel_method import LocalPipelineParallel
 from alpa.pipeline_parallel.layer_construction import manual_layer_construction

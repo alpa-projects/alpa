@@ -746,8 +746,8 @@ def download_weights(model_name, path):
             with open(param_path, "wb") as f:
                 np.save(f, param.cpu().detach().numpy())
     elif "codegen" in model_name:
-        for name, param in tqdm(list(model.transformer.named_parameters())):
-            print(name)
+        for name, param in tqdm(list(model.named_parameters())):
+            name = name.replace("transformer.", "")
             param_path = os.path.join(path, name)
             with open(param_path, "wb") as f:
                 np.save(f, param.cpu().detach().numpy())

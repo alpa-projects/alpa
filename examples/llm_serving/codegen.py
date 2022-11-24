@@ -11,7 +11,7 @@ def main(args):
     if "codegen" in args.model:
         name = args.model.replace("alpa", "Salesforce")\
                          .replace("jax", "Salesforce")
-        tokenizer = AutoTokenizer.from_pretrained(name)
+        tokenizer = AutoTokenizer.from_pretrained(name, padding_side="left")
         tokenizer.pad_token = 50256
     generate_params = {
         "do_sample": args.do_sample,
@@ -27,10 +27,10 @@ def main(args):
 
     # Generate
     prompts = [
-        "def hello_world():",
-        "Create a function that solves the two sum problem:",
-        "Create a function that solves the fibonacci sequence problem:",
-        "Create an array that contains the numbers 1 to 10:"
+        "def helloworld():",
+        "Create a function that solves the two sum problem",
+        "Create a function that solves the fibonacci sequence problem",
+        "Create an array that contains the numbers 1 to 10"
     ]
     prompts = prompts[:args.n_prompts]
 
@@ -38,7 +38,6 @@ def main(args):
     
     output_ids = model.generate(input_ids=input_ids,
                                 max_length=64,
-                                n_prompts=1,
                                 **generate_params)
     outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
     

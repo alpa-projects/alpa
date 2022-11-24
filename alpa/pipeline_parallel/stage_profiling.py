@@ -1199,6 +1199,10 @@ def generate_stage_info(all_layers, selected_indices,
         merged_apply = merge_marked_jaxprs_with_named_call(
             [layer.closed_jaxpr() for layer in apply_grad_layers],
             apply_grad_outvars, apply_grad_donation, name + "_apply")
+        outvars_set = set(merged_apply.jaxpr.outvars)
+        is_donated = tuple(invar in apply_grad_donation and
+                           apply_grad_donation[invar] in outvars_set
+                           for invar in merged_apply.jaxpr.invars)
         apply_only_invars = OrderedSet(merged_apply.jaxpr.invars)
         for module_jaxpr in module_merged_jaxprs:
             apply_only_invars = apply_only_invars.difference(
@@ -1209,6 +1213,7 @@ def generate_stage_info(all_layers, selected_indices,
                                      apply_only_invars)
         module_names.append(apply_grad_module_name)
         module_merged_jaxprs.append(merged_apply)
+        all_modules_donate_invars.append(is_donated)
         all_modules_donation_mapping.update(apply_grad_donation)
         all_modules_outvars.update(merged_apply.jaxpr.outvars)
     else:

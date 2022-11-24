@@ -243,7 +243,7 @@ class CompileWorker:
         acc_grad_module_compile_outputs = []
         apply_grad_input_sharding_protos = None
 
-        for module_id, module_name, donate_invars in enumerate(config.names):
+        for module_id, module_name in enumerate(config.names):
             hlo = hlo_dict[module_name]
             setup_computation_alias(hlo, config.module_donate_invars[module_id])
             module = hlo.get_module()

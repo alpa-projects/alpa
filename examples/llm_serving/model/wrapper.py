@@ -604,6 +604,7 @@ def get_alpa_model(model_name: str,
     elif "codegen" in model_name:
         inference_func_config.bos_token_id = 1
         inference_func_config.eos_token_id = 50256
+        inference_func_config.pad_token_id = 50256
     return WrappedInferenceFunc(inference_func,
                                 inference_func_config,
                                 executables[1],
@@ -745,7 +746,6 @@ def download_weights(model_name, path):
             with open(param_path, "wb") as f:
                 np.save(f, param.cpu().detach().numpy())
     elif "codegen" in model_name:
-        # TOOD(chris) refactor to fit for codegen model
         for name, param in tqdm(list(model.transformer.named_parameters())):
             print(name)
             param_path = os.path.join(path, name)

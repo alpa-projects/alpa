@@ -27,16 +27,18 @@ def main(args):
 
     # Generate
     prompts = [
-        "Create a function that prints hello world",
-        "Create a function that solves the two sum problem",
-        "Create a function that solves the fibonacci sequence problem",
-        "Create a function that find the first five prime numbers"
+        "def hello_world():",
+        "Create a function that solves the two sum problem:",
+        "Create a function that solves the fibonacci sequence problem:",
+        "Create an array that contains the numbers 1 to 10:"
     ]
     prompts = prompts[:args.n_prompts]
-    input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
 
+    input_ids = tokenizer(prompts, return_tensors="pt", padding="longest").input_ids
+    
     output_ids = model.generate(input_ids=input_ids,
                                 max_length=64,
+                                n_prompts=1,
                                 **generate_params)
     outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
     

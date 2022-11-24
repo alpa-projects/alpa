@@ -24,6 +24,7 @@ import jaxlib.xla_extension as jax_xla
 import numpy as np
 import ray
 from tqdm import tqdm
+from llm_serving.model.opt_model import (init_cache_aval, init_mask_aval)
 
 ACT2FN = {
     "gelu": partial(nn.gelu, approximate=False),
@@ -80,9 +81,9 @@ class CodeGenConfig:
     dtype: any = jnp.float16
     num_pp_stages: int = None
     tie_word_embeddings: bool = True
+    use_cache: bool = True
     # parallelize
     mark_boundary: bool = True
-    share_decoder_input_output_embed: bool = True
 
 
 # Copied from transformers.models.gptj.modeling_flax_gptj.create_sinusoidal_positions
@@ -154,15 +155,34 @@ class CodeGenAttention(nn.Module):
                  attention_mask=None,
                  deterministic:bool = True):
 
+        batch_size = hidden_states.shape[0]
+        seq_length = hidden_states.shape[1]
         fused_qkv = self.qkv_combined(hidden_states)
-        fused_qkv = fused_qkv.reshape(fused_qkv.shape[:2] + (-1, 3))
-        query, key, value = jnp.split(fused_qkv,
-                                            3,
-                                            axis=3)
-        
+        # NOTE: previously used bloom implementation for split but does not seem correct
+        # fused_qkv = fused_qkv.reshape(fused_qkv.shape[:-1] + (self.config.n_head, self.head_dim * 3))
+        # print(fused_qkv.shape)
+        # # # shape is [batch_size, seq length, num_heads, head_dim]
+        # query, key, value = jnp.split(fused_qkv, 3, axis=-1)
+        # print("query shape:", query.shape)
+
+        # TODO(Chris) fix qkv_proj split issue: currently following gist to split up the qkv correctly https://gist.github.com/moyix/7896575befbe1b99162ccfec8d135566
+        mp_num = 4 # number of cores on their TPU I guess?
+        local_dim = self.head_dim * self.config.n_head // mp_num
+        print(fused_qkv.shape)
+        qkv_split = fused_qkv.reshape(fused_qkv.shape[:-1] + (mp_num, -1))
+        print(qkv_split.shape)
+        # Shape after is [batch_size, seq length, mp_num, embed_dim * 3 / 4]
+        query, value, key = jnp.split(qkv_split, 3, axis=-1)
+        print("query shape pre splitting: ", query.shape)
+
+        # Shape after is [batch_size, seq length, #head, head_dim]
         query = self._split_heads(query)
         key = self._split_heads(key)
         value = self._split_heads(value)
+        print("query shape post splitting:", query.shape)
+
+        key_length = attention_mask.shape[-1]
+        causal_attention_mask = make_causal_mask(jnp.ones((batch_size, key_length)), dtype="bool")
 
         sincos = jnp.take(self.embed_positions, position_ids, axis=0)
         sincos = jnp.split(sincos, 2, axis=-1)
@@ -182,25 +202,19 @@ class CodeGenAttention(nn.Module):
             key = apply_rotary_pos_emb(key, sincos)
             query = apply_rotary_pos_emb(query, sincos)
 
-        query_length, key_length = query.shape[1], key.shape[1]
-
-        batch_size = hidden_states.shape[0]
-
+        # for fast decoding causal attention mask should be shifted
         if attention_cache:
             causal_attention_mask_shift = attention_cache[2][0]
         else:
             causal_attention_mask_shift = 0
 
-        if attention_cache is None:
-            causal_mask = self.causal_mask[:, :, :query_length, :key_length]
-        else:
+        if attention_cache:
             #TODO(chris): verify this section actually works
             max_decoder_length = attention_cache[0].shape[1]
-            query_length = query.shape[1]
-            causal_mask = jax.lax.dynamic_slice(
-                self.causal_mask,
+            causal_attention_mask = jax.lax.dynamic_slice(
+                causal_attention_mask,
                 (0, 0, causal_attention_mask_shift, 0),
-                (1, 1, query_length, max_decoder_length)
+                (1, 1, seq_length, max_decoder_length)
             )
 
             # Handle a special kind of internal padding added by alpa.
@@ -212,14 +226,14 @@ class CodeGenAttention(nn.Module):
             num_internal_pad = jnp.sum(is_internal_padding, axis=3).reshape(-1)
             attention_mask = (attention_mask == 1)
 
-        attention_mask = combine_masks(attention_mask, causal_mask)
+        attention_mask = combine_masks(attention_mask, causal_attention_mask)
 
         if attention_cache:
             cache_key, cache_value, cache_index = attention_cache
             *batch_dims, max_length, num_heads, depth_per_head = cache_key.shape
             # update key, value caches with our new 1d spatial slices
             cur_index = cache_index[0]
-            indices = (0, cur_index, 0, 0)
+            indices = (0,) * len(batch_dims) + (cur_index, 0, 0)
             key = lax.dynamic_update_slice(cache_key, key, indices)
             value = lax.dynamic_update_slice(cache_value, value, indices)
             cache_key = key
@@ -257,8 +271,7 @@ class CodeGenAttention(nn.Module):
             precision=None,
         )
 
-        attn_output = jnp.einsum("...hqk,...khd->...qhd", attn_weights,
-                                 value)
+        attn_output = jnp.einsum("...hqk,...khd->...qhd", attn_weights, value)
         attn_output = self._merge_heads(attn_output)
         attn_output = self.out_proj(attn_output)
         attn_output = self.resid_dropout(attn_output, deterministic=deterministic)
@@ -300,7 +313,7 @@ class CodeGenBlock(nn.Module):
         attention_cache = attn_outputs[1]
         
         feed_forward_hidden_states = self.mlp(hidden_states, deterministic=deterministic)
-        hidden_states = hidden_states + feed_forward_hidden_states + residual
+        hidden_states = attn_output + feed_forward_hidden_states + residual
         outputs = (hidden_states, attention_cache)
 
         if output_attentions:
@@ -314,13 +327,17 @@ class CodeGenMLP(nn.Module):
     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
+        kernel_init = jax.nn.initializers.normal(self.config.initializer_range)
+
         self.fc_in = nn.Dense(
-            self.config.decoder_ffn_embed_dim,
+            4 * self.config.hidden_size,
             dtype=self.dtype,
+            kernel_init=kernel_init
         )
         self.fc_out = nn.Dense(
             self.config.hidden_size,
             dtype=self.dtype,
+            kernel_init=kernel_init
         )
         self.act = ACT2FN[self.config.activation_fn]
         self.dropout = nn.Dropout(self.config.resid_pdrop)
@@ -334,46 +351,13 @@ class CodeGenMLP(nn.Module):
         hidden_states = self.dropout(hidden_states, deterministic=deterministic)
         return hidden_states
 
-
-class CodeGenTransformerLayer(nn.Module):
-    config: CodeGenConfig
-    dtype: jnp.dtype = jnp.float16  # the dtype of the computation
-
-    def setup(self):
-        self.attention = CodeGenBlock(self.config, dtype=self.dtype)
-        self.mlp = CodeGenMLP(self.config, dtype=self.dtype)
-
-    def __call__(self,
-                 hidden_states,
-                 position_ids,
-                 output_attentions: bool = False,
-                 attention_cache=None,
-                 attention_mask=None):
-
-        attention_outputs = self.attention(hidden_states,
-                                           position_ids=position_ids,
-                                           output_attentions=output_attentions,
-                                           attention_cache=attention_cache,
-                                           attention_mask=attention_mask)
-        attention_output = attention_outputs[0]
-        attention_cache = attention_outputs[1]
-
-        hidden_states = self.mlp(attention_output)
-
-        outputs = (hidden_states, attention_cache)
-
-        if output_attentions:
-            outputs += (attention_outputs[2],)
-        return outputs
-
-
 class CodeGenTransformerLayerCollection(nn.Module):
     config: CodeGenConfig
     dtype: jnp.dtype = jnp.float16  # the dtype of the computation
 
     def setup(self):
         self.layers = [ 
-            CodeGenTransformerLayer(self.config, name=str(i), dtype=self.dtype)
+            CodeGenBlock(self.config, name=str(i), dtype=self.dtype)
             for i in range(self.config.num_hidden_layers)
         ]
 
@@ -441,6 +425,7 @@ class CodeGenTransformerModule(nn.Module):
             self.config.vocab_size,
             self.config.hidden_size,
             embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
+            dtype=self.dtype
         )
 
         self.drop = nn.Dropout(rate=self.config.embd_pdrop)
@@ -463,13 +448,14 @@ class CodeGenTransformerModule(nn.Module):
         attention_cache=None,
         attention_mask=None
     ):
-        input_embeds = self.wte(input_ids.astype("i4"))
+        input_embeds = self.wte(input_ids)
         
         hidden_states = input_embeds
 
-        if token_type_ids:
-            token_type_embeds = self.wte(token_type_ids.astype("i4"))
-            hidden_states = input_embeds + token_type_embeds
+        # TODO(chris) investigate: I can't check whether token_type_ids is None because it requires a concrete value.
+        # if token_type_ids: 
+        # token_type_embeds = self.wte(token_type_ids.astype("i4"))
+        # hidden_states = input_embeds + token_type_embeds
         
         hidden_states = self.drop(hidden_states, deterministic=deterministic)
 
@@ -500,7 +486,6 @@ class CodeGenTransformerModule(nn.Module):
 class CodeGenForLMModule(nn.Module):
     config: CodeGenConfig
     dtype: jnp.dtype = jnp.float16
-    bias_init: Callable[..., jnp.ndarray] = jax.nn.initializers.zeros
 
     def setup(self):
         self.transformers = CodeGenTransformerModule(config=self.config,
@@ -524,10 +509,14 @@ class CodeGenForLMModule(nn.Module):
         attention_cache=None,
         attention_mask=None
     ):
+        # if token_type_ids is None:
+        #     token_type_ids = jnp.ones_like(input_ids, dtype="i4")
+
         # Model
         outputs = self.transformers(
-            input_ids,
-            position_ids,
+            input_ids=input_ids,
+            position_ids=position_ids,
+            # token_type_ids=token_type_ids,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
@@ -560,7 +549,7 @@ def get_config(name, **kwargs):
         config = CodeGenConfig(
             max_seq_len=2048, num_hidden_layers=20, n_head=16,
             hidden_size=1024, decoder_input_dim=1024, decoder_ffn_embed_dim=1024 * 4,
-            rotary_dim=32, bos_token_id=1
+            rotary_dim=32, bos_token_id=1, vocab_size=51200
         )
     elif name == "codegen-2b-mono":
         config = CodeGenConfig(
@@ -585,45 +574,18 @@ def get_config(name, **kwargs):
 
     return dataclasses.replace(config, **kwargs)
 
-# TODO(chris): fix this to fit the same params as Codegen
 def init_model_aval(config):
     """Initialize model with parameters with abstract values (shape-only arrays)."""
     model = CodeGenForLMModule(config, dtype=config.dtype)
     rngkey = jax.core.ShapedArray((2,), jnp.uint32)
-    input_ids = jax.core.ShapedArray((1, 128), jnp.int32)
-    position_ids = jax.core.ShapedArray((1, 128), jnp.int32)
-    token_type_ids = jax.core.ShapedArray((1, 128), jnp.int32)
-    params = jax.eval_shape(model.init, rngkey, input_ids, token_type_ids, position_ids)
+    input_ids = jax.core.ShapedArray((1, 2), jnp.int32)
+    position_ids = jax.core.ShapedArray((1, 2), jnp.int32)
+    token_type_ids = jax.core.ShapedArray((1, 2), jnp.int32)
+    attention_mask = jax.core.ShapedArray((1, 1, 1, 2), jnp.int32)
+    params = jax.eval_shape(model.init, rngkey, input_ids, token_type_ids, position_ids, attention_mask=attention_mask)
     params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, config.dtype),
                           params)
     return model, params
-
-
-def init_cache_aval(config, batch_size):
-    """Initialize cache with abstract values (shape-only arrays)."""
-    dtype = config.dtype
-    head_dim = config.hidden_size // config.n_head
-
-    all_cache = []
-    for _ in range(config.num_hidden_layers):
-        layer_cache = (
-            jax.core.ShapedArray((batch_size, config.max_seq_len,
-                                  config.n_head, head_dim),
-                                 dtype),
-            jax.core.ShapedArray((batch_size, config.max_seq_len,
-                                  config.n_head, head_dim),
-                                 dtype),
-            jax.core.ShapedArray((batch_size,), jnp.int32),
-        )
-        all_cache.append(layer_cache)
-    return tuple(all_cache)
-
-
-def init_mask_aval(config, batch_size):
-    """Initialize attention mask with abstract values (shape-only arrays)."""
-    mask = jax.core.ShapedArray((batch_size, 1, 1, config.max_seq_len), dtype=np.int8)
-    return mask
-
 
 def init_cache_np(config, batch_size):
     """Init cache with numpy arrays."""
@@ -645,7 +607,7 @@ def init_cache_np(config, batch_size):
     return tuple(all_cache)
 
 def inference_step_no_cache(params, batch, apply_func):
-    logits = apply_func(params, batch["input_ids"], batch["token_type_ids"])[0]
+    logits = apply_func(params, batch["input_ids"], batch["position_ids"])[0]
     return logits
 
 
@@ -663,6 +625,7 @@ def load_params_np(params, path, config, dummy=False):
         param_dict = params
         param_keys = param_key.split('.')
         for i, key in enumerate(param_keys):
+            # print(key, ":", param_dict[key].shape)
             if i == len(param_keys) - 1:
                 if dummy:
                     param_dict[key] = jax.core.ShapedArray(
@@ -690,28 +653,18 @@ def load_params_np(params, path, config, dummy=False):
         load_prefix = f"h.{i}."
         # Attention weights
         load_param(
-            param_prefix + "attention.self.out_proj.kernel",
+            param_prefix + "self.out_proj.kernel",
             load_array(load_prefix + "attn.out_proj.weight").transpose())
         load_param(
-            param_prefix + "attention.self.qkv_combined.kernel",
+            param_prefix + "self.qkv_combined.kernel",
             load_array(load_prefix + "attn.qkv_proj.weight").transpose())
 
-        load_param(param_prefix + "attention.layer_norm.scale",
+        load_param(param_prefix + "layer_norm.scale",
                    load_array(load_prefix + "ln_1.weight"))
-        load_param(param_prefix + "attention.layer_norm.bias",
+        load_param(param_prefix + "layer_norm.bias",
                    load_array(load_prefix + "ln_1.bias"))
 
         # MLP weights
-        load_param(param_prefix + "attention.mlp.fc_in.kernel",
-                   load_array(load_prefix + "mlp.fc_in.weight").transpose())
-        load_param(param_prefix + "attention.mlp.fc_in.bias",
-                   np.transpose(load_array(load_prefix + "mlp.fc_in.bias")))
-        load_param(param_prefix + "attention.mlp.fc_out.bias",
-                   load_array(load_prefix + "mlp.fc_out.bias"))
-        load_param(param_prefix + "attention.mlp.fc_out.kernel",
-                   load_array(load_prefix + "mlp.fc_out.weight").transpose())
-
-        #TODO(chris): added extra mlp fc_in and fc_out but confirm this is needed
         load_param(param_prefix + "mlp.fc_in.kernel",
                    load_array(load_prefix + "mlp.fc_in.weight").transpose())
         load_param(param_prefix + "mlp.fc_in.bias",
@@ -722,7 +675,6 @@ def load_params_np(params, path, config, dummy=False):
                    load_array(load_prefix + "mlp.fc_out.weight").transpose())
 
     return flax.core.freeze(params)
-
 
 def get_jax_executable(config: CodeGenConfig,
                        encoder_chunk_sizes: Sequence[int],
@@ -802,8 +754,6 @@ def get_pipeshard_executable(config: CodeGenConfig,
                         jax.core.ShapedArray((batch_size, 1), jnp.int32),
                     "position_ids":
                         jax.core.ShapedArray((batch_size, 1), jnp.int32),
-                    "token_type_ids":
-                        jax.core.ShapedArray((batch_size, 1), jnp.int32),
                     "cache":
                         cache,
                     "mask":
@@ -833,9 +783,6 @@ def get_pipeshard_executable(config: CodeGenConfig,
                             jax.core.ShapedArray(
                                 (batch_size, seq_len), jnp.int32),
                         "position_ids":
-                            jax.core.ShapedArray(
-                                (batch_size, seq_len), jnp.int32),
-                        "token_type_ids":
                             jax.core.ShapedArray(
                                 (batch_size, seq_len), jnp.int32),
                         "cache":

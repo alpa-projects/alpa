@@ -188,7 +188,6 @@ class CodeGenAttention(nn.Module):
             causal_attention_mask_shift = 0
 
         if attention_cache:
-            #TODO(chris): verify this section actually works
             max_decoder_length = attention_cache[0].shape[1]
             causal_attention_mask = jax.lax.dynamic_slice(
                 causal_attention_mask,
@@ -543,10 +542,9 @@ def init_model_aval(config):
     """Initialize model with parameters with abstract values (shape-only arrays)."""
     model = CodeGenForLMModule(config, dtype=config.dtype)
     rngkey = jax.core.ShapedArray((2,), jnp.uint32)
-    input_ids = jax.core.ShapedArray((1, 5), jnp.int32)
-    position_ids = jax.core.ShapedArray((1, 5), jnp.int32)
-    # token_type_ids = jax.core.ShapedArray((1, 2), jnp.int32)
-    attention_mask = jax.core.ShapedArray((1, 1, 1, 5), jnp.int32)
+    input_ids = jax.core.ShapedArray((1, 2), jnp.int32)
+    position_ids = jax.core.ShapedArray((1, 2), jnp.int32)
+    attention_mask = jax.core.ShapedArray((1, 1, 1, 2), jnp.int32)
     params = jax.eval_shape(model.init, rngkey, input_ids, position_ids, attention_mask=attention_mask)
     params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, config.dtype),
                           params)
@@ -688,112 +686,76 @@ def get_pipeshard_executable(config: CodeGenConfig,
             allow_all_to_all=False,
             allow_all_gather=False,
         ))
-    #method = alpa.ShardParallel()
+    
+    def inference_step_with_cache(params, batch):
+        output = model.apply(
+            params,
+            batch["input_ids"],
+            batch["position_ids"],
+            attention_cache=batch["cache"],
+            attention_mask=batch["mask"],
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states)
+        return output
 
-    if autoregressive:
+    alpa.global_config.always_donate_micro_batch_vars = False
 
-        def inference_step_with_cache(params, batch):
-            output = model.apply(
-                params,
-                batch["input_ids"],
-                batch["position_ids"],
-                attention_cache=batch["cache"],
-                attention_mask=batch["mask"],
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states)
-            return output
+    cache = init_cache_aval(config, batch_size)
+    mask = init_mask_aval(config, batch_size)
 
-        alpa.global_config.always_donate_micro_batch_vars = False
+    executables = {}
 
-        cache = init_cache_aval(config, batch_size)
-        mask = init_mask_aval(config, batch_size)
+    # Compile an executable with sequence length 1
+    executable = alpa.parallelize(
+        inference_step_with_cache, batch_argnums=(1,),
+        method=method).get_executable(
+            params, {
+                "input_ids":
+                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                "position_ids":
+                    jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                "cache":
+                    cache,
+                "mask":
+                    mask,
+            })
+    executable.dump_debug_info("tmp_executable_1")
+    executables[1] = executable
 
-        executables = {}
+    # Create another parallel method with assigned input sharding specs
+    method_with_input_sharding = alpa.PipeshardParallel(
+        num_micro_batches=num_micro_batches,
+        pipeline_schedule="inference",
+        layer_option="manual",
+        default_auto_sharding_option=alpa.AutoShardingOption(
+            enable_auto_sharding=False,
+        ),
+        stage_input_shardings=executable.stage_input_shard_specs)
 
-        # Compile an executable with sequence length 1
+    # Compile other executables
+    for seq_len in encoder_chunk_sizes:
         executable = alpa.parallelize(
-            inference_step_with_cache, batch_argnums=(1,),
-            method=method).get_executable(
+            inference_step_with_cache,
+            batch_argnums=(1,),
+            method=method_with_input_sharding).get_executable(
                 params, {
                     "input_ids":
-                        jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                        jax.core.ShapedArray(
+                            (batch_size, seq_len), jnp.int32),
                     "position_ids":
-                        jax.core.ShapedArray((batch_size, 1), jnp.int32),
+                        jax.core.ShapedArray(
+                            (batch_size, seq_len), jnp.int32),
                     "cache":
                         cache,
                     "mask":
                         mask,
                 })
-        executable.dump_debug_info("tmp_executable_1")
-        executables[1] = executable
-
-        # Create another parallel method with assigned input sharding specs
-        method_with_input_sharding = alpa.PipeshardParallel(
-            num_micro_batches=num_micro_batches,
-            pipeline_schedule="inference",
-            layer_option="manual",
-            default_auto_sharding_option=alpa.AutoShardingOption(
-                enable_auto_sharding=False,
-            ),
-            stage_input_shardings=executable.stage_input_shard_specs)
-
-        # Compile other executables
-        for seq_len in encoder_chunk_sizes:
-            executable = alpa.parallelize(
-                inference_step_with_cache,
-                batch_argnums=(1,),
-                method=method_with_input_sharding).get_executable(
-                    params, {
-                        "input_ids":
-                            jax.core.ShapedArray(
-                                (batch_size, seq_len), jnp.int32),
-                        "position_ids":
-                            jax.core.ShapedArray(
-                                (batch_size, seq_len), jnp.int32),
-                        "cache":
-                            cache,
-                        "mask":
-                            mask,
-                    })
-            executable.dump_debug_info("tmp_executable_%d" % seq_len)
-            executables[seq_len] = executable
-        return executables, params
-    else:
-        assert len(encoder_chunk_sizes) == 1
-        seq_len = encoder_chunk_sizes[0]
-
-        @alpa.parallelize(batch_argnums=(1,), method=method)
-        def inference_step(params, batch):
-            output = model.apply(
-                params,
-                batch["input_ids"],
-                batch["position_ids"],
-                batch["token_type_ids"],
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states)
-            return output
-
-        assert batch_size % num_micro_batches == 0, "cannot divide batch_size by num_micro_batches"
-        micro_batch_size = batch_size // num_micro_batches
-
-        executable = inference_step.get_executable(
-            params, {
-                "input_ids":
-                    jax.core.ShapedArray(
-                        (batch_size, seq_len), jnp.int32),
-                "position_ids":
-                    jax.core.ShapedArray(
-                        (batch_size, seq_len), jnp.int32),
-                "token_type_ids":
-                    jax.core.ShapedArray(
-                        (batch_size, seq_len), jnp.int32),
-            })
-
-        executable.dump_debug_info("tmp")
-    return {seq_len: executable}, params
+        executable.dump_debug_info("tmp_executable_%d" % seq_len)
+        executables[seq_len] = executable
+    return executables, params
 
 
-def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
+def load_codegen_params_worker_func(self, path, prefix_to_idx, config, shapes,
                                 uuids, indices, mesh_ids):
     """The worker function to load CodeGen parameters."""
 
@@ -821,67 +783,47 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
                 datas.append(loaded_array[indices[i][j][idx]])
             self.put_buffers(uuid, datas)
 
-    load_param("params.transformers.embeddings.word_embeddings.embedding",
-               load_array("decoder.embed_tokens.weight"))
-    load_param("params.transformers.embeddings.position_embeddings.embedding",
-               load_array("decoder.embed_positions.weight"),
-               is_position_embedding=True)
-
-    if config.version > 2:
-        load_param("params.transformers.layer_norm.scale",
-                   load_array("decoder.layer_norm.weight"))
-        load_param("params.transformers.layer_norm.bias",
-                   load_array("decoder.layer_norm.bias"))
-
     layers_per_stage = config.num_hidden_layers // config.num_pp_stages
 
+    load_param("params.transformers.layer_norm.scale", load_array("ln_f.weight"))
+    load_param("params.transformers.layer_norm.bias", load_array("ln_f.bias"))
+    load_param("params.transformers.wte.embedding", load_array("wte.weight"))
+    load_param("params.lm_head.bias", load_array("lm_head.bias"))
+    load_param("params.lm_head.kernel", load_array("lm_head.weight").transpose())
+    
     for i in range(config.num_hidden_layers):
         stage_id = i // layers_per_stage
         if stage_id != self.mesh_id:
             continue
 
         param_prefix = f"params.transformers.encoder.{i}."
-        load_prefix = f"decoder.layers.{i}."
+        load_prefix = f"h.{i}."
         # Attention weights
-        wq = load_array(load_prefix + "self_attn.q_proj.weight")
-        wk = load_array(load_prefix + "self_attn.k_proj.weight")
-        wv = load_array(load_prefix + "self_attn.v_proj.weight")
-        dim = wq.shape[-1]
-        w_qkv = np.concatenate([wq, wk, wv], axis=0).reshape(
-            (3, -1, dim)).transpose([2, 1, 0]).reshape((dim, -1))
-        load_param(param_prefix + "attention.self.qkv_combined.kernel", w_qkv)
-        bq = load_array(load_prefix + "self_attn.q_proj.bias")
-        bk = load_array(load_prefix + "self_attn.k_proj.bias")
-        bv = load_array(load_prefix + "self_attn.v_proj.bias")
-        b_qkv = np.concatenate([bq, bk, bv], axis=0).reshape(
-            (3, dim)).transpose([1, 0]).reshape((-1,))
-        load_param(param_prefix + "attention.self.qkv_combined.bias", b_qkv)
         load_param(
-            param_prefix + "attention.dense.kernel",
-            np.transpose(load_array(load_prefix + "self_attn.out_proj.weight")))
-        load_param(param_prefix + "attention.dense.bias",
-                   load_array(load_prefix + "self_attn.out_proj.bias"))
-        load_param(param_prefix + "attention.layer_norm.scale",
-                   load_array(load_prefix + "self_attn_layer_norm.weight"))
-        load_param(param_prefix + "attention.layer_norm.bias",
-                   load_array(load_prefix + "self_attn_layer_norm.bias"))
-        # FFN weights
-        load_param(param_prefix + "ffn.fc1.bias",
-                   load_array(load_prefix + "fc1.bias"))
-        load_param(param_prefix + "ffn.fc1.kernel",
-                   np.transpose(load_array(load_prefix + "fc1.weight")))
-        load_param(param_prefix + "ffn.fc2.bias",
-                   load_array(load_prefix + "fc2.bias"))
-        load_param(param_prefix + "ffn.fc2.kernel",
-                   np.transpose(load_array(load_prefix + "fc2.weight")))
-        load_param(param_prefix + "ffn.layer_norm.scale",
-                   load_array(load_prefix + "final_layer_norm.weight"))
-        load_param(param_prefix + "ffn.layer_norm.bias",
-                   load_array(load_prefix + "final_layer_norm.bias"))
+            param_prefix + "self.out_proj.kernel",
+            load_array(load_prefix + "attn.out_proj.weight").transpose())
+        load_param(
+            param_prefix + "self.qkv_combined.kernel",
+            load_array(load_prefix + "attn.qkv_proj.weight").transpose())
+
+        load_param(param_prefix + "layer_norm.scale",
+                   load_array(load_prefix + "ln_1.weight"))
+        load_param(param_prefix + "layer_norm.bias",
+                   load_array(load_prefix + "ln_1.bias"))
+
+        # MLP weights
+        load_param(param_prefix + "mlp.fc_in.kernel",
+                   load_array(load_prefix + "mlp.fc_in.weight").transpose())
+        load_param(param_prefix + "mlp.fc_in.bias",
+                   np.transpose(load_array(load_prefix + "mlp.fc_in.bias")))
+        load_param(param_prefix + "mlp.fc_out.bias",
+                   load_array(load_prefix + "mlp.fc_out.bias"))
+        load_param(param_prefix + "mlp.fc_out.kernel",
+                   load_array(load_prefix + "mlp.fc_out.weight").transpose())
 
 
-setattr(MeshHostWorker, "load_opt_params_worker_func",
-        load_opt_params_worker_func)
+setattr(MeshHostWorker, "load_codegen_params_worker_func",
+        load_codegen_params_worker_func)
 
 
 def load_params_dis_array(path, executable, params_aval, config, dummy=False):

@@ -23,6 +23,7 @@ from jax.interpreters import pxla
 import jaxlib.xla_extension as jax_xla
 import numpy as np
 import ray
+import torch
 from tqdm import tqdm
 from llm_serving.model.opt_model import (init_cache_aval, init_mask_aval)
 
@@ -55,7 +56,6 @@ class CodeGenLMOutput(ModelOutput):
 @dataclass(frozen=True)
 class CodeGenConfig:
     pad: int = 1
-    decoder_learned_pos: bool = True
     vocab_size: int = 50400
     max_seq_len: int = 2048
     n_ctx: int = 2048
@@ -68,19 +68,17 @@ class CodeGenConfig:
     resid_pdrop: float = 0.0
     embd_pdrop: float = 0.0
     attn_pdrop: float = 0.0
-    layer_norm_eps: float = 0.00001
+    layer_norm_eps: float = 1e-5
     initializer_range: float = 0.02
     scale_attn_weights: bool = True
     bos_token_id: int = 50256
     eos_token_id: int = 50256
-    use_stable_embedding: bool = False
-    no_scale_embedding: bool = True
     # Added
     decoder_input_dim: int = 4096
     decoder_ffn_embed_dim: int = 16384
     dtype: any = jnp.float16
     num_pp_stages: int = None
-    tie_word_embeddings: bool = True
+    tie_word_embeddings: bool = False
     use_cache: bool = True
     # parallelize
     mark_boundary: bool = True
@@ -133,10 +131,8 @@ class CodeGenAttention(nn.Module):
             use_bias=False
         )
         
-        self.out_proj = nn.Dense(self.config.hidden_size, dtype=self.dtype, use_bias = False)
+        self.out_proj = nn.Dense(self.config.hidden_size, dtype=self.dtype, use_bias=False)
         self.resid_dropout = nn.Dropout(rate=self.config.resid_pdrop)
-
-        self.causal_mask = make_causal_mask(jnp.ones((1, self.config.max_seq_len), dtype="bool"), dtype="bool")
 
         pos_embd_dim = self.rotary_dim or self.embed_dim
         self.embed_positions = create_sinusoidal_positions(self.config.max_seq_len, pos_embd_dim)
@@ -158,29 +154,12 @@ class CodeGenAttention(nn.Module):
         batch_size = hidden_states.shape[0]
         seq_length = hidden_states.shape[1]
         fused_qkv = self.qkv_combined(hidden_states)
-        # NOTE: previously used bloom implementation for split but does not seem correct
-        # fused_qkv = fused_qkv.reshape(fused_qkv.shape[:-1] + (self.config.n_head, self.head_dim * 3))
-        # print(fused_qkv.shape)
-        # # # shape is [batch_size, seq length, num_heads, head_dim]
-        # query, key, value = jnp.split(fused_qkv, 3, axis=-1)
-        # print("query shape:", query.shape)
-
-        # TODO(Chris) fix qkv_proj split issue: currently following gist to split up the qkv correctly https://gist.github.com/moyix/7896575befbe1b99162ccfec8d135566
-        mp_num = 4 # number of cores on their TPU I guess?
-        local_dim = self.head_dim * self.config.n_head // mp_num
-        print(fused_qkv.shape)
+        mp_num = 4 # number of cores on their TPU
         qkv_split = fused_qkv.reshape(fused_qkv.shape[:-1] + (mp_num, -1))
-        print(qkv_split.shape)
-        # Shape after is [batch_size, seq length, mp_num, embed_dim * 3 / 4]
         query, value, key = jnp.split(qkv_split, 3, axis=-1)
-        print("query shape pre splitting: ", query.shape)
-
-        # Shape after is [batch_size, seq length, #head, head_dim]
         query = self._split_heads(query)
         key = self._split_heads(key)
         value = self._split_heads(value)
-        print("query shape post splitting:", query.shape)
-
         key_length = attention_mask.shape[-1]
         causal_attention_mask = make_causal_mask(jnp.ones((batch_size, key_length)), dtype="bool")
 
@@ -201,7 +180,7 @@ class CodeGenAttention(nn.Module):
         else:
             key = apply_rotary_pos_emb(key, sincos)
             query = apply_rotary_pos_emb(query, sincos)
-
+            
         # for fast decoding causal attention mask should be shifted
         if attention_cache:
             causal_attention_mask_shift = attention_cache[2][0]
@@ -288,7 +267,6 @@ class CodeGenBlock(nn.Module):
 
     def setup(self):
         hidden_size = self.config.hidden_size
-        n_inner = self.config.n_inner if self.config.n_inner is not None else 4 * hidden_size
 
         self.self = CodeGenAttention(self.config, dtype=self.dtype)
         self.mlp = CodeGenMLP(self.config)
@@ -399,6 +377,7 @@ class CodeGenTransformerLayerCollection(nn.Module):
             hidden_states = layer_outputs[0]
             if attention_cache is not None:
                 new_attention_cache += (layer_outputs[1],)
+            
             if output_attentions:
                 all_attentions += (layer_outputs[2],)
 
@@ -440,7 +419,6 @@ class CodeGenTransformerModule(nn.Module):
         self,
         input_ids,
         position_ids,
-        token_type_ids=None,
         deterministic:bool = True,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
@@ -448,16 +426,9 @@ class CodeGenTransformerModule(nn.Module):
         attention_cache=None,
         attention_mask=None
     ):
-        input_embeds = self.wte(input_ids)
+        input_embeds = self.wte(input_ids.astype("i4"))
         
-        hidden_states = input_embeds
-
-        # TODO(chris) investigate: I can't check whether token_type_ids is None because it requires a concrete value.
-        # if token_type_ids: 
-        # token_type_embeds = self.wte(token_type_ids.astype("i4"))
-        # hidden_states = input_embeds + token_type_embeds
-        
-        hidden_states = self.drop(hidden_states, deterministic=deterministic)
+        hidden_states = self.drop(input_embeds, deterministic=deterministic)
 
         outputs = self.encoder(
             hidden_states,
@@ -471,16 +442,16 @@ class CodeGenTransformerModule(nn.Module):
         hidden_states = outputs[0]
         hidden_states = self.layer_norm(hidden_states)
 
+        if output_hidden_states:
+            all_hidden_states = outputs.hidden_states + (hidden_states,)
+            outputs = CodeGenModelOutput(last_hidden_state=hidden_states, hidden_states=all_hidden_states, attentions=outputs.attentions, attention_cache=outputs.attention_cache)
+        else:
+            outputs = CodeGenModelOutput(last_hidden_state=hidden_states, hidden_states=outputs.hidden_states, attentions=outputs.attentions, attention_cache=outputs.attention_cache)
+
         if not return_dict:
-            # if pooled is None, don't return it
             return (hidden_states,) + outputs[1:]
 
-        return CodeGenModelOutput(
-            last_hidden_state=hidden_states,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-            attention_cache=outputs.attention_cache,
-        )
+        return outputs
 
 
 class CodeGenForLMModule(nn.Module):
@@ -493,7 +464,6 @@ class CodeGenForLMModule(nn.Module):
 
         self.lm_head = nn.Dense(
             self.config.vocab_size,
-            use_bias=False,
             dtype=jnp.float32,
             kernel_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
         )
@@ -502,21 +472,16 @@ class CodeGenForLMModule(nn.Module):
         self,
         input_ids,
         position_ids,
-        token_type_ids=None,
         output_attentions: bool = False,
         output_hidden_states: bool = False,
         return_dict: bool = True,
         attention_cache=None,
         attention_mask=None
     ):
-        # if token_type_ids is None:
-        #     token_type_ids = jnp.ones_like(input_ids, dtype="i4")
-
         # Model
         outputs = self.transformers(
             input_ids=input_ids,
             position_ids=position_ids,
-            # token_type_ids=token_type_ids,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
@@ -531,7 +496,7 @@ class CodeGenForLMModule(nn.Module):
             logits = self.lm_head.apply({"params": {"kernel": shared_kernel}}, hidden_states)
         else:
             logits = self.lm_head(hidden_states)
-
+        
         # Compute the prediction scores
         if not return_dict:
             return (logits,) + outputs[1:]
@@ -578,11 +543,11 @@ def init_model_aval(config):
     """Initialize model with parameters with abstract values (shape-only arrays)."""
     model = CodeGenForLMModule(config, dtype=config.dtype)
     rngkey = jax.core.ShapedArray((2,), jnp.uint32)
-    input_ids = jax.core.ShapedArray((1, 2), jnp.int32)
-    position_ids = jax.core.ShapedArray((1, 2), jnp.int32)
-    token_type_ids = jax.core.ShapedArray((1, 2), jnp.int32)
-    attention_mask = jax.core.ShapedArray((1, 1, 1, 2), jnp.int32)
-    params = jax.eval_shape(model.init, rngkey, input_ids, token_type_ids, position_ids, attention_mask=attention_mask)
+    input_ids = jax.core.ShapedArray((1, 5), jnp.int32)
+    position_ids = jax.core.ShapedArray((1, 5), jnp.int32)
+    # token_type_ids = jax.core.ShapedArray((1, 2), jnp.int32)
+    attention_mask = jax.core.ShapedArray((1, 1, 1, 5), jnp.int32)
+    params = jax.eval_shape(model.init, rngkey, input_ids, position_ids, attention_mask=attention_mask)
     params = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, config.dtype),
                           params)
     return model, params
@@ -611,7 +576,6 @@ def inference_step_no_cache(params, batch, apply_func):
     return logits
 
 
-# TODO(chris): rename the loaded np arrays
 def load_params_np(params, path, config, dummy=False):
     """Load parameters with numpy arrays."""
     if dummy:
@@ -625,7 +589,6 @@ def load_params_np(params, path, config, dummy=False):
         param_dict = params
         param_keys = param_key.split('.')
         for i, key in enumerate(param_keys):
-            # print(key, ":", param_dict[key].shape)
             if i == len(param_keys) - 1:
                 if dummy:
                     param_dict[key] = jax.core.ShapedArray(
@@ -647,6 +610,8 @@ def load_params_np(params, path, config, dummy=False):
     load_param("params.transformers.layer_norm.scale", load_array("ln_f.weight"))
     load_param("params.transformers.layer_norm.bias", load_array("ln_f.bias"))
     load_param("params.transformers.wte.embedding", load_array("wte.weight"))
+    load_param("params.lm_head.bias", load_array("lm_head.bias"))
+    load_param("params.lm_head.kernel", load_array("lm_head.weight").transpose())
 
     for i in tqdm(range(config.num_hidden_layers)):
         param_prefix = f"params.transformers.encoder.{i}."

@@ -44,7 +44,8 @@ from alpa.shard_parallel.auto_sharding import (AutoShardingOption,
                                                hlo_sharding_to_sharding_spec)
 from alpa.timer import timers
 from alpa.util import (get_shard_shape, jaxpr_to_hlo, OrderedSet,
-                       retrieve_placement_group, get_num_available_gpus)
+                       retrieve_placement_group, get_num_available_gpus,
+                       setup_computation_alias)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -64,7 +65,8 @@ CompileOutput = namedtuple("CompileOutput", [
 ])
 
 CompileConfig = namedtuple("CompileConfig",
-                           ["hlo", "names", "acc_grad_outvars_indices"])
+                           ["hlo", "names", "module_donate_invars",
+                            "module_acc_grad_outvars_indices"])
 
 ProfileConfig = namedtuple("ProfileConfig", [
     "invar_names", "outvar_names", "invar_avals", "outvar_avals",
@@ -241,8 +243,9 @@ class CompileWorker:
         acc_grad_module_compile_outputs = []
         apply_grad_input_sharding_protos = None
 
-        for module_id, module_name in enumerate(config.names):
+        for module_id, module_name, donate_invars in enumerate(config.names):
             hlo = hlo_dict[module_name]
+            setup_computation_alias(hlo, config.module_donate_invars[module_id])
             module = hlo.get_module()
             if module_name.endswith(APPLY_GRAD_MARKER_SUFFIX):
                 apply_grad_input_sharding_protos, _ = (
@@ -250,7 +253,7 @@ class CompileWorker:
                                                     logical_mesh.num_devices))
             else:
                 acc_grad_outvars_indices = (
-                    config.acc_grad_outvars_indices[module_id])
+                    config.module_acc_grad_outvars_indices[module_id])
                 rewrite_for_grad_acc = len(acc_grad_outvars_indices) > 0
                 (input_sharding_protos,
                  output_sharding_proto) = get_input_output_sharding_proto(
@@ -1156,6 +1159,7 @@ def generate_stage_info(all_layers, selected_indices,
     module_profile_configs = []
 
     all_modules_donation_mapping = {}
+    all_modules_donate_invars = []
     all_modules_outvars = OrderedSet()
     all_modules_acc_grad_outvars_indices = []
     acc_grad_outvars_set = OrderedSet(acc_grad_outvars)
@@ -1184,6 +1188,7 @@ def generate_stage_info(all_layers, selected_indices,
                                        required_outvars_indices)
         module_merged_jaxprs.append(merged_jaxpr)
         module_profile_configs.append(profile_config)
+        all_modules_donate_invars.append(is_donated)
         all_modules_donation_mapping.update(accumulator_mapping)
         all_modules_outvars.update(merged_jaxpr.jaxpr.outvars)
         all_modules_acc_grad_outvars_indices.append(acc_grad_outvars_indices)
@@ -1214,7 +1219,7 @@ def generate_stage_info(all_layers, selected_indices,
                                  all_modules_outvars,
                                  all_modules_donation_mapping))
     hlo = jaxpr_to_hlo(name, all_modules_merged_jaxpr, all_modules_is_donated)
-    compile_config = CompileConfig(hlo, module_names,
+    compile_config = CompileConfig(hlo, module_names, all_modules_donate_invars,
                                    all_modules_acc_grad_outvars_indices)
     stage_config = StageConfig(n_modules, compile_config,
                                module_profile_configs, apply_info)

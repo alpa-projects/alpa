@@ -266,6 +266,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
 
     def donate_intermediates(self, computation):
         """Donate intermediate variables."""
+        # FIXME (yonghao): this function is not being used.
         # get sharding annotated hlo module
         hlo_module = computation.as_hlo_module()
         donatable = OrderedSet(self.donatables)

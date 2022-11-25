@@ -744,11 +744,37 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
             for var_id in module_result.acc_grad_outvars_indices:
                 acc_grad_outvars.add(module_result.outvar_names[var_id])
 
+    all_module_invars = []
+    for module_id, stage_order in enumerate(module_execution_orders):
+        module_invars = {}
+        in_module_vars = OrderedSet()
+        for stage_id in stage_order:
+            module_result = profile_results[stage_id].module_profile_results[
+                module_id]
+            for invar, size, donated in zip(module_result.invar_names,
+                                            module_result.invar_sizes,
+                                            module_result.donated_invars):
+                if invar in in_module_vars or donated:
+                    # If the variable is generated within the module, it
+                    # does not need to be counted as an input at the very
+                    # beginning. Also, if the varible is donated, we don't
+                    # add it into the module invars set since its memory
+                    # will immediately get donated.
+                    continue
+                if invar in module_invars:
+                    module_invars[invar] = max(module_invars[invar], size)
+                else:
+                    module_invars[invar] = size
+            for outvar in module_result.outvar_names:
+                in_module_vars.add(outvar)
+        all_module_invars.append(module_invars)
+
     env = {}
     intermediate_size = None
     stage_no = 0
     for module_id, stage_order in enumerate(module_execution_orders):
-        in_module_vars = OrderedSet()
+        module_invars = all_module_invars[module_id]
+        env.update(module_invars)
         for stage_id in stage_order:
             module_result = profile_results[stage_id].module_profile_results[
                 module_id]
@@ -768,7 +794,6 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
                                     module_result.outvar_sizes):
                 assert outvar not in env
                 env[outvar] = size
-                in_module_vars.add(outvar)
             total_env_size = sum(env.values())
             peak_memory = max(peak_memory,
                               total_env_size + module_result.temp_buffer_size)
@@ -776,7 +801,7 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
             # within the module.
             var_to_be_eliminated = []
             for var in env:
-                if (var in in_module_vars and var not in acc_grad_invars and
+                if (var not in module_invars and var not in acc_grad_invars and
                         var not in acc_grad_outvars and
                     (var not in last_used_stage_no or
                      last_used_stage_no[var] <= stage_no)):

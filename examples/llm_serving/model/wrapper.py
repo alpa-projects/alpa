@@ -12,7 +12,7 @@ from llm_serving.model import opt_model, bloom_model, codegen_model
 from llm_serving.model.opt_utils import (TransformerModelConfig,
                                          jax_index_select)
 from tqdm import tqdm
-from transformers import OPTForCausalLM, BloomForCausalLM
+from transformers import OPTForCausalLM, BloomForCausalLM, CodeGenForCausalLM
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
 
 import alpa

@@ -468,8 +468,9 @@ def get_sliced_virtual_submeshes(virtual_mesh, submesh_shapes):
 def cluster_layers_and_slice_mesh(
         layers: Sequence[JaxPipelineComputation],
         virtual_mesh: VirtualPhysicalMesh, accumulator_mapping: Dict[Var, Var],
-        acc_grad_outvars: Sequence[Var], num_micro_batches: int,
-        batch_size: int, jax_apply_layers: Sequence[JaxPipelineComputation],
+        acc_grad_invars: Sequence[Var], acc_grad_outvars: Sequence[Var],
+        num_micro_batches: int, batch_size: int,
+        jax_apply_layers: Sequence[JaxPipelineComputation],
         apply_grad_global_info: Tuple, pipeline_schedule: str,
         default_as_option: AutoShardingOption, stage_option: StageOption):
     """
@@ -484,6 +485,7 @@ def cluster_layers_and_slice_mesh(
         layers: All the layers.
         virtual_mesh: The virtual device mesh.
         accumulator_mapping: The donation_mapping for the layers.
+        acc_grad_invars: invars of the gradient accumulation layers.
         acc_grad_outvars: outvars of the gradient accumulation layers.
         num_micro_batches: The number of microbatches.
         batch_size: The micro batch size.
@@ -530,9 +532,9 @@ def cluster_layers_and_slice_mesh(
         # Use DP to find the optimal solution.
         compute_cost, max_n_succ_stages = get_compute_cost(
             virtual_mesh, submesh_choices, autosharding_configs, layers,
-            accumulator_mapping, acc_grad_outvars, jax_apply_layers,
-            apply_grad_global_info, num_micro_batches, default_as_option,
-            stage_option)
+            accumulator_mapping, acc_grad_invars, acc_grad_outvars,
+            jax_apply_layers, apply_grad_global_info, num_micro_batches,
+            default_as_option, stage_option)
         _, solution = dp(num_layers, virtual_mesh.num_devices,
                          num_micro_batches, submesh_choices,
                          num_autosharding_configs, compute_cost,

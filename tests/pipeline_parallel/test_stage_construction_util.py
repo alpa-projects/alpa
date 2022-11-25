@@ -39,9 +39,7 @@ class StageConstructUtilTest(unittest.TestCase):
     def setUp(self):
         init(cluster="ray")
 
-    def create_bert_jaxpr_with_donation(self,
-                                        num_layers,
-                                        num_microbatch):
+    def create_bert_jaxpr_with_donation(self, num_layers, num_microbatch):
         batch_size = 16
         state, batch, _ = get_bert_layer_train_state_and_step(
             batch_size=batch_size,
@@ -77,13 +75,13 @@ class StageConstructUtilTest(unittest.TestCase):
             hidden_size=512,
             num_layers=4,
             use_bias=False,
-            add_manual_pipeline_marker=True
-        )
+            add_manual_pipeline_marker=True)
 
         def train_step(state, batch):
+
             def loss_func(params):
                 out = state.apply_fn(params, batch["x"])
-                return jnp.mean((out - batch["y"]) ** 2)
+                return jnp.mean((out - batch["y"])**2)
 
             grads = grad(loss_func)(state.params)
             new_state = state.apply_gradients(grads=grads)
@@ -93,7 +91,11 @@ class StageConstructUtilTest(unittest.TestCase):
         micro_batch = {k: v[:microbatch_size] for k, v in batch.items()}
         return self.compile_train_step(train_step, state, batch, micro_batch)
 
-    def compile_train_step(self, train_step, state, batch, micro_batch,
+    def compile_train_step(self,
+                           train_step,
+                           state,
+                           batch,
+                           micro_batch,
                            use_remat=True):
         # Compile
         with GradFuncTransformContext(ManualLayerOption(use_remat).transform):
@@ -116,9 +118,12 @@ class StageConstructUtilTest(unittest.TestCase):
 
         (closed_jaxpr, global_outvars, jax_pipeline_layers, apply_grad_jaxpr,
          microbatch_bound, reduction_vector, post_microbatch_bound,
-         accumulator_mapping, acc_grad_outvars) = (split_and_process_layers(
-             closed_jaxpr, full_batch_closed_jaxpr, num_microbatch,
-             inference_mode, gensym_func))
+         accumulator_mapping, acc_grad_invars,
+         acc_grad_outvars) = (split_and_process_layers(closed_jaxpr,
+                                                       full_batch_closed_jaxpr,
+                                                       num_microbatch,
+                                                       inference_mode,
+                                                       gensym_func))
 
         (jax_apply_layers,
          apply_grad_global_info) = slice_apply_grad_for_stage_construction(
@@ -128,13 +133,13 @@ class StageConstructUtilTest(unittest.TestCase):
 
         return (closed_jaxpr, global_outvars, jax_pipeline_layers,
                 apply_grad_jaxpr, microbatch_bound, reduction_vector,
-                post_microbatch_bound, accumulator_mapping, acc_grad_outvars,
-                jax_apply_layers, apply_grad_global_info)
+                post_microbatch_bound, accumulator_mapping, acc_grad_invars,
+                acc_grad_outvars, jax_apply_layers, apply_grad_global_info)
 
     def generate_profile_result(self, jax_pipeline_layers, accumulator_mapping,
-                                acc_grad_outvars, jax_apply_layers,
-                                apply_grad_global_info, num_micro_batches,
-                                start_index, end_index):
+                                acc_grad_invars, acc_grad_outvars,
+                                jax_apply_layers, apply_grad_global_info,
+                                num_micro_batches, start_index, end_index):
         virtual_mesh = get_global_virtual_physical_mesh()
         # submesh = (virtual_mesh.num_hosts, virtual_mesh.num_devices_per_host)
         submesh = (1, 1)
@@ -159,8 +164,8 @@ class StageConstructUtilTest(unittest.TestCase):
         stage_config = generate_stage_info(
             jax_pipeline_layers,
             [forward_layer_indices, backward_layer_indices],
-            accumulator_mapping, acc_grad_outvars, "test_stage",
-            selected_apply_grad_layers, apply_grad_global_info)
+            accumulator_mapping, acc_grad_invars, acc_grad_outvars,
+            "test_stage", selected_apply_grad_layers, apply_grad_global_info)
 
         stage_index = 0
         stage = (stage_index, stage_config, auto_sharding_config)
@@ -186,8 +191,8 @@ class StageConstructUtilTest(unittest.TestCase):
          donated_invars) = self.create_mlp_jaxpr(num_microbatch)
         (closed_jaxpr, global_outvars, jax_pipeline_layers, apply_grad_jaxpr,
          microbatch_bound, reduction_vector, post_microbatch_bound,
-         accumulator_mapping, acc_grad_outvars, jax_apply_layers,
-         apply_grad_global_info) = self.pre_process_jaxpr(
+         accumulator_mapping, acc_grad_invars, acc_grad_outvars,
+         jax_apply_layers, apply_grad_global_info) = self.pre_process_jaxpr(
              closed_jaxpr, full_batch_closed_jaxpr, num_microbatch,
              donated_invars)
         print("-" * 100)
@@ -197,9 +202,9 @@ class StageConstructUtilTest(unittest.TestCase):
         # 2D
         print("-" * 100)
         profile_results_2d = self.generate_profile_result(
-            jax_pipeline_layers, accumulator_mapping, acc_grad_outvars,
-            jax_apply_layers, apply_grad_global_info, num_microbatch, 0,
-            num_layers - 1)
+            jax_pipeline_layers, accumulator_mapping, acc_grad_invars,
+            acc_grad_outvars, jax_apply_layers, apply_grad_global_info,
+            num_microbatch, 0, num_layers - 1)
         print(profile_results_2d)
         print("-" * 100)
         # 1D
@@ -217,9 +222,11 @@ class StageConstructUtilTest(unittest.TestCase):
 
         # Compare
         max_stage_2d, (available_memory_2d, peak_memory_2d, initial_size_2d,
-                       intermediate_size_2d) = get_max_n_succ_stages([profile_results_2d])
-        max_stage_1d, (available_memory_1d, peak_memory_1d, initial_size_1d,
-                       intermediate_size_1d) = get_max_n_succ_stages(profile_results_1d)
+                       intermediate_size_2d) = get_max_n_succ_stages(
+                           [profile_results_2d])
+        max_stage_1d, (
+            available_memory_1d, peak_memory_1d, initial_size_1d,
+            intermediate_size_1d) = get_max_n_succ_stages(profile_results_1d)
         print("max_stage_2d: ", max_stage_2d)
         print("max_stage_1d: ", max_stage_1d)
         print("available_memory_2d: ", available_memory_2d)
@@ -230,7 +237,6 @@ class StageConstructUtilTest(unittest.TestCase):
         print("initial_size_1d: ", initial_size_1d)
         print("intermediate_size_2d: ", intermediate_size_2d)
         print("intermediate_size_1d: ", intermediate_size_1d)
-
 
 
 def suite():

@@ -64,13 +64,13 @@ CompileOutput = namedtuple("CompileOutput", [
     "apply_grad_input_sharding_protos"
 ])
 
-CompileConfig = namedtuple("CompileConfig",
-                           ["hlo", "names", "module_donate_invars",
-                            "module_acc_grad_outvars_indices"])
+CompileConfig = namedtuple(
+    "CompileConfig",
+    ["hlo", "names", "module_donate_invars", "module_acc_grad_outvars_indices"])
 
-ProfileConfig = namedtuple("ProfileConfig", [
+ModuleProfileConfig = namedtuple("ModuleProfileConfig", [
     "invar_names", "outvar_names", "invar_avals", "outvar_avals",
-    "donated_invars", "required_outvars_indices"
+    "donated_invars", "acc_grad_invars_indices", "acc_grad_outvars_indices"
 ])
 
 ApplyGradConfig = namedtuple("ApplyGradConfig",
@@ -85,7 +85,8 @@ class ModuleProfileResult(
         namedtuple("ModuleProfileResult", [
             "compute_cost", "peak_memory", "temp_buffer_size", "invar_names",
             "outvar_names", "invar_sizes", "outvar_sizes", "donated_invars",
-            "required_outvars_indices", "available_memory"
+            "acc_grad_invars_indices", "acc_grad_outvars_indices",
+            "available_memory"
         ])):
     """Profile result of a module."""
 
@@ -106,7 +107,9 @@ class StageProfileResult:
 
     def __init__(self, n_modules, initial_var_names, initial_var_sizes):
         self.n_modules = n_modules
-        self.module_profile_results = [None] * n_modules
+        self.module_profile_results: Sequence[ModuleProfileResult] = [
+            None
+        ] * n_modules
         self.available_memory = None
         self.initial_var_names = tuple(initial_var_names)
         self.initial_var_sizes = tuple(initial_var_sizes)
@@ -539,7 +542,7 @@ def compile_all(stages, num_micro_batches, default_as_option, profile_results):
 
 
 def generate_module_profile_result(raw_result: Tuple,
-                                   profile_config: ProfileConfig,
+                                   profile_config: ModuleProfileConfig,
                                    compile_output: ModuleCompileOutput,
                                    logical_mesh_shape: Tuple[int, ...]):
     compute_costs, peak_memory, available_memory = raw_result
@@ -566,7 +569,8 @@ def generate_module_profile_result(raw_result: Tuple,
         invar_sizes=invar_sizes,
         outvar_sizes=outvar_sizes,
         donated_invars=tuple(profile_config.donated_invars),
-        required_outvars_indices=tuple(profile_config.required_outvars_indices),
+        acc_grad_invars_indices=tuple(profile_config.acc_grad_invars_indices),
+        acc_grad_outvars_indices=tuple(profile_config.acc_grad_outvars_indices),
         available_memory=available_memory,
     )
 
@@ -642,6 +646,7 @@ def profile_all(stages, compiled_outputs: Sequence[CompileOutput], meshes,
 def generate_training_stages_2d(layers,
                                 layer_flops_prefix_sum,
                                 accumulator_mapping,
+                                acc_grad_invars,
                                 acc_grad_outvars,
                                 apply_grad_layers,
                                 apply_grad_global_info,
@@ -682,8 +687,8 @@ def generate_training_stages_2d(layers,
             stage_name = f"stage_{start}_{end}"
             stage_config = generate_stage_info(
                 layers, [forward_layer_indices, backward_layer_indices],
-                accumulator_mapping, acc_grad_outvars, stage_name,
-                selected_apply_grad_layers, apply_grad_global_info)
+                accumulator_mapping, acc_grad_invars, acc_grad_outvars,
+                stage_name, selected_apply_grad_layers, apply_grad_global_info)
             for config_idx, autosharding_config in enumerate(
                     autosharding_configs):
                 if autosharding_config is not None:
@@ -694,7 +699,6 @@ def generate_training_stages_2d(layers,
 
 
 def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
-    env = {}
     initial_var_sizes_dict = {}
     for stage_result in profile_results:
         for name, size in zip(stage_result.initial_var_names,
@@ -716,62 +720,92 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
     assert n_modules == 2, "Only support forward and backward module"
     assert all(result.n_modules == n_modules for result in profile_results)
 
-    stage_module_execution_order = (
-        [(i, 0) for i in range(n_stages)] +
-        [(i, 1) for i in range(n_stages - 1, -1, -1)])
-
-    stage_no = n_modules * len(profile_results)
+    module_execution_orders = [
+        list(range(n_stages)),
+        list(range(n_stages - 1, -1, -1)),
+    ]
     # eliminate_time[var] = k means that the variable can be eliminated after
     # stage k.
-    eliminate_time = {}
-    required_outvars = set()
-    for stage_no, (i, j) in reversed(
-            list(enumerate(stage_module_execution_order))):
-        module_result = profile_results[i].module_profile_results[j]
-        for invar in module_result.invar_names:
-            if invar not in eliminate_time:
-                eliminate_time[invar] = stage_no
-        for required_idx in module_result.required_outvars_indices:
-            required_outvars.add(module_result.outvar_names[required_idx])
+    last_used_stage_no = {}
+    acc_grad_invars = OrderedSet()
+    acc_grad_outvars = OrderedSet()
+    stage_no = n_stages * n_modules
+    for module_id, stage_order in reversed(
+            list(enumerate(module_execution_orders))):
+        for stage_id in reversed(stage_order):
+            stage_no -= 1
+            module_result = profile_results[stage_id].module_profile_results[
+                module_id]
+            for invar in module_result.invar_names:
+                if invar not in last_used_stage_no:
+                    last_used_stage_no[invar] = stage_no
+            for var_id in module_result.acc_grad_invars_indices:
+                acc_grad_invars.add(module_result.invar_names[var_id])
+            for var_id in module_result.acc_grad_invars_indices:
+                acc_grad_outvars.add(module_result.outvar_names[var_id])
 
+    env = {}
     intermediate_size = None
-    for stage_no, (i, j) in enumerate(stage_module_execution_order):
-        module_result = profile_results[i].module_profile_results[j]
-        for invar, size, donated in zip(module_result.invar_names,
-                                        module_result.invar_sizes,
-                                        module_result.donated_invars):
-            if invar not in env:
-                env[invar] = size
-            else:
-                # env[invar] and size might be different because of different
-                # sharding specs. We take the max for estimation.
-                env[invar] = max(env[invar], size)
-            if donated:
-                del env[invar]
-        for outvar, size in zip(module_result.outvar_names,
-                                module_result.outvar_sizes):
-            if outvar not in env:
+    stage_no = 0
+    for module_id, stage_order in enumerate(module_execution_orders):
+        in_module_vars = OrderedSet()
+        for stage_id in stage_order:
+            module_result = profile_results[stage_id].module_profile_results[
+                module_id]
+            for invar, size, donated in zip(module_result.invar_names,
+                                            module_result.invar_sizes,
+                                            module_result.donated_invars):
+                if invar not in env:
+                    env[invar] = size
+                else:
+                    # env[invar] and size might be different because of
+                    # different sharding specs. We take the max for
+                    # estimation.
+                    env[invar] = max(env[invar], size)
+                if donated:
+                    del env[invar]
+            for outvar, size in zip(module_result.outvar_names,
+                                    module_result.outvar_sizes):
+                assert outvar not in env
                 env[outvar] = size
-            else:
-                assert env[outvar] == size
-        total_env_size = sum(env.values())
-        peak_memory = max(peak_memory,
-                          total_env_size + module_result.temp_buffer_size)
+                in_module_vars.add(outvar)
+            total_env_size = sum(env.values())
+            peak_memory = max(peak_memory,
+                              total_env_size + module_result.temp_buffer_size)
+            # Remove the variables that are no longer used and is generated
+            # within the module.
+            var_to_be_eliminated = []
+            for var in env:
+                if (var in in_module_vars and var not in acc_grad_invars and
+                        var not in acc_grad_outvars and
+                    (var not in last_used_stage_no or
+                     last_used_stage_no[var] <= stage_no)):
+                    var_to_be_eliminated.append(var)
+            for var in var_to_be_eliminated:
+                del env[var]
+            stage_no += 1
+        # Remove the variables that are no longer used
         var_to_be_eliminated = []
         for var in env:
-            if (var not in required_outvars and
-                (var not in eliminate_time or eliminate_time[var] >= stage_no)):
+            if (var not in acc_grad_invars and var not in acc_grad_outvars and
+                (var not in last_used_stage_no or
+                 last_used_stage_no[var] <= stage_no)):
                 var_to_be_eliminated.append(var)
         for var in var_to_be_eliminated:
             del env[var]
-        if stage_no == n_stages - 1:
-            # Record the variables that are not eliminated at the end of the
-            # last forward module.
+
+        # Record the variables that are not eliminated at the end of the
+        # last forward module.
+        if module_id == 0:
             intermediate_size = sum(env.values())
-    for var in required_outvars:
+
+    for var in acc_grad_invars:
         del env[var]
 
-    assert len(env) == 0, "Some variables are not eliminated"
+    for var in acc_grad_outvars:
+        del env[var]
+
+    assert len(env) == 0, f"Variables {env.keys()} are not eliminated."
 
     max_stage = int((available_memory - peak_memory - initial_size) //
                     max(intermediate_size, 1e-8) - 1)
@@ -808,9 +842,10 @@ def interpret_profile_result_2d(profile_results: Dict[Tuple[int, ...],
     return all_compute_cost, all_max_n_succ_stages
 
 
-def generate_training_stages_1d(layers, accumulator_mapping, acc_grad_outvars,
-                                apply_grad_layers, apply_grad_global_info,
-                                mesh_id, autosharding_configs):
+def generate_training_stages_1d(layers, accumulator_mapping, acc_grad_invars,
+                                acc_grad_outvars, apply_grad_layers,
+                                apply_grad_global_info, mesh_id,
+                                autosharding_configs):
     print("- Generate all stage infos (Jaxpr -> HLO)")
     assert len(layers) % 2 == 0
     num_layers = len(layers) // 2
@@ -822,7 +857,8 @@ def generate_training_stages_1d(layers, accumulator_mapping, acc_grad_outvars,
         stage_config = generate_stage_info(layers, [(l,),
                                                     (2 * num_layers - l - 1,)],
                                            accumulator_mapping,
-                                           acc_grad_outvars, stage_name,
+                                           acc_grad_outvars, acc_grad_outvars,
+                                           stage_name,
                                            list(selected_apply_grad_layers),
                                            apply_grad_global_info)
         for config_idx, autosharding_config in enumerate(autosharding_configs):
@@ -937,7 +973,8 @@ def get_compute_cost(
         autosharding_configs: Sequence[Sequence[Tuple[LogicalDeviceMesh,
                                                       dict]]],
         layers: Sequence[JaxPipelineComputation],
-        accumulator_mapping: Dict[Var, Var], acc_grad_outvars: Sequence[Var],
+        accumulator_mapping: Dict[Var, Var], acc_grad_invars: Sequence[Var],
+        acc_grad_outvars: Sequence[Var],
         apply_grad_layers: Sequence[JaxPipelineComputation],
         apply_grad_global_info: Tuple, num_micro_batches: int,
         default_as_option: AutoShardingOption,
@@ -959,6 +996,7 @@ def get_compute_cost(
             backward).
         accumulator_mapping: Donation mapping from accumulator to
             accumulated results for all layers.
+        acc_grad_outvars: Global input variables for all layers.
         acc_grad_outvars: Global output variables for all layers.
         apply_grad_layers: Apply gradient computations corresponding to each
             forward layers.
@@ -1011,17 +1049,15 @@ def get_compute_cost(
         if auto_stage_option.layer_profile_mode == "composition":
             stages = generate_training_stages_2d(
                 layers, layer_flops_prefix_sum, accumulator_mapping,
-                acc_grad_outvars, apply_grad_layers, apply_grad_global_info,
-                mesh_id, autosharding_configs[mesh_id],
+                acc_grad_invars, acc_grad_outvars, apply_grad_layers,
+                apply_grad_global_info, mesh_id, autosharding_configs[mesh_id],
                 sliced_virtual_meshes[0].num_devices, cluster_size,
                 auto_stage_option.stage_imbalance_tolerance)
         elif auto_stage_option.layer_profile_mode == "individual":
-            stages = generate_training_stages_1d(layers, accumulator_mapping,
-                                                 acc_grad_outvars,
-                                                 apply_grad_layers,
-                                                 apply_grad_global_info,
-                                                 mesh_id,
-                                                 autosharding_configs[mesh_id])
+            stages = generate_training_stages_1d(
+                layers, accumulator_mapping, acc_grad_invars, acc_grad_outvars,
+                apply_grad_layers, apply_grad_global_info, mesh_id,
+                autosharding_configs[mesh_id])
         else:
             raise ValueError(f"Unknown layer profile mode: "
                              f"{auto_stage_option.layer_profile_mode}")
@@ -1073,6 +1109,7 @@ def select_module_layers(layers: Sequence[JaxPipelineComputation],
         layer_indices: a list of layer ids within the module.
         accumulator_mapping: the mapping from accumulator input to output,
             used to determine the donation.
+        acc_grad_invars: the invars of the accumulator gradient layers.
         acc_grad_outvars: the outvars of the accumulator gradient layers.
 
     Returns:
@@ -1090,23 +1127,24 @@ def select_module_layers(layers: Sequence[JaxPipelineComputation],
     new_layers = []
     module_required_outvars = OrderedSet()
     module_accumulator_mapping = {}
-    global_used = OrderedSet(acc_grad_outvars)
+    used_by_other_layers_set = OrderedSet(acc_grad_outvars)
     for layer_id in reversed(range(num_layers)):
         layer = layers[layer_id]
         if layer_id not in layer_indices:
-            global_used.update(layer.invars)
+            used_by_other_layers_set.update(layer.invars)
             continue
         layer_donation, new_layer = (
             get_local_donation_mapping_and_add_missing_invars(
                 layer, reversed_accumulator_mapping, gensym_fn))
         for invar in layer_donation:
-            assert invar not in local_used and invar not in global_used
+            assert (invar not in local_used and
+                    invar not in used_by_other_layers_set)
 
-        global_used_outvars = [
-            var for var in new_layer.outvars if var in global_used
+        required_outvars = [
+            var for var in new_layer.outvars if var in used_by_other_layers_set
         ]
         module_accumulator_mapping.update(layer_donation)
-        module_required_outvars.update(global_used_outvars)
+        module_required_outvars.update(required_outvars)
         local_used.update(new_layer.invars)
         new_layers.append(new_layer)
     return (reversed(new_layers), module_accumulator_mapping,
@@ -1135,8 +1173,9 @@ def split_sharding_specs(layers: Sequence[JaxPipelineComputation],
 
 
 def generate_stage_info(all_layers, selected_indices,
-                        global_accumulator_mapping, acc_grad_outvars, name,
-                        apply_grad_layers, apply_grad_info):
+                        global_accumulator_mapping, acc_grad_invars,
+                        acc_grad_outvars, name, apply_grad_layers,
+                        apply_grad_info):
     """Combine selected layers together for profiling."""
     modules = []
     module_accumulator_mappings = []
@@ -1162,6 +1201,7 @@ def generate_stage_info(all_layers, selected_indices,
     all_modules_donate_invars = []
     all_modules_outvars = OrderedSet()
     all_modules_acc_grad_outvars_indices = []
+    acc_grad_invars_set = OrderedSet(acc_grad_invars)
     acc_grad_outvars_set = OrderedSet(acc_grad_outvars)
     for module_name, jaxprs, accumulator_mapping, required_outvars in zip(
             module_names, module_jaxprs, module_accumulator_mappings,
@@ -1172,10 +1212,9 @@ def generate_stage_info(all_layers, selected_indices,
         is_donated = tuple(invar in accumulator_mapping and
                            accumulator_mapping[invar] in outvars_set
                            for invar in merged_jaxpr.jaxpr.invars)
-        required_outvars_set = set(required_outvars)
-        required_outvars_indices = tuple(
-            i for i, outvar in enumerate(merged_jaxpr.jaxpr.outvars)
-            if outvar in required_outvars_set)
+        acc_grad_invars_indices = tuple(
+            i for i, outvar in enumerate(merged_jaxpr.jaxpr.invars)
+            if outvar in acc_grad_invars_set)
         acc_grad_outvars_indices = tuple(
             i for i, outvar in enumerate(merged_jaxpr.jaxpr.outvars)
             if outvar in acc_grad_outvars_set)
@@ -1183,9 +1222,11 @@ def generate_stage_info(all_layers, selected_indices,
         outvar_names = tuple(repr(var) for var in merged_jaxpr.jaxpr.outvars)
         invar_avals = tuple(var.aval for var in merged_jaxpr.jaxpr.invars)
         outvar_avals = tuple(var.aval for var in merged_jaxpr.jaxpr.outvars)
-        profile_config = ProfileConfig(invar_names, outvar_names, invar_avals,
-                                       outvar_avals, is_donated,
-                                       required_outvars_indices)
+        profile_config = ModuleProfileConfig(invar_names, outvar_names,
+                                             invar_avals, outvar_avals,
+                                             is_donated,
+                                             acc_grad_invars_indices,
+                                             acc_grad_outvars_indices)
         module_merged_jaxprs.append(merged_jaxpr)
         module_profile_configs.append(profile_config)
         all_modules_donate_invars.append(is_donated)
@@ -1225,6 +1266,7 @@ def generate_stage_info(all_layers, selected_indices,
                                  all_modules_donation_mapping))
     hlo = jaxpr_to_hlo(name, all_modules_merged_jaxpr, all_modules_is_donated)
     compile_config = CompileConfig(hlo, module_names, all_modules_donate_invars,
+                                   all_modules_acc_grad_invars_indices,
                                    all_modules_acc_grad_outvars_indices)
     stage_config = StageConfig(n_modules, compile_config,
                                module_profile_configs, apply_info)

@@ -134,9 +134,11 @@ def compile_pipeshard_executable_internal(
 
     (closed_jaxpr, global_outvars, jax_pipeline_layers, apply_grad_jaxpr,
      microbatch_bound, reduction_vector, post_microbatch_bound,
-     accumulator_mapping, acc_grad_outvars) = (split_and_process_layers(
-         closed_jaxpr, full_batch_closed_jaxpr, num_microbatch, inference_mode,
-         gensym_func))
+     accumulator_mapping, acc_grad_invars,
+     acc_grad_outvars) = (split_and_process_layers(closed_jaxpr,
+                                                   full_batch_closed_jaxpr,
+                                                   num_microbatch,
+                                                   inference_mode, gensym_func))
 
     debug_compilation_time("jaxpr operations")
 
@@ -150,9 +152,9 @@ def compile_pipeshard_executable_internal(
     (jax_pipeline_stages, stage_to_mesh, sliced_virtual_meshes,
      manual_stage_option) = cluster_layers_and_slice_mesh(
          jax_pipeline_layers, virtual_mesh, accumulator_mapping,
-         acc_grad_outvars, num_microbatch, micro_batch_size, jax_apply_layers,
-         apply_grad_global_info, pipeline_schedule, default_as_option,
-         stage_option)
+         acc_grad_invars, acc_grad_outvars, num_microbatch, micro_batch_size,
+         jax_apply_layers, apply_grad_global_info, pipeline_schedule,
+         default_as_option, stage_option)
     num_meshes = len(sliced_virtual_meshes)
     debug_compilation_time("stage construction")
 
@@ -300,7 +302,7 @@ def split_and_process_layers(closed_jaxpr, full_batch_closed_jaxpr,
 
     return (closed_jaxpr, global_outvars, jax_pipeline_layers, apply_grad_jaxpr,
             microbatch_bound, reduction_vector, post_microbatch_bound,
-            accumulator_mapping, acc_grad_outvars)
+            accumulator_mapping, acc_grad_invars, acc_grad_outvars)
 
 
 def shard_each_stage(jax_all_stages, virtual_meshes, schedule, num_meshes,

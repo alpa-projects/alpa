@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 import os
 import torch
-from llm_serving.model import opt_model, bloom_model
+from llm_serving.model import opt_model, bloom_model, codegen_model
 from llm_serving.model.opt_utils import (TransformerModelConfig,
                                          jax_index_select)
 from tqdm import tqdm

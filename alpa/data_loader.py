@@ -24,7 +24,7 @@ class DataLoader:
         self.avals = []
         self.indices = []
         self.sharding_specs = []
-        for ps in jax.tree_leaves(placement_specs):
+        for ps in jax.tree_util.tree_leaves(placement_specs):
             assert len(ps.mesh_ids) == 1
             assert ps.mesh_ids[0] == self.physical_mesh.mesh_id
 
@@ -132,7 +132,7 @@ class MeshDriverDataLoader:
         avals = []
         sharding_specs = []
         indices = []
-        for ps in jax.tree_leaves(placement_specs):
+        for ps in jax.tree_util.tree_leaves(placement_specs):
             avals.append(ps.aval)
             assert len(ps.mesh_ids) == 1
             assert ps.mesh_ids[0] == physical_mesh.mesh_id

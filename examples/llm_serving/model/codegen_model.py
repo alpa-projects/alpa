@@ -906,7 +906,7 @@ def load_params_dis_array(path, executable, params_aval, config, dummy=False):
 
     for m in executable.mesh_group.meshes:
         for w in m.workers:
-            w.load_opt_params_worker_func.remote(path, prefix_to_flat_idx,
+            w.load_codegen_params_worker_func.remote(path, prefix_to_flat_idx,
                                                  config, flat_shapes,
                                                  flat_uuids, flat_indices,
                                                  flat_mesh_ids)

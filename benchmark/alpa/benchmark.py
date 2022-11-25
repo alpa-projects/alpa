@@ -56,6 +56,7 @@ def benchmark_suite(suite_name,
                             "on local GPUs.")
 
     if num_gpus not in benchmark_suites[suite_name]:
+        print(f"No benchmark suite for #gpu={num_gpus}")
         return
     suite = benchmark_suites[suite_name][num_gpus]
 

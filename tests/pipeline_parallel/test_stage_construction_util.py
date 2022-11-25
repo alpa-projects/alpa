@@ -96,7 +96,7 @@ class StageConstructUtilTest(unittest.TestCase):
                            state,
                            batch,
                            micro_batch,
-                           use_remat=True):
+                           use_remat=False):
         # Compile
         with GradFuncTransformContext(ManualLayerOption(use_remat).transform):
             closed_jaxpr, output_tree = make_jaxpr(train_step,
@@ -199,6 +199,11 @@ class StageConstructUtilTest(unittest.TestCase):
         print(closed_jaxpr)
         print("-" * 100)
 
+        print("-" * 100)
+        for layer in jax_pipeline_layers:
+            print(layer.closed_jaxpr())
+            print("-" * 50)
+        print("-" * 100)
         # 2D
         print("-" * 100)
         profile_results_2d = self.generate_profile_result(
@@ -212,7 +217,7 @@ class StageConstructUtilTest(unittest.TestCase):
         profile_results_1d = []
         for layer_idx in range(num_layers):
             result = self.generate_profile_result(
-                jax_pipeline_layers, accumulator_mapping, acc_grad_outvars,
+                jax_pipeline_layers, accumulator_mapping, acc_grad_invars, acc_grad_outvars,
                 jax_apply_layers, apply_grad_global_info, num_microbatch,
                 layer_idx, layer_idx)
             profile_results_1d.append(result)

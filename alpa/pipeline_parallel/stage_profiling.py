@@ -741,7 +741,7 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
                     last_used_stage_no[invar] = stage_no
             for var_id in module_result.acc_grad_invars_indices:
                 acc_grad_invars.add(module_result.invar_names[var_id])
-            for var_id in module_result.acc_grad_invars_indices:
+            for var_id in module_result.acc_grad_outvars_indices:
                 acc_grad_outvars.add(module_result.outvar_names[var_id])
 
     env = {}
@@ -798,9 +798,11 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
         # last forward module.
         if module_id == 0:
             intermediate_size = sum(env.values())
+            print("intermediate env", env)
 
     for var in acc_grad_invars:
-        del env[var]
+        if var in env:
+            del env[var]
 
     for var in acc_grad_outvars:
         del env[var]
@@ -1266,7 +1268,6 @@ def generate_stage_info(all_layers, selected_indices,
                                  all_modules_donation_mapping))
     hlo = jaxpr_to_hlo(name, all_modules_merged_jaxpr, all_modules_is_donated)
     compile_config = CompileConfig(hlo, module_names, all_modules_donate_invars,
-                                   all_modules_acc_grad_invars_indices,
                                    all_modules_acc_grad_outvars_indices)
     stage_config = StageConfig(n_modules, compile_config,
                                module_profile_configs, apply_info)

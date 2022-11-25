@@ -771,11 +771,12 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
 
     env = {}
     intermediate_size = None
-    stage_no = 0
+    stage_no = -1
     for module_id, stage_order in enumerate(module_execution_orders):
         module_invars = all_module_invars[module_id]
         env.update(module_invars)
         for stage_id in stage_order:
+            stage_no += 1
             module_result = profile_results[stage_id].module_profile_results[
                 module_id]
             for invar, size, donated in zip(module_result.invar_names,
@@ -808,7 +809,6 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
                     var_to_be_eliminated.append(var)
             for var in var_to_be_eliminated:
                 del env[var]
-            stage_no += 1
         # Remove the variables that are no longer used
         var_to_be_eliminated = []
         for var in env:
@@ -823,7 +823,6 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
         # last forward module.
         if module_id == 0:
             intermediate_size = sum(env.values())
-            print("intermediate env", env)
 
     for var in acc_grad_invars:
         if var in env:

@@ -7,6 +7,8 @@ class GlobalConfig:
 
     def __init__(self):
         ########## Options of device mesh ##########
+        self.backend = "gpu"
+        self.has_cuda = os.system("nvidia-smi > /dev/null 2>&1") == 0
         # See https://jax.readthedocs.io/en/latest/gpu_memory_allocation.html
         self.xla_client_mem_fraction = float(
             os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", 0.9))
@@ -77,6 +79,14 @@ class GlobalConfig:
         ########## Options of logging ##########
         self.print_compilation_time = False
         self.print_auto_layer_stats = False
+
+        # Whether to collect activity trace
+        self.collect_trace = False
+
+    @property
+    def ray_accelerator_name(self):
+        backend_to_ray = {"gpu": "GPU"}
+        return backend_to_ray[self.backend]
 
 
 global_config = GlobalConfig()

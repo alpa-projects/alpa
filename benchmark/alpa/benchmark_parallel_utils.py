@@ -309,7 +309,7 @@ def compile_pipeshard_executable(parallel_mode, train_step, state,
 
     if parallel_mode == "search":
         compilation_times = {
-            k: timers(k).elapsed() for k in [
+            k: timers(k).elapsed(mode="sum") for k in [
                 "stage-construction", "stage-construction-dp",
                 "stage-construction-compilation", "stage-construction-profiling"
             ]
@@ -400,6 +400,7 @@ def compile_and_benchmark_pipeshard_inference_executable(
         parallel_mode, infer_step, params, other_inference_step_inputs)
 
     # Preshard params
+    executable.mesh_group.reset_memory_stats()
     params_ps = executable.get_input_placement_specs()[0]
     flat_params, in_tree = tree_flatten(params)
     flat_ps = tree_leaves(params_ps)
@@ -407,6 +408,8 @@ def compile_and_benchmark_pipeshard_inference_executable(
         in_tree,
         executable.mesh_group.shard_args_to_arrays(flat_ps, flat_params))
     print_used_time("Preshard (driver)")
+    per_stage_weight_mem = executable.mesh_group.get_max_memory_allocated_per_mesh(
+    )
 
     latencies = benchmark_inference_executable(
         niter,
@@ -416,69 +419,22 @@ def compile_and_benchmark_pipeshard_inference_executable(
         other_inference_step_inputs,
         profile_driver_time=profile_driver_time)
     max_mem_allocated = executable.mesh_group.get_max_memory_allocated()
+    per_stage_peak_mem = executable.mesh_group.get_max_memory_allocated_per_mesh(
+    )
 
-    return latencies, max_mem_allocated, compilation_times, executable
+    return latencies, max_mem_allocated, compilation_times, executable, per_stage_weight_mem, per_stage_peak_mem
 
 
-def dump_chrome_tracing(timelines: List[tuple], dumpfile: str):
-
-    def get_color(i):
-        color_list = [
-            "thread_state_uninterruptible",
-            "thread_state_iowait",
-            "thread_state_running",
-            "thread_state_runnable",
-            "thread_state_unknown",
-            "background_memory_dump",
-            "light_memory_dump",
-            "detailed_memory_dump",
-            "vsync_highlight_color",
-            "generic_work",
-            "good",
-            "bad",
-            "terrible",
-            "yellow",
-            "olive",
-            "rail_response",
-            "rail_animation",
-            "rail_idle",
-            "rail_load",
-            "startup",
-            "heap_dump_stack_frame",
-            "heap_dump_object_type",
-            "heap_dump_child_node_arrow",
-            "cq_build_running",
-            "cq_build_passed",
-            "cq_build_failed",
-            "cq_build_attempt_runnig",
-            "cq_build_attempt_passed",
-            "cq_build_attempt_failed",
-        ]
-        return color_list[i % len(color_list)]
-
-    slot_list = []
-    for request_id, request_timeline in enumerate(timelines):
+def compute_avg_stage_latencies(timelines: List[tuple]):
+    stage_latencies = []
+    for request_timeline in timelines:
         sorted_timeline = sorted(request_timeline, key=lambda x: x[0])
-
-        for stage_num, (s, e, node_ids, devices) in enumerate(sorted_timeline):
-            for node_id, devices_per_node in zip(node_ids, devices):
-                for device_id in devices_per_node:
-                    slot = {
-                        "name": f"r{request_id}s{stage_num}",
-                        "cat": f"request {request_id}, stage {stage_num}",
-                        "ph": "X",
-                        "pid": node_id,
-                        "tid": device_id,
-                        "ts": float(s) * 1e6,
-                        "dur": float(e - s) * 1e6,
-                        "cname": get_color(request_id)
-                    }
-                    slot_list.append(slot)
-
-    os.makedirs(os.path.dirname(dumpfile), exist_ok=True)
-    with open(dumpfile, "w") as fout:
-        fout.write(
-            json.dumps({
-                "traceEvents": slot_list,
-                "displayTimeUnit": "ms",
-            }))
+        stage_borders = [sorted_timeline[0][0]]
+        for _, e, _, _ in sorted_timeline:
+            stage_borders.append(e)
+        stage_latency = [
+            stage_borders[i + 1] - stage_borders[i]
+            for i in range(len(stage_borders) - 1)
+        ]
+        stage_latencies.append(stage_latency)
+    return np.mean(stage_latencies, axis=0)

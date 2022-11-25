@@ -10,10 +10,9 @@ import time
 from collections import OrderedDict
 from functools import partial, partialmethod
 import threading
-from typing import Iterable, Dict, Sequence, Any, Union, List
+from typing import Iterable, Dict, Sequence, Any, List
 from warnings import warn
 
-import flax
 from flax.training import train_state
 from flax.training.common_utils import stack_forest
 import jax
@@ -38,10 +37,11 @@ from ray.util.placement_group import get_current_placement_group,\
     PlacementGroup
 import tqdm
 
-import alpa
+from alpa import device_mesh
 from alpa.global_env import global_config, is_worker
 from alpa.monkey_patch import (restore_random, monkey_patch_random,
                                rng_primitives)
+from alpa.wrapped_hlo import HloStatus, WrappedHlo
 
 PLACEMENT_GROUP_TIMEOUT_S_ENV = "ALPA_PLACEMENT_GROUP_TIMEOUT_S_ENV"
 
@@ -73,7 +73,7 @@ def auto_static_argnums(args: Sequence[Any]):
         if isinstance(arg, (bool, int, float, str)):
             return True
 
-        if isinstance(arg, (flax.optim.base.Optimizer, train_state.TrainState)):
+        if isinstance(arg, train_state.TrainState):
             return False
 
         xs, _ = tree_flatten(arg)
@@ -92,7 +92,7 @@ def auto_donate_argnums(args: Sequence[Any]):
 
     def should_donate(x):
         # Always donate optimizer
-        if isinstance(x, (flax.optim.base.Optimizer, train_state.TrainState)):
+        if isinstance(x, train_state.TrainState):
             return True
         return False
 
@@ -110,7 +110,6 @@ def abstractify_with_aval(x):
 
 def update_jax_platform(platform):
     """Update the jax backend platform."""
-    jax.config.update("jax_platforms", platform)
     jax.config.update("jax_platform_name", platform)
     xb.get_backend.cache_clear()
 
@@ -327,11 +326,11 @@ def get_compile_options(num_replicas: int, num_partitions: int,
     return compile_options
 
 
-def jaxpr_to_hlo_module(name: str,
-                        closed_jaxpr: ClosedJaxpr,
-                        donated_invars: Sequence[bool],
-                        platform: str = "cuda"):
-    """Convert a jaxpr to an XLA HloModule.
+def jaxpr_to_hlo(name: str,
+                 closed_jaxpr: ClosedJaxpr,
+                 donated_invars: Sequence[bool],
+                 platform: str = "cuda"):
+    """Convert a jaxpr to a wrapped XLA HloModule.
 
     Reference code: jax/jax/_src/dispatch.py::lower_xla_callable
     """
@@ -351,24 +350,21 @@ def jaxpr_to_hlo_module(name: str,
         eff for eff in closed_jaxpr.effects if eff in core.ordered_effects
     ]
     lowering_result = mlir.lower_jaxpr_to_module(
-        name, closed_jaxpr, unordered_effects, ordered_effects, platform,
+        name, closed_jaxpr, unordered_effects, ordered_effects, None, platform,
         mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars)
     xla_computation = xe.mlir.mlir_module_to_xla_computation(
         mlir.module_to_string(lowering_result.module),
         use_tuple_args=tuple_args,
         return_tuple=True)
-    ret = xla_computation.as_hlo_module()
-    return ret
+    return WrappedHlo(xla_computation)
 
 
-def setup_computation_alias(xla_computation: Union[xc.XlaComputation,
-                                                   xe.HloModule],
-                            donated_invars: Sequence[bool]):
+def setup_computation_alias(hlo: WrappedHlo, donated_invars: Sequence[bool]):
     """Set input/output alias in xla computation.
 
     Assume the tensors in output tuple strictly match the donated parameters.
     """
-    program_shape = xla_computation.program_shape()
+    program_shape = hlo.program_shape()
     parameter_shapes = program_shape.parameter_shapes()
     result_shapes = program_shape.result_shape().tuple_shapes()
 
@@ -381,7 +377,7 @@ def setup_computation_alias(xla_computation: Union[xc.XlaComputation,
     while p_in < len(parameter_shapes) and p_out < len(result_shapes):
         if donated_invars[p_in]:
             if parameter_shapes[p_in] == result_shapes[p_out]:
-                xla_computation.setup_alias((p_out,), p_in, ())
+                hlo.get_module().setup_alias((p_out,), p_in, ())
                 p_in += 1
                 p_out += 1
             else:
@@ -427,7 +423,7 @@ def compile_dummy_zero_constant():
     zero = xc.ops.Constant(c, np.array(0, dtype=np.dtype(np.int32)))
     c.clear_sharding()
     c = c.build(xc.ops.Tuple(c, [zero]))
-    return c.get_hlo_module()
+    return WrappedHlo(c, HloStatus.SHARDING_ANNOTATED)
 
 
 def compile_allocate_zero_buffers(backend, num_devices: int,
@@ -523,7 +519,7 @@ def compile_concatenate(mesh_shape, sharding_spec, batch_size, batch_dim, aval):
         parameter_is_tupled_arguments=False,
         build_random_seed=build_random_seed)
     xe.run_spmd_partitioner(hlo_module, compile_options)
-    return hlo_module.as_serialized_hlo_module_proto()
+    return WrappedHlo(hlo_module, HloStatus.SPMD_PARTITIONED)
 
 
 def compile_allgather(shape, dtype, src_spec, dst_spec, num_devices):
@@ -553,7 +549,7 @@ def compile_allgather(shape, dtype, src_spec, dst_spec, num_devices):
         parameter_is_tupled_arguments=False,
         build_random_seed=build_random_seed)
     xe.run_spmd_partitioner(hlo_module, compile_options)
-    return hlo_module.as_serialized_hlo_module_proto()
+    return WrappedHlo(hlo_module, HloStatus.SPMD_PARTITIONED)
 
 
 def get_index_select_computation(sharding_specs, dim, avals, index_shape):
@@ -577,7 +573,7 @@ def get_index_select_computation(sharding_specs, dim, avals, index_shape):
     sharding2.tuple_shardings = shardings
     c.set_sharding(sharding2)
     c = c.build(xc.ops.Tuple(c, selected))
-    return c
+    return WrappedHlo(c, HloStatus.SHARDING_ANNOTATED)
 
 
 def get_shard_shape(aval: ShapedArray, sharding_spec: pxla.ShardingSpec):
@@ -920,7 +916,6 @@ def trace_jaxpr_with_micro_batch(fun: lu.WrappedFun,
     with jax.disable_jit():
         jaxpr, _, consts = pe.trace_to_jaxpr_final(fun, avals)
     closed_jaxpr = ClosedJaxpr(jaxpr, consts)
-    closed_jaxpr = process_remat(closed_jaxpr)
 
     # Restore jax.random to original stateless version
     restore_random()
@@ -1256,7 +1251,7 @@ def run_cmd(cmd: str):
 
 
 def list_gpu_info():
-    """List all gpu information by calling nvidia-sim."""
+    """List all gpu information by calling nvidia-smi."""
     ret = subprocess.getoutput("nvidia-smi -L")
     visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", None)
     if visible_devices:
@@ -1283,7 +1278,13 @@ def get_num_hosts_and_num_devices(args):
     else:
         if hasattr(args, "local") and args.local:
             num_hosts = 1
-            num_devices_per_host = list_gpu_info().count("UUID")
+            if global_config.backend == "gpu":
+                num_devices_per_host = list_gpu_info().count("UUID")
+            elif global_config.backend == "tpu":
+                num_devices_per_host = len(jax.devices("tpu"))
+            else:
+                raise ValueError(
+                    f"Unsupported backend: {global_config.backend}")
         else:
             ray.init(address="auto")
             num_hosts = len(ray.nodes())
@@ -1601,7 +1602,7 @@ def retrieve_placement_group():
 
     # case 2:
     # Get the placement group created when alpa.init('ray')
-    global_cluster = alpa.device_mesh.global_cluster
+    global_cluster = device_mesh.global_cluster
     if global_cluster and global_cluster.placement_group:
         alpa_placement_group = global_cluster.placement_group
         return alpa_placement_group

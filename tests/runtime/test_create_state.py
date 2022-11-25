@@ -4,6 +4,7 @@ import unittest
 from flax import linen as nn
 from flax.training.train_state import TrainState
 import jax
+from jax.tree_util import tree_flatten
 from jax._src.api import make_jaxpr
 import jax.numpy as jnp
 import optax
@@ -26,6 +27,9 @@ class CreateStateTest(unittest.TestCase):
         batch_size = 8
         input_dim = output_dim = hidden_dim = 32
 
+        grad_fn = (jax.grad if isinstance(method, ShardParallel) and
+                   method.num_micro_batches is None else alpa.grad)
+
         class Model(nn.Module):
 
             @nn.compact
@@ -44,7 +48,7 @@ class CreateStateTest(unittest.TestCase):
                 out = state.apply_fn(params, batch["x"])
                 return jnp.mean((out - batch["y"])**2)
 
-            grads = alpa.grad(loss_func)(state.params)
+            grads = grad_fn(loss_func)(state.params)
             new_state = state.apply_gradients(grads=grads)
             return new_state
 
@@ -69,9 +73,9 @@ class CreateStateTest(unittest.TestCase):
         state = train_step(state, batch)
 
         if isinstance(method, ShardParallel):
-            actual = jax.tree_flatten(create_state.get_last_executable().
-                                      get_output_placement_specs())[0]
-            expected = jax.tree_flatten(
+            actual = tree_flatten(create_state.get_last_executable().
+                                  get_output_placement_specs())[0]
+            expected = tree_flatten(
                 train_step.get_last_executable().get_input_placement_specs()
                 [0])[0]
             assert actual == expected

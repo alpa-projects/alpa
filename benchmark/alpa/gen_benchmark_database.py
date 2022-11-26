@@ -1,6 +1,6 @@
 import argparse
 
-from alpa_serve.profiling import ProfilingDatabase, ParallelConfig
+from alpa_serve.profiling import ProfilingDatabase
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

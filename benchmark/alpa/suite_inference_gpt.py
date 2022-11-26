@@ -52,7 +52,11 @@ def get_config(model_config,
 #           ignore_one_device_case=True)
 
 ## generate inference profiling results
-get_config(gpt_specs["1.3B"], [1, 2, 4, 8], [1], [1, 2, 4, 8], [1], [1, 2, 4, 8, 16])
-get_config(gpt_specs["2.6B"], [1, 2, 4, 8, 16, 32], [1], [1, 2, 4, 8], [1], [1, 2, 4, 8, 16])
-get_config(gpt_specs["6.7B"], [1, 2, 4, 8, 16, 32], [1], [1, 2, 4, 8], [1], [1, 2, 4, 8, 16])
-get_config(gpt_specs["15B"], [1, 2, 4, 8, 16], [1], [1, 2, 4, 8], [1], [1, 2, 4, 8, 16])
+get_config(gpt_specs["1.3B"], [1, 2, 4, 8], [1], [1, 2, 4, 8], [1],
+           [1, 2, 4, 8, 16])
+get_config(gpt_specs["2.6B"], [1, 2, 4, 8, 16, 32], [1], [1, 2, 4, 8], [1],
+           [1, 2, 4, 8, 16])
+get_config(gpt_specs["6.7B"], [1, 2, 4, 8, 16, 32], [1], [1, 2, 4, 8], [1],
+           [1, 2, 4, 8, 16])
+get_config(gpt_specs["15B"], [1, 2, 4, 8, 16], [1], [1, 2, 4, 8], [1],
+           [1, 2, 4, 8, 16])

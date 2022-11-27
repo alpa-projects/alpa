@@ -127,8 +127,9 @@ def prepare_unet_input_and_model(benchmark_case):
 
     # Init train state
 
-    down_block_types = ("CrossAttnDownBlock2D",) * (block_cnt - 1) + ("DownBlock2D",)
-    up_block_types = ("CrossAttnUpBlock2D",) * (block_cnt - 1) + ("UpBlock2D",)
+    down_block_types = (("CrossAttnDownBlock2D",) * (block_cnt - 1) +
+                        ("DownBlock2D",))
+    up_block_types = ("UpBlock2D",) + ("CrossAttnUpBlock2D",) * (block_cnt - 1)
     # Each downsampling, the num channels grows twice
     block_out_channels = [
         channel_size * (2**i) for i in range(block_cnt - 1)

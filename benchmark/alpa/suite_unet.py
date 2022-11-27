@@ -31,8 +31,10 @@ auto_stage_option = {
     "profiling_database_filename": None,
 }
 
+
 def get_num_auto_layers(name):
     return int(unet_specs[name].block_cnt * 1.5)
+
 
 def get_search_cases(model_name, max_global_batch_size, num_micro_batches_list):
     num_auto_layers = get_num_auto_layers(model_name)
@@ -44,6 +46,7 @@ def get_search_cases(model_name, max_global_batch_size, num_micro_batches_list):
                                num_auto_layers, auto_stage_option))
         for num_micro_batches in num_micro_batches_list
     ]
+
 
 def get_solution_case(model_name, max_global_batch_size, num_micro_batches,
                       forward_stage_layer_ids, submesh_physical_shapes,
@@ -60,6 +63,7 @@ def get_solution_case(model_name, max_global_batch_size, num_micro_batches,
                                      submesh_logical_shapes,
                                      submesh_autosharding_option_dicts))
     ]
+
 
 # B = batch_size, I = image_size,
 # L = num_layers, C = num_base_channels, W = width_factor,
@@ -80,17 +84,25 @@ perf_test_2d_suite = {}
 
 # Performance test with search solutions found for p3.16xlarge
 perf_test_auto_suite = {
-    2: get_solution_case("470M", 256, 4, [list(range(7)), list(range(7, 13))], [(1, 1)] * 2, [(1, 1)] * 2,
-                          [{}] * 2),
-    4: get_solution_case("1B", 2048, 32, [list(range(8)), list(range(8, 13))], [(1, 2)] * 2, [(1, 2)] * 2,
-                          [{}] * 2),
-    8: get_solution_case("2B", 2048, 32, [list(range(8)), list(range(8, 13))], [(1, 4)] * 2, [(1, 4)] * 2,
-                          [{}] * 2),
+    2:
+        get_solution_case("470M", 256, 4,
+                          [list(range(7)), list(range(7, 13))], [(1, 1)] * 2,
+                          [(1, 1)] * 2, [{}] * 2),
+    4:
+        get_solution_case("1B", 2048, 32,
+                          [list(range(8)), list(range(8, 13))], [(1, 2)] * 2,
+                          [(1, 2)] * 2, [{}] * 2),
+    8:
+        get_solution_case("2B", 2048, 32,
+                          [list(range(8)), list(range(8, 13))], [(1, 4)] * 2,
+                          [(1, 4)] * 2, [{}] * 2),
 }
 
 # Grid search on hyperparameters
 # key = the number of gpus, value = a list of cases
 # model_name, B, NB
 grid_search_auto_suite = {
-    4: get_search_cases("1B", 256, [16,])
+    4: get_search_cases("1B", 256, [
+        16,
+    ])
 }

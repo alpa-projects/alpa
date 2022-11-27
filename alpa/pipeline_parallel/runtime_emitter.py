@@ -490,8 +490,7 @@ class PipelineInstEmitter:
             return
         # TODO(yonghao): only compile alloc once, use multiple times
         recv_uuid_list = self._compile_alloc(invars, dst_specs, mesh_idx,
-                                             batch_idx, False,
-                                             alloc_lists,
+                                             batch_idx, False, alloc_lists,
                                              executable_config_lists, "recv")
 
         for invar, recv_uuid in zip(invars, recv_uuid_list):
@@ -888,8 +887,8 @@ class PipelineInstEmitter:
         return output_local_uuid_list, mesh_output_indices, output_spec_list
 
     def _compile_alloc(self, variables, sharding_specs, mesh_idx, batch_idx,
-                       preallocated, instruction_lists,
-                       executable_config_lists, debug):
+                       preallocated, instruction_lists, executable_config_lists,
+                       debug):
         """Compile an executable which allocates zero buffers.
 
         The zero buffers are:
@@ -1116,6 +1115,7 @@ class PipelineInstEmitter:
 
 
 class OverlapFriendlyPipelineInstEmitter(PipelineInstEmitter):
+    """Pipeline instruction emitter that allocates buffers earlier."""
 
     def __init__(self, *args, **kwargs):
         outvar_def_order = kwargs.pop("outvar_def_order")
@@ -1165,8 +1165,8 @@ class OverlapFriendlyPipelineInstEmitter(PipelineInstEmitter):
             for v in outvar_def_order[stage_idx]:
                 if v in var_send_as:
                     recv_stage_idx, spec = var_send_as[v]
-                    if len(final_send_seq) and (final_send_seq[-1][0]
-                                                == recv_stage_idx):
+                    if (len(final_send_seq) != 0 and
+                        (final_send_seq[-1][0] == recv_stage_idx)):
                         final_send_seq[-1][1].append(v)
                         final_send_seq[-1][2].append(spec)
                     else:
@@ -1204,6 +1204,6 @@ class OverlapFriendlyPipelineInstEmitter(PipelineInstEmitter):
                                                      comm_insts,
                                                      instruction_lists,
                                                      executable_config_lists)
-        for worker in exec_insts:
-            instruction_lists[worker].extend(exec_insts[worker])
+        for worker, insts in exec_insts.items():
+            instruction_lists[worker].extend(insts)
             instruction_lists[worker].extend(comm_insts[worker])

@@ -589,7 +589,6 @@ class PipeshardMeshWorkerExecuable:
         buffers.clear()
         xe.reset_event_context(self.worker.backend)
 
-
     def profile_with_dummy_inputs(self):
         """Profile the executable with dummy inputs."""
         self.worker.reset_memory_stats()

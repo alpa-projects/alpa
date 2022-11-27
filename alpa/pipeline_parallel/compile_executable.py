@@ -259,20 +259,19 @@ def compile_pipeshard_executable_internal(
 
     # Wrap all things into a distributed runtime
     # TODO(yonghao): use virtual mesh instead of launched physical group
-    emitter_kwargs = dict(
-        stages=xla_stages,
-        global_invars=global_invars,
-        grad_dummy_invars=grad_in_to_out,
-        global_outvars=global_outvars,
-        concat_vars_mapping=concat_vars_mapping,
-        mesh_group=virtual_mesh.launched_physical_mesh_group,
-        schedule=schedule,
-        is_batch=batch_invars,
-        num_batch=num_microbatch,
-        default_auto_sharding_option=default_as_option,
-        manual_stage_option=manual_stage_option,
-        flop_count=total_flops,
-        allreduce_groups=allreduce_groups)
+    emitter_kwargs = dict(stages=xla_stages,
+                          global_invars=global_invars,
+                          grad_dummy_invars=grad_in_to_out,
+                          global_outvars=global_outvars,
+                          concat_vars_mapping=concat_vars_mapping,
+                          mesh_group=virtual_mesh.launched_physical_mesh_group,
+                          schedule=schedule,
+                          is_batch=batch_invars,
+                          num_batch=num_microbatch,
+                          default_auto_sharding_option=default_as_option,
+                          manual_stage_option=manual_stage_option,
+                          flop_count=total_flops,
+                          allreduce_groups=allreduce_groups)
     if pipeline_schedule == "1f1b_overlap_friendly":
         emitter_cls = OverlapFriendlyPipelineInstEmitter
         emitter_kwargs["outvar_def_order"] = [

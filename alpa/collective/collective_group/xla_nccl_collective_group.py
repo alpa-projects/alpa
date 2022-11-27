@@ -6,7 +6,7 @@ from jax._src.lib import xla_extension as xe
 
 from alpa.collective.collective_group import xla_nccl_util
 from alpa.collective.collective_group.base_collective_group import BaseGroup, Rendezvous
-from alpa.collective.const import get_store_name, ENV
+from alpa.collective.const import get_store_name
 from alpa.collective.types import (Backend, BroadcastOptions, AllReduceOptions,
                                    BarrierOptions, ReduceOptions,
                                    AllGatherOptions, ReduceScatterOptions,
@@ -309,7 +309,7 @@ class XLANCCLGroup(BaseGroup):
         comm_key = _get_comm_key_send_recv(self.rank, my_gpu_idx, peer_rank,
                                            peer_gpu_idx)
         self._create_nccl_p2p_communicator(comm_key, my_gpu_idx, peer_rank,
-                                        peer_gpu_idx)
+                                           peer_gpu_idx)
 
         key = self._dev_comm_uids[comm_key]
         peer_p2p_rank = 0 if self.rank > peer_rank else 1
@@ -456,6 +456,7 @@ def _get_comm_key_from_devices(devices):
 
     """
     return ",".join([str(d) for d in devices])
+
 
 def _get_comm_key_send_recv(my_rank, my_gpu_idx, peer_rank, peer_gpu_idx):
     """Return a key given source and destination ranks for p2p tasks.

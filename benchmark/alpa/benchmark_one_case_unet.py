@@ -77,10 +77,7 @@ def get_train_step(learning_rate_fn,
             loss = jnp.mean(
                 optax.l2_loss(predictions=sample, targets=batch["targets"]))
 
-            metrics = {
-                "loss": loss,
-                "lr": learning_rate_fn(step)
-            }
+            metrics = {"loss": loss, "lr": learning_rate_fn(step)}
             return loss, metrics
 
         if isinstance(method, ShardParallel) and use_remat:
@@ -131,9 +128,7 @@ def prepare_unet_input_and_model(benchmark_case):
                         ("DownBlock2D",))
     up_block_types = ("UpBlock2D",) + ("CrossAttnUpBlock2D",) * (block_cnt - 1)
     # Each downsampling, the num channels grows twice
-    block_out_channels = [
-        channel_size * (2**i) for i in range(block_cnt - 1)
-    ]
+    block_out_channels = [channel_size * (2**i) for i in range(block_cnt - 1)]
     block_out_channels.append(block_out_channels[-1])
     model = get_unet_2d(image_size,
                         down_block_types=down_block_types,

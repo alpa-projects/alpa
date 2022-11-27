@@ -8,12 +8,10 @@ from jax._src.lib import xla_extension as xe
 import numpy as np
 
 import alpa.collective as col
-from alpa.collective.const import ENV
 from alpa.util import (jax_tensor_set, jax_tensor_index,
                        xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
                        is_continuous_subset, infer_offset_and_n_elements,
                        infer_start_pos_and_n_elements)
-# from alpa.pipeline_parallel.xla_custom_call_marker import dummy_compute_on_default_stream
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

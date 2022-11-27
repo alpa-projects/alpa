@@ -61,14 +61,11 @@ class GlobalConfig:
         self.use_memzero_for_gradient_accumulation = False
         # Cross mesh resharding mode. Possible choices: {"send_recv",
         # "broadcast"}
-        self.resharding_mode = "broadcast"
+        self.resharding_mode = "send_recv"
         # Which nccl to use. Possible choices: {"cupy",
         # "xla_extension"}
-        self.nccl_mode = "xla_extension"
-        self.enable_overlapping = True
-        # TODO: move it to the pipeshard parallel method
-        self.cross_mesh_bandwidth = 10 * 2**30 / 4
-        self.device_tflops = 15.7 * 2**40
+        self.nccl_mode = "cupy"
+        self.enable_overlapping = False
 
         ########## Options of benchmark ##########
         # If true, the system is allowed to use dummy values during

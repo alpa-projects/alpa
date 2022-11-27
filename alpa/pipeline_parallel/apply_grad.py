@@ -162,7 +162,7 @@ def _get_delayed_eqns(compute_eqns, layer_invars, pipeline_outvars, gensym_fn):
             # we don't want to do dce here, because it may make its operand be
             # considered as cross layer grad, and then moved across microbatch
             # boundary, which is harder to analyze.
-            if not len(outvars) and out_marker:
+            if len(outvars) == 0 and out_marker:
                 continue
             # only if an eqn is not used and OUT MARKER does it moved after
             # microbatch boundary. Those inside a microbatch boundary is handled

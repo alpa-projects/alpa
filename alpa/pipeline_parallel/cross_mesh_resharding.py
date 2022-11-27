@@ -955,8 +955,7 @@ class CrossMeshCommunicator:
         return self._schedule.num_mesh
 
     @staticmethod
-    def _rewrite_allgather_spec(sharding_spec: pxla.ShardingSpec, mesh,
-                                var_shape):
+    def _rewrite_allgather_spec(sharding_spec: pxla.ShardingSpec, var_shape):
         """
         Given a sharding spec, if use_local_allgather is on and the tensor
         corresponding to the spec is not fully sharded, the function rewrite the
@@ -992,14 +991,6 @@ class CrossMeshCommunicator:
             if isinstance(dim_spec, pxla.Chunked):
                 for chunk_idx in range(len(dim_spec.chunks)):
                     chunk_axis_to_tensor_dim.append((tensor_dim, chunk_idx))
-
-        # TODO(yonghao): Support allgather cross node for communication balance.
-        # Check whether allgather should be cross node.
-        node_mesh_mapping = sharding_spec.mesh_mapping[0]
-        node_chunk = 1
-        if isinstance(node_mesh_mapping, pxla.ShardedAxis):
-            tensor_dim, _ = chunk_axis_to_tensor_dim[node_mesh_mapping.axis]
-            node_chunk = _get_chunk_value(sharding_spec.sharding[tensor_dim])
 
         sharding = list(sharding_spec.sharding)
         squeezed_mesh_mapping = [
@@ -1088,7 +1079,7 @@ class CrossMeshCommunicator:
                 final_dst_spec = dst_sharding_spec
                 if global_config.resharding_mode == "send_recv":
                     dst_sharding_spec = self._rewrite_allgather_spec(
-                        dst_sharding_spec, dst_mesh, var.aval.shape)
+                        dst_sharding_spec, var.aval.shape)
 
                 src_array = VirtualDistributedArray(
                     device_mesh=src_mesh,

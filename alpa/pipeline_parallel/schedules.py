@@ -444,6 +444,12 @@ class InferenceSchedule(PipelineSchedule):
 
 
 class OverlapFriendlyPipeDreamSchedule(PipeDreamFlush):
+    """
+    Generate a PipeDream-Flush schedule (a.k.a. 1F1B) but is more communication-
+    computation-overlap-friendly.
+
+    It has similar latency to 1F1B but costs more memory to store intermediates.
+    """
 
     def _generate_schedule(self):
         """

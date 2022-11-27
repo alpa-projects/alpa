@@ -258,26 +258,41 @@ class FlaxAttentionBlock(nn.Module):
         self.scale = self.dim_head**-0.5
 
         # Weights were exported with old names {to_q, to_k, to_v, to_out}
-        self.query = nn.Dense(inner_dim, use_bias=False, dtype=self.dtype, name="to_q")
-        self.key = nn.Dense(inner_dim, use_bias=False, dtype=self.dtype, name="to_k")
-        self.value = nn.Dense(inner_dim, use_bias=False, dtype=self.dtype, name="to_v")
+        self.query = nn.Dense(inner_dim,
+                              use_bias=False,
+                              dtype=self.dtype,
+                              name="to_q")
+        self.key = nn.Dense(inner_dim,
+                            use_bias=False,
+                            dtype=self.dtype,
+                            name="to_k")
+        self.value = nn.Dense(inner_dim,
+                              use_bias=False,
+                              dtype=self.dtype,
+                              name="to_v")
 
-        self.proj_attn = nn.Dense(self.query_dim, dtype=self.dtype, name="to_out_0")
+        self.proj_attn = nn.Dense(self.query_dim,
+                                  dtype=self.dtype,
+                                  name="to_out_0")
 
     def reshape_heads_to_batch_dim(self, tensor):
         batch_size, seq_len, dim = tensor.shape
         head_size = self.heads
-        tensor = tensor.reshape(batch_size, seq_len, head_size, dim // head_size)
+        tensor = tensor.reshape(batch_size, seq_len, head_size,
+                                dim // head_size)
         tensor = jnp.transpose(tensor, (0, 2, 1, 3))
-        tensor = tensor.reshape(batch_size * head_size, seq_len, dim // head_size)
+        tensor = tensor.reshape(batch_size * head_size, seq_len,
+                                dim // head_size)
         return tensor
 
     def reshape_batch_dim_to_heads(self, tensor):
         batch_size, seq_len, dim = tensor.shape
         head_size = self.heads
-        tensor = tensor.reshape(batch_size // head_size, head_size, seq_len, dim)
+        tensor = tensor.reshape(batch_size // head_size, head_size, seq_len,
+                                dim)
         tensor = jnp.transpose(tensor, (0, 2, 1, 3))
-        tensor = tensor.reshape(batch_size // head_size, seq_len, dim * head_size)
+        tensor = tensor.reshape(batch_size // head_size, seq_len,
+                                dim * head_size)
         return tensor
 
     def __call__(self, hidden_states, context=None, deterministic=True):
@@ -292,12 +307,14 @@ class FlaxAttentionBlock(nn.Module):
         value_states = self.reshape_heads_to_batch_dim(value_proj)
 
         # compute attentions
-        attention_scores = jnp.einsum("b i d, b j d->b i j", query_states, key_states)
+        attention_scores = jnp.einsum("b i d, b j d->b i j", query_states,
+                                      key_states)
         attention_scores = attention_scores * self.scale
         attention_probs = nn.softmax(attention_scores, axis=2)
 
         # attend to values
-        hidden_states = jnp.einsum("b i j, b j d -> b i d", attention_probs, value_states)
+        hidden_states = jnp.einsum("b i j, b j d -> b i d", attention_probs,
+                                   value_states)
         hidden_states = self.reshape_batch_dim_to_heads(hidden_states)
         hidden_states = self.proj_attn(hidden_states)
         return hidden_states
@@ -327,10 +344,20 @@ class FlaxBasicTransformerBlock(nn.Module):
 
     def setup(self):
         # self attention
-        self.attn1 = FlaxAttentionBlock(self.dim, self.n_heads, self.d_head, self.dropout, dtype=self.dtype)
+        self.attn1 = FlaxAttentionBlock(self.dim,
+                                        self.n_heads,
+                                        self.d_head,
+                                        self.dropout,
+                                        dtype=self.dtype)
         # cross attention
-        self.attn2 = FlaxAttentionBlock(self.dim, self.n_heads, self.d_head, self.dropout, dtype=self.dtype)
-        self.ff = FlaxGluFeedForward(dim=self.dim, dropout=self.dropout, dtype=self.dtype)
+        self.attn2 = FlaxAttentionBlock(self.dim,
+                                        self.n_heads,
+                                        self.d_head,
+                                        self.dropout,
+                                        dtype=self.dtype)
+        self.ff = FlaxGluFeedForward(dim=self.dim,
+                                     dropout=self.dropout,
+                                     dtype=self.dtype)
         self.norm1 = nn.LayerNorm(epsilon=1e-5, dtype=self.dtype)
         self.norm2 = nn.LayerNorm(epsilon=1e-5, dtype=self.dtype)
         self.norm3 = nn.LayerNorm(epsilon=1e-5, dtype=self.dtype)
@@ -338,17 +365,21 @@ class FlaxBasicTransformerBlock(nn.Module):
     def __call__(self, hidden_states, context, deterministic=True):
         # self attention
         residual = hidden_states
-        hidden_states = self.attn1(self.norm1(hidden_states), deterministic=deterministic)
+        hidden_states = self.attn1(self.norm1(hidden_states),
+                                   deterministic=deterministic)
         hidden_states = hidden_states + residual
 
         # cross attention
         residual = hidden_states
-        hidden_states = self.attn2(self.norm2(hidden_states), context, deterministic=deterministic)
+        hidden_states = self.attn2(self.norm2(hidden_states),
+                                   context,
+                                   deterministic=deterministic)
         hidden_states = hidden_states + residual
 
         # feed forward
         residual = hidden_states
-        hidden_states = self.ff(self.norm3(hidden_states), deterministic=deterministic)
+        hidden_states = self.ff(self.norm3(hidden_states),
+                                deterministic=deterministic)
         hidden_states = hidden_states + residual
 
         return hidden_states
@@ -392,7 +423,11 @@ class FlaxSpatialTransformer(nn.Module):
         )
 
         self.transformer_blocks = [
-            FlaxBasicTransformerBlock(inner_dim, self.n_heads, self.d_head, dropout=self.dropout, dtype=self.dtype)
+            FlaxBasicTransformerBlock(inner_dim,
+                                      self.n_heads,
+                                      self.d_head,
+                                      dropout=self.dropout,
+                                      dtype=self.dtype)
             for _ in range(self.depth)
         ]
 
@@ -413,7 +448,9 @@ class FlaxSpatialTransformer(nn.Module):
         hidden_states = hidden_states.reshape(batch, height * width, channels)
 
         for transformer_block in self.transformer_blocks:
-            hidden_states = transformer_block(hidden_states, context, deterministic=deterministic)
+            hidden_states = transformer_block(hidden_states,
+                                              context,
+                                              deterministic=deterministic)
 
         hidden_states = hidden_states.reshape(batch, height, width, channels)
 
@@ -542,7 +579,8 @@ class FlaxCrossAttnDownBlock2D(nn.Module):
                  deterministic=True):
         output_states = ()
 
-        for idx, (resnet, attn) in enumerate(zip(self.resnets, self.attentions)):
+        for idx, (resnet, attn) in enumerate(zip(self.resnets,
+                                                 self.attentions)):
             hidden_states = resnet(hidden_states,
                                    temb,
                                    deterministic=deterministic)

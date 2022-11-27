@@ -760,13 +760,13 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
         for stage_id in stage_order:
             module_result = profile_results[stage_id].module_profile_results[
                 module_id]
-            for invar, size, donated in zip(module_result.invar_names,
-                                            module_result.invar_sizes,
-                                            module_result.donated_invars):
+            for invar, size in zip(module_result.invar_names,
+                                   module_result.invar_sizes):
+                # If the variable is from another module instead of generated
+                # with in the module, it cannot be freed within the execution
+                # of a single module, but need to be freed after the module
+                # finishes.
                 if invar in in_module_vars:
-                    # If the variable is generated within the module, it
-                    # does not need to be counted as an input at the very
-                    # beginning.
                     continue
                 if invar in module_invars:
                     module_invars[invar] = max(module_invars[invar], size)
@@ -786,9 +786,8 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
             stage_no += 1
             module_result = profile_results[stage_id].module_profile_results[
                 module_id]
-            for invar, size, donated in zip(module_result.invar_names,
-                                            module_result.invar_sizes,
-                                            module_result.donated_invars):
+            for invar, size in zip(module_result.invar_names,
+                                   module_result.invar_sizes):
                 if invar not in env:
                     env[invar] = size
                 else:
@@ -796,8 +795,6 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
                     # different sharding specs. We take the max for
                     # estimation.
                     env[invar] = max(env[invar], size)
-                if donated:
-                    del env[invar]
             for outvar, size in zip(module_result.outvar_names,
                                     module_result.outvar_sizes):
                 assert outvar not in env
@@ -893,7 +890,7 @@ def generate_training_stages_1d(layers, accumulator_mapping, acc_grad_invars,
         stage_config = generate_stage_info(layers, [(l,),
                                                     (2 * num_layers - l - 1,)],
                                            accumulator_mapping,
-                                           acc_grad_outvars, acc_grad_outvars,
+                                           acc_grad_invars, acc_grad_outvars,
                                            stage_name,
                                            list(selected_apply_grad_layers),
                                            apply_grad_global_info)

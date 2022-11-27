@@ -136,7 +136,7 @@ ConcatWorkerExecutableConfig = namedtuple("ConcatWorkerExecutableConfig",
                                           ["exec_uuid", "hlo"])
 PartialGradWorkerExecutableConfig = namedtuple(
     "PartialGradWorkerExecutableConfig",
-    ["exec_uuid", "hlo", "stage_plan", "donated_invars", "kwargs"])
+    ["exec_uuid", "hlo", "stage_plan", "donated_invars"])
 
 ExecutableConfig = Union[AllocateZeroWorkerExecutableConfig,
                          MemZeroWorkerExecutableConfig,
@@ -591,9 +591,6 @@ class PipelineInstEmitter:
         for worker, worker_instruction in worker_tmp_instructions.items():
             instruction_lists[worker].extend(worker_instruction)
 
-    def _compile_grad_get_executable_kwargs(self, stage_idx):
-        return {}
-
     def _compile_computation_executables(self):
         """Compile executables for forward, backward, and apply_grad
         compuations."""
@@ -609,9 +606,8 @@ class PipelineInstEmitter:
             assert len(mesh_idx) == 1
             mesh_idx = list(mesh_idx)[0]
             hlo = stage.get_spmd_partitioned()
-            kwargs = self._compile_grad_get_executable_kwargs(stage_idx)
             exec_config = PartialGradWorkerExecutableConfig(
-                exec_uuid, hlo, stage.stage_plan, stage.donated_invars, kwargs)
+                exec_uuid, hlo, stage.stage_plan, stage.donated_invars)
 
             for worker in self.mesh_group[mesh_idx].workers:
                 executable_config_lists[worker].append(exec_config)
@@ -1177,32 +1173,6 @@ class OverlapFriendlyPipelineInstEmitter(PipelineInstEmitter):
                         final_send_seq.append((recv_stage_idx, [v], [spec]))
             self.stage_send_vars[stage_idx] = final_send_seq
             self.send_var_sets[stage_idx] = set(var_send_as.keys())
-
-    def _compile_grad_get_executable_kwargs(self, stage_idx):
-        kwargs = super()._compile_grad_get_executable_kwargs(stage_idx)
-        if (stage_idx >= self.schedule.num_mesh and
-                global_config.enable_overlapping):
-            # Overlap the backward computation
-            # TODO: add more analysis to the comm size
-            comm_size = 0
-            indices = []
-            send_vars = self.send_var_sets[stage_idx]
-            last_send = None
-            size = 0
-            for idx, var in enumerate(self.stages[stage_idx].outvars):
-                if var in send_vars:
-                    indices.append(idx)
-                    if len([d for d in var.aval.shape if d > 1]) > 1:
-                        last_send = var.aval
-                        size += np.prod(last_send.shape) * last_send.dtype.itemsize
-            if last_send:
-                # size = np.prod(last_send.shape) * last_send.dtype.itemsize
-                comm_size = size / global_config.cross_mesh_bandwidth
-                comm_size *= global_config.device_tflops
-            if len(indices):
-                print(comm_size, indices)
-                kwargs["overlap_dep_options"] = (comm_size, indices)
-        return kwargs
 
     def _compile_exec_one_tick(self, sched, donation_mapping, instruction_lists,
                                executable_uuids, executable_config_lists):

@@ -217,9 +217,9 @@ class StageConstructUtilTest(unittest.TestCase):
         profile_results_1d = []
         for layer_idx in range(num_layers):
             result = self.generate_profile_result(
-                jax_pipeline_layers, accumulator_mapping, acc_grad_invars, acc_grad_outvars,
-                jax_apply_layers, apply_grad_global_info, num_microbatch,
-                layer_idx, layer_idx)
+                jax_pipeline_layers, accumulator_mapping, acc_grad_invars,
+                acc_grad_outvars, jax_apply_layers, apply_grad_global_info,
+                num_microbatch, layer_idx, layer_idx)
             profile_results_1d.append(result)
             print(result)
             print("-" * 50)

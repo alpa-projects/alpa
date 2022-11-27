@@ -727,6 +727,7 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
     # eliminate_time[var] = k means that the variable can be eliminated after
     # stage k.
     last_used_stage_no = {}
+    reverse_donation_mapping = {}
     acc_grad_invars = OrderedSet()
     acc_grad_outvars = OrderedSet()
     stage_no = n_stages * n_modules
@@ -739,6 +740,14 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
             for invar in module_result.invar_names:
                 if invar not in last_used_stage_no:
                     last_used_stage_no[invar] = stage_no
+            for i, (invar, donated) in enumerate(
+                    zip(module_result.invar_names,
+                        module_result.donated_invars)):
+                if donated:
+                    # Note: here we assume that we always donate the i-th
+                    # invar to the i-th outvar. See rearrange_vars function.
+                    reverse_donation_mapping[
+                        module_result.outvar_names[i]] = invar
             for var_id in module_result.acc_grad_invars_indices:
                 acc_grad_invars.add(module_result.invar_names[var_id])
             for var_id in module_result.acc_grad_outvars_indices:
@@ -754,12 +763,10 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
             for invar, size, donated in zip(module_result.invar_names,
                                             module_result.invar_sizes,
                                             module_result.donated_invars):
-                if invar in in_module_vars or donated:
+                if invar in in_module_vars:
                     # If the variable is generated within the module, it
                     # does not need to be counted as an input at the very
-                    # beginning. Also, if the varible is donated, we don't
-                    # add it into the module invars set since its memory
-                    # will immediately get donated.
+                    # beginning.
                     continue
                 if invar in module_invars:
                     module_invars[invar] = max(module_invars[invar], size)
@@ -795,6 +802,9 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
                                     module_result.outvar_sizes):
                 assert outvar not in env
                 env[outvar] = size
+                if outvar in reverse_donation_mapping:
+                    assert reverse_donation_mapping[outvar] in env
+                    del env[reverse_donation_mapping[outvar]]
             total_env_size = sum(env.values())
             peak_memory = max(peak_memory,
                               total_env_size + module_result.temp_buffer_size)

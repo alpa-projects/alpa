@@ -727,6 +727,7 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
     # eliminate_time[var] = k means that the variable can be eliminated after
     # stage k.
     last_used_stage_no = {}
+    donation_mapping = {}
     reverse_donation_mapping = {}
     acc_grad_invars = OrderedSet()
     acc_grad_outvars = OrderedSet()
@@ -746,6 +747,7 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
                 if donated:
                     # Note: here we assume that we always donate the i-th
                     # invar to the i-th outvar. See rearrange_vars function.
+                    donation_mapping[invar] = module_result.outvar_names[i]
                     reverse_donation_mapping[
                         module_result.outvar_names[i]] = invar
             for var_id in module_result.acc_grad_invars_indices:
@@ -832,7 +834,7 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
             intermediate_size = sum(env.values())
 
     for var in acc_grad_invars:
-        if var in env:
+        if var not in donation_mapping:
             del env[var]
 
     for var in acc_grad_outvars:

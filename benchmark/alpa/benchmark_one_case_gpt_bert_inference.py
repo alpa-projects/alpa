@@ -178,9 +178,10 @@ def benchmark_gpt_inference_internal(model_type,
 
     # Log per-stage execution information if needed
     if profile_stage_execution_time:
+        model_name = f"bert-{parameter_count/1e9:.1f}b"
         # dump chrome trace
         executable.dump_stage_execution_trace(
-            f"./chrome_trace/bs={benchmark_case.batch_size},op={benchmark_case.parallel_args.op},pp={benchmark_case.parallel_args.pp}.json"
+            f"./chrome_trace/{model_name},bs={benchmark_case.batch_size},op={benchmark_case.parallel_args.op},pp={benchmark_case.parallel_args.pp}.json"
         )
         # compute and log per-stage latency/memory statistics
         exec_info = executable.get_stage_execution_info()
@@ -191,20 +192,19 @@ def benchmark_gpt_inference_internal(model_type,
         assert len(avg_stage_latencies) == num_manual_pipeline_stages
         parallel_args = benchmark_case.parallel_args
         dp, op, pp = parallel_args.dp, parallel_args.op, parallel_args.pp
-        model_name = os.environ.get("MODEL_NAME", default="bert_model")
         heads = [
             "ModelName", "BS", "#Microbatch", "DP", "OP", "PP", "#GPU",
-            "MeanTime(s)", "StdTime(s)", "TFLOPs", "StageWeights(GB)",
-            "StagePeakMem(GB)", "StageLatencies(s)"
+            "MeanTime(s)", "StdTime(s)", "TFLOPs", "StageWeights(B)",
+            "StagePeakMem(B)", "StageLatencies(s)"
         ]
         values = [
             model_name, benchmark_case.batch_size,
             benchmark_case.num_micro_batches, dp, op, pp, dp * op * pp,
             f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
-            f"{tflops:.2f}", f"{np.array(per_stage_weight_mem)/GB}",
-            f"{np.array(per_stage_peak_mem)/GB}", avg_stage_latencies
+            f"{tflops:.2f}", f"{per_stage_weight_mem}", f"{per_stage_peak_mem}",
+            avg_stage_latencies
         ]
-        write_tsv(heads, values, f"{model_name}.tsv")
+        write_tsv(heads, values, f"benchmark_results.tsv")
 
     metadata = {
         "compilation_times": compilation_times,

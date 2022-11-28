@@ -39,7 +39,7 @@ class StageConstructUtilTest(unittest.TestCase):
     def setUp(self):
         init(cluster="ray")
 
-    def create_bert_jaxpr_with_donation(self, num_layers, num_microbatch):
+    def create_bert_layers(self, num_layers, num_microbatch):
         batch_size = 16
         state, batch, _ = get_bert_layer_train_state_and_step(
             batch_size=batch_size,
@@ -66,9 +66,9 @@ class StageConstructUtilTest(unittest.TestCase):
 
         microbatch_size = batch_size // num_microbatch
         micro_batch = {k: v[:microbatch_size] for k, v in batch.items()}
-        return self.compile_train_step(train_step, state, batch, micro_batch)
+        return train_step, state, batch, micro_batch
 
-    def create_mlp_jaxpr(self, num_microbatch):
+    def create_mlp(self, num_microbatch):
         batch_size = 16
         state, batch, train_step = get_mlp_train_state_and_step(
             batch_size=batch_size,
@@ -89,14 +89,14 @@ class StageConstructUtilTest(unittest.TestCase):
 
         microbatch_size = batch_size // num_microbatch
         micro_batch = {k: v[:microbatch_size] for k, v in batch.items()}
-        return self.compile_train_step(train_step, state, batch, micro_batch)
+        return train_step, state, batch, micro_batch
 
-    def compile_train_step(self,
-                           train_step,
-                           state,
-                           batch,
-                           micro_batch,
-                           use_remat=False):
+    def get_train_step_jaxpr(self,
+                             train_step,
+                             state,
+                             batch,
+                             micro_batch,
+                             use_remat=False):
         # Compile
         with GradFuncTransformContext(ManualLayerOption(use_remat).transform):
             closed_jaxpr, output_tree = make_jaxpr(train_step,
@@ -105,8 +105,8 @@ class StageConstructUtilTest(unittest.TestCase):
             full_batch_closed_jaxpr, full_batch_output_tree = make_jaxpr(
                 train_step, return_shape=True)(state, batch)
 
-        num_params = len(closed_jaxpr.jaxpr.invars) - 3
-        donated_invars = [True] * num_params + [False] * 3
+        num_params = len(closed_jaxpr.jaxpr.invars) - len(batch)
+        donated_invars = [True] * num_params + [False] * len(batch)
         return closed_jaxpr, full_batch_closed_jaxpr, donated_invars
 
     def pre_process_jaxpr(self, closed_jaxpr: ClosedJaxpr,
@@ -141,7 +141,6 @@ class StageConstructUtilTest(unittest.TestCase):
                                 jax_apply_layers, apply_grad_global_info,
                                 num_micro_batches, start_index, end_index):
         virtual_mesh = get_global_virtual_physical_mesh()
-        # submesh = (virtual_mesh.num_hosts, virtual_mesh.num_devices_per_host)
         submesh = (1, 1)
         virtual_submesh = virtual_mesh.slice_2d(tuple(range(
             submesh[0])), (tuple(range(submesh[1])),) * submesh[0])
@@ -180,40 +179,24 @@ class StageConstructUtilTest(unittest.TestCase):
 
         return profile_results[stage_index]
 
-    def test_1d_2d_results_the_same(self):
-        num_microbatch = 2
-        # num_layers = 3
-        # (closed_jaxpr, full_batch_closed_jaxpr,
-        #  donated_invars) = self.create_bert_jaxpr_with_donation(
-        #      num_layers, num_microbatch)
-        num_layers = 2
+    def check_1d_2d_results_the_same(self, train_step, state, batch,
+                                     micro_batch, num_layers, num_microbatch):
         (closed_jaxpr, full_batch_closed_jaxpr,
-         donated_invars) = self.create_mlp_jaxpr(num_microbatch)
+         donated_invars) = self.get_train_step_jaxpr(train_step, state, batch,
+                                                     micro_batch)
         (closed_jaxpr, global_outvars, jax_pipeline_layers, apply_grad_jaxpr,
          microbatch_bound, reduction_vector, post_microbatch_bound,
          accumulator_mapping, acc_grad_invars, acc_grad_outvars,
          jax_apply_layers, apply_grad_global_info) = self.pre_process_jaxpr(
              closed_jaxpr, full_batch_closed_jaxpr, num_microbatch,
              donated_invars)
-        print("-" * 100)
-        print(closed_jaxpr)
-        print("-" * 100)
-
-        print("-" * 100)
-        for layer in jax_pipeline_layers:
-            print(layer.closed_jaxpr())
-            print("-" * 50)
-        print("-" * 100)
         # 2D
-        print("-" * 100)
         profile_results_2d = self.generate_profile_result(
             jax_pipeline_layers, accumulator_mapping, acc_grad_invars,
             acc_grad_outvars, jax_apply_layers, apply_grad_global_info,
             num_microbatch, 0, num_layers - 1)
-        print(profile_results_2d)
-        print("-" * 100)
+
         # 1D
-        print("-" * 100)
         profile_results_1d = []
         for layer_idx in range(num_layers):
             result = self.generate_profile_result(
@@ -221,9 +204,6 @@ class StageConstructUtilTest(unittest.TestCase):
                 acc_grad_outvars, jax_apply_layers, apply_grad_global_info,
                 num_microbatch, layer_idx, layer_idx)
             profile_results_1d.append(result)
-            print(result)
-            print("-" * 50)
-        print("-" * 100)
 
         # Compare
         max_stage_2d, (available_memory_2d, peak_memory_2d, initial_size_2d,
@@ -232,21 +212,43 @@ class StageConstructUtilTest(unittest.TestCase):
         max_stage_1d, (
             available_memory_1d, peak_memory_1d, initial_size_1d,
             intermediate_size_1d) = get_max_n_succ_stages(profile_results_1d)
-        print("max_stage_2d: ", max_stage_2d)
-        print("max_stage_1d: ", max_stage_1d)
-        print("available_memory_2d: ", available_memory_2d)
-        print("available_memory_1d: ", available_memory_1d)
-        print("peak_memory_2d: ", peak_memory_2d)
-        print("peak_memory_1d: ", peak_memory_1d)
-        print("initial_size_2d: ", initial_size_2d)
-        print("initial_size_1d: ", initial_size_1d)
-        print("intermediate_size_2d: ", intermediate_size_2d)
-        print("intermediate_size_1d: ", intermediate_size_1d)
+
+        assert available_memory_1d == available_memory_2d, (
+            f"available_memory_1d: {available_memory_1d}, "
+            f"available_memory_2d: {available_memory_2d}")
+        assert initial_size_1d == initial_size_2d, (
+            f"initial_size_1d: {initial_size_1d}, "
+            f"initial_size_2d: {initial_size_2d}")
+        assert intermediate_size_1d == intermediate_size_2d, (
+            f"intermediate_size_1d: {intermediate_size_1d}, "
+            f"intermediate_size_2d: {intermediate_size_2d}")
+        # Note: peak_memory_1d is not equal to peak_memory_2d because
+        # the greedy memory register allocation algorithm in XLA is not
+        # optimal, and may behave different in 1D and 2D cases.
+
+    def test_mlp_1d_2d_the_same(self):
+        num_microbatch = 2
+        num_layers = 2
+        (train_step, state, batch,
+         micro_batch) = self.create_mlp(num_microbatch)
+        self.check_1d_2d_results_the_same(train_step, state, batch,
+                                          micro_batch, num_layers,
+                                          num_microbatch)
+
+    def test_bert_1d_2d_the_same(self):
+        num_microbatch = 2
+        num_layers = 3
+        (train_step, state, batch,
+         micro_batch) = self.create_bert(num_layers, num_microbatch)
+        self.check_1d_2d_results_the_same(train_step, state, batch,
+                                          micro_batch, num_layers,
+                                          num_microbatch)
 
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(StageConstructUtilTest("test_1d_2d_results_the_same"))
+    suite.addTest(StageConstructUtilTest("test_mlp_1d_2d_the_same"))
+    suite.addTest(StageConstructUtilTest("test_bert_1d_2d_the_same"))
     return suite
 
 

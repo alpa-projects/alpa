@@ -891,9 +891,8 @@ def generate_training_stages_1d(layers, accumulator_mapping, acc_grad_invars,
         stage_name = f"stage_{l}"
         stage_config = generate_stage_info(layers, [(l,),
                                                     (2 * num_layers - l - 1,)],
-                                           accumulator_mapping,
-                                           acc_grad_invars, acc_grad_outvars,
-                                           stage_name,
+                                           accumulator_mapping, acc_grad_invars,
+                                           acc_grad_outvars, stage_name,
                                            list(selected_apply_grad_layers),
                                            apply_grad_global_info)
         for config_idx, autosharding_config in enumerate(autosharding_configs):

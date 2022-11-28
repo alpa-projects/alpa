@@ -5,7 +5,7 @@ from jax._src.api import make_jaxpr
 from jax.core import ClosedJaxpr, Var, gensym
 import jax.numpy as jnp
 
-from alpa import init, grad
+from alpa import init, grad, parallelize, PipeshardParallel
 from alpa.device_mesh import get_global_virtual_physical_mesh
 from alpa.pipeline_parallel.stage_construction import (
     AutoStageOption, get_one_submesh_autosharding_config_choices)
@@ -37,7 +37,7 @@ def _assert_avals_allmatch(aval_seq_a, aval_seq_b):
 class StageConstructUtilTest(unittest.TestCase):
 
     def setUp(self):
-        init(cluster="ray")
+        init(cluster="ray", num_nodes=1, num_devices_per_node=1)
 
     def create_bert_layers(self, num_layers, num_microbatch):
         batch_size = 16
@@ -242,11 +242,53 @@ class StageConstructUtilTest(unittest.TestCase):
         self.check_1d_2d_results_the_same(train_step, state, batch, micro_batch,
                                           num_layers, num_microbatch)
 
+    def check_2d_real_the_same(self):
+        num_microbatch = 2
+        num_layers = 2
+        (train_step, state, batch,
+         micro_batch) = self.create_mlp(num_microbatch)
+        (closed_jaxpr, full_batch_closed_jaxpr,
+         donated_invars) = self.get_train_step_jaxpr(train_step, state, batch,
+                                                     micro_batch)
+
+        (closed_jaxpr, global_outvars, jax_pipeline_layers, apply_grad_jaxpr,
+         microbatch_bound, reduction_vector, post_microbatch_bound,
+         accumulator_mapping, acc_grad_invars, acc_grad_outvars,
+         jax_apply_layers, apply_grad_global_info) = self.pre_process_jaxpr(
+             closed_jaxpr, full_batch_closed_jaxpr, num_microbatch,
+             donated_invars)
+        # 2D
+        profile_results_2d = self.generate_profile_result(
+            jax_pipeline_layers, accumulator_mapping, acc_grad_invars,
+            acc_grad_outvars, jax_apply_layers, apply_grad_global_info,
+            num_microbatch, 0, num_layers - 1)
+        max_stage_2d, (available_memory_2d, peak_memory_2d, initial_size_2d,
+                       intermediate_size_2d) = get_max_n_succ_stages(
+                           [profile_results_2d])
+
+        # Real
+        pipeshard_method = PipeshardParallel(
+            num_micro_batches=num_microbatch,
+            layer_option="manual",
+            stage_option="uniform",
+        )
+        parallelized_train_step = parallelize(
+            train_step,
+            donate_argnums=(0,),
+            method=pipeshard_method,
+        )
+        parallelized_train_step(state, batch)
+        peak_memory = (
+            parallelized_train_step.mesh_group.get_max_memory_allocated())
+        print(f"2D peak_memory: {peak_memory_2d}")
+        print(f"Real peak_memory: {peak_memory}")
+
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(StageConstructUtilTest("test_mlp_1d_2d_the_same"))
     suite.addTest(StageConstructUtilTest("test_bert_1d_2d_the_same"))
+    suite.addTest(StageConstructUtilTest("check_2d_real_the_same"))
     return suite
 
 

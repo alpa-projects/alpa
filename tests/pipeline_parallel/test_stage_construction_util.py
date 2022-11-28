@@ -231,18 +231,16 @@ class StageConstructUtilTest(unittest.TestCase):
         num_layers = 2
         (train_step, state, batch,
          micro_batch) = self.create_mlp(num_microbatch)
-        self.check_1d_2d_results_the_same(train_step, state, batch,
-                                          micro_batch, num_layers,
-                                          num_microbatch)
+        self.check_1d_2d_results_the_same(train_step, state, batch, micro_batch,
+                                          num_layers, num_microbatch)
 
     def test_bert_1d_2d_the_same(self):
         num_microbatch = 2
         num_layers = 3
         (train_step, state, batch,
          micro_batch) = self.create_bert_layers(num_layers, num_microbatch)
-        self.check_1d_2d_results_the_same(train_step, state, batch,
-                                          micro_batch, num_layers,
-                                          num_microbatch)
+        self.check_1d_2d_results_the_same(train_step, state, batch, micro_batch,
+                                          num_layers, num_microbatch)
 
 
 def suite():

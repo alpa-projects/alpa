@@ -424,9 +424,8 @@ class HloCostModelProfileWorker:
         self.num_micro_batches = num_micro_batches
 
     def profile(self, stage_id, compiled_module_output, stage_plan,
-                profile_info):
+                profile_config):
         """Use cost model to estimate cost on this profile worker."""
-        _, _, _, acc_grad_indices = profile_info
         try:
             compiled = run_backend_compilation(
                 self.backend,
@@ -440,7 +439,7 @@ class HloCostModelProfileWorker:
 
         hlo_module = compiled.hlo_modules()[0]
         grad_sync_channel_ids = ""
-        if acc_grad_indices:
+        if profile_config.acc_grad_outvars_indices:
             grad_sync_channel_ids = get_grad_sync_channel_ids(hlo_module)
         peak_memory = compiled.total_allocation_size()
         available_memory = self.prof_result.available_memory_per_device

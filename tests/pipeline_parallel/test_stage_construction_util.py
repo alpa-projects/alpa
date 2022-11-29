@@ -282,13 +282,16 @@ class StageConstructUtilTest(unittest.TestCase):
             state, batch).mesh_group.get_max_memory_allocated())
         print(f"2D peak_memory: {peak_memory_2d}")
         print(f"Real peak_memory: {peak_memory}")
+        # Note: real peak_memory is not equal to peak_memory_2d because
+        # of the same reason as above. In addition, our old profiling
+        # method is also not accurate compared to the real peak memory.
 
 
 def suite():
     suite = unittest.TestSuite()
     suite.addTest(StageConstructUtilTest("test_mlp_1d_2d_the_same"))
     suite.addTest(StageConstructUtilTest("test_bert_1d_2d_the_same"))
-    suite.addTest(StageConstructUtilTest("check_2d_real_the_same"))
+    # suite.addTest(StageConstructUtilTest("check_2d_real_the_same"))
     return suite
 
 

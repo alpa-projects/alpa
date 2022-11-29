@@ -36,12 +36,7 @@ def get_config(model_config,
                         profile_suite[num_gpus].append(case)
 
 
-#get_config(gpt_specs["6.7B"], [1], [1], [1, 2, 4, 8], [1, 256], [1, 4, 16, 64])
-#get_config(gpt_specs["6.7B"], [1], [1, 2, 4, 8], [1], [1, 256], [1, 4, 16, 64],
-#           ignore_one_device_case=True)
-#get_config(gpt_specs["6.7B"], [1, 2, 4, 8], [1], [1], [1, 256], [1, 4, 16, 64],
-#           ignore_one_device_case=True)
-
+## general examples:
 #get_config(gpt_specs["350M"], [1, 2, 4, 8], [1], [1], [1], [1, 4, 16])
 #get_config(gpt_specs["760M"], [1, 2, 4, 8], [1], [1], [1], [1, 4, 16])
 #get_config(gpt_specs["1.3B"], [1, 2, 4, 8], [1], [1], [1], [1, 4, 16])
@@ -49,4 +44,19 @@ def get_config(model_config,
 #get_config(gpt_specs["6.7B"], [1, 2, 4, 8], [1], [1], [1], [1, 4, 16])
 #get_config(gpt_specs["15B"],  [1, 2, 4, 8], [1], [1], [1], [1, 4, 16])
 
-get_config(gpt_specs["2.6B"], [1, 2, 4, 8], [1], [1], [1], [1, 4, 16])
+## benchmark specific parallel method:
+#get_config(gpt_specs["6.7B"], [1], [1], [1, 2, 4, 8], [1, 256], [1, 4, 16, 64])
+#get_config(gpt_specs["6.7B"], [1], [1, 2, 4, 8], [1], [1, 256], [1, 4, 16, 64],
+#           ignore_one_device_case=True)
+#get_config(gpt_specs["6.7B"], [1, 2, 4, 8], [1], [1], [1, 256], [1, 4, 16, 64],
+#           ignore_one_device_case=True)
+
+## generate inference profiling results
+get_config(gpt_specs["1.3B"], [1, 2, 4, 8], [1], [1, 2, 4, 8], [1],
+           [1, 2, 4, 8, 16])
+get_config(gpt_specs["2.6B"], [1, 2, 4, 8, 16, 32], [1], [1, 2, 4, 8], [1],
+           [1, 2, 4, 8, 16])
+get_config(gpt_specs["6.7B"], [1, 2, 4, 8, 16, 32], [1], [1, 2, 4, 8], [1],
+           [1, 2, 4, 8, 16])
+get_config(gpt_specs["15B"], [1, 2, 4, 8, 16], [1], [1, 2, 4, 8], [1],
+           [1, 2, 4, 8, 16])

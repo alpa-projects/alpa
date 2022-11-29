@@ -25,7 +25,7 @@ is_initialized = False
 def init(cluster: str = "ray",
          num_nodes: Optional[int] = None,
          num_devices_per_node: Optional[int] = None,
-         namespace: Optional[str] = None):
+         namespace: Optional[str] = "alpa_default_space"):
     """Initialize the global environment.
 
     `devices_per_node, num_nodes` are used to specify the number of devices.

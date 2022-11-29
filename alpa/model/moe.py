@@ -7,7 +7,7 @@ from typing import Callable, Optional, Tuple
 import numpy as np
 
 import flax
-from flax import optim, linen as nn
+from flax import linen as nn
 from flax.training import train_state
 from flax.linen.attention import dot_product_attention_weights
 from flax.linen.initializers import lecun_normal

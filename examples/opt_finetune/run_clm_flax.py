@@ -40,7 +40,7 @@ from datasets import Dataset, load_dataset
 from tqdm import tqdm
 
 import alpa
-from alpa.model.model_util import DynamicScale, TrainState, concrete_remat
+from alpa.model.model_util import DynamicScale, TrainState
 from alpa import AutoShardingOption, AutoLayerOption, ManualStageOption
 import jax
 import jax.numpy as jnp
@@ -323,19 +323,53 @@ def create_learning_rate_fn(
 def monkey_patch_remat():
     # Use monkey patch to add remat for all transformer layers.
     from transformers.models.opt.modeling_flax_opt import FlaxOPTDecoderLayer, FlaxOPTDecoderLayerCollection
+    from flax.linen.partitioning import remat
     from flax.linen.module import wrap_method_once
     import flax.linen as nn
 
     @wrap_method_once
     def setup(self):
         self.layers = [
-            concrete_remat(FlaxOPTDecoderLayer)(
+            remat(FlaxOPTDecoderLayer, static_argnums=(2, 3, 4))(
                 self.config, name=str(i), dtype=self.dtype)
             for i in range(self.config.num_hidden_layers)
         ]
         self.layerdrop = self.config.layerdrop
 
+    def call(
+        self,
+        hidden_states,
+        attention_mask,
+        deterministic: bool = True,
+        init_cache: bool = False,
+        output_attentions: bool = False,
+        output_hidden_states: bool = False,
+    ):
+        # decoder layers
+        all_hidden_states = () if output_hidden_states else None
+        all_self_attns = () if output_attentions else None
+
+        for decoder_layer in self.layers:
+            if output_hidden_states:
+                all_hidden_states += (hidden_states,)
+
+            layer_outputs = decoder_layer(
+                hidden_states,
+                attention_mask,
+                init_cache,
+                output_attentions,
+                deterministic,
+            )
+
+            hidden_states = layer_outputs[0]
+            if output_attentions:
+                all_self_attns += (layer_outputs[1],)
+
+        outputs = [hidden_states, all_hidden_states, all_self_attns]
+        return outputs
+
     setattr(FlaxOPTDecoderLayerCollection, "setup", setup)
+    setattr(FlaxOPTDecoderLayerCollection, "__call__", call)
 
 
 def main():

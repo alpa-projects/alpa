@@ -21,8 +21,7 @@ from functools import partial
 from typing import Any, Callable, Sequence, Tuple
 
 from flax import linen as nn
-from flax.optim import dynamic_scale as dynamic_scale_lib
-from flax.training import train_state
+from flax.training import train_state, dynamic_scale as dynamic_scale_lib
 import jax.numpy as jnp
 
 ModuleDef = Any

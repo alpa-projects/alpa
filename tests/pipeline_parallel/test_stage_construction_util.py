@@ -68,14 +68,14 @@ class StageConstructUtilTest(unittest.TestCase):
         micro_batch = {k: v[:microbatch_size] for k, v in batch.items()}
         return train_step, state, batch, micro_batch
 
-    def create_mlp(self, num_microbatch):
+    def create_mlp(self, num_microbatch, add_marker=True):
         batch_size = 16
         state, batch, train_step = get_mlp_train_state_and_step(
             batch_size=batch_size,
             hidden_size=512,
             num_layers=4,
             use_bias=False,
-            add_manual_pipeline_marker=True)
+            add_manual_pipeline_marker=add_marker)
 
         def train_step(state, batch):
 
@@ -244,9 +244,9 @@ class StageConstructUtilTest(unittest.TestCase):
 
     def check_2d_real_the_same(self):
         num_microbatch = 2
-        num_layers = 2
+        num_layers = 1
         (train_step, state, batch,
-         micro_batch) = self.create_mlp(num_microbatch)
+         micro_batch) = self.create_mlp(num_microbatch, add_marker=False)
         (closed_jaxpr, full_batch_closed_jaxpr,
          donated_invars) = self.get_train_step_jaxpr(train_step, state, batch,
                                                      micro_batch)
@@ -278,8 +278,8 @@ class StageConstructUtilTest(unittest.TestCase):
             method=pipeshard_method,
         )
         parallelized_train_step(state, batch)
-        peak_memory = (
-            parallelized_train_step.mesh_group.get_max_memory_allocated())
+        peak_memory = (parallelized_train_step.get_executable(
+            state, batch).mesh_group.get_max_memory_allocated())
         print(f"2D peak_memory: {peak_memory_2d}")
         print(f"Real peak_memory: {peak_memory}")
 

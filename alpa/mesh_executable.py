@@ -933,10 +933,7 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
     def __init__(self, physical_mesh: "PhysicalDeviceMesh", hlo: WrappedHlo,
                  stage_plan: StagePlan, avals: Sequence[ShapedArray],
                  out_avals: Sequence[ShapedArray],
-                 donated_invars: Sequence[bool],
-                 out_acc_grad_indices: Sequence[int]):
-        self.out_acc_grad_indices = out_acc_grad_indices
-
+                 donated_invars: Sequence[bool]):
         super().__init__(physical_mesh, hlo, stage_plan, avals, out_avals,
                          donated_invars)
 

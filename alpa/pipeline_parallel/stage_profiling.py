@@ -1436,14 +1436,8 @@ def get_sharded_size_by_proto(serialized_proto,
     else:
         if tuple_proto:
             hlo_sharding = xe.HloSharding(serialized_proto[0])
-            if len(avals) == 1:
-                sharding_specs = [
-                    hlo_sharding_to_sharding_spec(hlo_sharding, avals[0],
-                                                  logical_mesh_shape)
-                ]
-            else:
-                sharding_specs = hlo_sharding_to_sharding_spec(
-                    hlo_sharding, avals, logical_mesh_shape)
+            sharding_specs = hlo_sharding_to_sharding_spec(
+                hlo_sharding, avals, logical_mesh_shape)
         else:
             sharding_specs = [
                 hlo_sharding_to_sharding_spec(xe.HloSharding(proto), aval,

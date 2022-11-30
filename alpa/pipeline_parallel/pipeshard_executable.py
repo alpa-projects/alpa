@@ -508,7 +508,8 @@ class PipeshardMeshWorkerExecuable:
         for local_id, global_id in zip(self.input_local_uuids,
                                        input_global_uuids):
             buffers[local_id] = self.global_buffers[global_id]
-        xe.reset_event_context(self.worker.backend)
+        if global_config.enable_overlapping:
+            xe.reset_event_context(self.worker.backend)
         # add preallocated buffers for gradient accumulation
         buffers.update(self.acc_grad_buffers)
         # donate invars
@@ -587,7 +588,8 @@ class PipeshardMeshWorkerExecuable:
         # restore global environment
         self.worker.buffers = self.global_buffers
         buffers.clear()
-        xe.reset_event_context(self.worker.backend)
+        if global_config.enable_overlapping:
+            xe.reset_event_context(self.worker.backend)
 
     def profile_with_dummy_inputs(self):
         """Profile the executable with dummy inputs."""

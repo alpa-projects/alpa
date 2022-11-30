@@ -136,7 +136,8 @@ def prepare_unet_input_and_model(benchmark_case):
                         block_out_channels=block_out_channels,
                         in_channels=in_channels,
                         out_channels=out_channels,
-                        layers_per_block=1)
+                        layers_per_block=1,
+                        dtype=dtype)
 
     rngkey = jax.random.PRNGKey(0)
     learning_rate_fn = create_learning_rate_fn()

@@ -94,7 +94,7 @@ perf_test_auto_suite = {
                           [(1, 2)] * 2, [{}] * 2),
     8:
         get_solution_case("2B", 2048, 32,
-                          [list(range(8)), list(range(8, 13))], [(1, 4)] * 2,
+                          [list(range(9)), list(range(9, 13))], [(1, 4)] * 2,
                           [(1, 4)] * 2, [{}] * 2),
 }
 

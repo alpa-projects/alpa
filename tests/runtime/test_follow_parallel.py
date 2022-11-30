@@ -4,13 +4,11 @@ import unittest
 from flax import linen as nn
 from flax.training.train_state import TrainState
 import jax
-from jax._src.api import make_jaxpr
 import jax.numpy as jnp
 import optax
 
 import alpa
-from alpa import (init, shutdown, parallelize, ShardParallel, PipeshardParallel,
-                  CreateStateParallel)
+from alpa import init, shutdown, parallelize, ShardParallel, PipeshardParallel
 
 
 class FollowParallelTest(unittest.TestCase):
@@ -42,7 +40,7 @@ class FollowParallelTest(unittest.TestCase):
                 out = state.apply_fn(params, batch["x"])
                 return jnp.mean((out - batch["y"])**2)
 
-            grads = alpa.grad(loss_func)(state.params)
+            grads = grad_fn(loss_func)(state.params)
             new_state = state.apply_gradients(grads=grads)
             return new_state
 
@@ -66,10 +64,8 @@ class FollowParallelTest(unittest.TestCase):
             "y": jnp.ones((batch_size * 2, output_dim)),
         }
 
-        if isinstance(method, ShardParallel):
-            num_micro_batches = None
-        else:
-            num_micro_batches = 2
+        grad_fn = jax.grad if method.num_micro_batches is None else alpa.grad
+        num_micro_batches = method.num_micro_batches
 
         state = create_state()
 

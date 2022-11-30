@@ -133,11 +133,11 @@ MemZeroWorkerExecutableConfig = namedtuple(
     "MemZeroWorkerExecutableConfig",
     ["exec_uuid", "grad_shard_shapes", "grad_shard_dtypes"])
 ConcatWorkerExecutableConfig = namedtuple("ConcatWorkerExecutableConfig",
-                                          ["exec_uuid", "hlo_proto"])
+                                          ["exec_uuid", "hlo"])
 PartialGradWorkerExecutableConfig = namedtuple(
     "PartialGradWorkerExecutableConfig", [
         "exec_uuid",
-        "hlo_proto",
+        "hlo",
         "stage_plan",
         "donated_invars",
     ])
@@ -602,10 +602,9 @@ class PipelineInstEmitter:
             mesh_idx = self.schedule.stage_placement(stage_idx)
             assert len(mesh_idx) == 1
             mesh_idx = list(mesh_idx)[0]
-            hlo_module = stage.get_spmd_partitioned()
-            hlo_proto = hlo_module.as_serialized_hlo_module_proto()
+            hlo = stage.get_spmd_partitioned()
             exec_config = PartialGradWorkerExecutableConfig(
-                exec_uuid, hlo_proto, stage.stage_plan, stage.donated_invars)
+                exec_uuid, hlo, stage.stage_plan, stage.donated_invars)
 
             for worker in self.mesh_group[mesh_idx].workers:
                 executable_config_lists[worker].append(exec_config)
@@ -816,10 +815,10 @@ class PipelineInstEmitter:
                 # create and run concat executable
                 exec_uuid = next_mesh_executable_uuid()
                 spec = to_concate_specs[mesh_idx][src_var]
-                hlo_proto = compile_concatenate(physical_mesh.shape, spec,
-                                                self.num_batch, batch_dim,
-                                                src_var.aval)
-                exec_config = ConcatWorkerExecutableConfig(exec_uuid, hlo_proto)
+                hlo = compile_concatenate(physical_mesh.shape, spec,
+                                          self.num_batch, batch_dim,
+                                          src_var.aval)
+                exec_config = ConcatWorkerExecutableConfig(exec_uuid, hlo)
                 kwargs = {
                     "sync_before": False,
                     "sync_after": False,

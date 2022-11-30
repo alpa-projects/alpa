@@ -1,5 +1,4 @@
 """Alpa is a system for training large-scale neural networks."""
-
 # Import all public packages
 from . import api
 from . import collective
@@ -18,6 +17,7 @@ from . import shard_parallel
 from . import timer
 from . import util
 from . import version
+from . import wrapped_hlo
 
 # Short cuts
 from alpa.api import (init, shutdown, parallelize, grad, value_and_grad,

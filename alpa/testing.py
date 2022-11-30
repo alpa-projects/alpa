@@ -6,6 +6,7 @@ from typing import Callable, Optional
 
 import jax
 import jax.numpy as jnp
+from jax.tree_util import tree_leaves
 from jax.experimental.maps import FrozenDict as FrozenDictJax
 import numpy as np
 import optax
@@ -43,7 +44,7 @@ def assert_allclose(x, y, rtol=1e-4, atol=1e-4):
         np.testing.assert_allclose(x, y, rtol, atol)
     elif isinstance(x, TrainState):
         assert isinstance(y, TrainState)
-        assert_allclose(jax.tree_leaves(x), jax.tree_leaves(y))
+        assert_allclose(tree_leaves(x), tree_leaves(y))
     elif x == y:
         return
     else:

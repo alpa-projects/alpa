@@ -244,15 +244,14 @@ class SymbolicReshardingTask(ReshardingTask):
         if self.is_local_allgather_task:
             self.allgather_uuid = uuid = next_mesh_executable_uuid()
             task_spec = self.task_spec
-            hlo_proto = compile_allgather(task_spec.aval.shape,
-                                          task_spec.aval.dtype,
-                                          task_spec.dst_sharding_spec,
-                                          task_spec.final_dst_spec,
-                                          np.prod(self.dst_mesh.shape))
+            hlo = compile_allgather(task_spec.aval.shape, task_spec.aval.dtype,
+                                    task_spec.dst_sharding_spec,
+                                    task_spec.final_dst_spec,
+                                    np.prod(self.dst_mesh.shape))
             for worker in self.dst_mesh.workers:
                 task_dones.append(
                     worker.put_executable.remote(uuid, UtilMeshWorkerExecutable,
-                                                 hlo_proto))
+                                                 hlo))
         ray.get(task_dones)
 
     def create_resharding_communicators(self):

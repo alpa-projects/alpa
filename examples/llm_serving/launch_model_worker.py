@@ -334,7 +334,11 @@ class LangaugeModelWorker:
         for x in request.scope['headers']:
             if x[0] == b"x-forwarded-for":
                 v = x[1].decode()
-                return v[:v.index(':')]
+                v = v.split(",")[0] # Obtain the client IP
+                if ":" in v:
+                    # Drop the port number
+                    return v[:v.index(":")]
+                return v
         return request.client.host
 
 
@@ -357,7 +361,7 @@ if __name__ == "__main__":
         controller = ray.get_actor(CONTROLLER_NAME)
     except ValueError:
         controller = run_controller(args.host, ALPA_SERVE_PORT, "/",
-                                    args.ssl_keyfile, args.ssl_certfile)
+                                    ssl_keyfile=args.ssl_keyfile, ssl_certfile=args.ssl_certfile)
 
     group_id = 0
     controller.launch_mesh_group_manager.remote(group_id)

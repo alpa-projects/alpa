@@ -4,15 +4,15 @@ from typing import List, Set
 from jax import lax
 from jax.lib import xla_client as xc, xla_bridge as xb
 from jax.core import JaxprEqn, Var, DropVar, Jaxpr, ClosedJaxpr
-from alpa.util import OrderedSet, jaxpr_to_hlo_module
+from alpa.util import OrderedSet, jaxpr_to_hlo
 
 non_trivial_primitive = [lax.dot_general_p, lax.conv_general_dilated_p]
 
 
 def eqn_flops(eqn: JaxprEqn) -> float:
     """Get the FLOP of a jaxpr equation."""
-    if "call_jaxpr" in eqn.params:
-        return sum(eqn_flops(x) for x in eqn.params["call_jaxpr"].eqns)
+    if "jaxpr" in eqn.params:
+        return sum(eqn_flops(x) for x in eqn.params["jaxpr"].eqns)
 
     if eqn.primitive not in non_trivial_primitive:
         return 0
@@ -20,9 +20,9 @@ def eqn_flops(eqn: JaxprEqn) -> float:
     new_inv = [inv for inv in eqn.invars if isinstance(inv, Var)]
     jaxpr = Jaxpr([], new_inv, eqn.outvars, [eqn])
     closed_jaxpr = ClosedJaxpr(jaxpr, [])
-    hlo_module = jaxpr_to_hlo_module("tmp", closed_jaxpr, [
+    hlo_module = jaxpr_to_hlo("tmp", closed_jaxpr, [
         False,
-    ] * len(jaxpr.invars))
+    ] * len(jaxpr.invars)).get_module()
 
     backend = xb.get_backend("cpu")
     properties = xc._xla.hlo_module_cost_analysis(  # pylint: disable=protected-access
@@ -48,8 +48,8 @@ def cluster_edges_cost(start: List["JaxprEqn"], end: List["JaxprEqn"]):
 
 def heavy_count(eqn):
     """Check the number of heavy ops in the eqn."""
-    if "call_jaxpr" in eqn.params:
-        return sum(heavy_count(x) for x in eqn.params["call_jaxpr"].eqns)
+    if "jaxpr" in eqn.params:
+        return sum(heavy_count(x) for x in eqn.params["jaxpr"].eqns)
 
     if eqn.primitive not in non_trivial_primitive:
         return 0

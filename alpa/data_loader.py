@@ -24,7 +24,7 @@ class DataLoader:
         self.avals = []
         self.indices = []
         self.sharding_specs = []
-        for ps in jax.tree_leaves(placement_specs):
+        for ps in jax.tree_util.tree_leaves(placement_specs):
             assert len(ps.mesh_ids) == 1
             assert ps.mesh_ids[0] == self.physical_mesh.mesh_id
 
@@ -132,7 +132,7 @@ class MeshDriverDataLoader:
         avals = []
         sharding_specs = []
         indices = []
-        for ps in jax.tree_leaves(placement_specs):
+        for ps in jax.tree_util.tree_leaves(placement_specs):
             avals.append(ps.aval)
             assert len(ps.mesh_ids) == 1
             assert ps.mesh_ids[0] == physical_mesh.mesh_id
@@ -144,14 +144,14 @@ class MeshDriverDataLoader:
         self.physical_mesh = physical_mesh
 
         # Create output DisributedArray
-        self.output_uuids = []
+        ary_refs, ary_uuids = create_remote_array_refs(physical_mesh,
+                                                       len(avals))
+        self.output_uuids = ary_uuids
         self.output_arrays = []
         for i in range(len(avals)):
-            ary_ref, ary_uuid = create_remote_array_refs(physical_mesh)
-            self.output_uuids.append(ary_uuid[0])
             self.output_arrays.append(
                 DistributedArray(physical_mesh, avals[i], sharding_specs[i],
-                                 ary_ref[0]))
+                                 ary_refs[i]))
 
         # Create worker part data loaders
         self.worker_data_loaders = []

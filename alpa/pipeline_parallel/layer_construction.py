@@ -5,13 +5,12 @@ import logging
 from typing import Callable, Union, Sequence, Optional
 
 import numpy as np
-from jax import tree_flatten, lax
-from jax._src.api import _check_callable
-from jax._src.api import make_jaxpr
-from jax._src.tree_util import tree_unflatten
+from jax import lax
+from jax.tree_util import tree_flatten, tree_unflatten
+from jax._src.api import _check_callable, make_jaxpr
+from jax._src.ad_checkpoint import remat_p
 from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun,
                       gensym, raise_to_shaped, get_aval)
-from jax.interpreters.partial_eval import remat_call_p
 
 from alpa.global_env import global_config
 from alpa.parallel_plan import PlacementSpec
@@ -265,17 +264,15 @@ def remat_sliced_eqns(origin_jaxpr, sliced_eqns):
     ret_eqns = []
 
     sliced_jaxprs = slices_to_jaxpr(origin_jaxpr, sliced_eqns)
-    for i, jaxpr in enumerate(sliced_jaxprs):
+    for jaxpr in sliced_jaxprs:
         new_invars = jaxpr.jaxpr.invars + jaxpr.jaxpr.constvars
         new_jaxpr = Jaxpr([], new_invars, jaxpr.jaxpr.outvars, jaxpr.jaxpr.eqns)
         ret_eqns.append([
             new_jaxpr_eqn(
-                new_invars, new_jaxpr.outvars, remat_call_p,
-                dict(concrete=False,
-                     differentiated=False,
-                     name=str(i),
-                     call_jaxpr=new_jaxpr,
+                new_invars, new_jaxpr.outvars, remat_p,
+                dict(jaxpr=new_jaxpr,
                      prevent_cse=True,
+                     differentiated=False,
                      policy=None))
         ])
     return ret_eqns

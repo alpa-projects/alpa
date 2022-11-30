@@ -80,7 +80,7 @@ class SwappingPipelineMLPTest(unittest.TestCase):
 
     def test_2_layer_mlp_local_pipeline_parallel(self):
         # init(cluster="local")
-        self.train_2_layer_mlp(LocalPipelineParallel(swap=True))
+        self.train_2_layer_mlp(LocalPipelineParallel(swap="optimal"))
 
 
 def suite():

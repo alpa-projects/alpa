@@ -1,7 +1,9 @@
 """Pipeline parallel on a single device. This is only used for debugging."""
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from typing import Sequence, Any, Dict
+from math import inf
+from typing import Sequence, Any, Dict, Optional
+import heapq
 
 import jax
 from jax import linear_util as lu
@@ -43,178 +45,80 @@ class LocalPipelineRunner:
         """Get the value of a variable from the env."""
         return self.env[var]
 
-    def place_var(self, var, device):
-        # var may have been freed, in which case we do nothing.
-        if var in self.env:
-            val = self.env[var]
-            self.env[var] = jax.device_put(val, device=device)
-            return val.nbytes
-        return 0
+    def set_val(self, var, val):
+        """Set the value of a variable in the env. Only use for swapping."""
+        self.env[var] = val
 
     def del_var(self, var):
         """Delete a variable from the env."""
         del self.env[var]
 
 
-class LocalSwapManager(ABC):
-    
-    def __init__(
-        self,
-        global_invals: Dict[Var, DeviceArray],
-        stages: Sequence[PipelineComputation],
-        var_stage_mapping: Dict[Var, PipelineComputation],
-        runners: Dict[PipelineComputation, LocalPipelineRunner],
-        logging,
-    ):
-        self.global_invals = global_invals
-        self.var_stage_mapping = var_stage_mapping
-        self.runners = runners
-        self.log = None
-        if logging:
-            self.log = []
-
-        self.host = jax.local_devices(backend="cpu")[0]
-        self.device = jax.local_devices(backend="gpu")[0]
-        self.swap_out = {}
-        self.swap_in = {}
-        self._compute_swap_strategy(stages)
-   
-    @abstractmethod
-    def _compute_swap_strategy(self, stages: Sequence[PipelineComputation]):
-        raise NotImplementedError()
-
-    def swap(self, stage_name: str):
-        for var in self.swap_out[stage_name]:
-            if var in self.global_invals:
-                val = self.global_invals[var]
-                self.global_invals[var] = jax.device_put(val, device=self.host)
-                bytes = val.nbytes
-            else:
-                assert var in self.var_stage_mapping, (
-                    f"cannot swap out unknown var {var}")
-                runner = self.runners[self.var_stage_mapping[var]]
-                bytes = runner.place_var(var, self.host)
-            if self.log is not None:
-                self.log.append(("out", var, bytes))
-        for var in self.swap_in[stage_name]:
-            if var in self.global_invals:
-                val = self.global_invals[var]
-                self.global_invals[var] = jax.device_put(val, device=self.host)
-                bytes = val.nbytes
-            else:
-                assert var in self.var_stage_mapping, (
-                    f"cannot swap in unknown var {var}")
-                runner = self.runners[self.var_stage_mapping[var]]
-                bytes = runner.place_var(var, self.device)
-            if self.log is not None:
-                self.log.append(("in", var, bytes))
-    
-    def view_log(self):
-        s = ""
-        for entry in self.log:
-            s += "\t".join([str(e) for e in entry]) + "\n"
-        return s
-
-
-class LocalSimpleSwapManager(LocalSwapManager):
-    """
-    Swap in all tensors needed to run a stage. Swap all tensors out once the stage ends.
-    """
-
-    def __init__(
-        self,
-        global_invals: Dict[Var, DeviceArray],
-        stages: Sequence[PipelineComputation],
-        var_stage_mapping: Dict[Var, PipelineComputation],
-        runners: Dict[PipelineComputation, LocalPipelineRunner],
-        logging=False,
-    ):
-        super().__init__(global_invals, stages, var_stage_mapping, runners, logging)
-
-        # Ensure all inputs start in host memory.
-        for var, val in global_invals.copy().items():
-            if isinstance(val, jax.numpy.DeviceArray) \
-                and val.device_buffer.device() != self.host:
-                global_invals[var] = jax.device_put(val, self.host)
-        
-        # Swap in tensors needed in first stage.
-        for var in stages[0].invars:
-            assert var in global_invals, (
-                f"{var} not in global invars"
-            )
-            val = global_invals[var]
-            global_invals[var] = jax.device_put(val, device=self.host)
-            if self.log is not None:
-                self.log.append(("in", var, val.nbytes))
-    
-    def _compute_swap_strategy(self, stages):
-        """
-        Order: execute stage -> swap out this stage -> swap in next stage
-        """
-        for i in range(len(stages) - 1):
-            self.swap_out[stages[i].name] = stages[i].invars + stages[i].outvars
-            self.swap_in[stages[i].name] = stages[i + 1].invars
-        last_stage = stages[len(stages) - 1]
-        self.swap_out[last_stage.name] = last_stage.invars + last_stage.outvars
-        self.swap_in[last_stage.name] = []
-
-
-class SwapValue:
-    def __init__(self, val: Any, priority: int):
-        self.val = val
+class SwapElement:
+    def __init__(self, var: Optional[Var], priority: int):
+        self.var = var
         self.priority = priority
+        self.valid = True
     
     def __lt__(self, other):
         return self.priority < other.priority
 
+    def __eq__(self, other):
+        return self.var == other.var
 
-class LocalLRUSwapManager(LocalSwapManager):
 
-    def __init__(
-        self,
-        global_invals: Dict[Var, DeviceArray],
-        stages: Sequence[PipelineComputation],
-        var_stage_mapping: Dict[Var, PipelineComputation],
-        runners: Dict[PipelineComputation, LocalPipelineRunner],
-    ):
-        super().__init__(global_invals, stages, var_stage_mapping, runners)
+class SwapPool:
+    """A heap queue for simulating a pool of variables on device.
 
-        # Somehow analyze stages to decide allocation pool
-        self.pool = OrderedDict() # size_class: queue_of_vals
-        self.pool[1000] = []
-        self.val_size_map = {}
+    This implementation lazily invalidates elements upon removal.
+    """
 
-        # Swap in tensors needed by first stage
-    
-    # def swap_in(self, val: DeviceArray, priority: int):
-    #     for sc in self.pool:
-    #         if sc >= val.bytes:
-    #             break
-    #     sval = SwapValue(val, priority)
-    #     heapq.heappush(self.pool[sc], sval)
-    #     if self.log is not None:
-    #         self.log.append((f"in", val.bytes))
-    #     return jax.device_put(val, self.gpu)
-    
-    # def swap_out(self, val: DeviceArray):
-    #     pass
-    
+    def __init__(self, max_size: int):
+        self.heap = []
+        self.map = {}
+        self.size = 0
+        assert max_size > 0, "max_size must be greater than 0"
+        self.max_size = max_size
 
-class LocalMinSwapManager(LocalSwapManager):
-
-    def __init__(self, logging=False):
-        pass
-    
-    def _compute_swap_strategy(self, stages):
+    def alloc(self, var: Var, priority: int):
+        """Simulating swapping in a variable for a stage.
+        Args:
+            var: the variable to swap in.
+            priority: lesser means earlier to swap out. 
+        Returns:
+            A list of variables to swap out.
         """
-        Ideas:
-            1. Belady's strategy: swap out tensors not needed for the longest time.
-            2. A var can only be swapped after the stage where it's created.
-            3. Avoid swapping in too early because it might be swapped out again.
-            4. Account for reference counting.
-        """
-        pass
-    
+        swap_in = True
+        swap_out_var = None
+        if var in self.map:
+            self.map[var].valid = False
+            swap_in = False
+        elif self.size < self.max_size:
+            self.size += 1
+        else:
+            popped = heapq.heappop(self.heap)
+            self.map.pop(popped.var)
+            while not popped.valid:
+                popped = heapq.heappop(self.heap)
+                self.map.pop(popped.var)
+            swap_out_var = popped.var
+        new_element = SwapElement(var, priority)
+        self.map[var] = new_element
+        heapq.heappush(self.heap, new_element)
+        return swap_in, swap_out_var
+
+    def free(self, var: Var):
+        assert var in self.map, f"{var} is not in pool"
+        self.map[var].valid = False
+        self.size -= 1
+
+
+def view_swap_log(log):
+        s = ""
+        for entry in log:
+            s += "\t".join([str(e) for e in entry]) + "\n"
+        return s
+
 
 class LocalPipelineExecutable:
     """A pipeline parallel executable running on a single local device.
@@ -228,29 +132,29 @@ class LocalPipelineExecutable:
 
     def __init__(self, *, stages: Sequence[PipelineComputation],
                  global_invars: Sequence[Var], global_outvars: Sequence[Var],
-                 swap: bool):
+                 swap: Optional[str]=None):
         self.stages = stages
         self.global_invars = global_invars
         self.global_outvars = global_outvars
-        self.swap = swap
+        if swap is None or swap == "none":
+            self.launch_fn = self._no_swap_launch_on_driver
+        elif swap == "basic":
+            self.launch_fn = self._basic_swap_launch_on_driver
+        elif swap == "optimal":
+            self.launch_fn = self._opt_swap_launch_on_driver
+        else:
+            raise ValueError(f"swap parameter does not support {swap}")
 
     def launch_on_driver(self, *args):
+        return self.launch_fn(*args)
+
+    def _no_swap_launch_on_driver(self, *args):
         """Run function."""
         global_invals = dict(zip(self.global_invars, args))
         runners = {}
 
         var_stage_mapping = {}
         var_reference_count = {}
-
-        swap_manager = None
-        if self.swap:
-            swap_manager = LocalSimpleSwapManager(
-                global_invals,
-                self.stages,
-                var_stage_mapping,
-                runners,
-                logging=True,
-            )
 
         # Create variable dependency mapping.
         for stage in self.stages:
@@ -287,11 +191,211 @@ class LocalPipelineExecutable:
                 runners[stage.name] = LocalPipelineRunner(
                     stage.name, global_invals)
             runners[stage.name].run_stage(stage, stage_invals)
-            if swap_manager:
-                swap_manager.swap(stage.name)
+
+        global_outvals_list = []
+        for var in self.global_outvars:
+            if isinstance(var, Literal):
+                global_outvals_list.append(var.val)
+            else:
+                assert var in var_stage_mapping, (
+                    f"referred to an unknown var {var}")
+                sender_runner = runners[var_stage_mapping[var]]
+                global_outvals_list.append(sender_runner.get_val(var))
+                var_reference_count[var] -= 1
+                if var_reference_count[var] == 0:
+                    sender_runner.del_var(var)
+        return global_outvals_list
+
+    def _basic_swap_launch_on_driver(self, *args):
+        """Run function."""
+        # Move all tensors to CPU memory.
+        host = jax.devices(backend="cpu")[0]
+        device = jax.devices(backend="gpu")[0]
+        host_args = []
+        for a in args:
+            if isinstance(a, DeviceArray) and a.device_buffer.device() == host:
+                host_args.append(a)
+            else:
+                host_args.append(jax.device_put(a, device=host))
+        del args
+        global_invals = dict(zip(self.global_invars, host_args))
+        runners = {}
+
+        var_stage_mapping = {}
+        var_reference_count = {}
+        swap_log = []
+
+        # Create variable dependency mapping.
+        for stage in self.stages:
+            for var in stage.invars:
+                if var not in global_invals:
+                    assert var in var_stage_mapping, (
+                        f"referred to an unknown var {var}")
+                    var_reference_count[var] = var_reference_count.get(var,
+                                                                       0) + 1
+            for var in stage.outvars:
+                var_stage_mapping[var] = stage.name
+
+        for var in self.global_outvars:
+            if not isinstance(var, Literal):
+                assert var in var_stage_mapping, (
+                    f"referred to an unknown var {var}")
+                var_reference_count[var] = var_reference_count.get(var, 0) + 1
+
+        for stage in self.stages:
+            stage_invals = {}
+            for var in stage.invars:
+                if var in global_invals:
+                    stage_invals[var] = global_invals[var]
+                else:
+                    assert var in var_stage_mapping, (
+                        f"referred to an unknown var {var}")
+                    sender_runner = runners[var_stage_mapping[var]]
+                    stage_invals[var] = sender_runner.get_val(var)
+                    var_reference_count[var] -= 1
+                    if var_reference_count[var] == 0:
+                        sender_runner.del_var(var)
+
+            # Swap in all arrays inputted in this stage.
+            stage_invals_swapped = {}
+            for var, val in stage_invals.items():
+                stage_invals_swapped[var] = jax.device_put(val, device=device)
+                swap_log.append(("in", var, val.nbytes))
+
+            # Execute stage.
+            if stage.name not in runners:
+                runners[stage.name] = LocalPipelineRunner(
+                    stage.name, global_invals)
+            runners[stage.name].run_stage(stage, stage_invals_swapped)
+            
+            # Swap out all arrays outputted from this stage.
+            for var in stage_invals_swapped:
+                swap_log.append(("out", var, stage_invals_swapped[var].nbytes))
+            del stage_invals_swapped
+
+            runner = runners[stage.name]
+            for var in runner.env:
+                swap_out_val = runner.get_val(var)
+                runner.set_val(var, jax.device_put(swap_out_val, device=host))
+                swap_log.append(("out", var, swap_out_val.nbytes))
         
         # Examine swap patterns.
-        print(swap_manager.view_log())
+        print(view_swap_log(swap_log))
+
+        global_outvals_list = []
+        for var in self.global_outvars:
+            if isinstance(var, Literal):
+                global_outvals_list.append(var.val)
+            else:
+                assert var in var_stage_mapping, (
+                    f"referred to an unknown var {var}")
+                sender_runner = runners[var_stage_mapping[var]]
+                global_outvals_list.append(sender_runner.get_val(var))
+                var_reference_count[var] -= 1
+                if var_reference_count[var] == 0:
+                    sender_runner.del_var(var)
+        return global_outvals_list
+
+    def _opt_swap_launch_on_driver(self, *args):
+        """Run function."""
+        host = jax.devices(backend="cpu")[0]
+        device = jax.devices(backend="gpu")[0]
+        global_invals = dict(zip(self.global_invars, args))
+        runners = {}
+
+        var_stage_mapping = {}
+        var_reference_count = {}
+
+        # Data structures used for OPT swapping strategy.
+        pool = SwapPool(max_size=32)
+        var_access_map = {} # List of stage indices where var is accessed.
+        var_access_index = {} # Indexes most recent access in var_access_map.
+        swap_log = []
+
+        # Create variable mappings.
+        for i, stage in enumerate(self.stages):
+            for var in stage.invars:
+                if var not in global_invals:
+                    assert var in var_stage_mapping, (
+                        f"referred to an unknown var {var}")
+                    var_reference_count[var] = var_reference_count.get(var,
+                                                                       0) + 1
+                if var in var_access_map:
+                    var_access_map[var].append(i)
+                else:
+                    var_access_map[var] = [i]
+                    var_access_index[var] = 0
+
+            for var in stage.outvars:
+                var_stage_mapping[var] = stage.name
+
+        # Fill pool based on current array placement.
+        for var, val in global_invals.items():
+            if isinstance(val, DeviceArray) and val.device_buffer.device() == device:
+                # Use number of stages until first access to compute priority.
+                swap_in, swap_out_var = pool.alloc(var, -var_access_map[var][0])
+
+        for var in self.global_outvars:
+            if not isinstance(var, Literal):
+                assert var in var_stage_mapping, (
+                    f"referred to an unknown var {var}")
+                var_reference_count[var] = var_reference_count.get(var, 0) + 1
+
+        for i, stage in enumerate(self.stages):
+            stage_invals = {}
+            for var in stage.invars:
+                # Use number of stages until next access to compute priority.
+                next_index = var_access_index[var] + 1
+                if next_index < len(var_access_map[var]):
+                    swap_in, swap_out_var = pool.alloc(var, i - var_access_map[var][next_index])
+                    var_access_index[var] = next_index
+                else:
+                    swap_in, swap_out_var = pool.alloc(var, -inf)
+
+                # Swap out an array if needed.
+                if swap_out_var is not None:
+                    if swap_out_var in global_invals:
+                        swap_out_val = global_invals[swap_out_var]
+                        global_invals[var] = jax.device_put(swap_out_val, device=host)
+                    else:
+                        assert swap_out_var in var_stage_mapping, (
+                            f"referred to an unknown var {swap_out_var}"
+                        )
+                        holder_runner = runners[var_stage_mapping[swap_out_var]]
+                        swap_out_val = holder_runner.get_val(swap_out_var)
+                        holder_runner.set_val(var, jax.device_put(swap_out_val, device=host))
+                    swap_log.append(("out", swap_out_var, swap_out_val.nbytes))
+                    del swap_out_val
+
+                # Get stage input arrays, swapping in if needed.
+                if var in global_invals:
+                    if swap_in:
+                        swap_in_val = global_invals[var]
+                        global_invals[var] = jax.device_put(swap_in_val, device=device)
+                        swap_log.append(("in", var, swap_in_val.nbytes))
+                    stage_invals[var] = global_invals[var]
+                else:
+                    assert var in var_stage_mapping, (
+                        f"referred to an unknown var {var}"
+                    )
+                    sender_runner = runners[var_stage_mapping[var]]
+                    if swap_in:
+                        swap_in_val = sender_runner.get_val(var)
+                        sender_runner.set_val(var, jax.device_put(swap_in_val, device=device))
+                        swap_log.append(("in", var, swap_in_val.nbytes))
+                    stage_invals[var] = sender_runner.get_val(var)
+                    var_reference_count[var] -= 1
+                    if var_reference_count[var] == 0:
+                        sender_runner.del_var(var)
+                        pool.free(var)
+
+            if stage.name not in runners:
+                runners[stage.name] = LocalPipelineRunner(
+                    stage.name, global_invals)
+            runners[stage.name].run_stage(stage, stage_invals)
+        
+        # Examine swap patterns.
+        print(view_swap_log(swap_log))
 
         global_outvals_list = []
         for var in self.global_outvars:

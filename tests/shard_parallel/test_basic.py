@@ -116,7 +116,6 @@ class AutoShardingBasicTest(unittest.TestCase):
         n_total, n_allreduce, _, _, _ = count_communication_primitives(hlo_ir)
         assert n_total == n_allreduce == 1
 
-    @unittest.skip("The support of Gather is broken after a rebase.")
     def test_gather(self):
 
         class Model(nn.Module):
@@ -153,10 +152,10 @@ class AutoShardingBasicTest(unittest.TestCase):
         assert executable.auto_sharding_objective < 1e6
 
         hlo_ir = executable.get_hlo_text()
-        assert "gather(f32[64,32]" in hlo_ir
-        assert "scatter(f32[64,32]" in hlo_ir
-        _, n_allreduce, _, _, _ = count_communication_primitives(hlo_ir)
-        assert n_allreduce == 1
+        assert "gather(f32[64,32]" in hlo_ir or "gather(f32[32,64]" in hlo_ir
+        assert "scatter(f32[64,32]" in hlo_ir or "scatter(f32[32,64]" in hlo_ir
+        n_total, n_allreduce, _, _, _ = count_communication_primitives(hlo_ir)
+        assert n_total == n_allreduce == 1
 
     def test_reshape_uneven_partition(self):
         # TODO(lmzheng): Support the uneven partition of reshape.

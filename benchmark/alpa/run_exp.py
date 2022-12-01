@@ -39,6 +39,10 @@ model_search_suites = {
         "niter": 10,
         "profile_stage_execution_time": True
     }),
+    "moe_inference": ("moe_inference.profile", {
+        "niter": 10,
+        "profile_stage_execution_time": True
+    }),
     "gpt_no_embedding_inference": ("gpt_no_embedding_inference.profile", {}),
     "gpt_inference_streaming": ("gpt_inference.profile", {
         "profile_driver_time": True

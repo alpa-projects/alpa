@@ -7,11 +7,14 @@ import time
 from typing import Optional, Sequence
 
 from jax._src import traceback_util
+from jax._src.lib import xla_extension as xe
 from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves, PyTreeDef
 import numpy as np
 import ray.exceptions
 
-from alpa.device_mesh import MeshHostWorker, RemoteArrayRef, create_and_record_cross_mesh_collective_communicators, next_array_uuids
+from alpa.device_mesh import (
+    MeshHostWorker, RemoteArrayRef,
+    create_and_record_cross_mesh_collective_communicators, next_array_uuids)
 from alpa.global_env import global_config
 from alpa.device_mesh import PhysicalDeviceMeshGroup
 from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
@@ -463,9 +466,7 @@ class PipeshardMeshWorkerExecuable:
             if isinstance(task_config, PartialGradWorkerExecutableConfig):
                 self.worker.put_executable(task_config.exec_uuid,
                                            PartialGradAccMeshWorkerExecutable,
-                                           task_config.hlo,
-                                           task_config.stage_plan,
-                                           task_config.donated_invars)
+                                           *task_config[1:])
                 self.partial_grad_exec_uuids.add(task_config.exec_uuid)
             elif isinstance(task_config, MemZeroWorkerExecutableConfig):
                 assert len(self.acc_grad_buffers) == 0
@@ -507,6 +508,8 @@ class PipeshardMeshWorkerExecuable:
         for local_id, global_id in zip(self.input_local_uuids,
                                        input_global_uuids):
             buffers[local_id] = self.global_buffers[global_id]
+        if global_config.enable_overlapping:
+            xe.reset_event_context(self.worker.backend)
         # add preallocated buffers for gradient accumulation
         buffers.update(self.acc_grad_buffers)
         # donate invars
@@ -585,6 +588,8 @@ class PipeshardMeshWorkerExecuable:
         # restore global environment
         self.worker.buffers = self.global_buffers
         buffers.clear()
+        if global_config.enable_overlapping:
+            xe.reset_event_context(self.worker.backend)
 
     def profile_with_dummy_inputs(self):
         """Profile the executable with dummy inputs."""

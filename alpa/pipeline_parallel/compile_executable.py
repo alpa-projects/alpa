@@ -12,9 +12,11 @@ from jax.tree_util import PyTreeDef
 from alpa.device_mesh import VirtualPhysicalMesh
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.pipeshard_executable import PipeshardDriverExecutable
-from alpa.pipeline_parallel.runtime_emitter import PipelineInstEmitter
-from alpa.pipeline_parallel.schedules import (GpipeSchedule, PipeDreamFlush,
-                                              InferenceSchedule)
+from alpa.pipeline_parallel.runtime_emitter import (
+    OverlapFriendlyPipelineInstEmitter, PipelineInstEmitter)
+from alpa.pipeline_parallel.schedules import (GpipeSchedule,
+                                              OverlapFriendlyPipeDreamSchedule,
+                                              PipeDreamFlush, InferenceSchedule)
 from alpa.pipeline_parallel.computation import (
     create_donation_mapping, generate_computations_from_modules,
     generate_sharded_xla_computations,
@@ -195,6 +197,12 @@ def compile_pipeshard_executable_internal(
                                      meshes=sliced_virtual_meshes,
                                      apply_grad_placement=apply_grad_placement,
                                      num_batch=num_microbatch)
+    elif pipeline_schedule == "1f1b_overlap_friendly":
+        schedule = OverlapFriendlyPipeDreamSchedule(
+            dependency=dependency,
+            meshes=sliced_virtual_meshes,
+            apply_grad_placement=apply_grad_placement,
+            num_batch=num_microbatch)
     else:
         raise ValueError(f"Invalid schedule: {pipeline_schedule}")
 
@@ -230,20 +238,27 @@ def compile_pipeshard_executable_internal(
 
     # Wrap all things into a distributed runtime
     # TODO(yonghao): use virtual mesh instead of launched physical group
-    pipeshard_config = PipelineInstEmitter(
-        stages=xla_stages,
-        global_invars=global_invars,
-        grad_dummy_invars=accumulator_mapping,
-        global_outvars=global_outvars,
-        concat_vars_mapping=concat_vars_mapping,
-        mesh_group=virtual_mesh.launched_physical_mesh_group,
-        schedule=schedule,
-        is_batch=batch_invars,
-        num_batch=num_microbatch,
-        default_auto_sharding_option=default_as_option,
-        manual_stage_option=manual_stage_option,
-        flop_count=total_flops,
-        allreduce_groups=allreduce_groups).compile()
+    emitter_kwargs = dict(stages=xla_stages,
+                          global_invars=global_invars,
+                          grad_dummy_invars=accumulator_mapping,
+                          global_outvars=global_outvars,
+                          concat_vars_mapping=concat_vars_mapping,
+                          mesh_group=virtual_mesh.launched_physical_mesh_group,
+                          schedule=schedule,
+                          is_batch=batch_invars,
+                          num_batch=num_microbatch,
+                          default_auto_sharding_option=default_as_option,
+                          manual_stage_option=manual_stage_option,
+                          flop_count=total_flops,
+                          allreduce_groups=allreduce_groups)
+    if pipeline_schedule == "1f1b_overlap_friendly":
+        emitter_cls = OverlapFriendlyPipelineInstEmitter
+        emitter_kwargs["outvar_def_order"] = [
+            stage.outvars_def_order() for stage in jax_all_stages
+        ]
+    else:
+        emitter_cls = PipelineInstEmitter
+    pipeshard_config = emitter_cls(**emitter_kwargs).compile()
 
     debug_compilation_time("runtime emitter")
     return pipeshard_config

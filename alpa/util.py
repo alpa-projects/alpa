@@ -449,7 +449,10 @@ def compile_allocate_zero_buffers(backend, num_devices: int,
         device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
     )
-    compiled = backend.compile(c, compile_options)
+    with XlaPassContext({
+            "done-event::enable": global_config.enable_overlapping,
+    }):
+        compiled = backend.compile(c, compile_options)
     return compiled
 
 
@@ -459,6 +462,8 @@ def compile_memset_zero_buffers(backend, num_devices: int,
     """
     Compile an XLA executable that memset zero buffers with given shape and
     dtypes. Try to avoid memcpy
+
+    This function is deprecated.
     """
     c = xc.XlaBuilder("allocate_zero_buffers")
     args = []

@@ -21,6 +21,7 @@ from jax.interpreters import pxla
 from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves, PyTreeDef
 import numpy as np
 import ray
+from alpa.util import XlaPassContext
 
 from alpa.device_mesh import (LocalPhysicalDeviceMesh,
                               DistributedPhysicalDeviceMesh, RemoteArrayRef,
@@ -449,6 +450,9 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
         # Sequence[Sequence[DeviceBuffer]], shape(num_args, num_devices)
         input_bufs = [buffer_dict[x] for x in input_uuids]
 
+        if global_config.enable_overlapping:
+            xe.computation_wait_events(input_uuids, self.worker.backend)
+            xe.set_idx_to_uuid(output_uuids)
         # Execute the executable
         timers(self.timer_name).start(self.sync_func if sync_before else None)
         try:
@@ -1087,6 +1091,8 @@ class AllocZeroBufferWorkerExecutable(MeshWorkerExecutable):
         buffer_dict = self.worker.buffers
 
         # Execute
+        if global_config.enable_overlapping:
+            xe.set_idx_to_uuid(output_uuids)
         timers(self.timer_name).start(self.sync_func if sync_before else None)
         output_bufs = (
             self.allocate_zero_buffers.execute_sharded_on_local_devices([]))
@@ -1098,6 +1104,7 @@ class AllocZeroBufferWorkerExecutable(MeshWorkerExecutable):
         self.allocate_zero_buffers.delete()
 
 
+# This executable is deprecated.
 class MemzeroWorkerExecutable(MeshWorkerExecutable):
     """The worker part of an executable that sets all input tensors to zeros."""
 
@@ -1151,7 +1158,10 @@ class UtilMeshWorkerExecutable(MeshWorkerExecutable):
             build_random_seed=global_config.compile_random_seed)
         xla_computation = hlo.get_computation()
 
-        self.exec = worker.backend.compile(xla_computation, compile_options)
+        with XlaPassContext({
+                "done-event::enable": global_config.enable_overlapping,
+        }):
+            self.exec = worker.backend.compile(xla_computation, compile_options)
 
         self.worker = worker
         self.timer_name = get_execution_timer_name(uuid)
@@ -1165,6 +1175,10 @@ class UtilMeshWorkerExecutable(MeshWorkerExecutable):
 
         # Get input
         input_bufs = [buffer_dict[x] for x in input_uuids]
+
+        if global_config.enable_overlapping:
+            xe.computation_wait_events(input_uuids, self.worker.backend)
+            xe.set_idx_to_uuid(output_uuids)
 
         # Execute
         timers(self.timer_name).start(self.sync_func if sync_before else None)

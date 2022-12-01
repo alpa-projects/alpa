@@ -84,7 +84,6 @@ class PipelineInferenceTest(unittest.TestCase):
             method=method,
             donate_argnums=())
         executable = parallel_inference_step.get_executable(state, batch)
-        executable = parallel_inference_step.get_executable(state, batch)
 
         # Run correctnesss test
         serial_out = serial_inference_step(state, batch)

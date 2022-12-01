@@ -465,6 +465,7 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
         # Store output buffers
         for i in range(len(output_uuids)):
             buffer_dict[output_uuids[i]] = output_bufs[i]
+
         # Delete donated input buffers
         delete_donated_buffers(buffer_dict, input_uuids, self.donated_invars)
 

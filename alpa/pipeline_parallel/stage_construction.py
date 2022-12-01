@@ -363,9 +363,9 @@ def inference_dp_impl(num_layers, num_devices, submesh_choices,
     best_s = -1
     best_total_cost = np.inf
     for s in range(1, num_layers + 1):
-        if f[s, 0, num_devices] * s < best_total_cost:
+        if f[s, num_layers, num_devices] * s < best_total_cost:
             best_s = s
-            best_total_cost = f[s, 0, num_devices] * s
+            best_total_cost = f[s, num_layers, num_devices] * s
 
     if np.isinf(best_total_cost):
         return np.inf, None
@@ -626,7 +626,7 @@ def cluster_layers_and_slice_mesh(
             default_as_option, stage_option, inference_mode)
         if inference_mode:
             _, solution = inference_dp(num_layers, virtual_mesh.num_devices,
-                                       submesh_choices, autosharding_configs,
+                                       submesh_choices, num_autosharding_configs,
                                        compute_cost)
         else:
             _, solution = training_dp(num_layers, virtual_mesh.num_devices,

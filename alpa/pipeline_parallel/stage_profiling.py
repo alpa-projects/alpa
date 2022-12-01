@@ -1223,7 +1223,7 @@ def get_compute_cost(
 
     if auto_stage_option.layer_profile_mode == "composition":
         if inference_mode:
-            compute_cost = interpret_profile_result_inference_2d(
+            compute_cost, _ = interpret_profile_result_inference_2d(
                 profile_results, num_layers, num_submesh_choices,
                 num_autosharding_configs)
             max_n_succ_stages = None

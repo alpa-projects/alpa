@@ -10,7 +10,7 @@ from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src.api import _check_callable, make_jaxpr
 from jax._src.ad_checkpoint import remat_p
 from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun,
-                      gensym, raise_to_shaped, get_aval)
+                      gensym)
 
 from alpa.global_env import global_config
 from alpa.parallel_plan import PlacementSpec

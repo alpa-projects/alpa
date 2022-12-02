@@ -137,6 +137,8 @@ class MeshHostWorker:
         set_override_backend(self.backend)
         self.local_devices = self.backend.local_devices()
         self.num_devices = len(self.local_devices)
+        if global_config.enable_overlapping:
+            xe.set_num_device_on_host(self.num_devices)
 
         self.buffers = {}  # Dict[uuid -> Sequence[DeviceArray]]
         self.executables = {}  # Dict[uud -> MeshWorkerExecutable]
@@ -182,6 +184,7 @@ class MeshHostWorker:
             device_id, batch_id = divmod(i, num_batch)
             arys[batch_id][device_id] = (self.backend.buffer_from_pyval(
                 data, self.local_devices[device_id]))
+
         for uuid, ary in zip(uuids, arys):
             self.buffers[uuid] = ary
 
@@ -209,6 +212,8 @@ class MeshHostWorker:
 
     def _get_buffers_with_local_ids(self, uuid: int, device_ids: Sequence[int]):
         bufs = self.buffers[uuid]
+        # TODO(yonghao): sync communication events. Currently it's safe because
+        # we never get values immediately after a cross-mesh communication.
         if device_ids is None:
             return map(np.asarray, bufs)
         elif not isinstance(device_ids, Iterable):
@@ -394,8 +399,8 @@ class MeshHostWorker:
         """Initialize the P2P communicator from within the mesh workers."""
         assert col.is_group_initialized(group_name)
         g = col.check_and_get_group(group_name)
-        g._get_nccl_broadcast_communicator(comm_key, world_size, device_ids,
-                                           devices_global_rank, nccl_uid)
+        g.create_nccl_broadcast_communicator(comm_key, world_size, device_ids,
+                                             devices_global_rank, nccl_uid)
 
     @staticmethod
     def destroy_collective_group(group_name: str = "default"):
@@ -408,8 +413,7 @@ class MeshHostWorker:
             self.init_collective_group(world_size, rank, backend, group_name)
         g = col.check_and_get_group(group_name)
         devices = list(range(self.num_devices))
-        comms = g.get_nccl_collective_communicator(devices, "xla")
-        xe.set_cross_mesh_communicator(comms, "")
+        g.create_and_set_xla_communicators(devices)
 
     def put_resharding_send_task(self, uuid, tasks, group_name):
         self.send_tasks[uuid] = ReshardingSendTask(tile_specs=tasks,
@@ -421,6 +425,10 @@ class MeshHostWorker:
 
     def run_resharding_send_task(self, uuid, ary_uuid):
         task: ReshardingSendTask = self.send_tasks[uuid]
+        group_name = task.group_name
+        if global_config.enable_overlapping:
+            col.wait_events(group_name, [ary_uuid], self.num_devices, True)
+
         for send_tile_spec in task.tile_specs:
             send_tile_spec: ReshardingSendSpec
             self.send_tile(ary_uuid, send_tile_spec.device_id,
@@ -430,8 +438,14 @@ class MeshHostWorker:
 
     def run_resharding_recv_task(self, uuid, ary_uuid, set_empty_buffer=True):
         task: ReshardingRecvTask = self.recv_tasks[uuid]
+        group_name = task.group_name
         if set_empty_buffer and ary_uuid not in self.buffers:
+            assert not global_config.enable_overlapping, "Unsupported."
             self.buffers[ary_uuid] = [None] * self.num_devices
+
+        if global_config.enable_overlapping:
+            col.wait_events(group_name, [ary_uuid], self.num_devices, False)
+
         buffers = self.buffers[ary_uuid]
         for recv_spec in task.recv_specs:
             recv_spec: ReshardingRecvSpec
@@ -440,11 +454,15 @@ class MeshHostWorker:
                 buffers[device_id] = self.backend.buffer_from_pyval(
                     np.full(recv_spec.shape, 1e-8, recv_spec.dtype),
                     self.local_devices[device_id])
+
             for recv_tile_spec in recv_spec.tile_specs:
                 recv_tile_spec: ReshardingTileSpec
                 self.recv_tile(ary_uuid, device_id, recv_tile_spec.offset,
                                recv_tile_spec.rank, recv_tile_spec.gpu_idx,
                                task.group_name)
+
+        if global_config.enable_overlapping:
+            col.record_events(group_name, [ary_uuid], self.num_devices, False)
 
     def send_tile(self, uuid: int, device_id: int, offset: Sequence[slice],
                   dst_rank: int, dst_gpu_idx: int, group_name: str):
@@ -488,8 +506,10 @@ class MeshHostWorker:
                                       ary_uuid,
                                       set_empty_buffer=True):
         task: ReshardingBroadcastTask = self.broadcast_tasks[uuid]
+        group_name = task.group_name
         broadcast_specs = task.broadcast_specs
         if set_empty_buffer and ary_uuid not in self.buffers:
+            assert not global_config.enable_overlapping, "Unsupported."
             picked_spec = list(broadcast_specs.values())[0]
             shape = picked_spec.recv_tile_shape
             dtype = picked_spec.dtype
@@ -498,8 +518,15 @@ class MeshHostWorker:
                                                self.local_devices[device_id])
                 for device_id in range(self.num_devices)
             ]
+
+        has_recv = False
         for group_idx in broadcast_specs:
             broadcast_spec: ReshardingBroadcastSpec = broadcast_specs[group_idx]
+            is_send = broadcast_spec.devices_global_rank[0] == 0
+            has_recv = has_recv or not is_send
+            if global_config.enable_overlapping:
+                col.wait_events(group_name, [ary_uuid], self.num_devices,
+                                is_send)
 
             worker_nccl_util.broadcast(self, ary_uuid, broadcast_spec.comm_key,
                                        broadcast_spec.world_size,
@@ -507,6 +534,8 @@ class MeshHostWorker:
                                        broadcast_spec.devices_global_rank,
                                        broadcast_spec.tensor_slices,
                                        task.group_name)
+        if global_config.enable_overlapping and has_recv:
+            col.record_events(group_name, [ary_uuid], self.num_devices, False)
 
     ##### Profiling and Debugging Related Functions #####
     def profile_hlo_ops(self, op_infos: Sequence[Any], cache_filename: str,
@@ -574,6 +603,10 @@ class MeshHostWorker:
         # We sync one device instead of all for smaller runtime overhead.
         # This is correct because of SPMD.
         self.local_devices[0].synchronize_all_activity()
+
+    def sync_all(self):
+        for device in self.local_devices:
+            device.synchronize_all_activity()
 
     @staticmethod
     def check_alive():

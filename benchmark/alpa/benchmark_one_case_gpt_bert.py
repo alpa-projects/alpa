@@ -211,11 +211,14 @@ def benchmark_gpt_bert_3d_internal(model_type,
     set_global_virtual_physical_mesh(virtual_mesh)
 
     # Parallel configs
+    pipeline_schedule = ("1f1b_overlap_friendly"
+                         if global_config.enable_overlapping else "1f1b")
     (method, add_manual_remat, add_manual_layer_marker,
      num_manual_pipeline_stages) = get_pipeshard_parallel_method(
          benchmark_case,
          virtual_mesh.num_devices_per_host,
-         use_fine_grained_remat=True)
+         use_fine_grained_remat=True,
+         pipeline_schedule=pipeline_schedule)
 
     state, batch, rngkey = prepare_gpt_bert_input_and_model(
         model_type,

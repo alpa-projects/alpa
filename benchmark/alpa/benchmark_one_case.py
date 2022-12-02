@@ -13,6 +13,7 @@ from benchmark_one_case_gpt_bert import (benchmark_gpt_bert_3d_internal,
                                          benchmark_gpt_bert_2d_internal)
 from benchmark_one_case_moe import (benchmark_moe_3d_internal,
                                     benchmark_moe_2d_internal)
+from benchmark_one_case_unet import benchmark_unet_3d_internal
 from benchmark_one_case_wresnet import (benchmark_wresnet_3d_internal,
                                         benchmark_wresnet_2d_internal)
 from benchmark_one_case_gpt_bert_inference import (
@@ -106,6 +107,15 @@ def benchmark_one_case_internal(model,
                 num_hosts,
                 num_devices_per_host,
                 profile_driver_time=profile_driver_time)
+        elif model == "unet":
+            global_config.xla_client_mem_fraction = 0.88
+            global_config.xla_gpu_autotune_level = 0
+            result = benchmark_unet_3d_internal(
+                case,
+                niter,
+                num_hosts,
+                num_devices_per_host,
+                profile_driver_time=profile_driver_time)
         elif model in ["gpt_inference", "gpt_no_embedding_inference"]:
             result = benchmark_gpt_inference_internal(
                 model,
@@ -170,6 +180,7 @@ if __name__ == "__main__":
     from suite_manual_gpt import GPTModelConfig
     from suite_manual_moe import MoEModelConfig
     from suite_wresnet import WResNetModelConfig
+    from suite_unet import UNetModelConfig
     case = eval(args.case)
 
     result = benchmark_one_case(args.model,

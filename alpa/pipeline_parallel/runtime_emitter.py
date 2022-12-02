@@ -645,8 +645,8 @@ class PipelineInstEmitter:
                 # first mb index when accum will take place.
                 grad_uuids[mesh_idx] = self._compile_alloc(
                     grad_vars, grad_sharding_specs, mesh_idx,
-                    self.schedule.first_backward_batch_index,
-                    instruction_lists, executable_config_lists, "grad acc")
+                    self.schedule.first_backward_batch_index, instruction_lists,
+                    executable_config_lists, "grad acc")
 
         return grad_uuids, instruction_lists
 

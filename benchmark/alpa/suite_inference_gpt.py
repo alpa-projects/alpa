@@ -1,6 +1,7 @@
 """Benchmark suites for gpt with auto parallelization."""
 from suite_manual_gpt import gpt_specs
-from benchmark_parallel_utils import (BenchmarkCase, UniformParallelArgs)
+from benchmark_parallel_utils import (BenchmarkCase, UniformParallelArgs,
+                                      LoadSolutionParallelArgs)
 
 prefer_reduce_scatter = True
 force_batch_dim_mapping = True
@@ -60,3 +61,28 @@ get_config(gpt_specs["6.7B"], [1, 2, 4, 8, 16, 32], [1], [1, 2, 4, 8], [1],
            [1, 2, 4, 8, 16])
 get_config(gpt_specs["15B"], [1, 2, 4, 8, 16], [1], [1, 2, 4, 8], [1],
            [1, 2, 4, 8, 16])
+
+test_suite = {
+    8: [
+        BenchmarkCase(
+            1, gpt_specs["1.3B"], 1, "uniform",
+            UniformParallelArgs(
+                prefer_reduce_scatter,
+                use_remat,
+                dp=1,
+                op=1,
+                pp=8,
+                force_batch_dim_mapping=force_batch_dim_mapping)),
+        BenchmarkCase(
+            1, gpt_specs["1.3B"], 1, "load_solution",
+            LoadSolutionParallelArgs(
+                prefer_reduce_scatter,
+                use_remat,
+                num_auto_layers=8,
+                forward_stage_layer_ids=[[0], [1], [2], [3], [4], [5], [6],
+                                         [7]],
+                submesh_physical_shapes=[(1, 1)] * 8,
+                submesh_logical_shapes=[(1, 1)] * 8,
+                submesh_autosharding_option_dicts=[force_dp_dict]))
+    ]
+}

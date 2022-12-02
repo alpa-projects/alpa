@@ -14,7 +14,7 @@ from alpa.testing import (MLPModel, create_train_state, mlp_inference_step,
 class PipelineInferenceAutoTest(unittest.TestCase):
 
     def setUp(self):
-        init(cluster="ray")
+        init(cluster="ray", num_nodes=1, num_devices_per_node=4)
 
     # pylint: disable=no-self-use
     def tearDown(self):
@@ -71,7 +71,7 @@ class PipelineInferenceAutoTest(unittest.TestCase):
         seq_len = 256
         hidden_size = 512
         num_heads = 512 // 64
-        n_layers = 2
+        n_layers = 4
 
         model = FlaxBertLayerCollection(
             config=BertConfig(hidden_size=hidden_size,

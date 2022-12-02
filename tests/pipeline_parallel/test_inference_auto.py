@@ -100,7 +100,6 @@ class PipelineInferenceAutoTest(unittest.TestCase):
         parallel_out = parallel_inference_step(state, batch)
         assert_allclose(serial_out, parallel_out, 1e-3, 1e-3)
 
-
     def test_mlp(self):
         self.run_mlp_inference(True)
 

@@ -626,8 +626,8 @@ def cluster_layers_and_slice_mesh(
             default_as_option, stage_option, inference_mode)
         if inference_mode:
             _, solution = inference_dp(num_layers, virtual_mesh.num_devices,
-                                       submesh_choices, num_autosharding_configs,
-                                       compute_cost)
+                                       submesh_choices,
+                                       num_autosharding_configs, compute_cost)
         else:
             _, solution = training_dp(num_layers, virtual_mesh.num_devices,
                                       num_micro_batches, submesh_choices,

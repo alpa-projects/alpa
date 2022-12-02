@@ -676,8 +676,7 @@ def cluster_layers_and_slice_mesh(
                 assert layer_id == last_layer_id
                 last_layer_id += 1
         assert last_layer_id == num_layers, (
-            f"{last_layer_id} layers in stage option, but {num_layers} marked"
-        )
+            f"{last_layer_id} layers in stage option, but {num_layers} marked")
         submesh_shapes = stage_option.submesh_physical_shapes
         logical_mesh_shapes = (stage_option.submesh_logical_shapes or
                                submesh_shapes)

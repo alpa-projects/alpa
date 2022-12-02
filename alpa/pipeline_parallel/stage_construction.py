@@ -108,8 +108,8 @@ def get_optimal_submeshes(best_s, f_argmin, num_devices, num_layers,
 
 
 @maybe_numba_jit
-def dp_impl_2(num_layers, num_devices, submesh_sizes, valid_idxs_and_costs,
-              max_n_succ_stages):
+def training_dp_impl_2(num_layers, num_devices, submesh_sizes,
+                       valid_idxs_and_costs, max_n_succ_stages):
     f = np.full((num_layers + 1, num_layers + 1, num_devices + 1),
                 np.inf,
                 dtype=np.float32)
@@ -141,14 +141,15 @@ def dp_impl_2(num_layers, num_devices, submesh_sizes, valid_idxs_and_costs,
     return f, f_stage_max, f_argmin
 
 
-def dp_2(
+def training_dp_2(
     num_devices,
     num_microbatches,
     submesh_choices,
     compute_cost,
     max_n_succ_stages,
 ):
-    """Auto stage dynamic programming."""
+    """Faster implementation of the training DP algorihtm."""
+    # TODO(zhuohan): Further verify the correctness of this implementation.
     timers("stage-construction-dp").start()
 
     num_layers = len(compute_cost)
@@ -190,7 +191,7 @@ def dp_2(
 
         # Don't perform backtracking each time (do it only for the best
         # solution).
-        f, f_stage_max, f_argmin = dp_impl_2(
+        f, f_stage_max, f_argmin = training_dp_impl_2(
             num_layers,
             num_devices,
             submesh_sizes,

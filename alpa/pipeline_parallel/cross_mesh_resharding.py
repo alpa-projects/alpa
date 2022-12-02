@@ -648,7 +648,7 @@ class CollectiveGroup:
                 i + len(self.src_mesh.host_ips)] = self.dst_mesh.workers[i]
             for j in range(dst_mesh.num_devices_per_host):
                 device_str = self.dst_mesh.device_strs[
-                    i * src_mesh.num_devices_per_host + j]
+                    i * dst_mesh.num_devices_per_host + j]
                 self.device_str_to_rank_map[device_str] = (
                     i + len(src_mesh.host_ips), j)
                 self.device_str_to_mesh_worker_map[

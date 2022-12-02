@@ -75,12 +75,12 @@ perf_loadbalance_suite = {
 }
 
 perf_broadcast_suite = {
-    (i, j): BenchmarkCase(
-                (1, 1),
-                (i, j),
-                (1024, 1024, 512),
-                ShardingSpec([NoSharding()], [Replicated(1)]), 
-                ShardingSpec([NoSharding()], [Replicated(i*j)]), 
-            )
-    for i in range(1,5) for j in range(1, 5)
+    (n_node, gpu_per_node): BenchmarkCase(
+                            (1, 1),
+                            (n_node, gpu_per_node),
+                            (1<<28, ),
+                            ShardingSpec([NoSharding()], [Replicated(1)]), 
+                            ShardingSpec([NoSharding()], [Replicated(n_node*gpu_per_node)]), 
+                        )
+    for n_node in range(1,5) for gpu_per_node in range(1, 5)
 }

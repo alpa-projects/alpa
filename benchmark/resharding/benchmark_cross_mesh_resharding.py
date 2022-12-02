@@ -56,7 +56,7 @@ def get_device_meshes(src_mesh_shape, dst_mesh_shape):
         src_mesh = virtual_mesh.slice_2d(range(src_num_host),
                                         [range(src_mesh_shape[1])] *
                                         src_num_host)
-        if (src_mesh_shape[1] + dst_mesh_shape[1] <=
+        if (False and src_mesh_shape[1] + dst_mesh_shape[1] <=
                 virtual_mesh.num_devices_per_host):
             dst_host_indices = range(dst_num_host)
             dst_device_indices = [
@@ -261,12 +261,16 @@ def benchmark_one_case_internal(src_mesh_shape,
 
     mean_time, var_time = get_mean_and_variance(time_spend)
     result = {
-        "case": case,
+        "src_mesh_shape": src_mesh_shape,
+        "dst_mesh_shape": dst_mesh_shape,
+        "src_sharding_spec": src_sharding_spec,
+        "dst_sharding_spec": dst_sharding_spec,
+        "tensor_shape": tensor_shape,
         "resharding_mode": resharding_mode,
         "use_local_allgather": use_local_allgather,
         "resharding_loadbalance_mode": resharding_loadbalance_mode,
-        "mean": mean_time,
-        "variance": var_time
+        "exec_time_mean": mean_time,
+        "exec_time_var": var_time
     }
 
     # Delete executables
@@ -304,3 +308,5 @@ if __name__ == "__main__":
                                          args.use_local_allgather,
                                          args.resharding_loadbalance_mode)
     print(result)
+
+# python benchmark_cross_mesh_resharding.py --case case1 --resharding-mode broadcast --resharding-loadbalance-mode normal 

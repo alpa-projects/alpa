@@ -565,9 +565,13 @@ class PipelineInstEmitter:
                 if self.env.var_at(invar, batch_idx, mesh_idx):
                     # have a copy at the current mesh
                     continue
-                if len(self.env.get_var_meshes(invar, batch_idx)) > 1:
-                    raise NotImplementedError(
-                        "Not support resharding replicated")
+                # TODO(yonghao): to avoid congestion, maybe sending from the
+                # last one (a.k.a. the latest one receiving it) is better, but
+                # we have to create the corresponding cross-mesh communication
+                # task.
+                # if len(self.env.get_var_meshes(invar, batch_idx)) > 1:
+                #     raise NotImplementedError(
+                #         "Not support resharding replicated")
                 var_key = self.env.get_var_with_accumulate(invar, batch_idx)
                 src_idx = list(
                     self.env.get_var_meshes(invar, batch_idx).keys())[0]

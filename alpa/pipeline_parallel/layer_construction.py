@@ -192,7 +192,7 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
     for idx, var in enumerate(closed_jaxpr.jaxpr.outvars):
         if isinstance(var, Literal):
             # add a dummy equation to transform a Literal into a normal Var
-            zero_literal = Literal(0, raise_to_shaped(get_aval(0)))
+            zero_literal = Literal(type(var.val)(0), var.aval)
             new_var = gensym_func(var.aval)
             new_eqn = new_jaxpr_eqn([var, zero_literal], [new_var], lax.add_p,
                                     {})

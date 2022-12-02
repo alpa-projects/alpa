@@ -32,7 +32,13 @@ class AutoStageOption:
     submesh_physical_shape_space: str = "power_of_two"
     # The search space of the logical mesh shapes.
     # Possible choices: {"same_as_physical", "data_parallel_only",
-    #                    "single_node_model_parallel", "all"}.
+    #                    "single_node_model_parallel", "all", "manual"}.
+    # If "manual", the user needs to specify the logical mesh shape.
+    manually_specified_submeshes: Sequence[Tuple[int, int]] = None
+    # The search space for the logical mesh shapes.
+    # Possible choices: {"all", "single_node_model_parallel",
+    #                    "same_as_physical", "data_parallel_only",
+    #                    "model_parallel_only"}.
     submesh_logical_shape_space: str = "single_node_model_parallel"
     # Profile only individual layers or composition different layers.
     # Possible choices: {"individual", "composition"}.
@@ -102,8 +108,8 @@ def get_optimal_submeshes(best_s, f_argmin, num_devices, num_layers,
 
 
 @maybe_numba_jit
-def dp_impl_2(num_layers, num_devices, submesh_sizes, valid_idxs_and_costs,
-              max_n_succ_stages):
+def training_dp_impl_2(num_layers, num_devices, submesh_sizes,
+                       valid_idxs_and_costs, max_n_succ_stages):
     f = np.full((num_layers + 1, num_layers + 1, num_devices + 1),
                 np.inf,
                 dtype=np.float32)
@@ -135,14 +141,15 @@ def dp_impl_2(num_layers, num_devices, submesh_sizes, valid_idxs_and_costs,
     return f, f_stage_max, f_argmin
 
 
-def dp_2(
+def training_dp_2(
     num_devices,
     num_microbatches,
     submesh_choices,
     compute_cost,
     max_n_succ_stages,
 ):
-    """Auto stage dynamic programming."""
+    """Faster implementation of the training DP algorihtm."""
+    # TODO(zhuohan): Further verify the correctness of this implementation.
     timers("stage-construction-dp").start()
 
     num_layers = len(compute_cost)
@@ -184,7 +191,7 @@ def dp_2(
 
         # Don't perform backtracking each time (do it only for the best
         # solution).
-        f, f_stage_max, f_argmin = dp_impl_2(
+        f, f_stage_max, f_argmin = training_dp_impl_2(
             num_layers,
             num_devices,
             submesh_sizes,
@@ -215,9 +222,9 @@ def dp_2(
 
 
 @maybe_numba_jit
-def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
-            num_autosharding_configs, compute_cost, max_n_succ_stages,
-            max_stage_cost):
+def training_dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
+                     num_autosharding_configs, compute_cost, max_n_succ_stages,
+                     max_stage_cost):
     """The core implementation of the DP algorithm."""
     # For f, layer ID start from 0
     # f[#pipeline stages,
@@ -291,8 +298,8 @@ def dp_impl(num_layers, num_devices, num_microbatches, submesh_choices,
     return total_cost, res
 
 
-def dp(num_layers, num_devices, num_microbatches, submesh_choices,
-       num_autosharding_configs, compute_cost, max_n_succ_stages):
+def training_dp(num_layers, num_devices, num_microbatches, submesh_choices,
+                num_autosharding_configs, compute_cost, max_n_succ_stages):
     """Auto stage dynamic programming."""
     timers("stage-construction-dp").start()
 
@@ -309,10 +316,11 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices,
             break
         if max_stage_cost - last_max_stage_cost < gap:
             continue
-        cost, solution = dp_impl(num_layers, num_devices, num_microbatches,
-                                 submesh_choices, num_autosharding_configs,
-                                 compute_cost, max_n_succ_stages,
-                                 max_stage_cost)
+        cost, solution = training_dp_impl(num_layers, num_devices,
+                                          num_microbatches, submesh_choices,
+                                          num_autosharding_configs,
+                                          compute_cost, max_n_succ_stages,
+                                          max_stage_cost)
         if cost < best_cost:
             best_cost = cost
             best_solution = solution
@@ -322,7 +330,83 @@ def dp(num_layers, num_devices, num_microbatches, submesh_choices,
     return best_cost, best_solution
 
 
-def get_submesh_choices(num_hosts: int, num_devices_per_host: int, space: str):
+@maybe_numba_jit
+def inference_dp_impl(num_layers, num_devices, submesh_choices,
+                      num_autosharding_configs, compute_cost):
+    """The core implementation of the DP algorithm."""
+    # For f, layer ID start from 0
+    # f[#pipeline stages,
+    #   layer id that is currently being considered,
+    #   number of devices used]
+    f = np.full((num_layers + 1, num_layers + 1, num_devices + 1),
+                np.inf,
+                dtype=np.float32)
+    f_argmin = np.full((num_layers + 1, num_layers + 1, num_devices + 1, 3),
+                       -1,
+                       dtype=np.int32)
+    f[0, 0, 0] = 0
+    for s in range(1, num_layers + 1):  # pylint: disable=too-many-nested-blocks
+        for i in range(1, num_layers + 1):
+            for j in range(1, num_devices + 1):
+                for k in range(0, i):
+                    for m, submesh in enumerate(submesh_choices):
+                        n_submesh_devices = np.prod(np.array(submesh))
+                        if n_submesh_devices <= j:
+                            for n_config in range(num_autosharding_configs):
+                                stage_cost = compute_cost[k, i - 1, m, n_config]
+                                new_cost = max(
+                                    f[s - 1, k, j - n_submesh_devices],
+                                    stage_cost)
+                                if new_cost < f[s, i, j]:
+                                    f[s, i, j] = new_cost
+                                    f_argmin[s, i, j] = (k, m, n_config)
+
+    best_s = -1
+    best_total_cost = np.inf
+    for s in range(1, num_layers + 1):
+        if f[s, num_layers, num_devices] * s < best_total_cost:
+            best_s = s
+            best_total_cost = f[s, num_layers, num_devices] * s
+
+    if np.isinf(best_total_cost):
+        return np.inf, None
+
+    current_s = best_s
+    current_layer = num_layers
+    current_devices = num_devices
+
+    res = []
+    while current_s > 0 and current_layer > 0 and current_devices > 0:
+        next_end_layer, submesh_choice, autosharding_choice = (
+            f_argmin[current_s, current_layer, current_devices])
+        assert next_end_layer != -1
+        res.append(((next_end_layer, current_layer), submesh_choice,
+                    autosharding_choice))
+        current_s -= 1
+        current_layer = next_end_layer
+        current_devices -= np.prod(np.array(submesh_choices[submesh_choice]))
+    assert (current_s == 0 and current_layer == 0 and current_devices == 0)
+
+    return best_total_cost, res
+
+
+def inference_dp(num_layers, num_devices, submesh_choices,
+                 num_autosharding_configs, compute_cost):
+    """Auto stage dynamic programming."""
+    timers("stage-construction-dp").start()
+    cost, solution = inference_dp_impl(num_layers, num_devices, submesh_choices,
+                                       num_autosharding_configs, compute_cost)
+    solution = list(reversed(solution))
+    timers("stage-construction-dp").stop()
+    return cost, solution
+
+
+def get_submesh_choices(
+        num_hosts: int,
+        num_devices_per_host: int,
+        space: str,
+        manually_specified_submeshes: Optional[Sequence[Tuple[int,
+                                                              int]]] = None):
     """Gets the valid choices of submesh shapes."""
     if global_config.overwrite_submesh_choices is not None:
         return global_config.overwrite_submesh_choices
@@ -351,6 +435,8 @@ def get_submesh_choices(num_hosts: int, num_devices_per_host: int, space: str):
         while i <= min(num_hosts, 4):
             submesh_choices.append((i, num_devices_per_host))
             i *= 2
+    elif space == "manual":
+        submesh_choices = manually_specified_submeshes
     else:
         raise ValueError(f"Invalid submesh space: {space}")
 
@@ -393,6 +479,13 @@ def get_one_submesh_autosharding_config_choices(
         results.append((virtual_submesh.get_logical_mesh((num_devices, 1)), {
             "force_batch_dim_to_mesh_dim": 0
         }))
+    elif space == "model_parallel_only":
+        results.append((virtual_submesh.get_logical_mesh((1, num_devices)), {
+            "force_batch_dim_to_mesh_dim": 0
+        }))
+    else:
+        raise ValueError(f"Invalid space for get_one_submesh_autosharding"
+                         f"_config_choices: {space}")
     return results
 
 
@@ -516,14 +609,11 @@ def cluster_layers_and_slice_mesh(
             raise NotImplementedError("automatically slicing layers with "
                                       "existing physical meshes is not"
                                       "supported yet.")
-        if inference_mode:
-            # TODO(zhuohan): Implement the auto slicing in inference mode.
-            raise NotImplementedError("automatically slicing layers with "
-                                      "inference mode is not supported yet.")
 
         submesh_choices = get_submesh_choices(
             virtual_mesh.num_hosts, virtual_mesh.num_devices_per_host,
-            stage_option.submesh_physical_shape_space)
+            stage_option.submesh_physical_shape_space,
+            stage_option.manually_specified_submeshes)
         autosharding_configs = get_all_submesh_autosharding_config_choices(
             virtual_mesh, submesh_choices,
             stage_option.submesh_logical_shape_space, batch_size)
@@ -534,11 +624,16 @@ def cluster_layers_and_slice_mesh(
             virtual_mesh, submesh_choices, autosharding_configs, layers,
             accumulator_mapping, acc_grad_invars, acc_grad_outvars,
             jax_apply_layers, apply_grad_global_info, num_micro_batches,
-            default_as_option, stage_option)
-        _, solution = dp(num_layers, virtual_mesh.num_devices,
-                         num_micro_batches, submesh_choices,
-                         num_autosharding_configs, compute_cost,
-                         max_n_succ_stages)
+            default_as_option, stage_option, inference_mode)
+        if inference_mode:
+            _, solution = inference_dp(num_layers, virtual_mesh.num_devices,
+                                       submesh_choices,
+                                       num_autosharding_configs, compute_cost)
+        else:
+            _, solution = training_dp(num_layers, virtual_mesh.num_devices,
+                                      num_micro_batches, submesh_choices,
+                                      num_autosharding_configs, compute_cost,
+                                      max_n_succ_stages)
 
         assert solution is not None, "no solution in auto stage construction."
 

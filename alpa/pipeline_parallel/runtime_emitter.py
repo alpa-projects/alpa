@@ -129,9 +129,6 @@ class PipelineInstruction:
 AllocateZeroWorkerExecutableConfig = namedtuple(
     "AllocateZeroWorkerExecutableConfig",
     ["exec_uuid", "grad_shard_shapes", "grad_shard_dtypes"])
-MemZeroWorkerExecutableConfig = namedtuple(
-    "MemZeroWorkerExecutableConfig",
-    ["exec_uuid", "grad_shard_shapes", "grad_shard_dtypes"])
 ConcatWorkerExecutableConfig = namedtuple("ConcatWorkerExecutableConfig",
                                           ["exec_uuid", "hlo"])
 PartialGradWorkerExecutableConfig = namedtuple(
@@ -139,7 +136,6 @@ PartialGradWorkerExecutableConfig = namedtuple(
     ["exec_uuid", "hlo", "stage_plan", "donated_invars"])
 
 ExecutableConfig = Union[AllocateZeroWorkerExecutableConfig,
-                         MemZeroWorkerExecutableConfig,
                          PartialGradWorkerExecutableConfig,
                          ConcatWorkerExecutableConfig]
 
@@ -490,7 +486,7 @@ class PipelineInstEmitter:
             return
         # TODO(yonghao): only compile alloc once, use multiple times
         recv_uuid_list = self._compile_alloc(invars, dst_specs, mesh_idx,
-                                             batch_idx, False, alloc_lists,
+                                             batch_idx, alloc_lists,
                                              executable_config_lists, "recv")
 
         for invar, recv_uuid in zip(invars, recv_uuid_list):
@@ -565,9 +561,13 @@ class PipelineInstEmitter:
                 if self.env.var_at(invar, batch_idx, mesh_idx):
                     # have a copy at the current mesh
                     continue
-                if len(self.env.get_var_meshes(invar, batch_idx)) > 1:
-                    raise NotImplementedError(
-                        "Not support resharding replicated")
+                # TODO(yonghao): to avoid congestion, maybe sending from the
+                # last one (a.k.a. the latest one receiving it) is better, but
+                # we have to create the corresponding cross-mesh communication
+                # task.
+                # if len(self.env.get_var_meshes(invar, batch_idx)) > 1:
+                #     raise NotImplementedError(
+                #         "Not support resharding replicated")
                 var_key = self.env.get_var_with_accumulate(invar, batch_idx)
                 src_idx = list(
                     self.env.get_var_meshes(invar, batch_idx).keys())[0]
@@ -645,9 +645,8 @@ class PipelineInstEmitter:
                 # first mb index when accum will take place.
                 grad_uuids[mesh_idx] = self._compile_alloc(
                     grad_vars, grad_sharding_specs, mesh_idx,
-                    self.schedule.first_backward_batch_index,
-                    global_config.use_memzero_for_gradient_accumulation,
-                    instruction_lists, executable_config_lists, "grad acc")
+                    self.schedule.first_backward_batch_index, instruction_lists,
+                    executable_config_lists, "grad acc")
 
         return grad_uuids, instruction_lists
 
@@ -887,16 +886,14 @@ class PipelineInstEmitter:
         return output_local_uuid_list, mesh_output_indices, output_spec_list
 
     def _compile_alloc(self, variables, sharding_specs, mesh_idx, batch_idx,
-                       preallocated, instruction_lists, executable_config_lists,
-                       debug):
+                       instruction_lists, executable_config_lists, debug):
         """Compile an executable which allocates zero buffers.
 
         The zero buffers are:
         1) gradient accumulation buffers
         2) temp buffers for receiving tensors
         """
-        config_class = (MemZeroWorkerExecutableConfig
-                        if preallocated else AllocateZeroWorkerExecutableConfig)
+        config_class = AllocateZeroWorkerExecutableConfig
         avals = [var.aval for var in variables]
         sharded_shapes = [
             get_shard_shape(aval, spec)
@@ -910,12 +907,8 @@ class PipelineInstEmitter:
         output_uuids = self._get_next_uuids(len(variables))
         for worker in physical_mesh.workers:
             executable_config_lists[worker].append(config)
-            if preallocated:
-                in_uuids = output_uuids
-                out_uuids = []
-            else:
-                in_uuids = []
-                out_uuids = output_uuids
+            in_uuids = []
+            out_uuids = output_uuids
             instruction_lists[worker].append(
                 PipelineInstruction.run(config.exec_uuid,
                                         in_uuids,
@@ -923,8 +916,7 @@ class PipelineInstEmitter:
                                             "sync_before": False,
                                             "sync_after": False
                                         },
-                                        info="mem set zero" if preallocated else
-                                        "allocate zero for " + debug))
+                                        info="allocate zero for " + debug))
 
         # shape: (#args, num_hosts, num_devices_per_host)
         for var_idx, var in enumerate(variables):

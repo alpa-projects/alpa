@@ -19,7 +19,6 @@ from alpa.global_env import global_config
 from alpa.device_mesh import PhysicalDeviceMeshGroup
 from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
                                   UtilMeshWorkerExecutable,
-                                  MemzeroWorkerExecutable,
                                   PartialGradAccMeshWorkerExecutable,
                                   next_mesh_executable_uuid,
                                   get_execution_timer_name)
@@ -27,9 +26,8 @@ from alpa.parallel_plan import ClusterInfo, PipelinePlan, ParallelPlan
 from alpa.pipeline_parallel.layer_construction import LayerOption
 from alpa.pipeline_parallel.runtime_emitter import (
     AllocateZeroWorkerExecutableConfig, ConcatWorkerExecutableConfig,
-    ExecutableConfig, MemZeroWorkerExecutableConfig,
-    PartialGradWorkerExecutableConfig, PipelineInstType, PipelineInstruction,
-    PipeshardConfig)
+    ExecutableConfig, PartialGradWorkerExecutableConfig, PipelineInstType,
+    PipelineInstruction, PipeshardConfig)
 from alpa.shard_parallel.auto_sharding import HloStatus
 from alpa.timer import timers, tracer
 from alpa.util import OrderedSet
@@ -450,7 +448,6 @@ class PipeshardMeshWorkerExecuable:
         # Buffer management
         self.worker = worker
         self.global_buffers = worker.buffers
-        self.acc_grad_buffers = {}
         self.acc_in_uuids = acc_local_uuids
         self.acc_out_uuids = acc_out_uuids
         self.donate_invars = donate_invars
@@ -458,7 +455,6 @@ class PipeshardMeshWorkerExecuable:
         # Executable management
         self._related_exec_uuids = []
         self.partial_grad_exec_uuids = OrderedSet()
-        self.use_memzero = False
 
         # Compile executables
         for task_config in executable_configs:
@@ -468,24 +464,6 @@ class PipeshardMeshWorkerExecuable:
                                            PartialGradAccMeshWorkerExecutable,
                                            *task_config[1:])
                 self.partial_grad_exec_uuids.add(task_config.exec_uuid)
-            elif isinstance(task_config, MemZeroWorkerExecutableConfig):
-                assert len(self.acc_grad_buffers) == 0
-                # allocate buffers
-                self.use_memzero = True
-                self.worker.put_executable(task_config.exec_uuid,
-                                           AllocZeroBufferWorkerExecutable,
-                                           task_config.grad_shard_shapes,
-                                           task_config.grad_shard_dtypes)
-                self.worker.buffers = self.acc_grad_buffers
-                self.worker.run_executable(task_config.exec_uuid, [],
-                                           acc_local_uuids)
-                self.worker.buffers = self.global_buffers
-                self.worker.delete_executable(task_config.exec_uuid)
-                # replace the temp AllocZeroExecutable by Memzero ones
-                self.worker.put_executable(task_config.exec_uuid,
-                                           MemzeroWorkerExecutable,
-                                           task_config.grad_shard_shapes,
-                                           task_config.grad_shard_dtypes)
             elif isinstance(task_config, AllocateZeroWorkerExecutableConfig):
                 self.worker.put_executable(task_config.exec_uuid,
                                            AllocZeroBufferWorkerExecutable,
@@ -510,8 +488,6 @@ class PipeshardMeshWorkerExecuable:
             buffers[local_id] = self.global_buffers[global_id]
         if global_config.enable_overlapping:
             xe.reset_event_context(self.worker.backend)
-        # add preallocated buffers for gradient accumulation
-        buffers.update(self.acc_grad_buffers)
         # donate invars
         for global_id, donate in zip(input_global_uuids, self.donate_invars):
             if donate:
@@ -579,12 +555,6 @@ class PipeshardMeshWorkerExecuable:
         for local_id, global_id in zip(self.output_local_uuids,
                                        output_global_uuids):
             self.global_buffers[global_id] = buffers[local_id]
-        # now acc_grad_buffers are those after grad acc, before apply grad
-        # with memzero. These buffers are reused in the next iteration.
-        # TODO(yonghao): never donate them
-        if self.use_memzero:
-            for in_uuid, out_uuid in zip(self.acc_in_uuids, self.acc_out_uuids):
-                self.acc_grad_buffers[in_uuid] = buffers[out_uuid]
         # restore global environment
         self.worker.buffers = self.global_buffers
         buffers.clear()

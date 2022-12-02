@@ -2150,7 +2150,7 @@ class DeviceCluster:
 
         for node in ray.nodes():
             for key in node["Resources"]:
-                if is_ray_node_resource(key):
+                if is_ray_node_resource(key) and global_config.ray_accelerator_name in node["Resources"]:
                     self.host_info.append(node)
                     self.host_ips.append(key.split("node:")[-1])
 

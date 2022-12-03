@@ -167,6 +167,9 @@ def benchmark_one_case_internal(src_mesh_shape,
         task = SymbolicBroadcastReshardingTask(task_spec, collective_group,
                                                src_mesh, dst_mesh)
 
+    if global_config.eagerly_create_communicators:
+        task.create_resharding_communicators()
+
     # Compile pipeline instructions
     instruction_lists = {worker: [] for worker in src_mesh.workers}
     for worker in dst_mesh.workers:
@@ -263,8 +266,8 @@ def benchmark_one_case_internal(src_mesh_shape,
     result = {
         "src_mesh_shape": src_mesh_shape,
         "dst_mesh_shape": dst_mesh_shape,
-        "src_sharding_spec": src_sharding_spec,
-        "dst_sharding_spec": dst_sharding_spec,
+        "src_sharding_spec": str(src_sharding_spec),
+        "dst_sharding_spec": str(dst_sharding_spec),
         "tensor_shape": tensor_shape,
         "resharding_mode": resharding_mode,
         "use_local_allgather": use_local_allgather,

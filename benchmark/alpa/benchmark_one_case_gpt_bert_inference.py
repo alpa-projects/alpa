@@ -1,5 +1,6 @@
 """Benchmark one case of inter-op + intra-op parallelism."""
 import os
+import datetime
 
 import jax
 import jax.numpy as jnp
@@ -179,10 +180,6 @@ def benchmark_gpt_inference_internal(model_type,
     # Log per-stage execution information if needed
     if profile_stage_execution_time:
         model_name = f"bert-{parameter_count/1e9:.1f}b"
-        # dump chrome trace
-        executable.dump_stage_execution_trace(
-            f"./chrome_trace/{model_name},bs={benchmark_case.batch_size},op={benchmark_case.parallel_args.op},pp={benchmark_case.parallel_args.pp}.json"
-        )
         # compute and log per-stage latency/memory statistics
         exec_info = executable.get_stage_execution_info()
         timelines = list(zip(*exec_info))
@@ -193,6 +190,11 @@ def benchmark_gpt_inference_internal(model_type,
         parallel_args = benchmark_case.parallel_args
         if benchmark_case.parallel_mode == "uniform":
             dp, op, pp = parallel_args.dp, parallel_args.op, parallel_args.pp
+            # dump chrome trace
+            executable.dump_stage_execution_trace(
+                f"./chrome_trace/{model_name},"
+                f"bs={benchmark_case.batch_size},"
+                f"op={op},pp={pp}.json")
             heads = [
                 "ModelName", "BS", "#Microbatch", "DP", "OP", "PP", "#GPU",
                 "MeanTime(s)", "StdTime(s)", "TFLOPs", "StageWeights(B)",
@@ -202,22 +204,26 @@ def benchmark_gpt_inference_internal(model_type,
                 model_name, benchmark_case.batch_size,
                 benchmark_case.num_micro_batches, dp, op, pp, dp * op * pp,
                 f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
-                f"{tflops:.2f}", f"{per_stage_weight_mem}", f"{per_stage_peak_mem}",
-                avg_stage_latencies
+                f"{tflops:.2f}", f"{per_stage_weight_mem}",
+                f"{per_stage_peak_mem}", avg_stage_latencies
             ]
         else:
+            timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+            executable.dump_stage_execution_trace(
+                f"./chrome_trace/{model_name},"
+                f"bs={benchmark_case.batch_size},"
+                f"{timestamp}.json")
             heads = [
-                "ModelName", "BS", "#Microbatch", "ParallelArgs",
-                "MeanTime(s)", "StdTime(s)", "TFLOPs", "StageWeights(B)",
-                "StagePeakMem(B)", "StageLatencies(s)"
+                "ModelName", "BS", "#Microbatch", "ParallelArgs", "MeanTime(s)",
+                "StdTime(s)", "TFLOPs", "StageWeights(B)", "StagePeakMem(B)",
+                "StageLatencies(s)", "TimeStamp"
             ]
             values = [
                 model_name, benchmark_case.batch_size,
                 benchmark_case.num_micro_batches, parallel_args,
                 f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
                 f"{tflops:.2f}", f"{per_stage_weight_mem}",
-                f"{per_stage_peak_mem}",
-                avg_stage_latencies
+                f"{per_stage_peak_mem}", avg_stage_latencies, timestamp
             ]
         write_tsv(heads, values, f"benchmark_results.tsv")
 

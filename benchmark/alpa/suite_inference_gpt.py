@@ -64,15 +64,15 @@ get_config(gpt_specs["15B"], [1, 2, 4, 8, 16], [1], [1, 2, 4, 8], [1],
 
 test_suite = {
     8: [
-        BenchmarkCase(
-            1, gpt_specs["1.3B"], 1, "uniform",
-            UniformParallelArgs(
-                prefer_reduce_scatter,
-                use_remat,
-                dp=1,
-                op=1,
-                pp=8,
-                force_batch_dim_mapping=force_batch_dim_mapping)),
+        # BenchmarkCase(
+        #     1, gpt_specs["1.3B"], 1, "uniform",
+        #     UniformParallelArgs(
+        #         prefer_reduce_scatter,
+        #         use_remat,
+        #         dp=1,
+        #         op=1,
+        #         pp=8,
+        #         force_batch_dim_mapping=force_batch_dim_mapping)),
         BenchmarkCase(
             1, gpt_specs["1.3B"], 1, "load_solution",
             LoadSolutionParallelArgs(

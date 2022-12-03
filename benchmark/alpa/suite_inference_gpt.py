@@ -92,9 +92,10 @@ test_suite = {
                 prefer_reduce_scatter,
                 use_remat,
                 num_auto_layers=24,
-                auto_stage_option=AutoStageOption(
-                    submesh_physical_shape_space="manual",
-                    manually_specified_submeshes=((1, 1),),
-                    submesh_logical_shape_space="model_parallel_only"))),
+                auto_stage_option={
+                    "submesh_physical_shape_space": "manual",
+                    "manually_specified_submeshes": ((1, 1),),
+                    "submesh_logical_shape_space": "model_parallel_only",
+                })),
     ]
 }

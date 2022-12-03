@@ -83,6 +83,6 @@ test_suite = {
                                          [7]],
                 submesh_physical_shapes=[(1, 1)] * 8,
                 submesh_logical_shapes=[(1, 1)] * 8,
-                submesh_autosharding_option_dicts=[force_dp_dict]))
+                submesh_autosharding_option_dicts=[force_dp_dict] * 8))
     ]
 }

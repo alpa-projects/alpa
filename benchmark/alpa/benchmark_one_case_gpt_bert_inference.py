@@ -191,19 +191,34 @@ def benchmark_gpt_inference_internal(model_type,
         avg_stage_latencies = compute_avg_stage_latencies(timelines)
         assert len(avg_stage_latencies) == num_manual_pipeline_stages
         parallel_args = benchmark_case.parallel_args
-        dp, op, pp = parallel_args.dp, parallel_args.op, parallel_args.pp
-        heads = [
-            "ModelName", "BS", "#Microbatch", "DP", "OP", "PP", "#GPU",
-            "MeanTime(s)", "StdTime(s)", "TFLOPs", "StageWeights(B)",
-            "StagePeakMem(B)", "StageLatencies(s)"
-        ]
-        values = [
-            model_name, benchmark_case.batch_size,
-            benchmark_case.num_micro_batches, dp, op, pp, dp * op * pp,
-            f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
-            f"{tflops:.2f}", f"{per_stage_weight_mem}", f"{per_stage_peak_mem}",
-            avg_stage_latencies
-        ]
+        if benchmark_case.parallel_mode == "uniform":
+            dp, op, pp = parallel_args.dp, parallel_args.op, parallel_args.pp
+            heads = [
+                "ModelName", "BS", "#Microbatch", "DP", "OP", "PP", "#GPU",
+                "MeanTime(s)", "StdTime(s)", "TFLOPs", "StageWeights(B)",
+                "StagePeakMem(B)", "StageLatencies(s)"
+            ]
+            values = [
+                model_name, benchmark_case.batch_size,
+                benchmark_case.num_micro_batches, dp, op, pp, dp * op * pp,
+                f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
+                f"{tflops:.2f}", f"{per_stage_weight_mem}", f"{per_stage_peak_mem}",
+                avg_stage_latencies
+            ]
+        else:
+            heads = [
+                "ModelName", "BS", "#Microbatch", "ParallelArgs",
+                "MeanTime(s)", "StdTime(s)", "TFLOPs", "StageWeights(B)",
+                "StagePeakMem(B)", "StageLatencies(s)"
+            ]
+            values = [
+                model_name, benchmark_case.batch_size,
+                benchmark_case.num_micro_batches, parallel_args,
+                f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
+                f"{tflops:.2f}", f"{per_stage_weight_mem}",
+                f"{per_stage_peak_mem}",
+                avg_stage_latencies
+            ]
         write_tsv(heads, values, f"benchmark_results.tsv")
 
     metadata = {

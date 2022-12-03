@@ -5,25 +5,30 @@ import jax.numpy as jnp
 import numpy as np
 
 from alpa import (init, shutdown, parallelize, PipeshardParallel,
-                  mark_pipeline_boundary)
+                  mark_pipeline_boundary, AutoStageOption)
 from alpa.model.bert_model import BertConfig, FlaxBertLayerCollection
 from alpa.testing import (MLPModel, create_train_state, mlp_inference_step,
                           bert_layer_collection_inference_step, assert_allclose)
 
 
-class PipelineInferenceTest(unittest.TestCase):
+class PipelineInferenceAutoTest(unittest.TestCase):
 
     def setUp(self):
-        init(cluster="ray")
+        init(cluster="ray", num_nodes=1, num_devices_per_node=4)
 
     # pylint: disable=no-self-use
     def tearDown(self):
         shutdown()
 
     def run_mlp_inference(self, manual_pipeline_layer):
-        method = PipeshardParallel(num_micro_batches=4,
+        stage_option = AutoStageOption(
+            submesh_physical_shape_space="manual",
+            manually_specified_submeshes=((1, 2),),
+            submesh_logical_shape_space="model_parallel_only")
+        method = PipeshardParallel(num_micro_batches=1,
                                    pipeline_schedule="inference",
-                                   layer_option="manual")
+                                   layer_option="manual",
+                                   stage_option=stage_option)
 
         # Init model and optimizer
         batch_size = 64
@@ -52,16 +57,21 @@ class PipelineInferenceTest(unittest.TestCase):
         assert_allclose(serial_out, parallel_out, 1e-3, 1e-3)
 
     def run_bert_layer_collection_inference(self, manual_pipeline_layer):
-        method = PipeshardParallel(num_micro_batches=4,
+        stage_option = AutoStageOption(
+            submesh_physical_shape_space="manual",
+            manually_specified_submeshes=((1, 2),),
+            submesh_logical_shape_space="model_parallel_only")
+        method = PipeshardParallel(num_micro_batches=1,
                                    pipeline_schedule="inference",
-                                   layer_option="manual")
+                                   layer_option="manual",
+                                   stage_option=stage_option)
 
         # Init model and optimizer
         batch_size = 16
         seq_len = 256
         hidden_size = 512
         num_heads = 512 // 64
-        n_layers = 2
+        n_layers = 4
 
         model = FlaxBertLayerCollection(
             config=BertConfig(hidden_size=hidden_size,
@@ -96,31 +106,11 @@ class PipelineInferenceTest(unittest.TestCase):
     def test_bert(self):
         self.run_bert_layer_collection_inference(True)
 
-    def test_output(self):
-        method = PipeshardParallel(num_micro_batches=2,
-                                   pipeline_schedule="inference",
-                                   layer_option="manual")
-
-        @parallelize(method=method, batch_argnums=(0,))
-        def func(x):
-            a = jnp.ones_like(x) + x
-            mark_pipeline_boundary()
-            b = jnp.ones_like(x) * 2 + x
-            return a, b, 3
-
-        x = np.ones(32, dtype=np.float32)
-        a, b, c = func(x)
-
-        assert_allclose(a, np.ones(32) * 2)
-        assert_allclose(b, np.ones(32) * (2 + 1))
-        assert_allclose(c, 3)
-
 
 def suite():
     suite = unittest.TestSuite()
-    suite.addTest(PipelineInferenceTest("test_mlp"))
-    suite.addTest(PipelineInferenceTest("test_bert"))
-    suite.addTest(PipelineInferenceTest("test_output"))
+    suite.addTest(PipelineInferenceAutoTest("test_mlp"))
+    suite.addTest(PipelineInferenceAutoTest("test_bert"))
     return suite
 
 

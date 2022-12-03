@@ -25,68 +25,199 @@ unsafe_map, map = map, safe_map  # type: ignore
 APPLY_GRAD_MARKER_SUFFIX = 'apply_grad'
 
 
-def _value_to_literal(value, dtype):
-    literal_val = np.array(value, dtype)
-    return Literal(literal_val, raise_to_shaped(get_aval(literal_val)))
+def _filter_literal(vars):
+    return [v for v in vars if isinstance(v, Var)]
 
 
-# TODO(yonghao): delaying the cross layer grad accmulation increases memory
-# cost, but may not decrease communication: if c=a+b is delayed, both a and
-# b are accumulated, so the memory cost is more than when only accumulate c.
-# If layer that outputs a(called layer_a, and the same applys for b) is
-# merged with layer_b to the same stage, they do not need any communication,
-# so the communication does not benefit from the rewrite.
-def _rewrite_cross_layer_grad(compute_eqns, microbatch_bound, apply_eqns,
-                              gensym_fn, closed_jaxpr):
-    """
-    If a parameter is used in multiple stages, its gradient is computed in
-    multiple stages and then added together. We accumulate the results on each
-    stage, and add them together exactly at the start of apply grad period.
+def _filter_droped(vars):
+    return [v for v in vars if not isinstance(v, DropVar)]
 
-    A common use case is the tied embedding in language models.
-    """
-    unmarked_vars = set()
+
+def _pipeline_marker_analysis(compute_eqns):
+    """Get vars as inputs of layers and outputs"""
     layer_invars = set()
-    global_invars = closed_jaxpr.jaxpr.invars
+    pipeline_outvars = {}
+    marker_cnt = 0
     for eqn in compute_eqns:
         if eqn.primitive is pipeline_p:
             if eqn.params['mark_type'] == 'end':
-                unmarked_vars.update(
-                    [v for v in eqn.outvars if not isinstance(v, DropVar)])
+                for v in eqn.outvars:
+                    if isinstance(v, DropVar):
+                        continue
+                    pipeline_outvars[v] = marker_cnt
+                marker_cnt += 1
             elif eqn.params['mark_type'] == 'start':
-                layer_invars.update(
-                    [v for v in eqn.invars if isinstance(v, Var)])
+                layer_invars.update(_filter_literal(eqn.invars))
+    return layer_invars, pipeline_outvars
+
+
+def _insert_to_pipeline_marker(marker, new_inv, mapping):
+    invs = list(marker.invars)
+    outvs = list(marker.outvars)
+    for inv in new_inv:
+        invs.append(inv)
+        outvs.append(mapping[inv])
+    return clone_jaxpr_eqn(marker, invs, outvs)
+
+
+def _rewrite_compute_eqns(eqns, eqn_moved_to, gensym_fn):
+    """Insert unmarked eqns(eqn_moved_to) to compute eqn sequence."""
+    marker_cnt = 0
+    new_eqns = []
+    for eqn in eqns:
+        if eqn.primitive is not pipeline_p:
+            pass
+        elif eqn.params['mark_type'] == 'start':
+            cur_pipeline_start_idx = len(new_eqns)
+        elif marker_cnt not in eqn_moved_to:
+            marker_cnt += 1
+        else:
+            appended_eqns = eqn_moved_to[marker_cnt]
+            i_marker = new_eqns[cur_pipeline_start_idx]
+            o_marker = eqn
+            layer_invar_map = {
+                inv: outv
+                for inv, outv in zip(i_marker.invars, i_marker.outvars)
+                if isinstance(inv, Var) and not isinstance(outv, DropVar)
+            }
+            layer_outvar_map = {
+                outv: inv
+                for inv, outv in zip(o_marker.invars, o_marker.outvars)
+                if isinstance(inv, Var) and not isinstance(outv, DropVar)
+            }
+            # collect and create all vars, then rewrite and create eqns
+            inserted_invars = OrderedSet()
+            inserted_outvars = OrderedSet()
+            for eq in appended_eqns:
+                # collect and create all used and output vars
+                eq_new_invs = []
+                for inv in eq.invars:
+                    if isinstance(inv, Var):
+                        if inv in layer_outvar_map:
+                            # this layer defines the invar, use pre-marker ver.
+                            eq_new_invs.append(layer_outvar_map[inv])
+                        else:
+                            if inv not in layer_invar_map:
+                                # add new invar from other layers
+                                layer_invar_map[inv] = gensym_fn(inv.aval)
+                                inserted_invars.add(inv)
+                            eq_new_invs.append(layer_invar_map[inv])
+                    else:
+                        eq_new_invs.append(inv)
+                eq_new_outvs = []
+                for outv in eq.outvars:
+                    if isinstance(outv, DropVar):
+                        eq_new_outvs.append(outv)
+                    else:
+                        new_mapped = gensym_fn(outv.aval)
+                        layer_outvar_map[outv] = new_mapped
+                        inserted_outvars.add(new_mapped)
+                        eq_new_outvs.append(new_mapped)
+                # create the new eqn
+                new_eqns.append(clone_jaxpr_eqn(eq, eq_new_invs, eq_new_outvs))
+
+            # create the new in marker
+            new_eqns[cur_pipeline_start_idx] = _insert_to_pipeline_marker(
+                i_marker, inserted_invars, layer_invar_map)
+            layer_outvar_map = {v: k for k, v in layer_outvar_map.items()}
+            eqn = _insert_to_pipeline_marker(o_marker, inserted_outvars,
+                                             layer_outvar_map)
+            marker_cnt += 1
+
+        new_eqns.append(eqn)
+    return new_eqns
+
+
+def _get_delayed_eqns(compute_eqns, layer_invars, pipeline_outvars, gensym_fn):
+    """
+    Get eqns that can be delayed to apply gradient stage and rewrite eqns that
+    cannot do so by moving them into a layer.
+
+    An example of cannot delayed vars is: x is computed in layer0, and sent to
+    layer1 and layer2. There is grad(x) = grad_1(x) + grad_2(x), but the
+    grad(weight) depends on grad(x) and is in the acc_grad period, so we cannot
+    delay it to the apply_grad period.
+    """
     cross_layer_grad_eqns = []
     new_compute_eqns = []
-    # Those eqn directly use output of pipeline end is delayed to apply grad.
-    defined_vars = set(global_invars)
-    for eqn in compute_eqns:
+    moved_to_layer_eqns = []
+
+    marked_vars = set()
+    used_vars = set()
+    out_marker = True
+    for eqn in reversed(compute_eqns):
+        invars = _filter_literal(eqn.invars)
+        outvars = _filter_droped(eqn.outvars)
+        used_outvars = used_vars.intersection(outvars)
         if eqn.primitive is pipeline_p:
+            # invars of a pipeline end marker is marked
+            if eqn.params['mark_type'] == 'end':
+                marked_vars.update(invars)
+                out_marker = False
+            else:
+                out_marker = True
             new_compute_eqns.append(eqn)
-            continue
-        invars = [v for v in eqn.invars if isinstance(v, Var)]
-        if not unmarked_vars.intersection(invars):
-            new_compute_eqns.append(eqn)
-            continue
-        assert unmarked_vars.issuperset(invars), f"'{eqn}' is not fully marked."
-        outvars = [v for v in eqn.outvars if not isinstance(v, DropVar)]
-        assert not layer_invars.intersection(
-            outvars), f"'{eqn}' cannot be delayed."
-        cross_layer_grad_eqns.append(eqn)
-        unmarked_vars.update(outvars)
-        defined_vars.update(outvars)
-    # Rewrite microbatch_bound and cross_layer_grad eqns.
+        else:
+            # we don't want to do dce here, because it may make its operand be
+            # considered as cross layer grad, and then moved across microbatch
+            # boundary, which is harder to analyze.
+            if len(outvars) == 0 and out_marker:
+                continue
+            # only if an eqn is not used and OUT MARKER does it moved after
+            # microbatch boundary. Those inside a microbatch boundary is handled
+            # by later DCE.
+            elif not used_outvars and out_marker:
+                cross_layer_grad_eqns.append(eqn)
+                continue
+            elif marked_vars.issuperset(used_outvars):
+                # eqn is marked if all outvars are marked, then mark its invars.
+                marked_vars.update(invars)
+                new_compute_eqns.append(eqn)
+            else:
+                assert not marked_vars.intersection(
+                    outvars), f"'{eqn}' is partially marked."
+                if layer_invars.intersection(outvars):
+                    # move the marked var to the latest stage producing some of
+                    # its invars.
+                    moved_to_layer_eqns.append(eqn)
+                    # update layer invars and marked vars.
+                    layer_invars.update(invars)
+                    marked_vars.update(outvars)
+                else:
+                    cross_layer_grad_eqns.append(eqn)
+                    continue
+        used_vars.update(invars)
+
+    new_compute_eqns = list(reversed(new_compute_eqns))
+    cross_layer_grad_eqns = list(reversed(cross_layer_grad_eqns))
+    eqn_moved_to = {}
+    for eqn in reversed(moved_to_layer_eqns):
+        invars = _filter_literal(eqn.invars)
+        outvars = _filter_droped(eqn.outvars)
+        moved_to = max(pipeline_outvars[v] for v in invars)
+        eqn_moved_to.setdefault(moved_to, []).append(eqn)
+        pipeline_outvars.update({v: moved_to for v in outvars})
+    if eqn_moved_to:
+        new_compute_eqns = _rewrite_compute_eqns(new_compute_eqns, eqn_moved_to,
+                                                 gensym_fn)
+    return cross_layer_grad_eqns, new_compute_eqns
+
+
+def _rewrite_microbatch_bound(microbatch_bound, delayed_eqns, gensym_fn):
+    """
+    Rewrite the microbatch bound because some eqns are moved from microbatched
+    part of the graph to non-microbatched part.
+    """
     microbatch_bound_in_to_outs = {}
     for invar, outvar in zip(microbatch_bound.invars, microbatch_bound.outvars):
         if isinstance(invar, Var) and not isinstance(outvar, DropVar):
             microbatch_bound_in_to_outs[invar] = outvar
     new_cross_microbatch_bound_invars = OrderedSet()
     new_post_microbatch_bound_outvars = OrderedSet()
-    for eqn in cross_layer_grad_eqns:
+    for eqn in delayed_eqns:
         for invar in eqn.invars:
             if (isinstance(invar, Var) and
-                    invar not in microbatch_bound_in_to_outs and
-                    invar not in defined_vars):
+                    invar not in microbatch_bound_in_to_outs):
                 new_cross_microbatch_bound_invars.add(invar)
                 microbatch_bound_in_to_outs[invar] = gensym_fn(invar.aval)
         new_post_microbatch_bound_outvars.update([
@@ -109,29 +240,64 @@ def _rewrite_cross_layer_grad(compute_eqns, microbatch_bound, apply_eqns,
     new_microbatch_bound = clone_jaxpr_eqn(microbatch_bound,
                                            new_microbatch_bound_invars,
                                            new_microbatch_bound_outvars)
-    # rewrite cross layer grad eqns and insert them to the top of apply eqns.
+    return new_microbatch_bound, microbatch_bound_in_to_outs
+
+
+def _rewrite_delayed_gradient_sum_eqns(delayed_eqns,
+                                       microbatch_bound_in_to_outs):
+    """Change args of eqns that are delayed to the non-microbatched part."""
     new_apply_eqns = []
-    rewrite_invars = set(new_microbatch_bound_invars)
-    rewrite_invars.update(microbatch_bound.invars)
-    for eqn in cross_layer_grad_eqns:
+    for eqn in delayed_eqns:
         invars = [
-            microbatch_bound_in_to_outs[var]
-            if isinstance(var, Var) and var in rewrite_invars else var
-            for var in eqn.invars
+            microbatch_bound_in_to_outs[var] if isinstance(var, Var) and
+            var in microbatch_bound_in_to_outs else var for var in eqn.invars
         ]
         outvars = [
-            microbatch_bound_in_to_outs[var]
-            if not isinstance(var, DropVar) and var in rewrite_invars else var
-            for var in eqn.outvars
+            microbatch_bound_in_to_outs[var] if not isinstance(var, DropVar) and
+            var in microbatch_bound_in_to_outs else var for var in eqn.outvars
         ]
         new_apply_eqns.append(clone_jaxpr_eqn(eqn, invars, outvars))
+    return new_apply_eqns
+
+
+def _value_to_literal(value, dtype):
+    literal_val = np.array(value, dtype)
+    return Literal(literal_val, raise_to_shaped(get_aval(literal_val)))
+
+
+# TODO(yonghao): delaying the cross layer grad accmulation increases memory
+# cost, but may not decrease communication: if c=a+b is delayed, both a and
+# b are accumulated, so the memory cost is more than when only accumulate c.
+# If layer that outputs a(called layer_a, and the same applys for b) is
+# merged with layer_b to the same stage, they do not need any communication,
+# so the communication does not benefit from the rewrite.
+def _rewrite_cross_layer_grad(compute_eqns, microbatch_bound, apply_eqns,
+                              gensym_fn, closed_jaxpr):
+    """
+    If a parameter is used in multiple stages, its gradient is computed in
+    multiple stages and then added together. We accumulate the results on each
+    stage, and add them together exactly at the start of apply grad period.
+
+    A common use case is the tied embedding in language models.
+    """
+    layer_invars, pipeline_outvars = _pipeline_marker_analysis(compute_eqns)
+    # Those eqn directly use output of pipeline end is delayed to apply grad.
+    cross_layer_grad_eqns, new_compute_eqns = _get_delayed_eqns(
+        compute_eqns, layer_invars, pipeline_outvars, gensym_fn)
+    # Rewrite microbatch_bound and cross_layer_grad eqns.
+    (new_microbatch_bound,
+     microbatch_bound_in_to_outs) = _rewrite_microbatch_bound(
+         microbatch_bound, cross_layer_grad_eqns, gensym_fn)
+    # rewrite cross layer grad eqns and insert them to the top of apply eqns.
+    new_apply_eqns = _rewrite_delayed_gradient_sum_eqns(
+        cross_layer_grad_eqns, microbatch_bound_in_to_outs)
     new_apply_eqns += apply_eqns
     new_global_outvars = list(closed_jaxpr.jaxpr.outvars)
     for idx in range(len(new_global_outvars)):
         var = new_global_outvars[idx]
         if isinstance(var, Literal):
             continue
-        if var in rewrite_invars:
+        if isinstance(var, Var) and var in microbatch_bound_in_to_outs:
             new_global_outvars[idx] = microbatch_bound_in_to_outs[var]
     closed_jaxpr = clone_jaxpr(closed_jaxpr,
                                eqns=new_compute_eqns + [new_microbatch_bound] +
@@ -202,10 +368,7 @@ def _get_post_to_pre_marker_mapping(compute_jaxpr):
     Get a dict that maps an out_var of a pipeline marker to
     its corresponding in_var.
     """
-    post_marker_outs = [
-        outvar for outvar in compute_jaxpr.jaxpr.outvars
-        if isinstance(outvar, Var)
-    ]
+    post_marker_outs = _filter_droped(compute_jaxpr.jaxpr.outvars)
     # Currently, assume no grad is literal
     assert len(post_marker_outs) == len(compute_jaxpr.jaxpr.outvars)
     post_marker_outs = OrderedSet(post_marker_outs)

@@ -1,6 +1,6 @@
 import unittest
 from alpa import init, PipeshardParallel, AutoStageOption
-from .test_inference_only import PipelineInferenceTest
+from test_inference_only import PipelineInferenceTest
 
 
 class PipelineInferenceAutoTest(PipelineInferenceTest):

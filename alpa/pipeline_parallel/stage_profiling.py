@@ -981,9 +981,9 @@ def generate_training_stages_1d(layers, accumulator_mapping, acc_grad_invars,
     num_layers = len(layers) // 2
     stages = []
     for l in tqdm.tqdm(range(0, num_layers)):
-        selected_apply_grad_layers = [
+        selected_apply_grad_layers = (
             [] if apply_grad_layers[l] is None else [apply_grad_layers[l]]
-        ]
+        )
         stage_name = f"stage_{l}"
         stage_config = generate_stage_info(layers, [(l,),
                                                     (2 * num_layers - l - 1,)],
@@ -1007,9 +1007,9 @@ def generate_inference_stages_1d(layers, accumulator_mapping, acc_grad_invars,
     num_layers = len(layers)
     stages = []
     for l in tqdm.tqdm(range(0, num_layers)):
-        selected_apply_grad_layers = [
+        selected_apply_grad_layers = (
             [] if apply_grad_layers[l] is None else [apply_grad_layers[l]]
-        ]
+        )
         assert len(selected_apply_grad_layers) == 0, (
             "Inference stage should not have apply_grad_layers")
         stage_name = f"stage_{l}"

@@ -16,8 +16,8 @@ import suite
 
 
 benchmark_suites = {
-    "loadbalance": suite.perf_loadbalance_suite,
-    "1-to-m": suite.perf_broadcast_suite,
+    "n-to-m": suite.perf_n_to_m_suite,
+    "1-to-m": suite.perf_1_to_m_suite,
 }
 
 def benchmark_and_write_to_namespace(result_namespace, *args, **kwargs):
@@ -43,10 +43,10 @@ def benchmark_one_case(*args, use_separate_process=False, **kwargs):
 def benchmark_load_balance_suite():
     os.makedirs("tmp", exist_ok=True)
     
-    result_file = "tmp/loadbalance_result.json"
+    result_file = "tmp/n_to_m_result.json"
     result = []
 
-    suite = benchmark_suites["loadbalance"]
+    suite = benchmark_suites["n-to-m"]
     config_list = [
         {"resharding_mode": "send_recv", "resharding_loadbalance_mode": "normal", "use_local_allgather":False},
         {"resharding_mode": "send_recv", "resharding_loadbalance_mode": "normal", "use_local_allgather":True},

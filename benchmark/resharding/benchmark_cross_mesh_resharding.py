@@ -290,17 +290,27 @@ def benchmark_one_case_internal(src_mesh_shape,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--case", type=str, required=True)
-    parser.add_argument("--resharding-mode", type=str, required=True, default="send_recv")
-    parser.add_argument("--resharding-loadbalance-mode", type=str, required=True)
+    parser.add_argument("--suite", type=str, required=True, choices=["1-to-m", "load-balance"])
+    parser.add_argument("--case", type=str)
+    parser.add_argument("--n-nodes", type=int, default=1)
+    parser.add_argument("--gpu-per-node", type=int, default=1)
+    parser.add_argument("--resharding-mode", 
+                        type=str, required=True, 
+                        choices=["send_recv", "broadcast"])
+    parser.add_argument("--resharding-loadbalance-mode", 
+                        type=str, required=True, 
+                        choices=["normal", "no_loadbalance", 
+                        "loadbalance_size", "loadbalance_order"])
     parser.add_argument("--use-local-allgather", action="store_true")
     parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
 
     os.makedirs("tmp", exist_ok=True)
 
-    case = suite.perf_loadbalance_suite[args.case]
-    #TODO(hexu): deal with broadcast suite. 
+    if args.suite == "1-to-m":
+        case = suite.perf_1_to_m_suite[(args.n_nodes, args.gpu_per_node)]
+    else:
+        case = suite.perf_n_to_m_suite[args.case]
     
     result = benchmark_one_case_internal(case.src_mesh_shape,
                                          case.dst_mesh_shape,

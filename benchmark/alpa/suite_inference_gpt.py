@@ -1,7 +1,9 @@
 """Benchmark suites for gpt with auto parallelization."""
+from alpa import AutoStageOption
 from suite_manual_gpt import gpt_specs
 from benchmark_parallel_utils import (BenchmarkCase, UniformParallelArgs,
-                                      LoadSolutionParallelArgs)
+                                      LoadSolutionParallelArgs,
+                                      SearchParallelArgs)
 
 prefer_reduce_scatter = True
 force_batch_dim_mapping = True
@@ -73,16 +75,26 @@ test_suite = {
         #         op=1,
         #         pp=8,
         #         force_batch_dim_mapping=force_batch_dim_mapping)),
+        # BenchmarkCase(
+        #     1, gpt_specs["1.3B"], 1, "load_solution",
+        #     LoadSolutionParallelArgs(
+        #         prefer_reduce_scatter,
+        #         use_remat,
+        #         num_auto_layers=8,
+        #         forward_stage_layer_ids=[[0], [1], [2], [3], [4], [5], [6],
+        #                                  [7]],
+        #         submesh_physical_shapes=[(1, 1)] * 8,
+        #         submesh_logical_shapes=[(1, 1)] * 8,
+        #         submesh_autosharding_option_dicts=[force_dp_dict] * 8)),
         BenchmarkCase(
-            1, gpt_specs["1.3B"], 1, "load_solution",
-            LoadSolutionParallelArgs(
+            1, gpt_specs["1.3B"], 1, "search",
+            SearchParallelArgs(
                 prefer_reduce_scatter,
                 use_remat,
-                num_auto_layers=8,
-                forward_stage_layer_ids=[[0], [1], [2], [3], [4], [5], [6],
-                                         [7]],
-                submesh_physical_shapes=[(1, 1)] * 8,
-                submesh_logical_shapes=[(1, 1)] * 8,
-                submesh_autosharding_option_dicts=[force_dp_dict] * 8))
+                num_auto_layers=24,
+                auto_stage_option=AutoStageOption(
+                    submesh_physical_shape_space="manual",
+                    manually_specified_submeshes=((1, 1),),
+                    submesh_logical_shape_space="model_parallel_only"))),
     ]
 }

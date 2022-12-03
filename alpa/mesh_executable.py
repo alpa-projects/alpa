@@ -141,7 +141,7 @@ class MeshWorkerExecutable(ABC):
 
 
 # The global executable counter
-mesh_executable_counter = 511
+mesh_executable_counter = 0
 
 
 def next_mesh_executable_uuid():

@@ -186,7 +186,8 @@ def benchmark_gpt_inference_internal(model_type,
         # drop warmup case
         timelines = timelines[1:]
         avg_stage_latencies = compute_avg_stage_latencies(timelines)
-        assert len(avg_stage_latencies) == num_manual_pipeline_stages
+        if num_manual_pipeline_stages is not None:
+            assert len(avg_stage_latencies) == num_manual_pipeline_stages
         parallel_args = benchmark_case.parallel_args
         if benchmark_case.parallel_mode == "uniform":
             dp, op, pp = parallel_args.dp, parallel_args.op, parallel_args.pp

@@ -15,7 +15,8 @@ import numpy as np
 import ray
 
 from alpa import init
-from alpa.device_mesh import (DistributedArray, VirtualPhysicalMesh, create_remote_array_refs,
+from alpa.device_mesh import (DistributedArray, VirtualPhysicalMesh,
+                              create_remote_array_refs,
                               get_global_virtual_physical_mesh)
 from alpa.mesh_executable import next_mesh_executable_uuid
 from alpa.global_env import global_config
@@ -35,27 +36,31 @@ import suite
 
 use_virtual_mesh = False
 
+
 def get_device_meshes(src_mesh_shape, dst_mesh_shape):
     if use_virtual_mesh:
         host_ids = [0, 1, 2, 3]
-        host_info = [
-                {"NodeManagerAddress":"0.0.0.1"},
-                {"NodeManagerAddress":"0.0.0.2"},
-                {"NodeManagerAddress":"0.0.0.3"},
-                {"NodeManagerAddress":"0.0.0.4"}
-            ]
+        host_info = [{
+            "NodeManagerAddress": "0.0.0.1"
+        }, {
+            "NodeManagerAddress": "0.0.0.2"
+        }, {
+            "NodeManagerAddress": "0.0.0.3"
+        }, {
+            "NodeManagerAddress": "0.0.0.4"
+        }]
         num_devices_per_host = 4
 
-        virtual_mesh = VirtualPhysicalMesh(host_ids=host_ids,
-                                           host_info=host_info,
-                                           head_ip="0.0.0.1",
-                                           num_devices_per_host=num_devices_per_host)
+        virtual_mesh = VirtualPhysicalMesh(
+            host_ids=host_ids,
+            host_info=host_info,
+            head_ip="0.0.0.1",
+            num_devices_per_host=num_devices_per_host)
 
         src_num_host = src_mesh_shape[0]
         dst_num_host = dst_mesh_shape[0]
-        src_mesh = virtual_mesh.slice_2d(range(src_num_host),
-                                        [range(src_mesh_shape[1])] *
-                                        src_num_host)
+        src_mesh = virtual_mesh.slice_2d(
+            range(src_num_host), [range(src_mesh_shape[1])] * src_num_host)
         if (False and src_mesh_shape[1] + dst_mesh_shape[1] <=
                 virtual_mesh.num_devices_per_host):
             dst_host_indices = range(dst_num_host)
@@ -65,15 +70,14 @@ def get_device_meshes(src_mesh_shape, dst_mesh_shape):
         else:
             dst_host_indices = range(src_num_host, src_num_host + dst_num_host)
             dst_device_indices = [range(dst_mesh_shape[1])] * dst_num_host
-        dst_mesh = virtual_mesh.slice_2d(
-            dst_host_indices, dst_device_indices)
+        dst_mesh = virtual_mesh.slice_2d(dst_host_indices, dst_device_indices)
     else:
         virtual_mesh = get_global_virtual_physical_mesh()
         src_num_host = src_mesh_shape[0]
         dst_num_host = dst_mesh_shape[0]
         src_mesh = virtual_mesh.slice_2d(range(src_num_host),
-                                        [range(src_mesh_shape[1])] *
-                                        src_num_host).get_physical_mesh()
+                                         [range(src_mesh_shape[1])] *
+                                         src_num_host).get_physical_mesh()
         if (src_mesh_shape[1] + dst_mesh_shape[1] <=
                 virtual_mesh.num_devices_per_host):
             dst_host_indices = range(dst_num_host)
@@ -87,6 +91,7 @@ def get_device_meshes(src_mesh_shape, dst_mesh_shape):
             dst_host_indices, dst_device_indices).get_physical_mesh()
     return src_mesh, dst_mesh
 
+
 def get_mean_and_variance(results):
     assert len(results) == 13
     results = results[3:]
@@ -95,15 +100,16 @@ def get_mean_and_variance(results):
     return mean, var
 
 
-def benchmark_one_case_internal(src_mesh_shape,
-                                dst_mesh_shape,
-                                src_sharding_spec,
-                                dst_sharding_spec,
-                                tensor_shape,
-                                resharding_mode="send_recv",
-                                use_local_allgather=True,
-                                resharding_loadbalance_mode="normal",
-                                ):
+def benchmark_one_case_internal(
+    src_mesh_shape,
+    dst_mesh_shape,
+    src_sharding_spec,
+    dst_sharding_spec,
+    tensor_shape,
+    resharding_mode="send_recv",
+    use_local_allgather=True,
+    resharding_loadbalance_mode="normal",
+):
 
     global_config.resharding_mode = resharding_mode
     global_config.resharding_loadbalance_mode = resharding_loadbalance_mode
@@ -112,7 +118,7 @@ def benchmark_one_case_internal(src_mesh_shape,
     init(cluster="ray")
 
     src_mesh, dst_mesh = get_device_meshes(src_mesh_shape, dst_mesh_shape)
-    
+
     var = Var(0, "", ShapedArray(tensor_shape, jnp.int32))
 
     # Resharding task spec and send/recv strategy
@@ -134,11 +140,13 @@ def benchmark_one_case_internal(src_mesh_shape,
     if resharding_mode == "send_recv":
         if global_config.resharding_loadbalance_mode == "normal":
             strategy = CrossMeshCommunicator._generate_send_recv_resharding_strategy_by_loads(
-                        task_spec, src_loads, dst_loads)
+                task_spec, src_loads, dst_loads)
         elif global_config.resharding_loadbalance_mode == "no_loadbalance":
             strategy = CrossMeshCommunicator._generate_send_recv_resharding_strategy_by_no_load(
-                        task_spec, src_loads, dst_loads)
-        elif global_config.resharding_loadbalance_mode in ["loadbalance_size", "loadbalance_order"]:
+                task_spec, src_loads, dst_loads)
+        elif global_config.resharding_loadbalance_mode in [
+                "loadbalance_size", "loadbalance_order"
+        ]:
             strategy = CrossMeshCommunicator._generate_sendrecv_resharding_strategy_by_loadbalance(
                 task_spec, src_mesh, dst_mesh)
     else:
@@ -146,8 +154,11 @@ def benchmark_one_case_internal(src_mesh_shape,
             strategy = CrossMeshCommunicator._generate_broadcast_resharding_strategy_by_loads(
                 task_spec, src_loads, dst_loads)
         elif global_config.resharding_loadbalance_mode == "no_loadbalance":
-            strategy = CrossMeshCommunicator._generate_broadcast_resharding_strategy_by_no_load(task_spec)
-        elif global_config.resharding_loadbalance_mode in ["loadbalance_size", "loadbalance_order"]:
+            strategy = CrossMeshCommunicator._generate_broadcast_resharding_strategy_by_no_load(
+                task_spec)
+        elif global_config.resharding_loadbalance_mode in [
+                "loadbalance_size", "loadbalance_order"
+        ]:
             strategy = CrossMeshCommunicator._generate_broadcast_resharding_strategy_by_loadbalance(
                 task_spec, src_mesh, dst_mesh)
 
@@ -205,7 +216,7 @@ def benchmark_one_case_internal(src_mesh_shape,
             src_mesh, src_uuid, task, dst_uuid, instruction_lists)
 
     exec_uuids = {}
- 
+
     # Compile Pipeline Executable
     for worker in src_mesh.workers:
         exec_uuid = next_mesh_executable_uuid()
@@ -241,16 +252,16 @@ def benchmark_one_case_internal(src_mesh_shape,
         timers("overall_resharding_time").start()
         for worker in src_mesh.workers:
             worker.run_executable.remote(exec_uuids[worker],
-                                        input_uuids, [],
-                                        sync_for_timer=True,
-                                        collect_trace=False)
+                                         input_uuids, [],
+                                         sync_for_timer=True,
+                                         collect_trace=False)
         for worker in dst_mesh.workers:
             worker.run_executable.remote(exec_uuids[worker], [],
                                          output_uuids,
                                          sync_for_timer=True,
                                          collect_trace=False)
 
-        # Check correctness    
+        # Check correctness
         # output_array = DistributedArray(dst_mesh, var.aval, dst_sharding_spec,
         #                                 output_refs[0])
         # assert_allclose(test_array, output_array)
@@ -281,26 +292,34 @@ def benchmark_one_case_internal(src_mesh_shape,
         worker.delete_executable.remote(exec_uuids[worker])
     for worker in dst_mesh.workers:
         worker.delete_executable.remote(exec_uuids[worker])
-    
+
     if not use_virtual_mesh:
         src_mesh.shutdown()
         dst_mesh.shutdown()
-    
+
     return result
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--suite", type=str, required=True, choices=["1-to-m", "load-balance"])
+    parser.add_argument("--suite",
+                        type=str,
+                        required=True,
+                        choices=["1-to-m", "load-balance"])
     parser.add_argument("--case", type=str)
     parser.add_argument("--n-nodes", type=int, default=1)
     parser.add_argument("--gpu-per-node", type=int, default=1)
-    parser.add_argument("--resharding-mode", 
-                        type=str, required=True, 
+    parser.add_argument("--resharding-mode",
+                        type=str,
+                        required=True,
                         choices=["send_recv", "broadcast"])
-    parser.add_argument("--resharding-loadbalance-mode", 
-                        type=str, required=True, 
-                        choices=["normal", "no_loadbalance", 
-                        "loadbalance_size", "loadbalance_order"])
+    parser.add_argument("--resharding-loadbalance-mode",
+                        type=str,
+                        required=True,
+                        choices=[
+                            "normal", "no_loadbalance", "loadbalance_size",
+                            "loadbalance_order"
+                        ])
     parser.add_argument("--use-local-allgather", action="store_true")
     parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
@@ -311,15 +330,11 @@ if __name__ == "__main__":
         case = suite.perf_1_to_m_suite[(args.n_nodes, args.gpu_per_node)]
     else:
         case = suite.perf_n_to_m_suite[args.case]
-    
-    result = benchmark_one_case_internal(case.src_mesh_shape,
-                                         case.dst_mesh_shape,
-                                         case.src_sharding_spec,
-                                         case.dst_sharding_spec,
-                                         case.tensor_shape,
-                                         args.resharding_mode,
-                                         args.use_local_allgather,
-                                         args.resharding_loadbalance_mode)
+
+    result = benchmark_one_case_internal(
+        case.src_mesh_shape, case.dst_mesh_shape, case.src_sharding_spec,
+        case.dst_sharding_spec, case.tensor_shape, args.resharding_mode,
+        args.use_local_allgather, args.resharding_loadbalance_mode)
     print(result)
 
-# python benchmark_cross_mesh_resharding.py --case case1 --resharding-mode broadcast --resharding-loadbalance-mode normal 
+# python benchmark_cross_mesh_resharding.py --case case1 --resharding-mode broadcast --resharding-loadbalance-mode normal

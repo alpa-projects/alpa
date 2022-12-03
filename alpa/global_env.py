@@ -66,8 +66,8 @@ class GlobalConfig:
         # "xla_extension"}
         self.nccl_mode = "cupy"
         self.enable_overlapping = False
-        # Cross mesh resharding load balancing mode. 
-        # Possible choices: {"normal", "no_loadbalance", 
+        # Cross mesh resharding load balancing mode.
+        # Possible choices: {"normal", "no_loadbalance",
         # "loadbalance_size", "loadbalance_order"}
         self.resharding_loadbalance_mode = "normal"
         self.loadbalance_order_algo = "greedy"

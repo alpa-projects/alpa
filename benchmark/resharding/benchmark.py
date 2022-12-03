@@ -5,20 +5,9 @@ import time
 import multiprocessing as mp
 import json
 
-import numpy as np
-from alpa.util import (write_tsv, get_num_hosts_and_num_devices, to_str_round,
-                       GB)
-from alpa import init
-from alpa.util import disable_tqdm_globally
-
 from benchmark_cross_mesh_resharding import benchmark_one_case_internal
 import suite
 
-
-benchmark_suites = {
-    "n-to-m": suite.perf_n_to_m_suite,
-    "1-to-m": suite.perf_1_to_m_suite,
-}
 
 def benchmark_and_write_to_namespace(result_namespace, *args, **kwargs):
     result = benchmark_one_case_internal(*args, **kwargs)
@@ -40,40 +29,35 @@ def benchmark_one_case(*args, use_separate_process=False, **kwargs):
         return -1, -1, [-1], -1, None
     return result_namespace.result
 
-def benchmark_load_balance_suite():
+
+def benchmark_n_to_m_suite():
     os.makedirs("tmp", exist_ok=True)
-    
+
     result_file = "tmp/n_to_m_result.json"
     result = []
 
-    suite = benchmark_suites["n-to-m"]
-    config_list = [
-        {"resharding_mode": "send_recv", "resharding_loadbalance_mode": "normal", "use_local_allgather":False},
-        {"resharding_mode": "send_recv", "resharding_loadbalance_mode": "normal", "use_local_allgather":True},
-        {"resharding_mode": "broadcast", "resharding_loadbalance_mode": "no_loadbalance", "use_local_allgather":False},
-        {"resharding_mode": "broadcast", "resharding_loadbalance_mode": "loadbalance_size", "use_local_allgather":False},
-        {"resharding_mode": "broadcast", "resharding_loadbalance_mode": "loadbalance_order", "use_local_allgather":False},
-    ]
+    benchmark_cases = suite.perf_n_to_m_suite
+    resharding_config_list = suite.resharding_n_to_m_configs
 
     # Run all cases
-    for key, benchmark_case in suite.items():
+    for case_name, benchmark_case in benchmark_cases.items():
         # Run one case
-        for config in config_list:
-            print("Working on {}: {}, config: {}".format(key, str(benchmark_case), str(config)))
-            one_result = benchmark_one_case(benchmark_case.src_mesh_shape,
-                                        benchmark_case.dst_mesh_shape,
-                                        benchmark_case.src_sharding_spec,
-                                        benchmark_case.dst_sharding_spec,
-                                        benchmark_case.tensor_shape,
-                                        config["resharding_mode"],
-                                        config["use_local_allgather"],
-                                        config["resharding_loadbalance_mode"])
+        for config in resharding_config_list:
+            print("Working on {}: {}, config: {}".format(
+                case_name, str(benchmark_case), str(config)))
+            one_result = benchmark_one_case(
+                benchmark_case.src_mesh_shape, benchmark_case.dst_mesh_shape,
+                benchmark_case.src_sharding_spec,
+                benchmark_case.dst_sharding_spec, benchmark_case.tensor_shape,
+                config["resharding_mode"], config["use_local_allgather"],
+                config["resharding_loadbalance_mode"])
 
             print(one_result)
             result.append(one_result)
             json.dump(result, open(result_file, "w"))
-            
+
             time.sleep(0.1)  # for ctrl+c to work
+
 
 def benchmark_1_to_m_suite():
     os.makedirs("tmp", exist_ok=True)
@@ -81,32 +65,26 @@ def benchmark_1_to_m_suite():
     result_file = "tmp/1_to_m_result.json"
     result = []
 
-    suite = benchmark_suites["1-to-m"]
-    config_list = [
-        {"resharding_mode": "send_recv", "resharding_loadbalance_mode": "normal", "use_local_allgather":False},
-        {"resharding_mode": "send_recv", "resharding_loadbalance_mode": "normal", "use_local_allgather":True},
-        {"resharding_mode": "broadcast", "resharding_loadbalance_mode": "normal", "use_local_allgather":False},
-    ]
+    benchmark_cases = suite.perf_1_to_m_suite
+    resharding_config_list = suite.resharding_1_to_m_configs
 
     # Run all cases
-    for key, benchmark_case in suite.items():
+    for case_name, benchmark_case in benchmark_cases.items():
         # Run one case
-        for config in config_list:
-            print("Working on {}: {}, config: {}".format(key, str(benchmark_case), str(config)))
-            one_result = benchmark_one_case(benchmark_case.src_mesh_shape,
-                                        benchmark_case.dst_mesh_shape,
-                                        benchmark_case.src_sharding_spec,
-                                        benchmark_case.dst_sharding_spec,
-                                        benchmark_case.tensor_shape,
-                                        config["resharding_mode"],
-                                        config["use_local_allgather"],
-                                        config["resharding_loadbalance_mode"])
+        for config in resharding_config_list:
+            print("Working on {}: {}, config: {}".format(
+                case_name, str(benchmark_case), str(config)))
+            one_result = benchmark_one_case(
+                benchmark_case.src_mesh_shape, benchmark_case.dst_mesh_shape,
+                benchmark_case.src_sharding_spec,
+                benchmark_case.dst_sharding_spec, benchmark_case.tensor_shape,
+                config["resharding_mode"], config["use_local_allgather"],
+                config["resharding_loadbalance_mode"])
             print(one_result)
             result.append(one_result)
             json.dump(result, open(result_file, "w"))
 
             time.sleep(0.1)  # for ctrl+c to work
-
 
 
 if __name__ == "__main__":
@@ -120,4 +98,4 @@ if __name__ == "__main__":
     if args.suite == "1-to-m":
         benchmark_1_to_m_suite()
     else:
-        benchmark_load_balance_suite()
+        benchmark_n_to_m_suite()

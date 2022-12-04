@@ -86,16 +86,28 @@ test_suite = {
         #         submesh_physical_shapes=[(1, 1)] * 8,
         #         submesh_logical_shapes=[(1, 1)] * 8,
         #         submesh_autosharding_option_dicts=[force_dp_dict] * 8)),
+        # BenchmarkCase(
+        #     1, gpt_specs["1.3B"], 1, "search",
+        #     SearchParallelArgs(
+        #         prefer_reduce_scatter,
+        #         use_remat,
+        #         num_auto_layers=50,
+        #         auto_stage_option={
+        #             "submesh_physical_shape_space": "manual",
+        #             "manually_specified_submeshes": ((1, 1),),
+        #             "submesh_logical_shape_space": "model_parallel_only",
+        #         })),
         BenchmarkCase(
             1, gpt_specs["1.3B"], 1, "search",
             SearchParallelArgs(
                 prefer_reduce_scatter,
                 use_remat,
-                num_auto_layers=24,
+                num_auto_layers=50,
                 auto_stage_option={
                     "submesh_physical_shape_space": "manual",
                     "manually_specified_submeshes": ((1, 1),),
                     "submesh_logical_shape_space": "model_parallel_only",
+                    "layer_profile_mode": "individual",
                 })),
     ]
 }

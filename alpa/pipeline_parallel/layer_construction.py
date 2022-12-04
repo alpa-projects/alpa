@@ -465,7 +465,7 @@ def log_solution(solution, jaxpr):
 
         invars = []
         for eqn in eqns:
-            tmp_set = set([var for var in eqn.invars if isinstance(var, Var)])
+            tmp_set = {var for var in eqn.invars if isinstance(var, Var)}
             tmp_set.intersection_update(jaxpr.jaxpr.invars)
             invars.extend(list(tmp_set))
         print(f"list_invar_shapes: "

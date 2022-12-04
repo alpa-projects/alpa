@@ -66,26 +66,79 @@ get_config(gpt_specs["15B"], [1, 2, 4, 8, 16], [1], [1, 2, 4, 8], [1],
 
 test_suite = {
     8: [
-        # BenchmarkCase(
-        #     1, gpt_specs["1.3B"], 1, "uniform",
-        #     UniformParallelArgs(
-        #         prefer_reduce_scatter,
-        #         use_remat,
-        #         dp=1,
-        #         op=1,
-        #         pp=8,
-        #         force_batch_dim_mapping=force_batch_dim_mapping)),
-        # BenchmarkCase(
-        #     1, gpt_specs["1.3B"], 1, "load_solution",
-        #     LoadSolutionParallelArgs(
-        #         prefer_reduce_scatter,
-        #         use_remat,
-        #         num_auto_layers=8,
-        #         forward_stage_layer_ids=[[0], [1], [2], [3], [4], [5], [6],
-        #                                  [7]],
-        #         submesh_physical_shapes=[(1, 1)] * 8,
-        #         submesh_logical_shapes=[(1, 1)] * 8,
-        #         submesh_autosharding_option_dicts=[force_dp_dict] * 8)),
+        BenchmarkCase(
+            1, gpt_specs["1.3B"], 1, "uniform",
+            UniformParallelArgs(
+                prefer_reduce_scatter,
+                use_remat,
+                dp=1,
+                op=1,
+                pp=8,
+                force_batch_dim_mapping=force_batch_dim_mapping)),
+        BenchmarkCase(
+            1, gpt_specs["1.3B"], 1, "load_solution",
+            LoadSolutionParallelArgs(
+                prefer_reduce_scatter,
+                use_remat,
+                num_auto_layers=8,
+                forward_stage_layer_ids=[[0], [1], [2], [3], [4], [5], [6],
+                                         [7]],
+                submesh_physical_shapes=[(1, 1)] * 8,
+                submesh_logical_shapes=[(1, 1)] * 8,
+                submesh_autosharding_option_dicts=[force_dp_dict] * 8)),
+        # 2D + Profile
+        BenchmarkCase(
+            1, gpt_specs["1.3B"], 1, "load_solution",
+            LoadSolutionParallelArgs(
+                prefer_reduce_scatter,
+                use_remat,
+                num_auto_layers=50,
+                forward_stage_layer_ids=[[0, 1, 2, 3, 4, 5],
+                                         [6, 7, 8, 9, 10, 11],
+                                         [12, 13, 14, 15, 16, 17, 18],
+                                         [19, 20, 21, 22, 23, 24, 25],
+                                         [26, 27, 28, 29, 30, 31],
+                                         [32, 33, 34, 35, 36, 37],
+                                         [38, 39, 40, 41, 42, 43, 44],
+                                         [45, 46, 47, 48, 49]],
+                submesh_physical_shapes=[(1, 1)] * 8,
+                submesh_logical_shapes=[(1, 1)] * 8,
+                submesh_autosharding_option_dicts=[force_dp_dict] * 8)),
+        # 1D + Profile
+        BenchmarkCase(
+            1, gpt_specs["1.3B"], 1, "load_solution",
+            LoadSolutionParallelArgs(
+                prefer_reduce_scatter,
+                use_remat,
+                num_auto_layers=50,
+                forward_stage_layer_ids=[[0, 1, 2, 3, 4, 5],
+                                         [6, 7, 8, 9, 10, 11, 12],
+                                         [13, 14, 15, 16, 17, 18],
+                                         [19, 20, 21, 22, 23, 24],
+                                         [25, 26, 27, 28, 29, 30, 31],
+                                         [32, 33, 34, 35, 36, 37],
+                                         [38, 39, 40, 41, 42, 43, 44],
+                                         [45, 46, 47, 48, 49]],
+                submesh_physical_shapes=[(1, 1)] * 8,
+                submesh_logical_shapes=[(1, 1)] * 8,
+                submesh_autosharding_option_dicts=[force_dp_dict] * 8)),
+        # 1D + Cost model
+        BenchmarkCase(
+            1, gpt_specs["1.3B"], 1, "load_solution",
+            LoadSolutionParallelArgs(
+                prefer_reduce_scatter,
+                use_remat,
+                num_auto_layers=50,
+                forward_stage_layer_ids=[[0, 1, 2, 3, 4], [5, 6, 7, 8, 9, 10],
+                                         [11, 12, 13, 14, 15, 16],
+                                         [17, 18, 19, 20, 21, 22, 23],
+                                         [24, 25, 26, 27, 28, 29, 30],
+                                         [31, 32, 33, 34, 35, 36, 37],
+                                         [38, 39, 40, 41, 42, 43, 44],
+                                         [45, 46, 47, 48, 49]],
+                submesh_physical_shapes=[(1, 1)] * 8,
+                submesh_logical_shapes=[(1, 1)] * 8,
+                submesh_autosharding_option_dicts=[force_dp_dict] * 8)),
         # BenchmarkCase(
         #     1, gpt_specs["1.3B"], 1, "search",
         #     SearchParallelArgs(
@@ -96,18 +149,9 @@ test_suite = {
         #             "submesh_physical_shape_space": "manual",
         #             "manually_specified_submeshes": ((1, 1),),
         #             "submesh_logical_shape_space": "model_parallel_only",
+        #             "layer_profile_mode": "individual",
+        #             "use_hlo_cost_model": True,
+        #             "profiling_database_filename": "prof_database.pkl",
         #         })),
-        BenchmarkCase(
-            1, gpt_specs["1.3B"], 1, "search",
-            SearchParallelArgs(
-                prefer_reduce_scatter,
-                use_remat,
-                num_auto_layers=50,
-                auto_stage_option={
-                    "submesh_physical_shape_space": "manual",
-                    "manually_specified_submeshes": ((1, 1),),
-                    "submesh_logical_shape_space": "model_parallel_only",
-                    "layer_profile_mode": "individual",
-                })),
     ]
 }

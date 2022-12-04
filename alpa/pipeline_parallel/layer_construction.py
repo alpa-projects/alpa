@@ -434,27 +434,43 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
     assert r == 0, "No solution for layer construction."
     solution = list(reversed(reversed_sliced_eqns))
 
-    # print("dp solution")
-    # for i, eqns in enumerate(solution):
-    #    invars = OrderedSet()
-    #    for eqn in eqns:
-    #        invars.update([var for var in eqn.invars if isinstance(var, Var)])
-    #    invars.intersection_update(jaxpr.jaxpr.invars)
-    #    print(f"mesh: {i},  set_shapes: "
-    #          f"{[x.aval.shape for x in invars if len(x.aval.shape) > 1]}")
-    #
-    #    invars = []
-    #    for eqn in eqns:
-    #        tmp_set = set([var for var in eqn.invars if isinstance(var, Var)])
-    #        tmp_set.intersection_update(jaxpr.jaxpr.invars)
-    #        invars.extend(list(tmp_set))
-    #    print(f"mesh: {i}, list_shapes: "
-    #          f"{[x.aval.shape for x in invars if len(x.aval.shape) > 1]}")
+    log_solution(solution, jaxpr)
 
     solution_info = {
         "total_cost": value,
     }
     return solution, solution_info
+
+
+def log_solution(solution, jaxpr):
+    print("-" * 80)
+    print(f"Layer construction solution ({len(solution)} layers):")
+    for i, eqns in enumerate(solution):
+        print("-" * 40)
+        print(f"Layer {i}:")
+
+        total_flops = 0
+        for j, eqn in enumerate(eqns):
+            flops = eqn_flops(eqn)
+            print(f"Eqn {j}: {eqn}, Flops: {flops}")
+            total_flops += flops
+        print(f"Total flops: {total_flops}")
+        invars = OrderedSet()
+        for eqn in eqns:
+            invars.update([var for var in eqn.invars if isinstance(var, Var)])
+        invars.intersection_update(jaxpr.jaxpr.invars)
+
+        print(f"set_invar_shapes: "
+              f"{[x.aval.shape for x in invars if len(x.aval.shape) > 1]}")
+
+        invars = []
+        for eqn in eqns:
+            tmp_set = set([var for var in eqn.invars if isinstance(var, Var)])
+            tmp_set.intersection_update(jaxpr.jaxpr.invars)
+            invars.extend(list(tmp_set))
+        print(f"list_invar_shapes: "
+              f"{[x.aval.shape for x in invars if len(x.aval.shape) > 1]}")
+    print("-" * 80)
 
 
 def search_layer_num(jaxpr,

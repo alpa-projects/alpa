@@ -454,15 +454,15 @@ def cluster_jaxpr_by_cost_optimized(jaxpr: Jaxpr, layer_num: int, costs,
 
     @maybe_numba_jit
     def init_layer_costs():
-        layer_costs = np.full((length + 1, layer_num + 1),
+        layer_costs = np.full((length, length),
                               np.inf,
                               dtype=np.float32)
-        for l in range(1, length + 1):
+        for l in range(0, length):
             layer_flops = 0
-            for r in range(l, length + 1):
-                layer_flops += compute_costs[r - 1]
+            for r in range(l, length):
+                layer_flops += compute_costs[r]
                 layer_costs[l, r] = (layer_flops / FLOPS_NORMALIZER +
-                                     input_sizes[l - 1, r] / NETWORK_NORMALIZER)
+                                     input_sizes[l, r + 1] / NETWORK_NORMALIZER)
         return layer_costs
 
     @maybe_numba_jit
@@ -481,8 +481,8 @@ def cluster_jaxpr_by_cost_optimized(jaxpr: Jaxpr, layer_num: int, costs,
         for q in range(1, layer_num + 1):
             for r in range(1, length + 1):
                 for k in range(0, r):
-                    new_value = max(max_cost[k, q - 1], layer_costs[k, r])
-                    new_sum = (sum_cost_under_max[k, q - 1] + layer_costs[k, r])
+                    new_value = max(max_cost[k, q - 1], layer_costs[k, r - 1])
+                    new_sum = (sum_cost_under_max[k, q - 1] + layer_costs[k, r - 1])
                     if (new_value < max_cost[r, q] or
                         (new_value <= max_cost[r, q] *
                          (1 + 1e-4) and new_sum < sum_cost_under_max[r, q])):

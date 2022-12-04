@@ -947,13 +947,15 @@ class SendRecvReshardingStrategyWithOrder(ReshardingStrategy):
        communication information with order considered.
 
     Args:
-        per_spec_plans (List[np.ndarray]): `per_spec_plan` is a list a np array, with
-            length as len(spec.dst_tile_to_src_tiles_map), each array is with shape
-            [len(dst_tile.devices), len(src_tiles)]; it specifies for each replica of
-            a dst tile, how it should get the data from src_tiles (src tile replicas).
-        order (List[Tuple(int, int, int)]): in which order we should submit these
-            send recv operation into cuda stream.
-        is_local_allgather (bool): if this strategy involves post allgather operations.
+        per_spec_plans (List[np.ndarray]): `per_spec_plan` is a list a
+            np array, with length as len(spec.dst_tile_to_src_tiles_map),
+            each array is with shape [len(dst_tile.devices), len(src_tiles)];
+            it specifies for each replica of a dst tile, how it should get
+            the data from src_tiles (src tile replicas).
+        order (List[Tuple(int, int, int)]): in which order we should submit
+            these send recv operation into cuda stream.
+        is_local_allgather (bool): if this strategy involves post allgather
+            operations.
     """
 
     def __init__(self, per_spec_plans, is_local_allgather, order):
@@ -966,10 +968,11 @@ class BroadcastReshardingStrategyWithOrder(ReshardingStrategy):
        information for with order considered.
 
     Args:
-        per_spec_plans (List[np.ndarray]): `per_spec_plan` is a list a np array, with
-            length as len(spec.dst_tile_to_src_tiles_map), each array is with shape
-            [len(src_tiles)]; it specifies for each dst tile with corresponding replicas,
-            how it should get the data from src_tiles (src tile replicas).
+        per_spec_plans (List[np.ndarray]): `per_spec_plan` is a list a
+            np array, with length as len(spec.dst_tile_to_src_tiles_map),
+            each array is with shape [len(src_tiles)]; it specifies for
+            each dst tile with corresponding replicas, how it should get
+            the data from src_tiles (src tile replicas).
         order (List[Tuple(int, int)]): in which order we should submit these
             broadcast operations into cuda stream.
     """
@@ -1024,39 +1027,13 @@ class CrossMeshCommunicator:
         for src_mesh_idx, dst_mesh_idx, var_spec_map in self.task_spec_iter():
             for _, spec in var_spec_map.items():
                 if global_config.resharding_mode == "send_recv":
-                    if global_config.resharding_loadbalance_mode == "normal":
-                        strategy = (
-                            self.
-                            _generate_send_recv_resharding_strategy_by_loads(
-                                spec, self._sender_loads, self._receiver_loads))
-                    elif global_config.resharding_loadbalance_mode == "no_loadbalance":
-                        strategy = (
-                            self.
-                            _generate_send_recv_resharding_strategy_by_no_load(
-                                spec, self._sender_loads, self._receiver_loads))
-                    elif global_config.resharding_loadbalance_mode in ([
-                            "loadbalance_size", "loadbalance_order"
-                    ]):
-                        strategy = self._generate_sendrecv_resharding_strategy_by_loadbalance(
-                            spec, self._schedule.meshes[src_mesh_idx],
-                            self._schedule.meshes[dst_mesh_idx])
-                    else:
-                        raise NotImplementedError()
+                    strategy = (self._generate_send_recv_resharding_strategy(
+                        spec, self._schedule.meshes[src_mesh_idx],
+                        self._schedule.meshes[dst_mesh_idx]))
                 else:
-                    if global_config.resharding_loadbalance_mode == "normal":
-                        strategy = self._generate_broadcast_resharding_strategy_by_loads(
-                            spec, self._sender_loads, self._receiver_loads)
-                    elif global_config.resharding_loadbalance_mode == "no_loadbalance":
-                        strategy = self._generate_broadcast_resharding_strategy_by_no_load(
-                            spec)
-                    elif global_config.resharding_loadbalance_mode in [
-                            "loadbalance_size", "loadbalance_order"
-                    ]:
-                        strategy = self._generate_broadcast_resharding_strategy_by_loadbalance(
-                            spec, self._schedule.meshes[src_mesh_idx],
-                            self._schedule.meshes[dst_mesh_idx])
-                    else:
-                        raise NotImplementedError()
+                    strategy = (self._generate_broadcast_resharding_strategy(
+                        spec, self._schedule.meshes[src_mesh_idx],
+                        self._schedule.meshes[dst_mesh_idx]))
                 spec.set_resharding_strategy(strategy)
 
     @property
@@ -1250,9 +1227,45 @@ class CrossMeshCommunicator:
         strategy = ReshardingStrategy(per_spec_plans, is_local_allgather)
         return strategy
 
+    def _generate_send_recv_resharding_strategy(self, spec: ReshardingTaskSpec,
+                                                src_mesh, dst_mesh):
+        if global_config.resharding_loadbalance_mode == "normal":
+            strategy = (self._generate_send_recv_resharding_strategy_by_loads(
+                spec, self._sender_loads, self._receiver_loads))
+        elif global_config.resharding_loadbalance_mode == "no_loadbalance":
+            strategy = (
+                self._generate_send_recv_resharding_strategy_by_no_load(spec))
+        elif global_config.resharding_loadbalance_mode in ([
+                "loadbalance_size", "loadbalance_order"
+        ]):
+            strategy = self.\
+            _generate_send_recv_resharding_strategy_by_loadbalance(
+                spec, src_mesh, dst_mesh)
+        else:
+            raise NotImplementedError()
+        return strategy
+
+    def _generate_broadcast_resharding_strategy(self, spec: ReshardingTaskSpec,
+                                                src_mesh, dst_mesh):
+        if global_config.resharding_loadbalance_mode == "normal":
+            strategy = (self._generate_broadcast_resharding_strategy_by_loads(
+                spec, self._sender_loads, self._receiver_loads))
+        elif global_config.resharding_loadbalance_mode == "no_loadbalance":
+            strategy = (
+                self._generate_broadcast_resharding_strategy_by_no_load(spec))
+        elif global_config.resharding_loadbalance_mode in [
+                "loadbalance_size", "loadbalance_order"
+        ]:
+            strategy = (
+                self._generate_broadcast_resharding_strategy_by_loadbalance(
+                    spec, src_mesh, dst_mesh))
+        else:
+            raise NotImplementedError()
+        return strategy
+
     @staticmethod
     def _generate_send_recv_resharding_strategy_by_no_load(
-            spec: ReshardingTaskSpec, src_loads, dst_loads):
+            spec: ReshardingTaskSpec):
         """Generate the resharding strategy by balancing loads."""
         is_local_allgather = spec.final_dst_spec != spec.dst_sharding_spec
         per_spec_plans = []
@@ -1261,25 +1274,23 @@ class CrossMeshCommunicator:
             per_spec_plan = np.empty(
                 (len(dst_tile.replica_device_strs), len(src_tileslices)),
                 dtype=object)
-            for receiver_idx, receiver in enumerate(
+            for receiver_idx, _ in enumerate(
                     dst_tile.replica_device_strs):
                 for src_tileslice_idx, src_tileslice in enumerate(
                         src_tileslices):
                     sender = src_tileslice.replica_device_strs[0]
                     # Choose an arbitrary sender without considering loads
                     per_spec_plan[receiver_idx][src_tileslice_idx] = sender
-                    # upload load on-the-fly
-                    src_loads[sender] += src_tileslice.slice_size
-                    dst_loads[receiver] += src_tileslice.slice_size
             per_spec_plans.append(per_spec_plan)
         strategy = ReshardingStrategy(per_spec_plans, is_local_allgather)
         return strategy
 
     @staticmethod
-    def _generate_sendrecv_resharding_strategy_by_loadbalance(
+    def _generate_send_recv_resharding_strategy_by_loadbalance(
             spec, src_mesh, dst_mesh):
         """
-            Generate the send/recv-based resharding strategy by balancing loads and along time.
+            Generate the send/recv-based resharding strategy by balancing
+            loads and along time.
         """
 
         def device_id_to_str(host_ip, device_id, device_type="gpu"):
@@ -1354,8 +1365,9 @@ class CrossMeshCommunicator:
     @staticmethod
     def _generate_broadcast_resharding_strategy_by_no_load(spec):
         """
-            Generate the broadcast-based resharding strategy by balancing loads.
-            For each tile, I not only allow one source to provide the tile.
+            Generate the broadcast-based resharding strategy by balancing
+            loads. For each tile, I not only allow one source to provide
+            the tile.
         """
         # pylint: disable=unused-argument
         per_spec_plans = []
@@ -1373,7 +1385,8 @@ class CrossMeshCommunicator:
     def _generate_broadcast_resharding_strategy_by_loadbalance(
             spec, src_mesh, dst_mesh):
         """
-            Generate the broadcast-based resharding strategy by balancing loads and along time.
+            Generate the broadcast-based resharding strategy by balancing
+            loads and along time.
         """
 
         def device_id_to_str(host_ip, device_id, device_type="gpu"):
@@ -1397,10 +1410,11 @@ class CrossMeshCommunicator:
                 nic_constraints.append(one_nic_constraint)
             return device_strs, device_host_map, nic_constraints
 
-        src_mesh_devices, src_device_host_map, src_nic_constraints = get_resources_info_in_mesh(
-            src_mesh)
-        dst_mesh_devices, dst_device_host_map, dst_nic_constraints = get_resources_info_in_mesh(
-            dst_mesh)
+        src_mesh_devices, src_device_host_map, src_nic_constraints = (
+            get_resources_info_in_mesh(src_mesh))
+
+        dst_mesh_devices, dst_device_host_map, dst_nic_constraints = (
+            get_resources_info_in_mesh(dst_mesh))
         device_host_map = {**src_device_host_map, **dst_device_host_map}
         nic_constraints = src_nic_constraints + dst_nic_constraints
 
@@ -1527,13 +1541,15 @@ class ReshardingLoadBalancingTaskSolver:
     def solve(self):
         """
             Return two data
-            1. The first List[device] represents which sender to choose for each work.
-            2. The second List[int] represents the order to execute these works.
+            1. The first List[device] represents which sender to choose
+               for each work.
+            2. The second List[int] represents the order to execute
+               these works.
         """
 
-        # Deal with the case when a src device share the same NIC with a tar device.
-        # Now I assmue they do not share NIC. The assumption is met in nic_contraints so we do
-        # not need to deal with it in this method.
+        # Deal with the case when a src device share the same NIC with a tar
+        # device. Now I assmue they do not share NIC. The assumption is met
+        # in nic_contraints so we do not need to deal with it in this method.
 
         tmp_device_to_worker_id_map = {
             device: idx for idx, device in enumerate(self.all_devices)
@@ -1701,14 +1717,14 @@ class AbstractedLoadBalancingTaskSolverGreedyAlgo(
 
     def find_best_concurrent_set_of_works(self, works_ids, n_rounds=100):
         """
-            One simple strategy is that everytime we choose the maximum number of
-            works and minimize std and put them into the sequence.
+            One simple strategy is that everytime we choose the maximum number
+            of works and minimize std and put them into the sequence.
             The simple logic behind is to maximize concurrency.
 
         Args:
             works_ids (List[int]): All available works waiting for running.
-            n_rounds (int, optional): The number of rounds to run for finding the best
-                set of works. Defaults to 100.
+            n_rounds (int, optional): The number of rounds to run for finding
+                the best set of works. Defaults to 100.
         """
 
         def calc_std(data):
@@ -1737,13 +1753,16 @@ class AbstractedLoadBalancingTaskSolverGreedyAlgo(
 
             # here we could use different criterions
             std = calc_std(loads)  # calc_max(loads)
-            # std = calc_std([self.works[i].duration for i in range(one_concurrent_works_ids)])
+            # std = calc_std(
+            # [self.works[i].duration for i in range(one_concurrent_works_ids)]
+            # )
 
             if num > max_num or (num == max_num and std < min_std):
                 max_num = num
                 min_std = std
                 best_concurrent_works_ids = one_concurrent_works_ids
-                best_concurrent_selected_senders = one_concurrent_selected_senders
+                best_concurrent_selected_senders = (
+                    one_concurrent_selected_senders)
         return best_concurrent_works_ids, best_concurrent_selected_senders
 
     def solve(self):
@@ -1814,8 +1833,10 @@ class AbstractedLoadBalancingTaskSolverSearchAlgo(
             for sender_id in work.sender_ids:
                 if sender_id_with_mintime == -1:
                     sender_id_with_mintime = sender_id
-                elif remained_time_lowerbound[sender_id] + current_time[sender_id] < \
-                    remained_time_lowerbound[sender_id_with_mintime] + current_time[sender_id_with_mintime]:
+                elif (remained_time_lowerbound[sender_id] +
+                      current_time[sender_id] <
+                      remained_time_lowerbound[sender_id_with_mintime] +
+                      current_time[sender_id_with_mintime]):
                     sender_id_with_mintime = sender_id
             # heuristic function could be continuely improved.
             remained_time_lowerbound[sender_id_with_mintime] += work.duration
@@ -1835,7 +1856,8 @@ class AbstractedLoadBalancingTaskSolverSearchAlgo(
 
         if depth == len(self.works):
             finish_time = max(current_time)
-            if self.minimal_finish_time is None or finish_time < self.minimal_finish_time:
+            if (self.minimal_finish_time is None or
+                    finish_time < self.minimal_finish_time):
                 self.minimal_finish_time = finish_time
                 self.sol_assigned_sender_id = list(self.cur_assigned_sender_id)
                 self.sol_order = list(self.cur_order)
@@ -1846,7 +1868,8 @@ class AbstractedLoadBalancingTaskSolverSearchAlgo(
         ]
 
         heuristic = self.heuristic(current_time, remained_work_ids)
-        if self.minimal_finish_time is not None and heuristic > self.minimal_finish_time:
+        if (self.minimal_finish_time is not None and
+                heuristic > self.minimal_finish_time):
             return
 
         for i in remained_work_ids:

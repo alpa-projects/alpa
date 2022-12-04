@@ -139,28 +139,34 @@ def benchmark_one_case_internal(
 
     if resharding_mode == "send_recv":
         if global_config.resharding_loadbalance_mode == "normal":
-            strategy = CrossMeshCommunicator._generate_send_recv_resharding_strategy_by_loads(
-                task_spec, src_loads, dst_loads)
+            strategy = (CrossMeshCommunicator.
+                        _generate_send_recv_resharding_strategy_by_loads(
+                            task_spec, src_loads, dst_loads))
         elif global_config.resharding_loadbalance_mode == "no_loadbalance":
-            strategy = CrossMeshCommunicator._generate_send_recv_resharding_strategy_by_no_load(
-                task_spec, src_loads, dst_loads)
+            strategy = (
+                CrossMeshCommunicator.
+                _generate_send_recv_resharding_strategy_by_no_load(task_spec))
         elif global_config.resharding_loadbalance_mode in [
                 "loadbalance_size", "loadbalance_order"
         ]:
-            strategy = CrossMeshCommunicator._generate_sendrecv_resharding_strategy_by_loadbalance(
-                task_spec, src_mesh, dst_mesh)
+            strategy = (CrossMeshCommunicator.
+                        _generate_send_recv_resharding_strategy_by_loadbalance(
+                            task_spec, src_mesh, dst_mesh))
     else:
         if global_config.resharding_loadbalance_mode == "normal":
-            strategy = CrossMeshCommunicator._generate_broadcast_resharding_strategy_by_loads(
-                task_spec, src_loads, dst_loads)
+            strategy = (CrossMeshCommunicator.
+                        _generate_broadcast_resharding_strategy_by_loads(
+                            task_spec, src_loads, dst_loads))
         elif global_config.resharding_loadbalance_mode == "no_loadbalance":
-            strategy = CrossMeshCommunicator._generate_broadcast_resharding_strategy_by_no_load(
-                task_spec)
+            strategy = (
+                CrossMeshCommunicator.
+                _generate_broadcast_resharding_strategy_by_no_load(task_spec))
         elif global_config.resharding_loadbalance_mode in [
                 "loadbalance_size", "loadbalance_order"
         ]:
-            strategy = CrossMeshCommunicator._generate_broadcast_resharding_strategy_by_loadbalance(
-                task_spec, src_mesh, dst_mesh)
+            strategy = (CrossMeshCommunicator.
+                        _generate_broadcast_resharding_strategy_by_loadbalance(
+                            task_spec, src_mesh, dst_mesh))
 
     task_spec.set_resharding_strategy(strategy)
 

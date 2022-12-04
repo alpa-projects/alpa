@@ -60,3 +60,9 @@ If you only want to run one test case,
 ```
 python3 benchmark.py --suite 1-to-m --n-nodes 1 --gpu-per-node 4
 ```
+
+## Result
+
+By using the above benchmark scripts, you could compare the time spent among different resharding configurations.
+And then we could see conclusions in [On Optimizing the Communication of Model Parallelism](https://arxiv.org/abs/2211.05322) from 
+these statistics.

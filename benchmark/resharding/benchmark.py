@@ -54,7 +54,7 @@ def benchmark_n_to_m_suite():
 
             print(one_result)
             result.append(one_result)
-            json.dump(result, open(result_file, "w"))
+            json.dump(result, open(result_file, "w"), indent=4)
 
             time.sleep(0.1)  # for ctrl+c to work
 
@@ -82,7 +82,7 @@ def benchmark_1_to_m_suite():
                 config["resharding_loadbalance_mode"])
             print(one_result)
             result.append(one_result)
-            json.dump(result, open(result_file, "w"))
+            json.dump(result, open(result_file, "w"), indent=4)
 
             time.sleep(0.1)  # for ctrl+c to work
 

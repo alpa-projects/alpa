@@ -8,15 +8,13 @@ import jax
 from jax import xla
 from jax.core import Var
 from jax._src.abstract_arrays import ShapedArray
-from jax.interpreters.pxla import (Chunked, NoSharding, Replicated, ShardedAxis,
-                                   ShardingSpec, spec_to_indices)
+from jax.interpreters.pxla import spec_to_indices
 import jax.numpy as jnp
 import numpy as np
 import ray
 
 from alpa import init
-from alpa.device_mesh import (DistributedArray, VirtualPhysicalMesh,
-                              create_remote_array_refs,
+from alpa.device_mesh import (create_remote_array_refs,
                               get_global_virtual_physical_mesh)
 from alpa.mesh_executable import next_mesh_executable_uuid
 from alpa.global_env import global_config
@@ -34,61 +32,20 @@ from alpa.timer import timers
 
 import suite
 
-use_virtual_mesh = False
-
 
 def get_device_meshes(src_mesh_shape, dst_mesh_shape):
-    if use_virtual_mesh:
-        host_ids = [0, 1, 2, 3]
-        host_info = [{
-            "NodeManagerAddress": "0.0.0.1"
-        }, {
-            "NodeManagerAddress": "0.0.0.2"
-        }, {
-            "NodeManagerAddress": "0.0.0.3"
-        }, {
-            "NodeManagerAddress": "0.0.0.4"
-        }]
-        num_devices_per_host = 4
-
-        virtual_mesh = VirtualPhysicalMesh(
-            host_ids=host_ids,
-            host_info=host_info,
-            head_ip="0.0.0.1",
-            num_devices_per_host=num_devices_per_host)
-
-        src_num_host = src_mesh_shape[0]
-        dst_num_host = dst_mesh_shape[0]
-        src_mesh = virtual_mesh.slice_2d(
-            range(src_num_host), [range(src_mesh_shape[1])] * src_num_host)
-        if (False and src_mesh_shape[1] + dst_mesh_shape[1] <=
-                virtual_mesh.num_devices_per_host):
-            dst_host_indices = range(dst_num_host)
-            dst_device_indices = [
-                range(src_mesh_shape[1], src_mesh_shape[1] + dst_mesh_shape[1])
-            ] * dst_num_host
-        else:
-            dst_host_indices = range(src_num_host, src_num_host + dst_num_host)
-            dst_device_indices = [range(dst_mesh_shape[1])] * dst_num_host
-        dst_mesh = virtual_mesh.slice_2d(dst_host_indices, dst_device_indices)
-    else:
-        virtual_mesh = get_global_virtual_physical_mesh()
-        src_num_host = src_mesh_shape[0]
-        dst_num_host = dst_mesh_shape[0]
-        src_mesh = virtual_mesh.slice_2d(range(src_num_host),
-                                         [range(src_mesh_shape[1])] *
-                                         src_num_host).get_physical_mesh()
-        if (src_mesh_shape[1] + dst_mesh_shape[1] <=
-                virtual_mesh.num_devices_per_host):
-            dst_host_indices = range(dst_num_host)
-            dst_device_indices = [
-                range(src_mesh_shape[1], src_mesh_shape[1] + dst_mesh_shape[1])
-            ] * dst_num_host
-        else:
-            dst_host_indices = range(src_num_host, src_num_host + dst_num_host)
-            dst_device_indices = [range(dst_mesh_shape[1])] * dst_num_host
-        dst_mesh = virtual_mesh.slice_2d(
-            dst_host_indices, dst_device_indices).get_physical_mesh()
+    virtual_mesh = get_global_virtual_physical_mesh()
+    src_num_host = src_mesh_shape[0]
+    dst_num_host = dst_mesh_shape[0]
+    assert virtual_mesh.num_hosts >= src_num_host+dst_num_host,\
+        "Error: There are not enough nodes for this test case"
+    src_mesh = virtual_mesh.slice_2d(range(src_num_host),
+                                        [range(src_mesh_shape[1])] *
+                                        src_num_host).get_physical_mesh()
+    dst_host_indices = range(src_num_host, src_num_host + dst_num_host)
+    dst_device_indices = [range(dst_mesh_shape[1])] * dst_num_host
+    dst_mesh = virtual_mesh.slice_2d(
+        dst_host_indices, dst_device_indices).get_physical_mesh()
     return src_mesh, dst_mesh
 
 
@@ -267,16 +224,9 @@ def benchmark_one_case_internal(
                                          sync_for_timer=True,
                                          collect_trace=False)
 
-        # Check correctness
-        # output_array = DistributedArray(dst_mesh, var.aval, dst_sharding_spec,
-        #                                 output_refs[0])
-        # assert_allclose(test_array, output_array)
-
         dst_mesh.sync_workers(sync_all_devices=True)
-
         timers("overall_resharding_time").stop()
-        tmp = timers("overall_resharding_time").elapsed(mode="sum")
-        time_spend.append(tmp)
+        time_spend.append(timers("overall_resharding_time").elapsed(mode="sum"))
         timers("overall_resharding_time").reset()
 
     mean_time, var_time = get_mean_and_variance(time_spend)
@@ -299,9 +249,8 @@ def benchmark_one_case_internal(
     for worker in dst_mesh.workers:
         worker.delete_executable.remote(exec_uuids[worker])
 
-    if not use_virtual_mesh:
-        src_mesh.shutdown()
-        dst_mesh.shutdown()
+    src_mesh.shutdown()
+    dst_mesh.shutdown()
 
     return result
 
@@ -329,8 +278,6 @@ if __name__ == "__main__":
     parser.add_argument("--use-local-allgather", action="store_true")
     parser.add_argument("--disable-tqdm", action="store_true")
     args = parser.parse_args()
-
-    os.makedirs("tmp", exist_ok=True)
 
     if args.suite == "1-to-m":
         case = suite.perf_1_to_m_suite[(args.n_nodes, args.gpu_per_node)]

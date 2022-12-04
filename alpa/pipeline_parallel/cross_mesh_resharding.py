@@ -584,8 +584,9 @@ class SymbolicBroadcastReshardingTask(ReshardingTask):
             nccl_uid = ray.get(
                 sender_worker.generate_nccl_uid.remote(group_name))
 
-            print("config: ", config.workers, config.device_ids, "nccl_uid: ",
-                  nccl_uid)
+            # debug
+            # print("config: ", config.workers, config.device_ids, "nccl_uid: ",
+            #       nccl_uid)
 
             for worker, devices_info in (
                     worker_to_devices_and_global_ranks.items()):
@@ -1535,7 +1536,7 @@ class ReshardingLoadBalancingTaskSolver:
         self.host_bridge_contraints = host_bridge_contraints
 
         # debug
-        self.print_task()
+        # self.print_task()
 
     def solve(self):
         """

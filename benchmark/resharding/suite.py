@@ -13,7 +13,8 @@ perf_n_to_m_suite = {
         BenchmarkCase(
             (2, 4),
             (2, 4),
-            (1024 // 8, 1024, 512),
+            # (1024 // 8, 1024, 512),
+            (1024, 1024, 512),
             ShardingSpec([Chunked(
                 [2]), NoSharding(), NoSharding()],
                          [ShardedAxis(0), Replicated(4)]),
@@ -25,7 +26,8 @@ perf_n_to_m_suite = {
         BenchmarkCase(
             (2, 4),
             (2, 4),
-            (1024 // 8, 1024, 512),
+            # (1024 // 8, 1024, 512),
+            (1024, 1024, 512),
             ShardingSpec(
                 [NoSharding(), NoSharding(),
                  NoSharding()], [Replicated(8)]),
@@ -37,7 +39,8 @@ perf_n_to_m_suite = {
         BenchmarkCase(
             (2, 4),
             (2, 4),
-            (1024 // 8, 1024, 512),
+            # (1024 // 8, 1024, 512),
+            (1024, 1024, 512),
             ShardingSpec(
                 [NoSharding(), Chunked([2]),
                  NoSharding()], [ShardedAxis(0), Replicated(4)]),
@@ -49,7 +52,8 @@ perf_n_to_m_suite = {
         BenchmarkCase(
             (2, 4),
             (2, 4),
-            (1024 // 8, 1024, 512),
+            # (1024 // 8, 1024, 512),
+            (1024, 1024, 512),
             ShardingSpec(
                 [NoSharding(), Chunked([8]),
                  NoSharding()], [ShardedAxis(0)]),
@@ -60,7 +64,8 @@ perf_n_to_m_suite = {
         BenchmarkCase(
             (2, 4),
             (2, 4),
-            (1024 // 8, 1024, 512),
+            # (1024 // 8, 1024, 512),
+            (1024, 1024, 512),
             ShardingSpec([Chunked(
                 [4]), NoSharding(), NoSharding()],
                          [Replicated(2), ShardedAxis(0)]),
@@ -68,18 +73,20 @@ perf_n_to_m_suite = {
                 [2]), NoSharding(), NoSharding()],
                          [ShardedAxis(0), Replicated(4)]),
         ),
-    # "case6": BenchmarkCase(
-    #             (2, 4),
-    #             (3, 4),
-    #             (1024*3//8, 1024, 170),
-    #             ShardingSpec([Chunked([2]), NoSharding(), NoSharding()], [ShardedAxis(0), Replicated(4)]),
-    #             ShardingSpec([Chunked([3]), NoSharding(), NoSharding()], [ShardedAxis(0), Replicated(4)]),
-    #         ),
+    "case6": BenchmarkCase(
+                (2, 4),
+                (3, 4),
+                # (1024*3//8, 1024, 170),
+                (1024*3, 1024, 170),
+                ShardingSpec([Chunked([2]), NoSharding(), NoSharding()], [ShardedAxis(0), Replicated(4)]),
+                ShardingSpec([Chunked([3]), NoSharding(), NoSharding()], [ShardedAxis(0), Replicated(4)]),
+            ),
     "case7":
         BenchmarkCase(
             (1, 4),
             (2, 4),
-            (1024 // 8, 1024, 512),
+            # (1024 // 8, 1024, 512),
+            (1024, 1024, 512),
             ShardingSpec([Chunked(
                 [4]), NoSharding(), NoSharding()], [ShardedAxis(0)]),
             ShardingSpec(
@@ -90,7 +97,8 @@ perf_n_to_m_suite = {
         BenchmarkCase(
             (1, 4),
             (2, 4),
-            (1024 // 8, 1024, 512),
+            # (1024 // 8, 1024, 512),
+            (1024, 1024, 512),
             ShardingSpec([Chunked(
                 [4]), NoSharding(), NoSharding()], [ShardedAxis(0)]),
             ShardingSpec(
@@ -101,7 +109,8 @@ perf_n_to_m_suite = {
         BenchmarkCase(
             (2, 4),
             (2, 4),
-            (1024 // 8, 1024, 512),
+            # (1024 // 8, 1024, 512),
+            (1024, 1024, 512),
             ShardingSpec(
                 [NoSharding(), Chunked([2]),
                  NoSharding()], [ShardedAxis(0), Replicated(4)]),
@@ -142,7 +151,7 @@ resharding_n_to_m_configs = [
 perf_1_to_m_suite = {(n_node, gpu_per_node): BenchmarkCase(
     (1, 1),
     (n_node, gpu_per_node),
-    (1 << 22,),
+    (1 << 28,),
     ShardingSpec([NoSharding()], [Replicated(1)]),
     ShardingSpec([NoSharding()], [Replicated(n_node * gpu_per_node)]),
 ) for n_node, gpu_per_node in [(1, 1), (1, 2), (1, 3), (1, 4), (2,

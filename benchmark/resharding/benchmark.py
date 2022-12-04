@@ -90,7 +90,7 @@ def benchmark_1_to_m_suite():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--suite",
-                        choices=["1-to-m", "load-balance"],
+                        choices=["1-to-m", "n-to-m"],
                         type=str,
                         required=True)
     args = parser.parse_args()

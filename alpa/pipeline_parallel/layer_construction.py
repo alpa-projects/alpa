@@ -442,6 +442,76 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
     return solution, solution_info
 
 
+def cluster_jaxpr_by_cost_optimized(jaxpr: Jaxpr, layer_num: int, costs,
+                                    cost_criteria):
+    """Clusters the jaxpr by cost."""
+    layer_num = int(layer_num)
+    length = len(jaxpr.eqns)
+    _, input_sizes, compute_costs = costs
+    assert cost_criteria == "flops"
+    FLOPS_NORMALIZER = 30 * 1e12  # 30 TFLOPS
+    NETWORK_NORMALIZER = 2 * 1e9  # 2 GB / s
+
+    @maybe_numba_jit
+    def init_layer_costs():
+        layer_costs = np.full((length + 1, layer_num + 1),
+                              np.inf,
+                              dtype=np.float32)
+        for l in range(1, length + 1):
+            layer_flops = 0
+            for r in range(l, length + 1):
+                layer_flops += compute_costs[r - 1]
+                layer_costs[l, r] = (layer_flops / FLOPS_NORMALIZER +
+                                     input_sizes[l - 1, r] / NETWORK_NORMALIZER)
+        return layer_costs
+
+    @maybe_numba_jit
+    def dp(layer_costs):
+        max_cost = np.full((length + 1, layer_num + 1),
+                           np.inf,
+                           dtype=np.float32)
+        sum_cost_under_max = np.full((length + 1, layer_num + 1),
+                                     np.inf,
+                                     dtype=np.float32)
+        max_cost_argmin = np.full((length + 1, layer_num + 1),
+                                  -1,
+                                  dtype=np.int32)
+        max_cost[0, 0] = 0
+        sum_cost_under_max[0, 0] = 0
+        for q in range(1, layer_num + 1):
+            for r in range(1, length + 1):
+                for k in range(0, r):
+                    new_value = max(max_cost[k, q - 1], layer_costs[k, r])
+                    new_sum = (sum_cost_under_max[k, q - 1] + layer_costs[k, r])
+                    if (new_value < max_cost[r, q] or
+                        (new_value <= max_cost[r, q] *
+                         (1 + 1e-4) and new_sum < sum_cost_under_max[r, q])):
+                        max_cost[r, q] = new_value
+                        sum_cost_under_max[r, q] = new_sum
+                        max_cost_argmin[r, q] = k
+        return max_cost_argmin, max_cost[length, layer_num]
+
+    layer_costs = init_layer_costs()
+    a_argmin, value = dp(layer_costs)
+
+    reversed_sliced_eqns = []
+
+    r = length
+    for q in range(layer_num, 0, -1):
+        k = a_argmin[r, q]
+        reversed_sliced_eqns.append(jaxpr.eqns[k:r])
+        r = k
+    assert r == 0, "No solution for layer construction."
+    solution = list(reversed(reversed_sliced_eqns))
+
+    log_solution(solution, jaxpr)
+
+    solution_info = {
+        "total_cost": value,
+    }
+    return solution, solution_info
+
+
 def log_solution(solution, jaxpr):
     print("-" * 80)
     print(f"Layer construction solution ({len(solution)} layers):")
@@ -527,11 +597,8 @@ def layer_level_jaxpr_transformation(fn: Callable,
                 layer_num = search_layer_num(jaxpr, eps, layer_eps)
             costs = get_layer_construction_costs(jaxpr,
                                                  cost_criteria=cost_criteria)
-            sliced_eqns, _ = cluster_jaxpr_by_cost(jaxpr,
-                                                   layer_num,
-                                                   eps,
-                                                   costs,
-                                                   cost_criteria=cost_criteria)
+            sliced_eqns, _ = cluster_jaxpr_by_cost_optimized(
+                jaxpr, layer_num, costs, cost_criteria=cost_criteria)
         else:
             sliced_eqns = slice_eqns_by_layer_boundary(jaxpr)
 

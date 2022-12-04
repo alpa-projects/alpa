@@ -1274,8 +1274,7 @@ class CrossMeshCommunicator:
             per_spec_plan = np.empty(
                 (len(dst_tile.replica_device_strs), len(src_tileslices)),
                 dtype=object)
-            for receiver_idx, _ in enumerate(
-                    dst_tile.replica_device_strs):
+            for receiver_idx, _ in enumerate(dst_tile.replica_device_strs):
                 for src_tileslice_idx, src_tileslice in enumerate(
                         src_tileslices):
                     sender = src_tileslice.replica_device_strs[0]

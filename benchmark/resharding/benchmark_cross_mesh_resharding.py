@@ -40,12 +40,12 @@ def get_device_meshes(src_mesh_shape, dst_mesh_shape):
     assert virtual_mesh.num_hosts >= src_num_host+dst_num_host,\
         "Error: There are not enough nodes for this test case"
     src_mesh = virtual_mesh.slice_2d(range(src_num_host),
-                                        [range(src_mesh_shape[1])] *
-                                        src_num_host).get_physical_mesh()
+                                     [range(src_mesh_shape[1])] *
+                                     src_num_host).get_physical_mesh()
     dst_host_indices = range(src_num_host, src_num_host + dst_num_host)
     dst_device_indices = [range(dst_mesh_shape[1])] * dst_num_host
-    dst_mesh = virtual_mesh.slice_2d(
-        dst_host_indices, dst_device_indices).get_physical_mesh()
+    dst_mesh = virtual_mesh.slice_2d(dst_host_indices,
+                                     dst_device_indices).get_physical_mesh()
     return src_mesh, dst_mesh
 
 

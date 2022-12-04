@@ -73,14 +73,19 @@ perf_n_to_m_suite = {
                 [2]), NoSharding(), NoSharding()],
                          [ShardedAxis(0), Replicated(4)]),
         ),
-    "case6": BenchmarkCase(
-                (2, 4),
-                (3, 4),
-                # (1024*3//8, 1024, 170),
-                (1024*3, 1024, 170),
-                ShardingSpec([Chunked([2]), NoSharding(), NoSharding()], [ShardedAxis(0), Replicated(4)]),
-                ShardingSpec([Chunked([3]), NoSharding(), NoSharding()], [ShardedAxis(0), Replicated(4)]),
-            ),
+    "case6":
+        BenchmarkCase(
+            (2, 4),
+            (3, 4),
+            # (1024*3//8, 1024, 170),
+            (1024 * 3, 1024, 170),
+            ShardingSpec([Chunked(
+                [2]), NoSharding(), NoSharding()],
+                         [ShardedAxis(0), Replicated(4)]),
+            ShardingSpec([Chunked(
+                [3]), NoSharding(), NoSharding()],
+                         [ShardedAxis(0), Replicated(4)]),
+        ),
     "case7":
         BenchmarkCase(
             (1, 4),

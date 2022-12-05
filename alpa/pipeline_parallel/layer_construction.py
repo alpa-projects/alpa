@@ -486,7 +486,7 @@ def cluster_jaxpr_by_cost_optimized(jaxpr: Jaxpr, layer_num: int, costs,
                     new_value = max(max_cost[k, q - 1], layer_costs[k, r - 1])
                     new_sum = (sum_cost_under_max[k, q - 1] +
                                layer_costs[k, r - 1])
-                    new_squared_sum = (sum_cost_under_max[k, q - 1] +
+                    new_squared_sum = (squared_cost_under_max[k, q - 1] +
                                        layer_costs[k, r - 1]**2)
                     if (new_value < max_cost[r, q] or
                         (new_value <= max_cost[r, q] *

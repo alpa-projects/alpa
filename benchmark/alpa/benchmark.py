@@ -29,6 +29,7 @@ benchmark_suites = {
     "gpt.correctness_test_auto": suite_auto_gpt.correctness_test_suite,
     "gpt_inference.profile": suite_inference_gpt.profile_suite,
     "gpt_inference.test": suite_inference_gpt.test_suite,
+    "gpt_inference.search": suite_inference_gpt.search_suite,
     "gpt_no_embedding_inference.profile": suite_inference_gpt.profile_suite,
     "moe.tmp": suite_manual_moe.tmp_suite,
     "moe.tmp_auto": suite_auto_moe.tmp_suite,

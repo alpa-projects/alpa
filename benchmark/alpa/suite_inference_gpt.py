@@ -139,19 +139,47 @@ test_suite = {
                 submesh_physical_shapes=[(1, 1)] * 8,
                 submesh_logical_shapes=[(1, 1)] * 8,
                 submesh_autosharding_option_dicts=[force_dp_dict] * 8)),
-        # BenchmarkCase(
-        #     1, gpt_specs["1.3B"], 1, "search",
-        #     SearchParallelArgs(
-        #         prefer_reduce_scatter,
-        #         use_remat,
-        #         num_auto_layers=50,
-        #         auto_stage_option={
-        #             "submesh_physical_shape_space": "manual",
-        #             "manually_specified_submeshes": ((1, 1),),
-        #             "submesh_logical_shape_space": "model_parallel_only",
-        #             "layer_profile_mode": "individual",
-        #             "use_hlo_cost_model": True,
-        #             "profiling_database_filename": "prof_database.pkl",
-        #         })),
     ]
 }
+
+search_suite = {}
+
+
+def generate_search_configs(model_config, num_auto_layers, pp_list, op_list):
+    """Generate search configs."""
+    for pp in pp_list:
+        for op in op_list:
+            num_gpus = pp * op
+            if num_gpus not in search_suite:
+                search_suite[num_gpus] = []
+            search_suite[num_gpus].append(
+                BenchmarkCase(
+                    1,
+                    model_config,
+                    1,
+                    "search",
+                    SearchParallelArgs(
+                        prefer_reduce_scatter,
+                        use_remat,
+                        num_auto_layers=num_auto_layers,
+                        auto_stage_option={
+                            "submesh_physical_shape_space":
+                                "manual",
+                            "manually_specified_submeshes": ((1, op),),
+                            "submesh_logical_shape_space":
+                                "model_parallel_only",
+                            "layer_profile_mode":
+                                "individual",
+                            # "use_hlo_cost_model": True,
+                            # "profiling_database_filename":
+                            #   "prof_database.pkl",
+                        })))
+
+
+generate_search_configs(gpt_specs["1.3B"], 50, [8], [1])
+# generate_search_configs(gpt_specs["1.3B"], 50, [1, 2, 4, 8, 16, 32],
+#                         [1, 2, 4, 8])
+# generate_search_configs(gpt_specs["2.6B"], 66, [1, 2, 4, 8, 16, 32],
+#                         [1, 2, 4, 8])
+# generate_search_configs(gpt_specs["6.7B"], 66, [1, 2, 4, 8, 16, 32],
+#                         [1, 2, 4, 8])

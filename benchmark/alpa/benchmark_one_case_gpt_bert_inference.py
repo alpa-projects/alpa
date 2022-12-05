@@ -237,8 +237,8 @@ def benchmark_gpt_inference_internal(model_type,
                 benchmark_case.num_micro_batches, parallel_args,
                 f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
                 f"{tflops:.2f}", f"{list(per_stage_weight_mem)}",
-                f"{list(per_stage_peak_mem)}", avg_stage_latencies, metadata,
-                timestamp
+                f"{list(per_stage_peak_mem)}",
+                list(avg_stage_latencies), metadata, timestamp
             ]
         write_tsv(heads, values, f"benchmark_results.tsv")
 

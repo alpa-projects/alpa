@@ -11,6 +11,7 @@ from alpa import (parallelize, get_global_cluster,
 from alpa.model.bert_model import BertConfig, FlaxBertLayerCollection
 from alpa.model.gpt_model import FlaxGPTForLMModule
 from alpa.util import print_used_time, GB, write_tsv
+from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 
 from util import compute_gpt_parameter_count, compute_gpt_tflops
 from benchmark_parallel_utils import (
@@ -209,6 +210,18 @@ def benchmark_gpt_inference_internal(model_type,
                 f"{per_stage_peak_mem}", avg_stage_latencies
             ]
         else:
+            (compute_cost_file_name, forward_stage_layer_ids, submesh_shapes,
+             logical_mesh_shapes,
+             autosharding_option_dicts) = get_last_dp_result()
+            metadata = {
+                "compilation_times": compilation_times,
+                "compute_cost_file_name": compute_cost_file_name,
+                "forward_stage_layer_ids": forward_stage_layer_ids,
+                "submesh_shapes": submesh_shapes,
+                "logical_mesh_shapes": logical_mesh_shapes,
+                "autosharding_option_dicts": autosharding_option_dicts,
+            }
+
             timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
             executable.dump_stage_execution_trace(
                 f"./chrome_trace/{model_name},"
@@ -217,14 +230,14 @@ def benchmark_gpt_inference_internal(model_type,
             heads = [
                 "ModelName", "BS", "#Microbatch", "ParallelArgs", "MeanTime(s)",
                 "StdTime(s)", "TFLOPs", "StageWeights(B)", "StagePeakMem(B)",
-                "StageLatencies(s)", "TimeStamp"
+                "StageLatencies(s)", "Metadata", "TimeStamp"
             ]
             values = [
                 model_name, benchmark_case.batch_size,
                 benchmark_case.num_micro_batches, parallel_args,
                 f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
                 f"{tflops:.2f}", f"{per_stage_weight_mem}",
-                f"{per_stage_peak_mem}", avg_stage_latencies, timestamp
+                f"{per_stage_peak_mem}", avg_stage_latencies, metadata, timestamp
             ]
         write_tsv(heads, values, f"benchmark_results.tsv")
 

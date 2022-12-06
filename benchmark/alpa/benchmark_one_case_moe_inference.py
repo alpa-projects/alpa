@@ -169,7 +169,7 @@ def benchmark_moe_inference_internal(benchmark_case,
 
     # Log per-stage execution information if needed
     if profile_stage_execution_time:
-        model_name = f"bert-{parameter_count/1e9:.1f}b"
+        model_name = f"moe-{parameter_count/1e9:.1f}b"
         # compute and log per-stage latency/memory statistics
         exec_info = executable.get_stage_execution_info()
         timelines = list(zip(*exec_info))

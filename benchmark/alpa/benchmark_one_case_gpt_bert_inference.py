@@ -187,7 +187,7 @@ def benchmark_gpt_inference_internal(model_type,
         exec_info = executable.get_stage_execution_info()
         timelines = list(zip(*exec_info))
         # drop warmup case
-        timelines = timelines[1:]
+        timelines = timelines[3:]
         avg_stage_latencies = compute_avg_stage_latencies(timelines)
         assert len(avg_stage_latencies) == num_manual_pipeline_stages
         parallel_args = benchmark_case.parallel_args
@@ -202,9 +202,9 @@ def benchmark_gpt_inference_internal(model_type,
             benchmark_case.num_micro_batches, dp, op, pp, dp * op * pp,
             f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
             f"{tflops:.2f}", f"{per_stage_weight_mem}", f"{per_stage_peak_mem}",
-            avg_stage_latencies
+            list(avg_stage_latencies)
         ]
-        write_tsv(heads, values, f"benchmark_results.tsv")
+        write_tsv(heads, values, f"inference_prof_res.tsv")
 
     metadata = {
         "compilation_times": compilation_times,

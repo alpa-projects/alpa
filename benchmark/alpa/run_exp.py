@@ -47,7 +47,7 @@ model_search_suites = {
         "niter": 10,
         "profile_stage_execution_time": True
     }),
-    "moe_inference_search": ("moe_inference.profile", {
+    "moe_inference_search": ("moe_inference.search", {
         "niter": 10,
         "profile_stage_execution_time": True
     }),

@@ -600,8 +600,8 @@ def layer_level_jaxpr_transformation(fn: Callable,
                 layer_num = search_layer_num(jaxpr, eps, layer_eps)
             costs = get_layer_construction_costs(jaxpr,
                                                  cost_criteria=cost_criteria)
-            sliced_eqns, _ = cluster_jaxpr_by_cost_optimized(
-                jaxpr, layer_num, costs, cost_criteria=cost_criteria)
+            sliced_eqns, _ = cluster_jaxpr_by_cost(
+                jaxpr, layer_num, eps, costs, cost_criteria=cost_criteria)
         else:
             sliced_eqns = slice_eqns_by_layer_boundary(jaxpr)
 

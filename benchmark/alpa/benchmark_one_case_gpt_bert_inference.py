@@ -1,5 +1,6 @@
 """Benchmark one case of inter-op + intra-op parallelism."""
 import os
+from datetime import datetime
 
 import jax
 import jax.numpy as jnp
@@ -10,6 +11,7 @@ from alpa import (parallelize, get_global_cluster,
 from alpa.model.bert_model import BertConfig, FlaxBertLayerCollection
 from alpa.model.gpt_model import FlaxGPTForLMModule
 from alpa.util import print_used_time, GB, write_tsv
+from alpa.pipeline_parallel.stage_construction import get_last_dp_result
 
 from util import compute_gpt_parameter_count, compute_gpt_tflops
 from benchmark_parallel_utils import (
@@ -179,31 +181,65 @@ def benchmark_gpt_inference_internal(model_type,
     # Log per-stage execution information if needed
     if profile_stage_execution_time:
         model_name = f"bert-{parameter_count/1e9:.1f}b"
-        # dump chrome trace
-        executable.dump_stage_execution_trace(
-            f"./chrome_trace/{model_name},bs={benchmark_case.batch_size},op={benchmark_case.parallel_args.op},pp={benchmark_case.parallel_args.pp}.json"
-        )
         # compute and log per-stage latency/memory statistics
         exec_info = executable.get_stage_execution_info()
         timelines = list(zip(*exec_info))
         # drop warmup case
         timelines = timelines[1:]
         avg_stage_latencies = compute_avg_stage_latencies(timelines)
-        assert len(avg_stage_latencies) == num_manual_pipeline_stages
+        if num_manual_pipeline_stages is not None:
+            assert len(avg_stage_latencies) == num_manual_pipeline_stages
         parallel_args = benchmark_case.parallel_args
-        dp, op, pp = parallel_args.dp, parallel_args.op, parallel_args.pp
-        heads = [
-            "ModelName", "BS", "#Microbatch", "DP", "OP", "PP", "#GPU",
-            "MeanTime(s)", "StdTime(s)", "TFLOPs", "StageWeights(B)",
-            "StagePeakMem(B)", "StageLatencies(s)"
-        ]
-        values = [
-            model_name, benchmark_case.batch_size,
-            benchmark_case.num_micro_batches, dp, op, pp, dp * op * pp,
-            f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
-            f"{tflops:.2f}", f"{per_stage_weight_mem}", f"{per_stage_peak_mem}",
-            avg_stage_latencies
-        ]
+        if benchmark_case.parallel_mode == "uniform":
+            dp, op, pp = parallel_args.dp, parallel_args.op, parallel_args.pp
+            # dump chrome trace
+            executable.dump_stage_execution_trace(
+                f"./chrome_trace/{model_name},"
+                f"bs={benchmark_case.batch_size},"
+                f"op={op},pp={pp}.json")
+            heads = [
+                "ModelName", "BS", "#Microbatch", "DP", "OP", "PP", "#GPU",
+                "MeanTime(s)", "StdTime(s)", "TFLOPs", "StageWeights(B)",
+                "StagePeakMem(B)", "StageLatencies(s)"
+            ]
+            values = [
+                model_name, benchmark_case.batch_size,
+                benchmark_case.num_micro_batches, dp, op, pp, dp * op * pp,
+                f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
+                f"{tflops:.2f}", f"{per_stage_weight_mem}",
+                f"{per_stage_peak_mem}", avg_stage_latencies
+            ]
+        else:
+            (compute_cost_file_name, forward_stage_layer_ids, submesh_shapes,
+             logical_mesh_shapes,
+             autosharding_option_dicts) = get_last_dp_result()
+            metadata = {
+                "compilation_times": compilation_times,
+                "compute_cost_file_name": compute_cost_file_name,
+                "forward_stage_layer_ids": forward_stage_layer_ids,
+                "submesh_shapes": submesh_shapes,
+                "logical_mesh_shapes": logical_mesh_shapes,
+                "autosharding_option_dicts": autosharding_option_dicts,
+            }
+
+            timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+            executable.dump_stage_execution_trace(
+                f"./chrome_trace/{model_name},"
+                f"bs={benchmark_case.batch_size},"
+                f"{timestamp}.json")
+            heads = [
+                "ModelName", "BS", "#Microbatch", "ParallelArgs", "MeanTime(s)",
+                "StdTime(s)", "TFLOPs", "StageWeights(B)", "StagePeakMem(B)",
+                "StageLatencies(s)", "Metadata", "TimeStamp"
+            ]
+            values = [
+                model_name, benchmark_case.batch_size,
+                benchmark_case.num_micro_batches, parallel_args,
+                f"{np.mean(latencies):.3f}", f"{np.std(latencies):.3f}",
+                f"{tflops:.2f}", f"{list(per_stage_weight_mem)}",
+                f"{list(per_stage_peak_mem)}",
+                list(avg_stage_latencies), metadata, timestamp
+            ]
         write_tsv(heads, values, f"benchmark_results.tsv")
 
     metadata = {

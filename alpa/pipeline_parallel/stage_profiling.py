@@ -125,11 +125,8 @@ class StageProfileResult:
         if self.available_memory is None:
             self.available_memory = result.available_memory
         else:
-            assert self.available_memory == result.available_memory, (
-                f"available_memory is not consistent: {self.available_memory} "
-                f"vs {result.available_memory}. This may be caused by "
-                f"mismatch of loaded profile results and newly profiled "
-                f"results.")
+            self.available_memory = min(self.available_memory,
+                                        result.available_memory)
 
     def __str__(self):
         total_initial_var_size = sum(self.initial_var_sizes)

@@ -958,7 +958,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
     def __init__(self,
                  host_ids: Sequence[int],
                  host_info: Sequence[dict],
-                 head_ip: str,
                  num_devices_per_host: int,
                  parent: Optional["VirtualPhysicalMesh"] = None,
                  devices: Optional[Sequence[Sequence[int]]] = None,
@@ -967,7 +966,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # host_ids are the indices of hosts in the global DeviceCluster
         self.host_ids = host_ids
         self.host_info = host_info
-        self.head_ip = head_ip
         self.num_hosts = len(host_ids)
         self.num_devices_per_host = num_devices_per_host
         self.parent = parent
@@ -1035,7 +1033,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             port = np.random.randint(20000, 25000)
         used_port_set.add(port)
 
-        server_address = f"{self.head_ip}:{port}"
+        server_address = f"{ray.util.get_node_ip_address()}:{port}"
         logger.debug(f"Trying to start XLA gRPC server on port: {port}...")
         service_server = xla_client._xla.get_distributed_runtime_service(
             server_address, self.num_hosts, use_coordination_service=False)
@@ -1127,7 +1125,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         return VirtualPhysicalMesh(
             host_ids=self.host_ids,
             host_info=self.host_info,
-            head_ip=self.head_ip,
             num_devices_per_host=self.num_devices_per_host,
             parent=self,
             devices=self.devices)
@@ -1795,14 +1792,12 @@ class VirtualPhysicalMesh:
     def __init__(self,
                  host_ids: Sequence[int],
                  host_info: Sequence[dict],
-                 head_ip,
                  num_devices_per_host,
                  parent: "VirtualPhysicalMesh" = None,
                  devices: Sequence[Sequence[int]] = None):
         # host_ids are the indices of hosts in the global DeviceCluster
         self.host_ids = host_ids
         self.host_info = host_info
-        self.head_ip = head_ip
         self.num_devices_per_host = num_devices_per_host
         self.parent = parent
 
@@ -1860,7 +1855,6 @@ class VirtualPhysicalMesh:
             return VirtualPhysicalMesh(
                 host_ids=host_ids,
                 host_info=host_info,
-                head_ip=self.head_ip,
                 num_devices_per_host=self.num_devices_per_host,
                 parent=self)
         else:
@@ -1873,7 +1867,6 @@ class VirtualPhysicalMesh:
 
             return VirtualPhysicalMesh(host_ids=self.host_ids,
                                        host_info=self.host_info,
-                                       head_ip=self.head_ip,
                                        num_devices_per_host=len(indices[0]),
                                        parent=self,
                                        devices=indices)
@@ -1889,7 +1882,6 @@ class VirtualPhysicalMesh:
 
         return VirtualPhysicalMesh(host_ids=host_ids,
                                    host_info=host_info,
-                                   head_ip=self.head_ip,
                                    num_devices_per_host=len(device_indices[0]),
                                    parent=self,
                                    devices=device_indices)
@@ -1939,7 +1931,6 @@ class VirtualPhysicalMesh:
         self.launched_physical_mesh = DistributedPhysicalDeviceMesh(
             host_ids=self.host_ids,
             host_info=self.host_info,
-            head_ip=self.head_ip,
             num_devices_per_host=self.num_devices_per_host,
             parent=self,
             devices=self.devices,
@@ -2142,7 +2133,6 @@ class DeviceCluster:
             raise RuntimeError(
                 "Cannot access ray global node. Did you call ray.init?") \
                 from ae
-        self.head_ip = self.head_info["node_ip_address"]
 
         # Gather host ids
         self.host_info = []
@@ -2265,7 +2255,6 @@ class DeviceCluster:
         return DistributedPhysicalDeviceMesh(
             host_ids=host_ids,
             host_info=host_info,
-            head_ip=self.head_ip,
             num_devices_per_host=num_devices_per_host,
             parent=self,
             namespace=self.namespace)
@@ -2289,7 +2278,6 @@ class DeviceCluster:
 
         return VirtualPhysicalMesh(host_ids=host_ids,
                                    host_info=host_info,
-                                   head_ip=self.head_ip,
                                    num_devices_per_host=num_devices_per_host,
                                    parent=self)
 

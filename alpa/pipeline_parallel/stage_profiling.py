@@ -125,11 +125,8 @@ class StageProfileResult:
         if self.available_memory is None:
             self.available_memory = result.available_memory
         else:
-            assert self.available_memory == result.available_memory, (
-                f"available_memory is not consistent: {self.available_memory} "
-                f"vs {result.available_memory}. This may be caused by "
-                f"mismatch of loaded profile results and newly profiled "
-                f"results.")
+            self.available_memory = min(self.available_memory,
+                                        result.available_memory)
 
     def __str__(self):
         total_initial_var_size = sum(self.initial_var_sizes)
@@ -772,9 +769,8 @@ def get_merged_stages_memory_stats(
                     f"vs. {size}.")
     initial_size = sum(initial_var_sizes_dict.values())
     peak_memory = 0
-    available_memory = profile_results[0].available_memory
-    assert all(result.available_memory == available_memory
-               for result in profile_results)
+    available_memory = min(
+        result.available_memory for result in profile_results)
     n_stages = len(profile_results)
     n_modules = profile_results[0].n_modules
     if inference_mode:

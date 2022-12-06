@@ -53,7 +53,7 @@ cluster_settings = [(8, 8), (4, 8), (3, 8), (2, 8), (1, 8), (1, 4), (1, 2),
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("model", type=str, choices=model_search_suites.keys())
+    parser.add_argument("suite", type=str, choices=model_search_suites.keys())
     parser.add_argument("--exp-name", type=str, default=None)
     args = parser.parse_args()
-    run_exp(args.exp_name, cluster_settings, *model_search_suites[args.model])
+    run_exp(args.exp_name, cluster_settings, *model_search_suites[args.suite])

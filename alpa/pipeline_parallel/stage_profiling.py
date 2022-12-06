@@ -769,9 +769,8 @@ def get_merged_stages_memory_stats(
                     f"vs. {size}.")
     initial_size = sum(initial_var_sizes_dict.values())
     peak_memory = 0
-    available_memory = profile_results[0].available_memory
-    assert all(result.available_memory == available_memory
-               for result in profile_results)
+    available_memory = min(
+        result.available_memory for result in profile_results)
     n_stages = len(profile_results)
     n_modules = profile_results[0].n_modules
     if inference_mode:

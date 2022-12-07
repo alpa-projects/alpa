@@ -830,8 +830,8 @@ def _wrap_with_call(closed_jaxpr: ClosedJaxpr, invars, outvars, name):
     new_invars = closed_jaxpr.jaxpr.invars + closed_jaxpr.jaxpr.constvars
     jaxpr = clone_jaxpr(closed_jaxpr, new_invars, constvars=[]).jaxpr
     params = dict(name=name, call_jaxpr=jaxpr)
-    return new_jaxpr_eqn(invars + closed_jaxpr.consts, outvars, named_call_p,
-                         params)
+    return new_jaxpr_eqn(invars + closed_jaxpr.jaxpr.constvars, outvars,
+                         named_call_p, params)
 
 
 def _rearrange_in_out_for_donation(invars, outvars, donation_map):
@@ -952,6 +952,7 @@ def merge_marked_jaxprs_with_named_call(jaxprs: Sequence[ClosedJaxpr],
     # Merge everything together
     for i, jaxpr in enumerate(jaxprs):
         const_dir.update(zip(jaxpr.jaxpr.constvars, jaxpr.consts))
+        env.update(jaxpr.jaxpr.constvars)
         if has_output(jaxpr.jaxpr):
             call_eqn = unwrap_with_call(jaxpr, name_prefix + str(i))
             new_eqns.append(call_eqn)

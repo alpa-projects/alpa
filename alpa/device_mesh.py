@@ -2201,7 +2201,8 @@ class DeviceCluster:
             # filter out the bundle index with device (GPUs)
             device_bundle_idx_list = [
                 i for i, bundle_spec in enumerate(bundle_specs)
-                if bundle_spec.get("GPU", 0) > 0]
+                if bundle_spec.get("GPU", 0) > 0
+            ]
 
             # filter nodes according to the placment group
             self.host_info = [host_ip2info[ip] for ip in ips]

@@ -2204,7 +2204,7 @@ class DeviceCluster:
                 if bundle_spec.get("GPU", 0) > 0
             ]
 
-            # filter nodes according to the placment group
+            # filter nodes according to the placement group
             self.host_info = [host_ip2info[ip] for ip in ips]
             self.host_ips = [
                 ips[bundle_idx] for bundle_idx in device_bundle_idx_list

@@ -12,9 +12,9 @@ from alpa.pipeline_parallel.stage_construction import (
 from alpa.pipeline_parallel.compile_executable import (
     split_and_process_layers, slice_apply_grad_for_stage_construction)
 from alpa.pipeline_parallel.layer_construction import ManualLayerOption
-from alpa.pipeline_parallel.stage_profiling import (generate_stage_info,
-                                                    distributed_profile_on_mesh,
-                                                    get_max_n_succ_stages)
+from alpa.pipeline_parallel.stage_profiling import (
+    generate_stage_info, distributed_profile_on_mesh,
+    get_merged_stages_memory_stats)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption
 from alpa.testing import (get_bert_layer_train_state_and_step,
                           get_mlp_train_state_and_step)
@@ -206,12 +206,12 @@ class StageConstructUtilTest(unittest.TestCase):
             profile_results_1d.append(result)
 
         # Compare
-        max_stage_2d, (available_memory_2d, peak_memory_2d, initial_size_2d,
-                       intermediate_size_2d) = get_max_n_succ_stages(
-                           [profile_results_2d])
-        max_stage_1d, (
-            available_memory_1d, peak_memory_1d, initial_size_1d,
-            intermediate_size_1d) = get_max_n_succ_stages(profile_results_1d)
+        (available_memory_2d, peak_memory_2d, initial_size_2d,
+         intermediate_size_2d,
+         max_stage_2d) = get_merged_stages_memory_stats([profile_results_2d])
+        (available_memory_1d, peak_memory_1d, initial_size_1d,
+         intermediate_size_1d,
+         max_stage_1d) = get_merged_stages_memory_stats(profile_results_1d)
 
         assert available_memory_1d == available_memory_2d, (
             f"available_memory_1d: {available_memory_1d}, "
@@ -262,9 +262,9 @@ class StageConstructUtilTest(unittest.TestCase):
             jax_pipeline_layers, accumulator_mapping, acc_grad_invars,
             acc_grad_outvars, jax_apply_layers, apply_grad_global_info,
             num_microbatch, 0, num_layers - 1)
-        max_stage_2d, (available_memory_2d, peak_memory_2d, initial_size_2d,
-                       intermediate_size_2d) = get_max_n_succ_stages(
-                           [profile_results_2d])
+        (available_memory_2d, peak_memory_2d, initial_size_2d,
+         intermediate_size_2d,
+         max_stage_2d) = get_merged_stages_memory_stats([profile_results_2d])
 
         # Real
         pipeshard_method = PipeshardParallel(

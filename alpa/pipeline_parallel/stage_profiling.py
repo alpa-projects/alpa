@@ -125,11 +125,8 @@ class StageProfileResult:
         if self.available_memory is None:
             self.available_memory = result.available_memory
         else:
-            assert self.available_memory == result.available_memory, (
-                f"available_memory is not consistent: {self.available_memory} "
-                f"vs {result.available_memory}. This may be caused by "
-                f"mismatch of loaded profile results and newly profiled "
-                f"results.")
+            self.available_memory = min(self.available_memory,
+                                        result.available_memory)
 
     def __str__(self):
         total_initial_var_size = sum(self.initial_var_sizes)
@@ -519,9 +516,14 @@ def compile_all(stages, num_micro_batches, default_as_option, profile_results):
         stage_idx, stage_config, auto_sharding_config = stages[i]
         logical_mesh_shape = compiled_output.stage_plan.logical_mesh_shape
         apply_in_shardings = compiled_output.apply_grad_input_sharding_protos
-        initial_var_names, initial_var_sizes = compute_apply_grad_invar_size(
-            apply_in_shardings, stage_config.apply_grad_config,
-            logical_mesh_shape)
+        if apply_in_shardings is not None:
+            (initial_var_names,
+             initial_var_sizes) = compute_apply_grad_invar_size(
+                 apply_in_shardings, stage_config.apply_grad_config,
+                 logical_mesh_shape)
+        else:
+            initial_var_names = ()
+            initial_var_sizes = ()
         if stage_idx not in profile_results:
             profile_results[stage_idx] = StageProfileResult(
                 stage_config.n_modules, initial_var_names, initial_var_sizes)
@@ -697,7 +699,63 @@ def generate_training_stages_2d(layers,
     return stages
 
 
-def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
+def generate_inference_stages_2d(layers,
+                                 layer_flops_prefix_sum,
+                                 accumulator_mapping,
+                                 acc_grad_invars,
+                                 acc_grad_outvars,
+                                 apply_grad_layers,
+                                 apply_grad_global_info,
+                                 mesh_id,
+                                 autosharding_configs,
+                                 mesh_num_devices,
+                                 cluster_size,
+                                 stage_imbalance_tolerance=np.inf):
+    print("- Generate all stage infos (Jaxpr -> HLO)")
+    num_layers = len(layers)
+    indices = list(range(2 * num_layers))
+    computation_source_ratio = mesh_num_devices / cluster_size
+    is_full_mesh = computation_source_ratio == 1
+    tot_flops = layer_flops_prefix_sum[num_layers]
+    stages = []
+    for start in tqdm.tqdm(range(0, num_layers)):
+        for end in tqdm.tqdm(range(start, num_layers), leave=False):
+            if is_full_mesh and not (start == 0 and end == num_layers - 1):
+                continue
+            flops_ratio = (layer_flops_prefix_sum[end + 1] -
+                           layer_flops_prefix_sum[start]) / tot_flops
+            if (computation_source_ratio > flops_ratio *
+                (1 + stage_imbalance_tolerance) or
+                    computation_source_ratio < flops_ratio /
+                (1 + stage_imbalance_tolerance)):
+                continue
+            forward_layer_indices = indices[start:end + 1]
+            selected_apply_grad_layers = [
+                apply_grad_layers[idx]
+                for idx in forward_layer_indices
+                if apply_grad_layers[idx] is not None
+            ]
+            assert len(selected_apply_grad_layers) == 0, (
+                "Inference stage should not have apply_grad_layers")
+            stage_name = f"stage_{start}_{end}"
+            stage_config = generate_stage_info(layers, [forward_layer_indices],
+                                               accumulator_mapping,
+                                               acc_grad_invars,
+                                               acc_grad_outvars, stage_name,
+                                               selected_apply_grad_layers,
+                                               apply_grad_global_info)
+            for config_idx, autosharding_config in enumerate(
+                    autosharding_configs):
+                if autosharding_config is not None:
+                    stage_indices = (start, end, mesh_id, config_idx)
+                    stages.append(
+                        (stage_indices, stage_config, autosharding_config))
+    return stages
+
+
+def get_merged_stages_memory_stats(
+        profile_results: Sequence[StageProfileResult],
+        inference_mode: bool = False):
     initial_var_sizes_dict = {}
     for stage_result in profile_results:
         for name, size in zip(stage_result.initial_var_names,
@@ -711,18 +769,22 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
                     f"vs. {size}.")
     initial_size = sum(initial_var_sizes_dict.values())
     peak_memory = 0
-    available_memory = profile_results[0].available_memory
-    assert all(result.available_memory == available_memory
-               for result in profile_results)
+    available_memory = min(
+        result.available_memory for result in profile_results)
     n_stages = len(profile_results)
     n_modules = profile_results[0].n_modules
-    assert n_modules == 2, "Only support forward and backward module"
+    if inference_mode:
+        assert n_modules == 1, "Inference mode should only have 1 module."
+        module_execution_orders = [list(range(n_stages))]
+    else:
+        assert n_modules == 2, ("Only support forward and backward modules in "
+                                "training mode.")
+        module_execution_orders = [
+            list(range(n_stages)),
+            list(range(n_stages - 1, -1, -1))
+        ]
     assert all(result.n_modules == n_modules for result in profile_results)
 
-    module_execution_orders = [
-        list(range(n_stages)),
-        list(range(n_stages - 1, -1, -1)),
-    ]
     # eliminate_time[var] = k means that the variable can be eliminated after
     # stage k.
     last_used_stage_no = {}
@@ -829,7 +891,7 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
 
         # Record the variables that are not eliminated at the end of the
         # last forward module.
-        if module_id == 0:
+        if module_id == 0 and not inference_mode:
             intermediate_size = sum(env.values())
 
     for var in acc_grad_invars:
@@ -841,18 +903,21 @@ def get_max_n_succ_stages(profile_results: Sequence[StageProfileResult]):
 
     assert len(env) == 0, f"Variables {env.keys()} are not eliminated."
 
-    max_stage = int((available_memory - peak_memory - initial_size) //
-                    max(intermediate_size, 1e-8) - 1)
-    max_stage = min(max(-1, max_stage), INFINITY_N_STAGES)
+    if inference_mode:
+        max_stage = None
+    else:
+        max_stage = int((available_memory - peak_memory - initial_size) //
+                        max(intermediate_size, 1e-8) - 1)
+        max_stage = min(max(-1, max_stage), INFINITY_N_STAGES)
 
-    return max_stage, (available_memory, peak_memory, initial_size,
-                       intermediate_size)
+    return (available_memory, peak_memory, initial_size, intermediate_size,
+            max_stage)
 
 
-def interpret_profile_result_2d(profile_results: Dict[Tuple[int, ...],
-                                                      StageProfileResult],
-                                num_layers: int, num_submesh_choices: int,
-                                num_autosharding_configs: int):
+def interpret_profile_result_training_2d(
+        profile_results: Dict[Tuple[int, ...],
+                              StageProfileResult], num_layers: int,
+        num_submesh_choices: int, num_autosharding_configs: int):
     all_compute_cost = np.full(
         (num_layers, num_layers, num_submesh_choices, num_autosharding_configs),
         np.inf,
@@ -870,10 +935,37 @@ def interpret_profile_result_2d(profile_results: Dict[Tuple[int, ...],
         all_compute_cost[index] = sum(
             result.compute_cost
             for result in profile_result.module_profile_results)
-        all_max_n_succ_stages[index], _ = get_max_n_succ_stages(
-            [profile_result])
+        _, _, _, _, all_max_n_succ_stages[index] = (
+            get_merged_stages_memory_stats([profile_result]))
 
     return all_compute_cost, all_max_n_succ_stages
+
+
+def interpret_profile_result_inference_2d(
+        profile_results: Dict[Tuple[int, ...],
+                              StageProfileResult], num_layers: int,
+        num_submesh_choices: int, num_autosharding_configs: int):
+    all_compute_cost = np.full(
+        (num_layers, num_layers, num_submesh_choices, num_autosharding_configs),
+        np.inf,
+        dtype=np.float64)
+    all_peak_memory = np.full(
+        (num_layers, num_layers, num_submesh_choices, num_autosharding_configs),
+        np.inf,
+        dtype=np.float64)
+
+    for index in np.ndindex(num_layers, num_layers, num_submesh_choices,
+                            num_autosharding_configs):
+        if index not in profile_results:
+            continue
+        profile_result = profile_results[index]
+        assert len(profile_result.module_profile_results) == 1
+        all_compute_cost[index] = (
+            profile_result.module_profile_results[0].compute_cost)
+        all_peak_memory[index] = (
+            profile_result.module_profile_results[0].peak_memory)
+
+    return all_compute_cost, all_peak_memory
 
 
 def generate_training_stages_1d(layers, accumulator_mapping, acc_grad_invars,
@@ -892,7 +984,7 @@ def generate_training_stages_1d(layers, accumulator_mapping, acc_grad_invars,
                                                     (2 * num_layers - l - 1,)],
                                            accumulator_mapping, acc_grad_invars,
                                            acc_grad_outvars, stage_name,
-                                           list(selected_apply_grad_layers),
+                                           selected_apply_grad_layers,
                                            apply_grad_global_info)
         for config_idx, autosharding_config in enumerate(autosharding_configs):
             if autosharding_config is not None:
@@ -902,10 +994,36 @@ def generate_training_stages_1d(layers, accumulator_mapping, acc_grad_invars,
     return stages
 
 
-def interpret_profile_result_1d(profile_results: Dict[Tuple[int, ...],
-                                                      StageProfileResult],
-                                num_layers: int, num_submesh_choices: int,
-                                num_autosharding_configs: int):
+def generate_inference_stages_1d(layers, accumulator_mapping, acc_grad_invars,
+                                 acc_grad_outvars, apply_grad_layers,
+                                 apply_grad_global_info, mesh_id,
+                                 autosharding_configs):
+    print("- Generate all stage infos (Jaxpr -> HLO)")
+    num_layers = len(layers)
+    stages = []
+    for l in tqdm.tqdm(range(0, num_layers)):
+        selected_apply_grad_layers = ([] if apply_grad_layers[l] is None else
+                                      [apply_grad_layers[l]])
+        assert len(selected_apply_grad_layers) == 0, (
+            "Inference stage should not have apply_grad_layers")
+        stage_name = f"stage_{l}"
+        stage_config = generate_stage_info(layers, [(l,)], accumulator_mapping,
+                                           acc_grad_invars, acc_grad_outvars,
+                                           stage_name,
+                                           selected_apply_grad_layers,
+                                           apply_grad_global_info)
+        for config_idx, autosharding_config in enumerate(autosharding_configs):
+            if autosharding_config is not None:
+                stage_indices = (l, mesh_id, config_idx)
+                stages.append(
+                    (stage_indices, stage_config, autosharding_config))
+    return stages
+
+
+def interpret_profile_result_training_1d(
+        profile_results: Dict[Tuple[int, ...],
+                              StageProfileResult], num_layers: int,
+        num_submesh_choices: int, num_autosharding_configs: int):
     all_compute_cost = np.full(
         (num_layers, num_layers, num_submesh_choices, num_autosharding_configs),
         np.inf,
@@ -932,10 +1050,52 @@ def interpret_profile_result_1d(profile_results: Dict[Tuple[int, ...],
                             result.compute_cost
                             for profile_result in selected_profile_results
                             for result in profile_result.module_profile_results)
-                    (all_max_n_succ_stages[start, end, submesh_choice,
-                                           config_idx],
-                     _) = get_max_n_succ_stages(selected_profile_results)
+                    (_, _, _, _, all_max_n_succ_stages[start, end,
+                                                       submesh_choice,
+                                                       config_idx]
+                    ) = get_merged_stages_memory_stats(selected_profile_results)
     return all_compute_cost, all_max_n_succ_stages
+
+
+def interpret_profile_result_inference_1d(
+        profile_results: Dict[Tuple[int, ...],
+                              StageProfileResult], num_layers: int,
+        num_submesh_choices: int, num_autosharding_configs: int):
+    all_compute_cost = np.full(
+        (num_layers, num_layers, num_submesh_choices, num_autosharding_configs),
+        np.inf,
+        dtype=np.float64)
+    all_peak_memory = np.full(
+        (num_layers, num_layers, num_submesh_choices, num_autosharding_configs),
+        np.inf,
+        dtype=np.float64)
+
+    for start in range(num_layers):
+        for end in range(start, num_layers):
+            for submesh_choice in range(num_submesh_choices):
+                for config_idx in range(num_autosharding_configs):
+                    if any(
+                        (l, submesh_choice, config_idx) not in profile_results
+                            for l in range(start, end + 1)):
+                        continue
+                    selected_profile_results = [
+                        profile_results[(l, submesh_choice, config_idx)]
+                        for l in range(start, end + 1)
+                    ]
+                    for result in selected_profile_results:
+                        assert len(result.module_profile_results) == 1
+                    all_compute_cost[
+                        start, end, submesh_choice, config_idx] = sum(
+                            profile_result.module_profile_results[0].
+                            compute_cost
+                            for profile_result in selected_profile_results)
+                    (available_memory, peak_memory, _, _,
+                     _) = get_merged_stages_memory_stats(
+                         selected_profile_results, inference_mode=True)
+                    if peak_memory > available_memory:
+                        all_compute_cost[start, end, submesh_choice,
+                                         config_idx] = np.inf
+    return all_compute_cost, all_peak_memory
 
 
 def distributed_profile_on_mesh(stages, meshes: Sequence[VirtualPhysicalMesh],
@@ -1006,12 +1166,15 @@ def get_compute_cost(
         autosharding_configs: Sequence[Sequence[Tuple[LogicalDeviceMesh,
                                                       dict]]],
         layers: Sequence[JaxPipelineComputation],
-        accumulator_mapping: Dict[Var, Var], acc_grad_invars: Sequence[Var],
+        accumulator_mapping: Dict[Var, Var],
+        acc_grad_invars: Sequence[Var],
         acc_grad_outvars: Sequence[Var],
         apply_grad_layers: Sequence[JaxPipelineComputation],
-        apply_grad_global_info: Tuple, num_micro_batches: int,
+        apply_grad_global_info: Tuple,
+        num_micro_batches: int,
         default_as_option: AutoShardingOption,
-        auto_stage_option: "AutoStageOption"):
+        auto_stage_option: "AutoStageOption",
+        inference_mode: bool = False):
     """Get computation cost for each possible (stage, mesh) configuration.
 
     This function enumerates all given submesh choices, then profiles compute
@@ -1036,6 +1199,8 @@ def get_compute_cost(
         apply_grad_global_info: Donation mapping and outvars for apply gradient
             stages.
         default_as_option: The default auto-sharding options.
+        auto_stage_option: The auto stage construction algorthm options.
+        inference_mode: Whether to run in inference mode.
 
     Returns:
         Two np.ndarray, each with shape (L, L, S, C), where L is the number of
@@ -1051,8 +1216,11 @@ def get_compute_cost(
     """
     cluster_size = virtual_mesh.num_devices
     layer_flops_prefix_sum = _get_layer_flops_prefix_sum(layers)
-    assert len(layers) % 2 == 0
-    num_layers = len(layers) // 2
+    if inference_mode:
+        num_layers = len(layers)
+    else:
+        assert len(layers) % 2 == 0
+        num_layers = len(layers) // 2
     num_submesh_choices = len(submesh_choices)
     num_autosharding_configs = len(autosharding_configs[0])
 
@@ -1080,17 +1248,33 @@ def get_compute_cost(
                 num_hosts, num_devices_per_host)
 
         if auto_stage_option.layer_profile_mode == "composition":
-            stages = generate_training_stages_2d(
-                layers, layer_flops_prefix_sum, accumulator_mapping,
-                acc_grad_invars, acc_grad_outvars, apply_grad_layers,
-                apply_grad_global_info, mesh_id, autosharding_configs[mesh_id],
-                sliced_virtual_meshes[0].num_devices, cluster_size,
-                auto_stage_option.stage_imbalance_tolerance)
+            if inference_mode:
+                stages = generate_inference_stages_2d(
+                    layers, layer_flops_prefix_sum, accumulator_mapping,
+                    acc_grad_invars, acc_grad_outvars, apply_grad_layers,
+                    apply_grad_global_info, mesh_id,
+                    autosharding_configs[mesh_id],
+                    sliced_virtual_meshes[0].num_devices, cluster_size,
+                    auto_stage_option.stage_imbalance_tolerance)
+            else:
+                stages = generate_training_stages_2d(
+                    layers, layer_flops_prefix_sum, accumulator_mapping,
+                    acc_grad_invars, acc_grad_outvars, apply_grad_layers,
+                    apply_grad_global_info, mesh_id,
+                    autosharding_configs[mesh_id],
+                    sliced_virtual_meshes[0].num_devices, cluster_size,
+                    auto_stage_option.stage_imbalance_tolerance)
         elif auto_stage_option.layer_profile_mode == "individual":
-            stages = generate_training_stages_1d(
-                layers, accumulator_mapping, acc_grad_invars, acc_grad_outvars,
-                apply_grad_layers, apply_grad_global_info, mesh_id,
-                autosharding_configs[mesh_id])
+            if inference_mode:
+                stages = generate_inference_stages_1d(
+                    layers, accumulator_mapping, acc_grad_invars,
+                    acc_grad_outvars, apply_grad_layers, apply_grad_global_info,
+                    mesh_id, autosharding_configs[mesh_id])
+            else:
+                stages = generate_training_stages_1d(
+                    layers, accumulator_mapping, acc_grad_invars,
+                    acc_grad_outvars, apply_grad_layers, apply_grad_global_info,
+                    mesh_id, autosharding_configs[mesh_id])
         else:
             raise ValueError(f"Unknown layer profile mode: "
                              f"{auto_stage_option.layer_profile_mode}")
@@ -1115,13 +1299,27 @@ def get_compute_cost(
     print("-" * 70)
 
     if auto_stage_option.layer_profile_mode == "composition":
-        compute_cost, max_n_succ_stages = interpret_profile_result_2d(
-            profile_results, num_layers, num_submesh_choices,
-            num_autosharding_configs)
+        if inference_mode:
+            compute_cost, _ = interpret_profile_result_inference_2d(
+                profile_results, num_layers, num_submesh_choices,
+                num_autosharding_configs)
+            max_n_succ_stages = None
+        else:
+            (compute_cost,
+             max_n_succ_stages) = interpret_profile_result_training_2d(
+                 profile_results, num_layers, num_submesh_choices,
+                 num_autosharding_configs)
     elif auto_stage_option.layer_profile_mode == "individual":
-        compute_cost, max_n_succ_stages = interpret_profile_result_1d(
-            profile_results, num_layers, num_submesh_choices,
-            num_autosharding_configs)
+        if inference_mode:
+            compute_cost, _ = interpret_profile_result_inference_1d(
+                profile_results, num_layers, num_submesh_choices,
+                num_autosharding_configs)
+            max_n_succ_stages = None
+        else:
+            (compute_cost,
+             max_n_succ_stages) = interpret_profile_result_training_1d(
+                 profile_results, num_layers, num_submesh_choices,
+                 num_autosharding_configs)
     else:
         raise ValueError(f"Unknown layer profile mode: "
                          f"{auto_stage_option.layer_profile_mode}")
@@ -1267,9 +1465,9 @@ def generate_stage_info(all_layers, selected_indices,
         all_modules_outvars.update(merged_jaxpr.jaxpr.outvars)
         all_modules_acc_grad_outvars_indices.append(acc_grad_outvars_indices)
 
-    if apply_grad_layers:
+    if len(apply_grad_layers) > 0:
         apply_grad_donation, apply_grad_outvars = apply_grad_info
-        apply_grad_module_name = name + APPLY_GRAD_MARKER_SUFFIX
+        apply_grad_module_name = "_".join([name, APPLY_GRAD_MARKER_SUFFIX])
         merged_apply = merge_marked_jaxprs_with_named_call(
             [layer.closed_jaxpr() for layer in apply_grad_layers],
             apply_grad_outvars, apply_grad_donation, name + "_apply")

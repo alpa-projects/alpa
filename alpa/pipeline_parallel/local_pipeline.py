@@ -55,10 +55,10 @@ class LocalPipelineRunner:
 
 
 class SwapElement:
-    def __init__(self, var: Optional[Var], priority: int):
+    def __init__(self, var: Optional[Var], priority=0, stage=-1):
         self.var = var
         self.priority = priority
-        self.valid = True
+        self.stage = stage
     
     def __lt__(self, other):
         return self.priority < other.priority
@@ -68,49 +68,64 @@ class SwapElement:
 
 
 class SwapPool:
-    """A heap queue for simulating a pool of variables on device.
-
-    This implementation lazily invalidates elements upon removal.
-    """
+    """A queue for simulating a pool of variables on device."""
 
     def __init__(self, max_size: int):
-        self.heap = []
-        self.map = {}
-        self.size = 0
+        self.queue = []
         assert max_size > 0, "max_size must be greater than 0"
         self.max_size = max_size
 
-    def alloc(self, var: Var, priority: int):
+    def alloc(self, var: Var, priority: int, stage: int, max_out_stage: int):
         """Simulating swapping in a variable for a stage.
         Args:
             var: the variable to swap in.
-            priority: lesser means earlier to swap out. 
+            priority: lower means earlier to swap out.
+            stage: stage for whch var is swapped in.
+            max_prev_stage: don't swap out if variable stage is greater.
         Returns:
-            A list of variables to swap out.
+            swap_in: whether var actually is swapped in.
+            swap_out_var: variable that is swapped out.
         """
         swap_in = True
         swap_out_var = None
-        if var in self.map:
-            self.map[var].valid = False
-            swap_in = False
-        elif self.size < self.max_size:
-            self.size += 1
-        else:
-            popped = heapq.heappop(self.heap)
-            self.map.pop(popped.var)
-            while not popped.valid:
-                popped = heapq.heappop(self.heap)
-                self.map.pop(popped.var)
-            swap_out_var = popped.var
-        new_element = SwapElement(var, priority)
-        self.map[var] = new_element
-        heapq.heappush(self.heap, new_element)
+        for i in range(len(self.queue)):
+            if self.queue[i].var == var:
+                # Re-insert var into queue with new stats.
+                self.queue.pop(i)
+                swap_in = False
+                break
+        if swap_in and len(self.queue) == self.max_size:
+            # Pick a variable to swap out.
+            i = 0
+            out_element = None
+            while out_element is None:
+                out_element = self.queue[i]
+                if out_element.stage > max_out_stage:
+                    out_element = None
+                    i += 1
+                    assert i == len(self.queue), f"SwapPool can't allocate for {var}"
+            self.queue.remove(out_element)
+            swap_out_var = out_element.var
+
+        # Insert new element in order of priority.
+        in_element = SwapElement(var, priority, stage)
+        i = 0
+        while i < len(self.queue):
+            if in_element < self.queue[i]:
+                self.queue.insert(i, in_element)
+                break
+            i += 1
+        if i == len(self.queue):
+            self.queue.append(in_element)
+        
         return swap_in, swap_out_var
 
     def free(self, var: Var):
-        assert var in self.map, f"{var} is not in pool"
-        self.map[var].valid = False
-        self.size -= 1
+        for i in range(len(self.queue)):
+            if self.queue[i].var == var:
+                # Re-insert var into queue with new stats.
+                self.queue.pop(i)
+                break
 
 
 def view_swap_log(log):
@@ -132,7 +147,7 @@ class LocalPipelineExecutable:
 
     def __init__(self, *, stages: Sequence[PipelineComputation],
                  global_invars: Sequence[Var], global_outvars: Sequence[Var],
-                 swap: Optional[str]=None):
+                 swap: Optional[str]=None, swap_args={}):
         self.stages = stages
         self.global_invars = global_invars
         self.global_outvars = global_outvars
@@ -140,8 +155,9 @@ class LocalPipelineExecutable:
             self.launch_fn = self._no_swap_launch_on_driver
         elif swap == "basic":
             self.launch_fn = self._basic_swap_launch_on_driver
-        elif swap == "optimal":
-            self.launch_fn = self._opt_swap_launch_on_driver
+        elif swap == "preempt":
+            self.max_size = swap_args.get("max_size", 32)
+            self.launch_fn = self._preempt_swap_launch_on_driver
         else:
             raise ValueError(f"swap parameter does not support {swap}")
 
@@ -280,7 +296,7 @@ class LocalPipelineExecutable:
                 swap_log.append(("out", var, swap_out_val.nbytes))
         
         # Examine swap patterns.
-        print(view_swap_log(swap_log))
+        # print(view_swap_log(swap_log))
 
         global_outvals_list = []
         for var in self.global_outvars:
@@ -296,7 +312,7 @@ class LocalPipelineExecutable:
                     sender_runner.del_var(var)
         return global_outvals_list
 
-    def _opt_swap_launch_on_driver(self, *args):
+    def _preempt_swap_launch_on_driver(self, *args):
         """Run function."""
         host = jax.devices(backend="cpu")[0]
         device = jax.devices(backend="gpu")[0]
@@ -307,7 +323,7 @@ class LocalPipelineExecutable:
         var_reference_count = {}
 
         # Data structures used for OPT swapping strategy.
-        pool = SwapPool(max_size=32)
+        pool = SwapPool(self.max_size)
         var_access_map = {} # List of stage indices where var is accessed.
         var_access_index = {} # Indexes most recent access in var_access_map.
         swap_log = []
@@ -333,7 +349,7 @@ class LocalPipelineExecutable:
         for var, val in global_invals.items():
             if isinstance(val, DeviceArray) and val.device_buffer.device() == device:
                 # Use number of stages until first access to compute priority.
-                swap_in, swap_out_var = pool.alloc(var, -var_access_map[var][0])
+                pool.alloc(var, -var_access_map[var][0], -1, -1)
 
         for var in self.global_outvars:
             if not isinstance(var, Literal):
@@ -341,53 +357,79 @@ class LocalPipelineExecutable:
                     f"referred to an unknown var {var}")
                 var_reference_count[var] = var_reference_count.get(var, 0) + 1
 
+        def swap_var(var: Var, stage: int, direction: str, device: Any):
+            if var in global_invals:
+                val = global_invals[var]
+                global_invals[var] = jax.device_put(val, device=device)
+                swap_log.append((f"{stage}:{direction}", var, val.nbytes))
+            else:
+                assert var in var_stage_mapping, (
+                    f"referred to an unknown var {var}"
+                )
+                sender_runner = runners[var_stage_mapping[var]]
+                val = sender_runner.get_val(var)
+                sender_runner.set_val(var, jax.device_put(val, device=device))
+                swap_log.append((f"{stage}:{direction}", var, val.nbytes))
+
+        def update_pool(var: Var):
+            # Use number of stages until next access to compute priority.
+            next_index = var_access_index[var] + 1
+            if next_index < len(var_access_map[var]):
+                swap_in, swap_out_var = pool.alloc(
+                    var, (i + 1) - var_access_map[var][next_index],
+                    stage=i+1, max_out_stage=i-1
+                )
+                var_access_index[var] = next_index
+            else:
+                swap_in, swap_out_var = pool.alloc(
+                    var, -inf, stage=i+1, max_out_stage=i-1
+                )
+            swap_in_var = var if swap_in else None
+            return swap_in_var, swap_out_var
+        
+        def perform_swap(swap_in_var: Optional[Var], swap_out_var: Optional[Var], stage: int):
+            if swap_out_var is not None:
+                swap_var(swap_out_var, stage, "out", host)
+            if swap_in_var is not None:
+                swap_var(swap_in_var, stage, "in", device)
+
+        # Immediately swap in the first stage's invars.
+        for var in self.stages[0].invars:
+            perform_swap(*update_pool(var), -1)
+
+        last_stage_outvars = []
         for i, stage in enumerate(self.stages):
+            # Update pool to reflect the outvars of the last stage.
+            for var in last_stage_outvars:
+                update_pool(var)
+            last_stage_outvars = []
+            
+            # Preemptive swapping for next stage.
+            if i < len(self.stages) - 1:
+                for var in self.stages[i + 1].invars:
+                    if var in stage.outvars:
+                        # var doesn't exist yet, but will at the end of this stage.
+                        last_stage_outvars.append(var)
+                        continue
+                    perform_swap(*update_pool(var), i)
+
             stage_invals = {}
             for var in stage.invars:
-                # Use number of stages until next access to compute priority.
-                next_index = var_access_index[var] + 1
-                if next_index < len(var_access_map[var]):
-                    swap_in, swap_out_var = pool.alloc(var, i - var_access_map[var][next_index])
-                    var_access_index[var] = next_index
-                else:
-                    swap_in, swap_out_var = pool.alloc(var, -inf)
-
-                # Swap out an array if needed.
-                if swap_out_var is not None:
-                    if swap_out_var in global_invals:
-                        swap_out_val = global_invals[swap_out_var]
-                        global_invals[var] = jax.device_put(swap_out_val, device=host)
-                    else:
-                        assert swap_out_var in var_stage_mapping, (
-                            f"referred to an unknown var {swap_out_var}"
-                        )
-                        holder_runner = runners[var_stage_mapping[swap_out_var]]
-                        swap_out_val = holder_runner.get_val(swap_out_var)
-                        holder_runner.set_val(var, jax.device_put(swap_out_val, device=host))
-                    swap_log.append(("out", swap_out_var, swap_out_val.nbytes))
-                    del swap_out_val
-
-                # Get stage input arrays, swapping in if needed.
                 if var in global_invals:
-                    if swap_in:
-                        swap_in_val = global_invals[var]
-                        global_invals[var] = jax.device_put(swap_in_val, device=device)
-                        swap_log.append(("in", var, swap_in_val.nbytes))
                     stage_invals[var] = global_invals[var]
                 else:
                     assert var in var_stage_mapping, (
                         f"referred to an unknown var {var}"
                     )
                     sender_runner = runners[var_stage_mapping[var]]
-                    if swap_in:
-                        swap_in_val = sender_runner.get_val(var)
-                        sender_runner.set_val(var, jax.device_put(swap_in_val, device=device))
-                        swap_log.append(("in", var, swap_in_val.nbytes))
                     stage_invals[var] = sender_runner.get_val(var)
                     var_reference_count[var] -= 1
                     if var_reference_count[var] == 0:
                         sender_runner.del_var(var)
                         pool.free(var)
+
+            # for var in stage_invals:
+            #     assert stage_invals[var].device_buffer.device() == device, "not swapped"
 
             if stage.name not in runners:
                 runners[stage.name] = LocalPipelineRunner(
@@ -395,7 +437,7 @@ class LocalPipelineExecutable:
             runners[stage.name].run_stage(stage, stage_invals)
         
         # Examine swap patterns.
-        print(view_swap_log(swap_log))
+        # print(view_swap_log(swap_log))
 
         global_outvals_list = []
         for var in self.global_outvars:

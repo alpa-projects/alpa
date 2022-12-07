@@ -618,11 +618,11 @@ def clone_jaxpr(closed_jaxpr: ClosedJaxpr,
                 constvars: Sequence[Var] = None,
                 consts: Sequence = None):
     """Clone a jaxpr and replace members if they are provided."""
-    constvars = constvars or closed_jaxpr.jaxpr.constvars
-    invars = invars or closed_jaxpr.jaxpr.invars
-    outvars = outvars or closed_jaxpr.jaxpr.outvars
-    eqns = eqns or closed_jaxpr.jaxpr.eqns
-    consts = consts or closed_jaxpr.consts
+    constvars = closed_jaxpr.jaxpr.constvars if constvars is None else constvars
+    invars = closed_jaxpr.jaxpr.invars if invars is None else invars
+    outvars = closed_jaxpr.jaxpr.outvars if outvars is None else outvars
+    eqns = closed_jaxpr.jaxpr.eqns if eqns is None else eqns
+    consts = closed_jaxpr.consts if consts is None else consts
     jaxpr = Jaxpr(constvars, invars, outvars, eqns)
     return ClosedJaxpr(jaxpr, consts)
 

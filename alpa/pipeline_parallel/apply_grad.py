@@ -217,7 +217,7 @@ def _rewrite_microbatch_bound(microbatch_bound, delayed_eqns, gensym_fn):
         delayed_outvars.update(_filter_droped(eqn.outvars))
     delayed_invars.difference_update(delayed_outvars)
     delayed_invars.difference_update(microbatch_bound_in_to_outs.keys())
-    delayed_outvars.intersection(microbatch_bound_in_to_outs.keys())
+    delayed_outvars.intersection_update(microbatch_bound_in_to_outs.keys())
     for invar in delayed_invars:
         microbatch_bound_in_to_outs[invar]= gensym_fn(invar.aval)
     # rewrite the microbatch_bound
@@ -352,8 +352,12 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn,
         logger.warning(
             'the apply gradient part is empty. Hint: apply() after alpa.grad')
     assert len(split_eqn.invars) == len(split_eqn.outvars)
-    invars_without_dropvar = _filter_droped(split_eqn.invars)
-    outvars_without_dropvar = _filter_droped(split_eqn.outvars)
+    invars_without_dropvar = []
+    outvars_without_dropvar = []
+    for invar, outvar in zip(split_eqn.invars, split_eqn.outvars):
+        if not isinstance(outvar, DropVar):
+            invars_without_dropvar.append(invar)
+            outvars_without_dropvar.append(outvar)
     split_eqn = clone_jaxpr_eqn(split_eqn, invars_without_dropvar,
                                 outvars_without_dropvar)
     return closed_jaxpr, compute_grad, apply_grad, split_eqn

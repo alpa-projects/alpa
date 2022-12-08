@@ -891,14 +891,17 @@ def merge_unmarked_with_call(jaxprs: Sequence[ClosedJaxpr],
 
 def _wrap_by_marker(jaxpr: Jaxpr, name, gensym_fn):
     eqns = []
-    new_invars = jaxpr.invars + jaxpr.constvars
+    new_invars = list(jaxpr.invars)
     new_outvars = list(jaxpr.outvars)
     sym_invars = [gensym_fn(var.aval) for var in new_invars]
     sym_outvars = [gensym_fn(var.aval) for var in new_outvars]
     eqns.append(mark_pipeline_jaxpreqn(new_invars, sym_invars, name, "start"))
     params = dict(name=name,
-                  call_jaxpr=Jaxpr([], new_invars, new_outvars, jaxpr.eqns))
-    eqns.append(new_jaxpr_eqn(sym_invars, sym_outvars, named_call_p, params))
+                  call_jaxpr=Jaxpr([], new_invars + jaxpr.constvars,
+                                   new_outvars, jaxpr.eqns))
+    eqns.append(
+        new_jaxpr_eqn(sym_invars + jaxpr.constvars, sym_outvars, named_call_p,
+                      params))
     eqns.append(mark_pipeline_jaxpreqn(sym_outvars, new_outvars, name, "end"))
     return Jaxpr(list(jaxpr.constvars), list(jaxpr.invars), new_outvars, eqns)
 

@@ -10,5 +10,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     database = ProfilingDatabase(args.output, args.new)
-    database.update_from_csv(args.input)
+    database.update_from_auto_csv(args.input)
     database.materialize()

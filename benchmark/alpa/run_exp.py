@@ -56,7 +56,7 @@ model_search_suites = {
         "profile_driver_time": True
     }),
 }
-cluster_settings = [(8, 8), (4, 8), (3, 8), (2, 8), (1, 8), (1, 4), (1, 2),
+cluster_settings = [(1, 8), (1, 4), (1, 2),
                     (1, 1)]
 
 if __name__ == "__main__":

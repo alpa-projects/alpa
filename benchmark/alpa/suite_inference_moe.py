@@ -75,16 +75,22 @@ def generate_search_configs(model_config, num_auto_layers, pp_list, op_list):
                                 "model_parallel_only",
                             "layer_profile_mode":
                                 "individual",
-                            # "use_hlo_cost_model": True,
-                            # "profiling_database_filename":
-                            #   "prof_database.pkl",
+                            "use_hlo_cost_model": True,
+                            "profiling_database_filename":
+                              "prof_database.pkl",
                         })))
 
 
-generate_search_configs(moe_specs["1.3B"], 34, [8], [1])
-# generate_search_configs(moe_specs["1.3B"], 50, [1, 2, 4, 8, 16, 32],
-#                         [1, 2, 4, 8])
-# generate_search_configs(moe_specs["2.4B"], 66, [1, 2, 4, 8, 16, 32],
-#                         [1, 2, 4, 8])
-# generate_search_configs(moe_specs["7.1B"], 66, [1, 2, 4, 8, 16, 32],
-#                         [1, 2, 4, 8])
+# generate_search_configs(moe_specs["1.3B"], 34, [8], [1])
+generate_search_configs(moe_specs["1.3B"], 34, [1, 2, 4, 8, 16, 32],
+                        [1, 2, 4, 8])
+generate_search_configs(moe_specs["2.4B"], 34, [1, 2, 4, 8, 16, 32],
+                        [1, 2, 4, 8])
+generate_search_configs(moe_specs["7.1B"], 34, [1, 2, 4, 8, 16, 32],
+                        [1, 2, 4, 8])
+# generate_search_configs(moe_specs["1.3B"], 16, [1, 2, 4, 8],
+#                         [1])
+# generate_search_configs(moe_specs["2.4B"], 16, [1, 2, 4, 8],
+#                         [1])
+# generate_search_configs(moe_specs["7.1B"], 16, [1, 2, 4, 8],
+#                         [1])

@@ -434,7 +434,7 @@ def cluster_jaxpr_by_cost(jaxpr: Jaxpr, layer_num: int, eps: float, costs,
     assert r == 0, "No solution for layer construction."
     solution = list(reversed(reversed_sliced_eqns))
 
-    log_solution(solution, jaxpr)
+    # log_solution(solution, jaxpr)
 
     solution_info = {
         "total_cost": value,
@@ -507,7 +507,7 @@ def cluster_jaxpr_by_cost_optimized(jaxpr: Jaxpr, layer_num: int, costs,
     assert r == 0, "No solution for layer construction."
     solution = list(reversed(reversed_sliced_eqns))
 
-    log_solution(solution, jaxpr)
+    # log_solution(solution, jaxpr)
 
     solution_info = {
         "total_cost": value,

@@ -219,12 +219,11 @@ def _rewrite_microbatch_bound(microbatch_bound, delayed_eqns, gensym_fn):
     delayed_invars.difference_update(microbatch_bound_in_to_outs.keys())
     delayed_outvars.intersection_update(microbatch_bound_in_to_outs.keys())
     for invar in delayed_invars:
-        microbatch_bound_in_to_outs[invar]= gensym_fn(invar.aval)
+        microbatch_bound_in_to_outs[invar] = gensym_fn(invar.aval)
     # rewrite the microbatch_bound
     new_microbatch_bound_invars = []
     new_microbatch_bound_outvars = []
-    for idx, var in enumerate(microbatch_bound.invars +
-                              list(delayed_invars)):
+    for idx, var in enumerate(microbatch_bound.invars + list(delayed_invars)):
         # remove vars now defined after microbatch_bound.
         if isinstance(var, Var) and var in delayed_outvars:
             continue

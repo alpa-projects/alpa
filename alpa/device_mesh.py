@@ -962,7 +962,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
     def __init__(self,
                  host_ids: Sequence[int],
                  host_info: Sequence[dict],
-                 head_ip: str,
                  num_devices_per_host: int,
                  parent: Optional["VirtualPhysicalMesh"] = None,
                  devices: Optional[Sequence[Sequence[int]]] = None,
@@ -971,7 +970,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # host_ids are the indices of hosts in the global DeviceCluster
         self.host_ids = host_ids
         self.host_info = host_info
-        self.head_ip = head_ip
         self.num_hosts = len(host_ids)
         self.num_devices_per_host = num_devices_per_host
         self.parent = parent
@@ -1039,7 +1037,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             port = np.random.randint(20000, 25000)
         used_port_set.add(port)
 
-        server_address = f"{self.head_ip}:{port}"
+        server_address = f"{ray.util.get_node_ip_address()}:{port}"
         logger.debug(f"Trying to start XLA gRPC server on port: {port}...")
         service_server = xla_client._xla.get_distributed_runtime_service(
             server_address, self.num_hosts, use_coordination_service=False)
@@ -1131,7 +1129,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         return VirtualPhysicalMesh(
             host_ids=self.host_ids,
             host_info=self.host_info,
-            head_ip=self.head_ip,
             num_devices_per_host=self.num_devices_per_host,
             parent=self,
             devices=self.devices)
@@ -1799,14 +1796,12 @@ class VirtualPhysicalMesh:
     def __init__(self,
                  host_ids: Sequence[int],
                  host_info: Sequence[dict],
-                 head_ip,
                  num_devices_per_host,
                  parent: "VirtualPhysicalMesh" = None,
                  devices: Sequence[Sequence[int]] = None):
         # host_ids are the indices of hosts in the global DeviceCluster
         self.host_ids = host_ids
         self.host_info = host_info
-        self.head_ip = head_ip
         self.num_devices_per_host = num_devices_per_host
         self.parent = parent
 
@@ -1864,7 +1859,6 @@ class VirtualPhysicalMesh:
             return VirtualPhysicalMesh(
                 host_ids=host_ids,
                 host_info=host_info,
-                head_ip=self.head_ip,
                 num_devices_per_host=self.num_devices_per_host,
                 parent=self)
         else:
@@ -1877,7 +1871,6 @@ class VirtualPhysicalMesh:
 
             return VirtualPhysicalMesh(host_ids=self.host_ids,
                                        host_info=self.host_info,
-                                       head_ip=self.head_ip,
                                        num_devices_per_host=len(indices[0]),
                                        parent=self,
                                        devices=indices)
@@ -1893,7 +1886,6 @@ class VirtualPhysicalMesh:
 
         return VirtualPhysicalMesh(host_ids=host_ids,
                                    host_info=host_info,
-                                   head_ip=self.head_ip,
                                    num_devices_per_host=len(device_indices[0]),
                                    parent=self,
                                    devices=device_indices)
@@ -1943,7 +1935,6 @@ class VirtualPhysicalMesh:
         self.launched_physical_mesh = DistributedPhysicalDeviceMesh(
             host_ids=self.host_ids,
             host_info=self.host_info,
-            head_ip=self.head_ip,
             num_devices_per_host=self.num_devices_per_host,
             parent=self,
             devices=self.devices,
@@ -2146,43 +2137,44 @@ class DeviceCluster:
             raise RuntimeError(
                 "Cannot access ray global node. Did you call ray.init?") \
                 from ae
-        self.head_ip = self.head_info["node_ip_address"]
 
         # Gather host ids
-        self.host_info = []
-        self.host_ips = []
+        all_host_info = []
+        all_host_ips = []
 
         for node in ray.nodes():
             for key in node["Resources"]:
                 if is_ray_node_resource(key):
-                    self.host_info.append(node)
-                    self.host_ips.append(key.split("node:")[-1])
+                    all_host_info.append(node)
+                    all_host_ips.append(key.split("node:")[-1])
 
         # Gather device info
-        self.host_num_devices = []
-        for host_info in self.host_info:
+        all_host_num_devices = []
+        for host_info in all_host_info:
             number = host_info["Resources"][global_config.ray_accelerator_name]
             assert number.is_integer()
-            self.host_num_devices.append(int(number))
+            all_host_num_devices.append(int(number))
 
         # adjust the resource allocations
         # if `num_nodes` is set, use it.
         # otherwise, use the number of nodes in cluster
         if num_nodes:
-            num_hosts = min(num_nodes, self.num_hosts)
+            num_hosts = min(num_nodes, len(all_host_info))
         else:
-            num_hosts = self.num_hosts
+            num_hosts = len(all_host_info)
 
         # if `devices_per_node` is set, use it.
         if num_devices_per_node:
             # verify that the number of devices per node is valid
             num_valid = sum(num_device >= num_devices_per_node
-                            for num_device in self.host_num_devices)
+                            for num_device in all_host_num_devices)
             if num_valid < num_nodes:
                 raise RuntimeError("The number of devices per node is invalid. "
                                    f"There are only {num_valid} valid nodes.")
             # NOTE: for simplicity, we assume `num_devices_per_node` are equal.
             self.host_num_devices = [num_devices_per_node] * num_hosts
+        else:
+            self.host_num_devices = all_host_num_devices
 
         # Create placement group
         self.namespace = namespace
@@ -2199,31 +2191,31 @@ class DeviceCluster:
             self.placement_group = pg
         else:
             self.placement_group = create_placement_group(
-                self.num_hosts, self.host_num_devices, pg_name)
-            # update the Device Cluster info
-            if num_devices_per_node or num_nodes:
-                self._update_cluster_resource_from_placement_group()
+                num_hosts, self.host_num_devices, pg_name)
 
-    def _update_cluster_resource_from_placement_group(self):
-        """Update the cluster resource from the placement group."""
-        # map: host ip to host info
-        self.dict_host_ip2info = dict(zip(self.host_ips, self.host_info))
+        # Update the Device Cluster info from placement group
+        if num_devices_per_node or num_nodes:
+            # map: host ip to host info
+            host_ip2info = dict(zip(all_host_ips, all_host_info))
 
-        # get bundle's ip address
-        ips = get_bundle2ip(self.placement_group)
-        bundle_specs = self.placement_group.bundle_specs
+            # get bundle's ip address
+            ips = get_bundle2ip(self.placement_group)
+            bundle_specs = self.placement_group.bundle_specs
 
-        # filter out the bundle index with device (GPUs)
-        device_bundle_idx_list = [
-            i for i, bundle_spec in enumerate(bundle_specs)
-            if bundle_spec.get("GPU", 0) > 0
-        ]
-        self.host_ips = [
-            ips[bundle_idx] for bundle_idx in device_bundle_idx_list
-        ]
+            # filter out the bundle index with device (GPUs)
+            device_bundle_idx_list = [
+                i for i, bundle_spec in enumerate(bundle_specs)
+                if bundle_spec.get("GPU", 0) > 0
+            ]
 
-        # filter nodes according to the placment group
-        self.host_info = [self.dict_host_ip2info[ip] for ip in ips]
+            # filter nodes according to the placement group
+            self.host_info = [host_ip2info[ip] for ip in ips]
+            self.host_ips = [
+                ips[bundle_idx] for bundle_idx in device_bundle_idx_list
+            ]
+        else:
+            self.host_info = all_host_info
+            self.host_ips = all_host_ips
 
     def delete_placement_group(self):
         """remove the placement group for the current device cluster."""
@@ -2269,7 +2261,6 @@ class DeviceCluster:
         return DistributedPhysicalDeviceMesh(
             host_ids=host_ids,
             host_info=host_info,
-            head_ip=self.head_ip,
             num_devices_per_host=num_devices_per_host,
             parent=self,
             namespace=self.namespace)
@@ -2293,7 +2284,6 @@ class DeviceCluster:
 
         return VirtualPhysicalMesh(host_ids=host_ids,
                                    host_info=host_info,
-                                   head_ip=self.head_ip,
                                    num_devices_per_host=num_devices_per_host,
                                    parent=self)
 

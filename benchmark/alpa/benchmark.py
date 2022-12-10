@@ -17,6 +17,7 @@ import suite_manual_moe
 import suite_unet
 import suite_wresnet
 import suite_inference_gpt
+import suite_inference_moe
 
 benchmark_suites = {
     "gpt.tmp": suite_manual_gpt.tmp_suite,
@@ -33,6 +34,7 @@ benchmark_suites = {
     "moe.perf_test_fast_2d": suite_manual_moe.perf_test_fast_2d_suite,
     "moe.perf_test_auto": suite_auto_moe.perf_test_suite,
     "moe.grid_search_auto": suite_auto_moe.grid_search_suite,
+    "moe_inference.profile": suite_inference_moe.profile_suite,
     "unet.perf_test_auto": suite_unet.perf_test_auto_suite,
     "unet.grid_search_auto": suite_unet.grid_search_auto_suite,
     "wresnet.perf_test_2d": suite_wresnet.perf_test_2d_suite,

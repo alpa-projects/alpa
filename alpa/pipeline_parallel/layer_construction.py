@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from functools import partial, wraps
 import logging
-from typing import Callable, Union, Sequence, Optional
+from typing import Callable, Iterable, Optional, Sequence, Union
 
 import numpy as np
 from jax import lax
@@ -10,7 +10,7 @@ from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src.api import _check_callable, make_jaxpr
 from jax._src.ad_checkpoint import remat_p
 from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun,
-                      gensym, raise_to_shaped, get_aval)
+                      gensym)
 
 from alpa.global_env import global_config
 from alpa.parallel_plan import PlacementSpec
@@ -192,7 +192,13 @@ def add_pipeline_marks_for_sliced_eqns(closed_jaxpr: ClosedJaxpr, sliced_eqns):
     for idx, var in enumerate(closed_jaxpr.jaxpr.outvars):
         if isinstance(var, Literal):
             # add a dummy equation to transform a Literal into a normal Var
-            zero_literal = Literal(0, raise_to_shaped(get_aval(0)))
+            if isinstance(var.val, np.ndarray):
+                val = np.zeros_like(var.val)
+            elif isinstance(var.val, Iterable):
+                raise NotImplementedError()
+            else:
+                val = type(var.val)(0)
+            zero_literal = Literal(val, var.aval)
             new_var = gensym_func(var.aval)
             new_eqn = new_jaxpr_eqn([var, zero_literal], [new_var], lax.add_p,
                                     {})

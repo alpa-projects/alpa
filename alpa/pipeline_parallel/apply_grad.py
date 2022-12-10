@@ -34,16 +34,14 @@ def _filter_droped(vars):
 
 
 def _pipeline_marker_analysis(compute_eqns):
-    """Get vars as inputs of layers and outputs"""
+    """Get vars as inputs and outputs of layers"""
     layer_invars = set()
     pipeline_outvars = {}
     marker_cnt = 0
     for eqn in compute_eqns:
         if eqn.primitive is pipeline_p:
             if eqn.params['mark_type'] == 'end':
-                for v in eqn.outvars:
-                    if isinstance(v, DropVar):
-                        continue
+                for v in _filter_droped(eqn.outvars):
                     pipeline_outvars[v] = marker_cnt
                 marker_cnt += 1
             elif eqn.params['mark_type'] == 'start':
@@ -163,9 +161,9 @@ def _get_delayed_eqns(compute_eqns, layer_invars, pipeline_outvars, gensym_fn):
             # boundary, which is harder to analyze.
             if len(outvars) == 0 and out_marker:
                 continue
-            # only if an eqn is not used and OUT MARKER does it moved after
-            # microbatch boundary. Those inside a microbatch boundary is handled
-            # by later DCE.
+            # only if an eqn is not used and is out marker will be it moved
+            # after microbatch boundary. Those inside a microbatch boundary is
+            # handled by later DCE.
             elif not used_outvars and out_marker:
                 cross_layer_grad_eqns.append(eqn)
                 continue
@@ -212,25 +210,22 @@ def _rewrite_microbatch_bound(microbatch_bound, delayed_eqns, gensym_fn):
     for invar, outvar in zip(microbatch_bound.invars, microbatch_bound.outvars):
         if isinstance(invar, Var) and not isinstance(outvar, DropVar):
             microbatch_bound_in_to_outs[invar] = outvar
-    new_cross_microbatch_bound_invars = OrderedSet()
-    new_post_microbatch_bound_outvars = OrderedSet()
+    delayed_invars = OrderedSet()
+    delayed_outvars = OrderedSet()
     for eqn in delayed_eqns:
-        for invar in eqn.invars:
-            if (isinstance(invar, Var) and
-                    invar not in microbatch_bound_in_to_outs):
-                new_cross_microbatch_bound_invars.add(invar)
-                microbatch_bound_in_to_outs[invar] = gensym_fn(invar.aval)
-        new_post_microbatch_bound_outvars.update([
-            var for var in eqn.outvars if not isinstance(var, DropVar) and
-            var in microbatch_bound_in_to_outs
-        ])
+        delayed_invars.update(_filter_literal(eqn.invars))
+        delayed_outvars.update(_filter_droped(eqn.outvars))
+    delayed_invars.difference_update(delayed_outvars)
+    delayed_invars.difference_update(microbatch_bound_in_to_outs.keys())
+    delayed_outvars.intersection_update(microbatch_bound_in_to_outs.keys())
+    for invar in delayed_invars:
+        microbatch_bound_in_to_outs[invar] = gensym_fn(invar.aval)
     # rewrite the microbatch_bound
     new_microbatch_bound_invars = []
     new_microbatch_bound_outvars = []
-    for idx, var in enumerate(microbatch_bound.invars +
-                              list(new_cross_microbatch_bound_invars)):
+    for idx, var in enumerate(microbatch_bound.invars + list(delayed_invars)):
         # remove vars now defined after microbatch_bound.
-        if isinstance(var, Var) and var in new_post_microbatch_bound_outvars:
+        if isinstance(var, Var) and var in delayed_outvars:
             continue
         new_microbatch_bound_invars.append(var)
         # add vars now used after microbatch_bound.
@@ -320,6 +315,7 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn,
     """Split the train_step jaxpr into two parts: compute_grad and
     apply_grad. These two parts are separated by a gradient marker generated
     by `alpa.grad`."""
+    # Locate the marker
     split_eqn = None
     for idx, eqn in enumerate(closed_jaxpr.eqns):
         if eqn.primitive is pipeline_p and eqn.params['mark_type'] == 'grad':
@@ -343,8 +339,11 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn,
         closed_jaxpr.eqns[:split_idx], split_eqn,
         closed_jaxpr.eqns[split_idx + 1:]
     ]
+    # Some equations are not marked. This pass moves them either into apply grad
+    # or a layer.
     closed_jaxpr, sliced_eqns = _rewrite_cross_layer_grad(
         *sliced_eqns, gensym_fn, closed_jaxpr)
+    # Reconstruct jaxpr
     sliced_jaxprs = slices_to_jaxpr(closed_jaxpr, sliced_eqns)
     compute_grad, _, apply_grad = sliced_jaxprs  # pylint: disable=unbalanced-tuple-unpacking
     split_eqn = sliced_eqns[1][0]

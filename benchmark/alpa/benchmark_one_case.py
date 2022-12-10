@@ -18,6 +18,7 @@ from benchmark_one_case_wresnet import (benchmark_wresnet_3d_internal,
                                         benchmark_wresnet_2d_internal)
 from benchmark_one_case_gpt_bert_inference import (
     benchmark_gpt_inference_internal)
+from benchmark_one_case_moe_inference import (benchmark_moe_inference_internal)
 
 
 def benchmark_one_case_internal(model,
@@ -119,6 +120,14 @@ def benchmark_one_case_internal(model,
         elif model in ["gpt_inference", "gpt_no_embedding_inference"]:
             result = benchmark_gpt_inference_internal(
                 model,
+                case,
+                niter,
+                num_hosts,
+                num_devices_per_host,
+                profile_driver_time=profile_driver_time,
+                profile_stage_execution_time=profile_stage_execution_time)
+        elif model in ["moe_inference"]:
+            result = benchmark_moe_inference_internal(
                 case,
                 niter,
                 num_hosts,

@@ -631,7 +631,7 @@ def pipeline_dce(jax_pipeline_computations: Sequence[JaxPipelineComputation],
     return new_computations
 
 
-def rearrange_vars(vars,
+def rearrange_vars(invars,
                    selected: Sequence[Var],
                    pipe_marker=None,
                    is_input=True):
@@ -642,14 +642,14 @@ def rearrange_vars(vars,
     well.
 
     Args:
-        vars (Sequence[Var]): all vars to be rearranged.
+        invars (Sequence[Var]): all vars to be rearranged.
         selected (Sequence[Var]): vars selected to be prior.
         pipe_marker (JaxprEqn): pipe marker corresponding to vars
         is_input (bool): the var is input of pipe_marker, if False, it is output
     """
     new_vars = list(selected)
     selected = OrderedSet(selected)
-    for var in vars:
+    for var in invars:
         if var not in selected:
             new_vars.append(var)
 
@@ -657,20 +657,23 @@ def rearrange_vars(vars,
         return new_vars
 
     if is_input:
-        new_invars = new_vars
+        new_invars = list(new_vars)
+        var_set = set(new_vars)
+        # the pipeline start marker also include constvars
+        for v in pipe_marker.invars:
+            if v not in var_set:
+                new_invars.append(v)
         invar_idx = {v: idx for idx, v in enumerate(pipe_marker.invars)}
         new_outvars = [
             pipe_marker.outvars[invar_idx[var]] for var in new_invars
         ]
     else:
-        new_outvars = new_vars
+        new_outvars = list(new_vars)
         outvar_idx = {v: idx for idx, v in enumerate(pipe_marker.outvars)}
         new_invars = [
             pipe_marker.invars[outvar_idx[var]] for var in new_outvars
         ]
-    new_marker = mark_pipeline_jaxpreqn(new_invars, new_outvars,
-                                        pipe_marker.params["name"],
-                                        pipe_marker.params["mark_type"])
+    new_marker = clone_jaxpr_eqn(pipe_marker, new_invars, new_outvars)
     return new_vars, new_marker
 
 
@@ -828,10 +831,10 @@ def rewrite_hook(eqns, gensym_fn):
 
 def _wrap_with_call(closed_jaxpr: ClosedJaxpr, invars, outvars, name):
     new_invars = closed_jaxpr.jaxpr.invars + closed_jaxpr.jaxpr.constvars
-    jaxpr = clone_jaxpr(closed_jaxpr, new_invars, constvars=[]).jaxpr
+    jaxpr = clone_jaxpr(closed_jaxpr, new_invars, constvars=[], consts=[]).jaxpr
     params = dict(name=name, call_jaxpr=jaxpr)
-    return new_jaxpr_eqn(invars + closed_jaxpr.consts, outvars, named_call_p,
-                         params)
+    return new_jaxpr_eqn(invars + closed_jaxpr.jaxpr.constvars, outvars,
+                         named_call_p, params)
 
 
 def _rearrange_in_out_for_donation(invars, outvars, donation_map):
@@ -888,14 +891,17 @@ def merge_unmarked_with_call(jaxprs: Sequence[ClosedJaxpr],
 
 def _wrap_by_marker(jaxpr: Jaxpr, name, gensym_fn):
     eqns = []
-    new_invars = jaxpr.invars + jaxpr.constvars
+    new_invars = list(jaxpr.invars)
     new_outvars = list(jaxpr.outvars)
     sym_invars = [gensym_fn(var.aval) for var in new_invars]
     sym_outvars = [gensym_fn(var.aval) for var in new_outvars]
     eqns.append(mark_pipeline_jaxpreqn(new_invars, sym_invars, name, "start"))
     params = dict(name=name,
-                  call_jaxpr=Jaxpr([], new_invars, new_outvars, jaxpr.eqns))
-    eqns.append(new_jaxpr_eqn(sym_invars, sym_outvars, named_call_p, params))
+                  call_jaxpr=Jaxpr([], new_invars + jaxpr.constvars,
+                                   new_outvars, jaxpr.eqns))
+    eqns.append(
+        new_jaxpr_eqn(sym_invars + jaxpr.constvars, sym_outvars, named_call_p,
+                      params))
     eqns.append(mark_pipeline_jaxpreqn(sym_outvars, new_outvars, name, "end"))
     return Jaxpr(list(jaxpr.constvars), list(jaxpr.invars), new_outvars, eqns)
 
@@ -952,6 +958,7 @@ def merge_marked_jaxprs_with_named_call(jaxprs: Sequence[ClosedJaxpr],
     # Merge everything together
     for i, jaxpr in enumerate(jaxprs):
         const_dir.update(zip(jaxpr.jaxpr.constvars, jaxpr.consts))
+        env.update(jaxpr.jaxpr.constvars)
         if has_output(jaxpr.jaxpr):
             call_eqn = unwrap_with_call(jaxpr, name_prefix + str(i))
             new_eqns.append(call_eqn)

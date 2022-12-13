@@ -554,7 +554,7 @@ def get_config(name, **kwargs):
             hidden_size=2560, n_head=32, num_hidden_layers=30,
             pretraining_tp=4, use_cache=True
         )
-    elif name == "bloom-7b1":
+    elif name in ["bloom-7b1", "bloomz-7b1"]:
         config = BloomConfig(
             hidden_size=4096, n_head=32, num_hidden_layers=30,
             pretraining_tp=4, use_cache=True

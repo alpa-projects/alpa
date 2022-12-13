@@ -534,7 +534,7 @@ class FlaxBloomForCausalLMModule(nn.Module):
 
 
 def get_config(name, **kwargs):
-    if name == "bloom-560m":
+    if name in ["bloom-560m", "bloomz-560m"]:
         config = BloomConfig(
             hidden_size=1024, n_head=16, num_hidden_layers=24,
             pretraining_tp=1, use_cache=True

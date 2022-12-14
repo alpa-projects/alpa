@@ -539,17 +539,17 @@ def get_config(name, **kwargs):
             hidden_size=1024, n_head=16, num_hidden_layers=24,
             pretraining_tp=1, use_cache=True
         )
-    elif name == "bloom-1b1":
+    elif name in ["bloom-1b1", "bloomz-1b1"]:
         config = BloomConfig(
             hidden_size=1536, n_head=16, num_hidden_layers=24,
             pretraining_tp=1, use_cache=True
         )
-    elif name == "bloom-1b7":
+    elif name in ["bloom-1b7", "bloomz-1b7"]:
         config = BloomConfig(
             hidden_size=2048, n_head=16, num_hidden_layers=24,
             pretraining_tp=2, use_cache=True
         )
-    elif name == "bloom-3b":
+    elif name in ["bloom-3b", "bloomz-3b"]:
         config = BloomConfig(
             hidden_size=2560, n_head=32, num_hidden_layers=30,
             pretraining_tp=4, use_cache=True

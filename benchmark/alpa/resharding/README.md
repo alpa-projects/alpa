@@ -43,10 +43,10 @@ The result will be saved in `tmp/1_to_m_result.json`. In this set of experiment,
 
 If you only want to run one test case,
 ```
-python3 benchmark.py --suite 1-to-m --case case1
+python3 benchmark_cross_mesh_resharding.py --suite 1-to-m --n-nodes 1 --gpu-per-node 4 --resharding-mode send_recv --resharding-loadbalance-mode normal
 ```
-Here, I take case1 as example and you could choose other cases by refering to `suite.py`. 
-You could also use `--resharding-mode`, `--resharding-loadbalance-mode`, `--use-local-allgather` flags 
+Here, I take dst mesh to be (1, 4) as example and you could also choose other cases.
+You could use `--resharding-mode`, `--resharding-loadbalance-mode`, `--use-local-allgather` flags 
 to specify the configurations for cross mesh resharding. 
 
 ### Multiple devices to multiple devices microbenchmark
@@ -54,12 +54,14 @@ Similar to the previous subsection.
 ```
 python3 benchmark.py --suite n-to-m
 ```
-The result will be saved in `tmp/n_to_m_result.json`. In this set of experiment, we move to more complicated cases where both the sender mesh and receiver mesh have multiple nodes. For more details, please refer to `perf_n_to_m_suite` in `suite.py`. 
+The result will be saved in `tmp/n_to_m_result.json`. In this set of experiment, we move to more complicated cases where both the sender mesh and receiver mesh have multiple nodes. For more details, please refer to `perf_n_to_m_suite` in `suite.py`.
 
 If you only want to run one test case,
 ```
-python3 benchmark.py --suite 1-to-m --n-nodes 1 --gpu-per-node 4
+python3 benchmark_cross_mesh_resharding.py --suite n-to-m --case case1 --resharding-mode send_recv --resharding-loadbalance-mode normal
 ```
+Here, I take case1 as example and you could choose other cases by refering to `suite.py`. Same as above, you could 
+specify the configurations for cross mesh resharding.
 
 ## Result
 

@@ -260,7 +260,7 @@ if __name__ == "__main__":
     parser.add_argument("--suite",
                         type=str,
                         required=True,
-                        choices=["1-to-m", "load-balance"])
+                        choices=["1-to-m", "n-to-m"])
     parser.add_argument("--case", type=str)
     parser.add_argument("--n-nodes", type=int, default=1)
     parser.add_argument("--gpu-per-node", type=int, default=1)

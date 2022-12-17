@@ -1,10 +1,6 @@
 """Test cross-mesh resharding."""
-import os
 import argparse
-import multiprocessing as mp
-import unittest
 
-import jax
 from jax import xla
 from jax.core import Var
 from jax._src.abstract_arrays import ShapedArray
@@ -26,7 +22,6 @@ from alpa.pipeline_parallel.pipeshard_executable import (
     AllocateZeroWorkerExecutableConfig, PipelineInstruction,
     PipeshardMeshWorkerExecuable)
 from alpa.pipeline_parallel.resharding_tensor import VirtualDistributedArray
-from alpa.testing import assert_allclose
 from alpa.util import get_shard_shape
 from alpa.timer import timers
 

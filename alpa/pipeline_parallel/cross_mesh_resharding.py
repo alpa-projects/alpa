@@ -1,14 +1,14 @@
 """Cross mesh resharding for pipeline parallelism."""
 from abc import ABC, abstractmethod
+from collections import namedtuple
 import logging
 import math
+import random
 import time
 from typing import List, Any
-from collections import namedtuple
-import random
 
-import numpy as np
 from jax.interpreters import pxla
+import numpy as np
 import ray
 
 import alpa.collective as col

@@ -1,9 +1,9 @@
 """The entry point of intra-op + inter-op parallelism benchmark."""
-import os
 import argparse
-import time
-import multiprocessing as mp
 import json
+import multiprocessing as mp
+import os
+import time
 
 from benchmark_cross_mesh_resharding import benchmark_one_case_internal
 import suite

@@ -14,7 +14,6 @@ from jax import pxla
 @dataclasses.dataclass
 class ManualShardingOption:
     """Options to manually set shardings in pjit convention."""
-    use_manual_sharding: bool = False
     mesh_axis_names: Tuple[pxla.MeshAxisName, ...] = None
     in_axis_resources: Any = None
     out_axis_resources: Any = None
@@ -67,36 +66,38 @@ def flatten_axes(treedef, axis_tree):
 
 def get_manual_sharding_spec(
         sharding_option: ManualShardingOption, mesh_shape, in_tree, out_tree,
-        in_avals, out_avals) -> Tuple[Tuple[xc.HloSharding], xc.HloSharding]:
+        in_avals, out_avals) -> Tuple[Tuple[xc.OpSharding], xc.OpSharding]:
     """Create input and output sharding spec from user's in_axis_resources."""
     named_mesh_shape = OrderedDict(
         (name, size)
         for name, size in safe_zip(sharding_option.mesh_axis_names, mesh_shape))
 
-    in_axis_resources, _, _, any_auto = _prepare_axis_resources(
-        sharding_option.in_axis_resources, "in_axis_resources")
-    out_axis_resources, _, _, _ = _prepare_axis_resources(
-        sharding_option.out_axis_resources, "out_axis_resources")
-    if any_auto:
-        raise NotImplementedError(
-            "auto mode in manual partition is unsupported.")
+    # process input
+    if sharding_option.in_axis_resources is not None:
+        in_axis_resources, _, _, any_auto = _prepare_axis_resources(
+            sharding_option.in_axis_resources, "in_axis_resources")
+        if any_auto:
+            raise NotImplementedError(
+                "auto mode in manual partition is unsupported.")
+        in_axis_flat = tuple(flatten_axes(in_tree, in_axis_resources))
+        in_op_shardings = tuple(
+            _parsed_pspec_to_hlo_sharding(named_mesh_shape, sharding_option.
+                                        mesh_axis_names, axis, len(aval.shape))
+            for axis, aval in safe_zip(in_axis_flat, in_avals))
+    else:
+        in_op_shardings = None
 
-    in_axis_flat = tuple(flatten_axes(in_tree, in_axis_resources))
-    in_op_shardings = tuple(
-        _parsed_pspec_to_hlo_sharding(named_mesh_shape, sharding_option.
-                                      mesh_axis_names, axis, len(aval.shape))
-        for axis, aval in safe_zip(in_axis_flat, in_avals))
-    out_axis_flat = tuple(flatten_axes(out_tree, out_axis_resources))
-    out_op_shardings = tuple(
-        _parsed_pspec_to_hlo_sharding(named_mesh_shape, sharding_option.
-                                      mesh_axis_names, axis, len(aval.shape))
-        for axis, aval in safe_zip(out_axis_flat, out_avals))
-    # Tuple[OpSharding] -> OpSharding w/ type=TUPLE
-    tuple_output_sharding = xla.tuple_sharding_proto(out_op_shardings)
-    # OpSharding->HloSharding
-    in_hlo_shardings = tuple([
-        xc.HloSharding.from_proto(op_sharding)
-        for op_sharding in in_op_shardings
-    ])
-    out_hlo_sharding = xc.HloSharding.from_proto(tuple_output_sharding)
-    return in_hlo_shardings, out_hlo_sharding
+    # process output
+    if sharding_option.out_axis_resources is not None:
+        out_axis_resources, _, _, _ = _prepare_axis_resources(
+            sharding_option.out_axis_resources, "out_axis_resources")
+        out_axis_flat = tuple(flatten_axes(out_tree, out_axis_resources))
+        out_op_shardings = tuple(
+            _parsed_pspec_to_hlo_sharding(named_mesh_shape, sharding_option.
+                                        mesh_axis_names, axis, len(aval.shape))
+            for axis, aval in safe_zip(out_axis_flat, out_avals))
+        # Tuple[OpSharding] -> OpSharding w/ type=TUPLE
+        tuple_output_sharding = xla.tuple_sharding_proto(out_op_shardings)
+    else:
+        tuple_output_sharding = None
+    return in_op_shardings, tuple_output_sharding

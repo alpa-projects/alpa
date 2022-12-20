@@ -20,6 +20,8 @@ from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                run_spmd_partitioner_pass,
                                                AutoShardingOption)
+from alpa.shard_parallel.manual_sharding import (ManualShardingOption,
+                                                 get_manual_sharding_spec)
 from alpa.util import (jaxpr_to_hlo, trace_jaxpr_with_micro_batch,
                        setup_computation_alias, OrderedSet, new_jaxpr_eqn)
 
@@ -58,6 +60,7 @@ def compile_shard_executable(
     device_mesh: Union[PhysicalDeviceMesh, LogicalDeviceMesh],
     num_micro_batches: Optional[int],
     as_option: AutoShardingOption,
+    ms_option: ManualShardingOption,
     *avals: Sequence[AbstractValue],
 ):
     """Compile an executable with auto-sharding pass."""
@@ -74,7 +77,7 @@ def compile_shard_executable(
         return shard_parallel_internal(fun, in_tree, out_tree_thunk,
                                        static_argnums, donated_invars,
                                        physical_mesh, logical_mesh_choices,
-                                       as_option, *avals)
+                                       as_option, ms_option, *avals)
     else:
         if global_config.backend == "tpu":
             raise NotImplementedError(
@@ -82,7 +85,7 @@ def compile_shard_executable(
         return shard_parallel_internal_gradient_accumulation(
             fun, in_tree, out_tree_thunk, static_argnums, donated_invars,
             batch_invars, physical_mesh, logical_mesh_choices,
-            num_micro_batches, as_option, *avals)
+            num_micro_batches, as_option, ms_option, *avals)
 
 
 def shard_parallel_internal(
@@ -90,7 +93,8 @@ def shard_parallel_internal(
         static_argnums: Sequence[int], donated_invars: Sequence[bool],
         physical_mesh: PhysicalDeviceMesh,
         logical_mesh_choices: Sequence[LogicalDeviceMesh],
-        as_option: AutoShardingOption, *avals: Sequence[AbstractValue]):
+        as_option: AutoShardingOption, ms_option: ManualShardingOption,
+        *avals: Sequence[AbstractValue]):
     """
     Compile an executable with auto-sharding pass.
 
@@ -115,6 +119,17 @@ def shard_parallel_internal(
     # Convert jaxpr to XLA HLO
     name = f"{fun.__name__}_shard_parallel"
     hlo = jaxpr_to_hlo(name, closed_jaxpr, donated_invars)
+    # Set user specified sharding specs.
+    if ms_option:
+        if as_option.enable_auto_sharding:
+            raise NotImplementedError("hybrid auto sharding is unsupported")
+        in_sharding_proto, out_sharding_proto = get_manual_sharding_spec(
+            ms_option, logical_mesh_choices[0].shape, in_tree, out_tree_thunk(),
+            avals, out_avals)
+        if in_sharding_proto is not None:
+            hlo.set_input_shardings(in_sharding_proto)
+        if out_sharding_proto is not None:
+            hlo.set_output_shardings(out_sharding_proto)
     flop_count = xe.hlo_module_count_flop_dot_conv_only(hlo.get_module())
 
     # Compile a XLA executable
@@ -144,10 +159,12 @@ def shard_parallel_internal_gradient_accumulation(
         batch_invars: Sequence[bool], physical_mesh: PhysicalDeviceMesh,
         logical_mesh_choices: Sequence[LogicalDeviceMesh],
         num_micro_batches: int, as_option: AutoShardingOption,
-        *raw_avals: Sequence[AbstractValue]):
+        ms_option: ManualShardingOption, *raw_avals: Sequence[AbstractValue]):
     """Compile a gradient accumulation executable with auto-sharding pass."""
     # pylint: disable=unused-argument
     # Split the batch dimension
+    if ms_option is not None:
+        raise NotImplementedError("Unsupported yet.")
     closed_jaxpr, _ = trace_jaxpr_with_micro_batch(fun, batch_invars,
                                                    num_micro_batches, raw_avals)
 

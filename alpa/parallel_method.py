@@ -38,6 +38,7 @@ from alpa.pipeline_parallel.stage_construction import (StageOption,
                                                        UniformStageOption)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption, LogicalDeviceMesh
 from alpa.shard_parallel.compile_executable import compile_shard_executable
+from alpa.shard_parallel.manual_sharding import ManualShardingOption
 
 traceback_util.register_exclusion(__file__)
 
@@ -75,10 +76,12 @@ class ShardParallel(ParallelMethod):
                  devices: Optional[Union[LogicalDeviceMesh,
                                          PhysicalDeviceMesh]] = None,
                  num_micro_batches: Optional[int] = None,
-                 auto_sharding_option: Optional[AutoShardingOption] = None):
+                 auto_sharding_option: Optional[AutoShardingOption] = None,
+                 manual_sharding_option: Optional[ManualShardingOption] = None):
         self.devices = devices
         self.num_micro_batches = num_micro_batches
         self.as_option = auto_sharding_option or AutoShardingOption()
+        self.ms_option = manual_sharding_option
 
     def compile_executable(
         self,
@@ -106,7 +109,7 @@ class ShardParallel(ParallelMethod):
                                         static_argnums, donated_invars,
                                         batch_invars, mesh,
                                         self.num_micro_batches, self.as_option,
-                                        *avals)
+                                        self.ms_option, *avals)
 
 
 class DataParallel(ShardParallel):

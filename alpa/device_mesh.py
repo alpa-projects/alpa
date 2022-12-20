@@ -599,10 +599,14 @@ class MeshHostWorker:
         return list(self.buffers.keys())
 
     ##### Other Functions #####
-    def sync(self):
+    def sync(self, sync_all_devices=False):
         # We sync one device instead of all for smaller runtime overhead.
         # This is correct because of SPMD.
-        self.local_devices[0].synchronize_all_activity()
+        if sync_all_devices:
+            for device in self.local_devices:
+                device.synchronize_all_activity()
+        else:
+            self.local_devices[0].synchronize_all_activity()
 
     def sync_all(self):
         for device in self.local_devices:
@@ -1396,8 +1400,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             ray.get(worker.reset_memory_stats.remote())
 
     ##### Other Functions #####
-    def sync_workers(self):
-        ray.get([w.sync.remote() for w in self.workers])
+    def sync_workers(self, sync_all_devices=False):
+        ray.get([w.sync.remote(sync_all_devices) for w in self.workers])
 
     def sync_move_workers(self):
         ray.get([w.sync_move_worker.remote() for w in self.workers])

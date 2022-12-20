@@ -8,7 +8,6 @@ import argparse
 
 from alpa_serve.profiling import ProfilingDatabase
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, default="inference_prof_res.tsv")

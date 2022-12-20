@@ -1,20 +1,16 @@
 """Compile executables for shard parallelism."""
 import hashlib
 import inspect
-from typing import Callable, Sequence, Optional, OrderedDict, Union
+from typing import Callable, Sequence, Optional, Union
 
 import numpy as np
-from jax import linear_util as lu, pxla
+from jax import linear_util as lu
 from jax._src import traceback_util
-from jax._src.lib import xla_client as xc, xla_extension as xe
-from jax._src.tree_util import _replace_nones
-from jax._src.util import safe_zip
+from jax._src.lib import xla_extension as xe
 from jax.core import (Jaxpr, ClosedJaxpr, Literal, gensym, get_aval,
                       raise_to_shaped, AbstractValue)
-from jax.experimental import pjit
-from jax.interpreters import mlir
 from jax.lax import add_p, div_p
-from jax.tree_util import PyTreeDef, tree_flatten, tree_map, tree_unflatten
+from jax.tree_util import PyTreeDef
 
 from alpa.device_mesh import LogicalDeviceMesh, PhysicalDeviceMesh
 from alpa.global_env import global_config
@@ -397,45 +393,3 @@ def add_gradient_accumulation(raw_jaxpr, num_micro_batches):
     ]
     return (combined_jaxpr, accumulate_grad_invar_indices,
             apply_grad_invar_indices, num_grads)
-
-
-def pjit_to_sharding_spec(mesh_axis_names, logical_mesh, in_axis_resources,
-                          in_tree, avals):
-
-    def _parsed_pspec_to_hlo_sharding(
-        mesh_shape,
-        mesh_axis_names,
-        _parsed_pspec,
-        num_dimensions: int
-    ) -> xc.HloSharding:
-
-        array_mapping = pjit.get_array_mapping(_parsed_pspec)
-        sharding_spec = pxla.new_mesh_sharding_specs(
-            mesh_shape, mesh_axis_names)(num_dimensions, array_mapping)
-        # Used in `with_sharding_constraint`.
-        special_axes = {}
-        op_sharding = sharding_spec.sharding_proto(special_axes=special_axes)
-        return xc.HloSharding.from_proto(op_sharding)
-
-
-    def flatten_axes(treedef, axis_tree):
-        proxy = object()
-        dummy = tree_unflatten(treedef, [object()] * treedef.num_leaves)
-        axes = []
-        add_leaves = lambda i, x: axes.extend([i] * len(tree_flatten(x)[0]))
-        tree_map(add_leaves, _replace_nones(proxy, axis_tree), dummy)
-        axes = [None if a is proxy else a for a in axes]
-        assert len(axes) == treedef.num_leaves
-        return axes
-    mesh_shape = OrderedDict(
-        (name, size)
-        for name, size in safe_zip(mesh_axis_names, logical_mesh.shape))
-
-    in_axis_resources, _, _, _ = pjit._prepare_axis_resources(
-        in_axis_resources, "in_axis_resources")
-    in_axis_flat = tuple(flatten_axes(in_tree, in_axis_resources))
-    canonicalized_shardings = tuple(
-        _parsed_pspec_to_hlo_sharding(mesh_shape, mesh_axis_names, axis,
-                                      len(aval.shape))
-        for axis, aval in safe_zip(in_axis_flat, avals))
-    return canonicalized_shardings

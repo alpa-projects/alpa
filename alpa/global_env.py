@@ -59,13 +59,18 @@ class GlobalConfig:
         # Whether to use the scatter-gater/local-all-gather optimization.
         self.use_local_allgather = True
         self.eagerly_create_communicators = True
-        self.use_memzero_for_gradient_accumulation = False
         # Cross mesh resharding mode. Possible choices: {"send_recv",
         # "broadcast"}
         self.resharding_mode = "send_recv"
         # Which nccl to use. Possible choices: {"cupy",
         # "xla_extension"}
         self.nccl_mode = "cupy"
+        self.enable_overlapping = False
+        # Cross mesh resharding load balancing mode.
+        # Possible choices: {"normal", "no_loadbalance",
+        # "loadbalance_size", "loadbalance_order"}
+        self.resharding_loadbalance_mode = "normal"
+        self.loadbalance_order_algo = "greedy"
 
         ########## Options of benchmark ##########
         # If true, the system is allowed to use dummy values during

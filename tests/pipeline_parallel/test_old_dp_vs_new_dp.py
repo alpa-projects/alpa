@@ -1,8 +1,9 @@
 import unittest
 import numpy as np
 
-from alpa.pipeline_parallel.stage_construction import (get_submesh_choices, dp,
-                                                       dp_2)
+from alpa.pipeline_parallel.stage_construction import (get_submesh_choices,
+                                                       training_dp as dp,
+                                                       training_dp_2 as dp_2)
 
 
 def default_num_auto_sharding_configs(num_devices):

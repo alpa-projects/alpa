@@ -1,5 +1,5 @@
 """Benchmark suites for gpt with auto parallelization."""
-from suite_manual_gpt import gpt_specs
+from suite_manual_moe import moe_specs
 from benchmark_parallel_utils import (BenchmarkCase, UniformParallelArgs)
 
 prefer_reduce_scatter = True
@@ -36,27 +36,12 @@ def get_config(model_config,
                         profile_suite[num_gpus].append(case)
 
 
-## general examples:
-#get_config(gpt_specs["350M"], [1, 2, 4, 8], [1], [1], [1], [1, 4, 16])
-#get_config(gpt_specs["760M"], [1, 2, 4, 8], [1], [1], [1], [1, 4, 16])
-#get_config(gpt_specs["1.3B"], [1, 2, 4, 8], [1], [1], [1], [1, 4, 16])
-#get_config(gpt_specs["2.6B"], [1, 2, 4, 8], [1], [1], [1], [1, 4, 16])
-#get_config(gpt_specs["6.7B"], [1, 2, 4, 8], [1], [1], [1], [1, 4, 16])
-#get_config(gpt_specs["15B"],  [1, 2, 4, 8], [1], [1], [1], [1, 4, 16])
-
-## benchmark specific parallel method:
-#get_config(gpt_specs["6.7B"], [1], [1], [1, 2, 4, 8], [1, 256], [1, 4, 16, 64])
-#get_config(gpt_specs["6.7B"], [1], [1, 2, 4, 8], [1], [1, 256], [1, 4, 16, 64],
-#           ignore_one_device_case=True)
-#get_config(gpt_specs["6.7B"], [1, 2, 4, 8], [1], [1], [1, 256], [1, 4, 16, 64],
-#           ignore_one_device_case=True)
-
 ## generate inference profiling results
-get_config(gpt_specs["1.3B"], [1, 2, 4, 8], [1], [1, 2, 4, 8], [1],
+get_config(moe_specs["1.3B"], [1, 2, 4, 8, 16], [1], [1, 2, 4, 8], [1],
            [1, 2, 4, 8, 16])
-get_config(gpt_specs["2.6B"], [1, 2, 4, 8, 16, 32], [1], [1, 2, 4, 8], [1],
+get_config(moe_specs["2.4B"], [1, 2, 4, 8, 16], [1], [1, 2, 4, 8], [1],
            [1, 2, 4, 8, 16])
-get_config(gpt_specs["6.7B"], [1, 2, 4, 8, 16, 32], [1], [1, 2, 4, 8], [1],
+get_config(moe_specs["7.1B"], [1, 2, 4, 8, 16], [1], [1, 2, 4, 8], [1],
            [1, 2, 4, 8, 16])
-get_config(gpt_specs["15B"], [1, 2, 4, 8, 16], [1], [1, 2, 4, 8], [1],
+get_config(moe_specs["10B"], [1, 2, 4, 8, 16], [1], [1, 2, 4, 8], [1],
            [1, 2, 4, 8, 16])

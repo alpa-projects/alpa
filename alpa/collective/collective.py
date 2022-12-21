@@ -764,6 +764,26 @@ def _check_and_get_group(group_name):
 check_and_get_group = _check_and_get_group
 
 
+def record_events(group_name, uuids, num_devices, is_send):
+    g = _check_and_get_group(group_name)
+    g.record_events(uuids, num_devices, is_send)
+
+
+def wait_events(group_name, uuids, num_devices, is_send):
+    g = _check_and_get_group(group_name)
+    g.wait_events(uuids, num_devices, is_send)
+
+
+def comm_wait_compute(group_name, is_send, is_compute, device_id):
+    g = _check_and_get_group(group_name)
+    g.comm_wait_compute(is_send, is_compute, device_id)
+
+
+def compute_wait_comm(group_name, is_send, is_compute, device_id):
+    g = _check_and_get_group(group_name)
+    g.compute_wait_comm(is_send, is_compute, device_id)
+
+
 def _check_single_tensor_input(tensor):
     """Check if the tensor is with a supported type."""
     if isinstance(tensor, (np.ndarray, xe.DeviceArray)):

@@ -215,9 +215,6 @@ def broadcast(worker, uuid, comm_key, world_size, devices_ids,
         worker.buffers[uuid][device_id] = new_buffer
 
 
-init_local_comm = cupy.cuda.nccl.NcclCommunicator.initAll
-
-
 def to_signal_buffer(jax_tensor):
     return jax_tensor_to_cupy(jax_tensor, take_ownership=True)
 

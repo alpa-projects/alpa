@@ -20,11 +20,7 @@ class PipelineInferenceTest(unittest.TestCase):
     def tearDown(self):
         shutdown()
 
-    def run_mlp_inference(self, manual_pipeline_layer):
-        method = PipeshardParallel(num_micro_batches=4,
-                                   pipeline_schedule="inference",
-                                   layer_option="manual")
-
+    def run_mlp_inference(self, manual_pipeline_layer, parallel_method):
         # Init model and optimizer
         batch_size = 64
         hidden_size = 16
@@ -42,7 +38,7 @@ class PipelineInferenceTest(unittest.TestCase):
         serial_inference_step = mlp_inference_step
 
         parallel_inference_step = parallelize(mlp_inference_step,
-                                              method=method,
+                                              method=parallel_method,
                                               donate_argnums=())
         executable = parallel_inference_step.get_executable(state, batch)
 
@@ -51,17 +47,14 @@ class PipelineInferenceTest(unittest.TestCase):
         parallel_out = parallel_inference_step(state, batch)
         assert_allclose(serial_out, parallel_out, 1e-3, 1e-3)
 
-    def run_bert_layer_collection_inference(self, manual_pipeline_layer):
-        method = PipeshardParallel(num_micro_batches=4,
-                                   pipeline_schedule="inference",
-                                   layer_option="manual")
-
+    def run_bert_layer_collection_inference(self, manual_pipeline_layer,
+                                            parallel_method):
         # Init model and optimizer
         batch_size = 16
         seq_len = 256
         hidden_size = 512
         num_heads = 512 // 64
-        n_layers = 2
+        n_layers = 4
 
         model = FlaxBertLayerCollection(
             config=BertConfig(hidden_size=hidden_size,
@@ -81,9 +74,8 @@ class PipelineInferenceTest(unittest.TestCase):
         serial_inference_step = bert_layer_collection_inference_step
         parallel_inference_step = parallelize(
             bert_layer_collection_inference_step,
-            method=method,
+            method=parallel_method,
             donate_argnums=())
-        executable = parallel_inference_step.get_executable(state, batch)
         executable = parallel_inference_step.get_executable(state, batch)
 
         # Run correctnesss test
@@ -92,10 +84,16 @@ class PipelineInferenceTest(unittest.TestCase):
         assert_allclose(serial_out, parallel_out, 1e-3, 1e-3)
 
     def test_mlp(self):
-        self.run_mlp_inference(True)
+        method = PipeshardParallel(num_micro_batches=4,
+                                   pipeline_schedule="inference",
+                                   layer_option="manual")
+        self.run_mlp_inference(True, method)
 
     def test_bert(self):
-        self.run_bert_layer_collection_inference(True)
+        method = PipeshardParallel(num_micro_batches=4,
+                                   pipeline_schedule="inference",
+                                   layer_option="manual")
+        self.run_bert_layer_collection_inference(True, method)
 
     def test_output(self):
         method = PipeshardParallel(num_micro_batches=2,

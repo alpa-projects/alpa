@@ -5,8 +5,8 @@ from alpa.testing import PipelineBasicTest
 
 
 def auto_stage():
-    return AutoStageOption("small_power_of_two", "same_as_physical",
-                           float("inf"), False, None, None)
+    return AutoStageOption(submesh_physical_shape_space="small_power_of_two",
+                           submesh_logical_shape_space="same_as_physical")
 
 
 class StageConstructionSlowTest(PipelineBasicTest):

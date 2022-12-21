@@ -44,7 +44,7 @@ def test_resharding(var,
     dst_loads = dst_loads or {dst: 0 for dst in dst_mesh.device_strs}
     if resharding_mode == "send_recv":
         rewrite_dst_sharding_spec = CrossMeshCommunicator._rewrite_allgather_spec(
-            dst_sharding_spec, dst_mesh, var.aval.shape)
+            dst_sharding_spec, dst_mesh.num_hosts, var.aval.shape)
     else:
         rewrite_dst_sharding_spec = dst_sharding_spec
     src_array = VirtualDistributedArray(device_mesh=src_mesh,

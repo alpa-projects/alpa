@@ -203,7 +203,7 @@ class PipeshardParallel(ParallelMethod):
                 stage_imbalance_tolerance=np.inf,
                 use_hlo_cost_model=False,
                 profiling_database_filename=None,
-                cached_compute_cost=None,
+                cached_profile_result=None,
             )
         elif stage_option == "uniform":
             stage_option = UniformStageOption()

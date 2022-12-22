@@ -22,8 +22,9 @@ from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
                                                AutoShardingOption)
 from alpa.shard_parallel.manual_sharding import (ManualShardingOption,
                                                  get_manual_sharding_spec)
-from alpa.util import (jaxpr_to_hlo, trace_jaxpr_with_micro_batch,
-                       setup_computation_alias, OrderedSet, new_jaxpr_eqn)
+from alpa.util import (jaxpr_to_hlo, new_jaxpr_eqn, setup_computation_alias,
+                       trace_jaxpr_with_micro_batch,
+                       undefined_sharding_spec_proto, OrderedSet)
 
 traceback_util.register_exclusion(__file__)
 
@@ -181,6 +182,20 @@ def shard_parallel_internal_gradient_accumulation(
     hlo = jaxpr_to_hlo(name, closed_jaxpr, donated_invars)
     flop_count = xe.hlo_module_count_flop_dot_conv_only(hlo.get_module())
     flop_count *= num_micro_batches
+
+    # Set user specified sharding specs.
+    if ms_option:
+        if as_option.enable_auto_sharding:
+            raise NotImplementedError("hybrid auto sharding is unsupported")
+        in_sharding_proto, out_sharding_proto = get_manual_sharding_spec(
+            ms_option, logical_mesh_choices[0].shape, in_tree, out_tree_thunk(),
+            in_avals, out_avals)
+        grad_sharding_proto = [undefined_sharding_spec_proto()] * num_grads
+        if in_sharding_proto is not None:
+            in_sharding_proto += tuple(grad_sharding_proto)
+            hlo.set_input_shardings(in_sharding_proto)
+        if out_sharding_proto is not None:
+            hlo.set_output_shardings(out_sharding_proto)
 
     # pylint: disable=unbalanced-tuple-unpacking
     hlo_stage_names, hlo_stages, stage_plan = run_auto_sharding_pass(

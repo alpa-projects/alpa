@@ -1034,7 +1034,10 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # Launch distributed xla runtime
         port = None
         while port in used_port_set:
-            port = np.random.randint(20000, 25000)
+            port = np.random.randint(
+                    global_config.xla_server_port_start, 
+                    global_config.xla_server_port_end
+                    )
         used_port_set.add(port)
 
         server_address = f"{ray.util.get_node_ip_address()}:{port}"

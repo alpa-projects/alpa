@@ -94,7 +94,6 @@ class GlobalConfig:
         self.xla_server_port_end = int(
             os.environ.get("XLA_SERVER_PORT_END", "25000").lower())
 
-
     @property
     def ray_accelerator_name(self):
         backend_to_ray = {"gpu": "GPU"}

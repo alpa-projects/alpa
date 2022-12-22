@@ -7,23 +7,146 @@ This guide is modified from `Deploy Ray on Slurm <https://docs.ray.io/en/latest/
 Prerequisites
 **************
 
-Alpa requires CUDA and runs on GPU. Therefore, you need access to CUDA-compatible GPU in the cluster to run Alpa.
+Alpa requires CUDA and runs on GPUs. Therefore, you need access to CUDA-compatible GPUs in the cluster to run Alpa.
 
-Please make sure you have or can create an environment with required dependencies installed for Alpa.
-These dependencies are described in `Install Alpa <https://alpa.ai/install.html>`_.
+If you have a virtual environment with required dependencies for Alpa installed, please jump to the section `Create sbatch Script`_.
+
+If you don't have one already, please follow the steps below to create a Python virtual environment for Alpa.
+
+Create Environment for Alpa
+===========================
+
+Here we give a sample workflow to create an environment for Alpa and verfy the environment as well.
+
+We assume that there is Python environment management systems available on the Slurm cluster, e.g. `conda <https://docs.conda.io/en/latest/>`_.
+
+The following steps can make sure you set up the environment needed by Alpa correctly. To illustrate this process we use conda, but the workflow also applies to other Python virtual environment management systems.
+
+Enter Interactive Mode 
+----------------------
+
+The first step is to create an interactive mode on Slurm so that you can run commands and check results in real-time.
+
+    .. code:: bash
+
+        interact -p GPU-shared -N 1 --gres=gpu:v100-16:1 -t 10:00
 
     .. note::
 
-        One easy way to create an environment with all dependencies installed is to create an environment using package management systems like `conda <https://docs.conda.io/en/latest/>`_ and setup the environment running an interactive job on Slurm.
-        The interact job on Slurm can allow you to run and experiment in the exact way you do locally.
-        To run a interactive job on Slurm, use the command :code:`interact`.
+        1. This command starts an interactive job on the partition of GPU-shared (:code:`-p GPU-shared`), on one GPU node (:code:`-N 1`) with one v100-16GB GPU assigned (:code:`--gres=gpu:v100-16:1`) for a time of 10 minutes (:code:`-t 10:00`).
+
+        2. The minimum command to start an interactive job is by running :code:`interact` directly. This will ask the cluster to assign all resources by default. As we want to setup and test the environment, we need GPU to test and hence we need to specify all these options.
+
+        3. The name of the partition, the option for assigning GPU (in some clusters, :code:`--gpus=` is used instead of :code:`--gres=`), and the name for GPU depend on the cluster you work on. Please use these values specified by your cluster.
+
+Then the cluster will try to assign the resources you asked for.
+
+Once you got these resources, the command :code:`interact` returns and you are now in an interactive session. Your commandline will show that you are now at the node of the cluster like :code:`user@v001:~/$` where :code:`v001` is the name of the node you are assigned to.
+
+Load Required Software 
+-----------------------
+
+In some clusters, containers of common tools are packed and can be loaded through :code:`module load <target>`.
+
+For example, to run Alpa, we need CUDA, so we run the following to get CUDA:
+
+    .. code:: bash
+
+        module load cuda
+
+    .. note::
+
+        Some clusters have multiple versions of CUDA for you to use, you can check all versions using:
+
+            .. code:: bash
+
+                module avail cuda
+
+        Then you can specify a version to be used. Like Alpa requires CUDA >= 11.1.
+
+            .. code:: bash
+
+                module load cuda/11.1
+
+        Please refer to the manager of the cluster to install a specific versions of CUDA or other softwares if not available.
+
+Similarly, we can load CuDNN and NVCC:
+
+    .. code:: bash
+
+        module load cudnn
+        module load nvhpc
+
+    .. note::
+
+        1. Note here :code:`nvhpc` is loaded as it contains :code:`nvcc` in the cluster. :code:`nvcc` might need to be loaded differently in other clusters. Please check with your cluster on how to load :code:`nvcc`.
+
+        2. A common issue with CuDNN on clusters is the version provided by the cluster is older than the version required by Alpa (>= 8.0.5). To solve this, one can install a compatible version of CuDNN inside the Python virtual environment like the installation of other dependencies covered in `Install and Check Dependencies`_.
+
+Install and Check Dependencies
+------------------------------
+
+Before you install dependencies of Alpa, create a virtual environment with the version of Python you use:
+
+    .. code:: bash
+
+        conda create -n alpa_environment python=3.9
+
+    .. note::
+
+        Please make sure the Python version meets the requirement by Alpa of >= 3.7.
+
+Then enter this Python virtual environment:
+
+    .. code:: bash
+
+        conda activate alpa_environment
+
+Then your commandline should show as :code:`(alpa_environment)user@v001:~/$`.
+
+    .. note::
+        Check the environment is entered by checking the version of python:
+
+            .. code:: bash
+
+                python3 --version
+
+Then please follow the installation guide of Alpa in `Install Alpa <https://alpa.ai/install.html#install-alpa>`_.
+All the commands mentioned in the installation guide works for you and can make sure the environment :code:`alpa_environment` works with Alpa.
+
+Exit Virtual Environment
+------------------------
+
+Once you have finished installation and testing, exit the environment:
+
+    .. code:: bash
+
+        conda deactivate
+
+Next time you want to activate this environment, use the following command:
+
+    .. code:: bash
+
+        conda activate alpa_environment
+
+Exit Interactive Session
+------------------------
+
+To exit interactive session, press :code:`Ctrl+D`.
 
 Create :code:`sbatch` Script
 ****************************
 
-Usually large jobs like Alpa is run through sbatch on Slurm using a :code:`sbatch` script. :code:`sbatch` scripts are bash scripts with :code:`sbatch` options specified using :code:`#SBATCH <options>`.
-The Slurm cluster takes sbatch scripts submitted using command sbatch then queue the job specified by the script for execution.
+Usually large jobs like Alpa is run through sbatch on Slurm using a :code:`sbatch` script. :code:`sbatch` scripts are bash scripts with :code:`sbatch` options specified using the syntax of :code:`#SBATCH <options>`.
+The Slurm cluster takes sbatch scripts submitted using command :code:`sbatch`` then queues the job specified by the script for execution.
 When Slurm executes the script, the script works exactly the same as a shell script.
+
+    .. note::
+
+        The shell script commands are run on each of the nodes assigned for your job. To specify running a command at one node, use command :code:`srun`'s option of :code:`--nodes=1`. 
+        Available options for :code:`srun` can be found in `SRUN <https://slurm.schedmd.com/srun.html>`_. :code:`srun` is to run a job for execution in real time while :code:`sbatch` allows you to submit a job for later execution without blocking.
+        :code:`srun` is also compatible with the script we create.
+
 A :code:`sbatch` script to run Alpa can be roughly summarized as four parts: resources setup, load dependencies, Ray startup, and run Alpa.
 
 The first step is to create a :code:`sbatch` script in your directory, usually named as a :code:`.sh` file.
@@ -53,7 +176,11 @@ These usually includes the name of the job, partition the job should go to, CPU 
 
     .. note::
 
-        Setting the resources needed in the sbatch script is equivalent to setting them submitting the job to Slurm running :code:`sbatch <options> <sbatch script>`.
+        1. Setting the resources needed in the sbatch script is equivalent to setting them submitting the job to Slurm running :code:`sbatch <options> <sbatch script>`.
+        
+        2. Here, :code:`--tasks-per-node=1 --cpus-per-task=1` are specified to allow Ray (which uses CPU) to run on the nodes.
+
+        3. The option :node:`--gpus-per-node=v100-16:8` is specified with GPU type and number. Please refer to your cluster on how to set this field.
 
 Load Dependencies
 =================
@@ -70,14 +197,31 @@ To load directly from available containers, use :code:`module load <module>`:
 
     .. note::
 
-        At this step, usually one can specify the version used if available like:
+        1. To check available softwares, run:
 
-        .. code:: bash
+            .. code:: bash
 
-            module load cuda/11.1.1
-            module load cudnn/8.0.5
+                module avail
+                module avail cuda
 
-To activate a environment using package management systems like conda, add the following line:
+        When there is no required software, please ask manager of the cluster to install.
+
+        When multiple versions available, one can specify the version to be used:
+
+            .. code:: bash
+
+                module load cuda/11.1.1
+                module load cudnn/8.0.5
+
+        You can check the module needed is used with:
+
+            .. code:: bash
+
+                module list cuda
+
+        1. The load of pre-installed software can be different in different clusters, please use the way your cluster uses.
+
+To activate an environment using package management systems like conda, add the following line:
 
     .. code:: bash
 
@@ -88,7 +232,7 @@ In summary, this step adds a chunk in the script like below:
     .. code:: bash
 
         # load containers
-        module purge
+        module purge    # optional
         module load cuda
         module load cudnn
         module load nvhpc
@@ -148,7 +292,7 @@ After we have a head node, we spawn HEAD on head node:
 
     .. note::
 
-        Note here the argument gpus_per_node should not exceed the number of GPU you have on each node.
+        Note here the argument :code:`gpus_per_node` should not exceed the number of GPU you have on each node.
 
 Then we spawn worker nodes on other nodes we have and connect then to HEAD:
 
@@ -166,6 +310,17 @@ Then we spawn worker nodes on other nodes we have and connect then to HEAD:
                 --num-gpus $gpus_per_node --block &
             sleep 5
         done
+
+[Optional] Check Ray is Running
+===============================
+
+You can check if Ray is started and all nodes connected by adding this line:
+
+    .. code:: bash
+
+        ray list nodes
+
+In the output of the job, you are expected to see the same number of nodes you asked for listed by this command.
 
 At this time, we have a running Ray instance and next we can run Alpa on it.
 
@@ -209,15 +364,27 @@ To submit the job, run the following command:
 
         When you no longer see a job in the list, it means the job is finished.
 
+    .. note::
+
+        Another option is to run with :code:`srun`. 
+        This will give an interactive session, meaning the output will show up in your terminal 
+        while :code:`sbatch` collects output to a file.
+
+        Run with :code:`srun` is exactly the same as :code:`sbatch`:
+        
+        .. code:: bash
+
+            srun run_alpa_on_slurm.sh
+
 Check Output
 ************
 
-After a Slurm job is finished, the output will appear in your directory as a file.
+After a Slurm job is finished, the output will appear in your directory as a file (if you submitted the job through :code:`sbatch`).
 On some Slurm clusters, the output file is named :code:`slurm-<job_number>.out`.
 You can check the file for output the same way you read a text file.
 
-Sample sbatch Scripts
-*********************
+Sample :code:`sbatch`` Scripts
+******************************
 
 Multi-node Script
 =================

@@ -89,10 +89,10 @@ class GlobalConfig:
         self.collect_trace = False
 
         ########## Options for xla server port range setting ########
-        self.xla_server_port_start = int(os.environ.get("XLA_SERVER_PORT_START",
-                                                        "20000").lower())
-        self.xla_server_port_end = int(os.environ.get("XLA_SERVER_PORT_END",
-                                                      "25000").lower())
+        self.xla_server_port_start = int(
+            os.environ.get("XLA_SERVER_PORT_START", "20000").lower())
+        self.xla_server_port_end = int(
+            os.environ.get("XLA_SERVER_PORT_END", "25000").lower())
 
 
     @property

@@ -7,7 +7,7 @@ This guide is modified from `Deploy Ray on Slurm <https://docs.ray.io/en/latest/
 Prerequisites
 **************
 
-Alpa requires CUDA and runs on GPU. Therefore you need access to CUDA-compatible GPU in the cluster to run Alpa.
+Alpa requires CUDA and runs on GPU. Therefore, you need access to CUDA-compatible GPU in the cluster to run Alpa.
 
 Please make sure you have or can create an environment with required dependencies installed for Alpa.
 These dependencies are described in `Install Alpa <https://alpa.ai/install.html>`_.
@@ -16,6 +16,7 @@ These dependencies are described in `Install Alpa <https://alpa.ai/install.html>
 
         One easy way to create an environment with all dependencies installed is to create an environment using package management systems like `conda <https://docs.conda.io/en/latest/>`_ and setup the environment running an interactive job on Slurm.
         The interact job on Slurm can allow you to run and experiment in the exact way you do locally.
+        To run a interactive job on Slurm, use the command :code:`interact`.
 
 Create :code:`sbatch` Script
 ****************************
@@ -25,8 +26,8 @@ The Slurm cluster takes sbatch scripts submitted using command sbatch then queue
 When Slurm executes the script, the script works exactly the same as a shell script.
 A :code:`sbatch` script to run Alpa can be roughly summarized as four parts: resources setup, load dependencies, Ray startup, and run Alpa.
 
-The first step is to create a :code:`sbatch` script in your directory, usually named as a :code:`.sh`` file.
-
+The first step is to create a :code:`sbatch` script in your directory, usually named as a :code:`.sh` file.
+Here, this guide asumes the script is included in a file :code:`run_alpa_on_slurm.sh`.
 Just like a shell script, the :code:`sbatch` script starts with a line specifying the path to interpreter:
 
     .. code:: bash
@@ -204,7 +205,7 @@ To submit the job, run the following command:
 
         .. code:: bash
 
-            squeue -u <partition_name>
+            squeue -p <partition_name>
 
         When you no longer see a job in the list, it means the job is finished.
 

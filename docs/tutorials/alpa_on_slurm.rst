@@ -119,6 +119,7 @@ The first step is to grab the nodes assigned in the cluster to this job and name
         In the case of a cluster uses ipv6 addresses, one can use the following script after we get head node ip to change it to ipv4:
 
         .. code:: bash
+            
             # Convert ipv6 address to ipv4 address
             if [[ "$head_node_ip" == *" "* ]]; then
             IFS=' ' read -ra ADDR <<<"$head_node_ip"

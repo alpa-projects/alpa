@@ -1,3 +1,4 @@
+"""User specified manual sharding strategy following pjit's api."""
 import dataclasses
 from typing import Any, Optional, OrderedDict, Tuple, Union
 
@@ -22,7 +23,7 @@ class ManualShardingOption:
 def _parsed_pspec_to_hlo_sharding(
     mesh_shape,
     mesh_axis_names,
-    _parsed_pspec,
+    parsed_pspec,
     num_dimensions: int,
     axis_ctx: Optional[Union[mlir.SPMDAxisContext, mlir.ShardingContext]] = None
 ) -> xc.OpSharding:
@@ -36,7 +37,7 @@ def _parsed_pspec_to_hlo_sharding(
     the driver side.
     """
 
-    array_mapping = get_array_mapping(_parsed_pspec)
+    array_mapping = get_array_mapping(parsed_pspec)
     sharding_spec = pxla.new_mesh_sharding_specs(mesh_shape, mesh_axis_names)(
         num_dimensions, array_mapping)
     # Used in `with_sharding_constraint`.
@@ -56,8 +57,12 @@ def flatten_axes(treedef, axis_tree):
     """Flatten the axis tree and consider None as an effective value."""
     proxy = object()
     dummy = tree_unflatten(treedef, [object()] * treedef.num_leaves)
+
     axes = []
-    add_leaves = lambda i, x: axes.extend([i] * len(tree_flatten(x)[0]))
+
+    def add_leaves(i, x):
+        axes.extend([i] * len(tree_flatten(x))[0])
+
     tree_map(add_leaves, _replace_nones(proxy, axis_tree), dummy)
     axes = [None if a is proxy else a for a in axes]
     assert len(axes) == treedef.num_leaves
@@ -81,8 +86,9 @@ def get_manual_sharding_spec(
                 "auto mode in manual partition is unsupported.")
         in_axis_flat = tuple(flatten_axes(in_tree, in_axis_resources))
         in_op_shardings = tuple(
-            _parsed_pspec_to_hlo_sharding(named_mesh_shape, sharding_option.
-                                        mesh_axis_names, axis, len(aval.shape))
+            _parsed_pspec_to_hlo_sharding(named_mesh_shape,
+                                          sharding_option.mesh_axis_names, axis,
+                                          len(aval.shape))
             for axis, aval in safe_zip(in_axis_flat, in_avals))
     else:
         in_op_shardings = None
@@ -93,8 +99,9 @@ def get_manual_sharding_spec(
             sharding_option.out_axis_resources, "out_axis_resources")
         out_axis_flat = tuple(flatten_axes(out_tree, out_axis_resources))
         out_op_shardings = tuple(
-            _parsed_pspec_to_hlo_sharding(named_mesh_shape, sharding_option.
-                                        mesh_axis_names, axis, len(aval.shape))
+            _parsed_pspec_to_hlo_sharding(named_mesh_shape,
+                                          sharding_option.mesh_axis_names, axis,
+                                          len(aval.shape))
             for axis, aval in safe_zip(out_axis_flat, out_avals))
         # Tuple[OpSharding] -> OpSharding w/ type=TUPLE
         tuple_output_sharding = xla.tuple_sharding_proto(out_op_shardings)

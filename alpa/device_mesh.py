@@ -1065,7 +1065,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 "XLA_FLAGS": (os.environ.get("XLA_FLAGS", "") +
                               f" --xla_gpu_autotune_level"
                               f"={global_config.xla_gpu_autotune_level}"),
-                "XLA_PYTHON_CLIENT_PREALLOCATE": 
+                "XLA_PYTHON_CLIENT_PREALLOCATE":
                     global_config.xla_client_client_preallocate,
                 # "NCCL_LAUNCH_MODE": "PARALLEL",
                 # "XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"

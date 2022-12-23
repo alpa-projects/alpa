@@ -6,6 +6,7 @@ import logging
 import os
 import subprocess
 import re
+import socket
 import time
 from collections import OrderedDict
 from functools import partial, partialmethod
@@ -1285,14 +1286,24 @@ def to_str_round(x: Any, decimal: int = 6):
         return "[" + tmp_str + "]"
     if isinstance(x, dict):
         return str({k: to_str_round(v, decimal=decimal) for k, v in x.items()})
-    if isinstance(x, int):
+    if isinstance(x, (int, np.int32, np.int64)):
         return str(x)
-    if isinstance(x, float):
+    if isinstance(x, (float, np.float32, np.float64)):
         format_str = f"%.{decimal}f"
         return format_str % x
     if x is None:
         return str(x)
     raise ValueError("Invalid value: " + str(x))
+
+
+def check_server_port(address, port):
+    """Checking Port Opening Status """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.connect((address, port))
+            return True
+        except socket.error:
+            return False
 
 
 _tic = None
@@ -1307,7 +1318,7 @@ def print_used_time(message: str):
 
 
 ########################################
-##### Ray Compatibilityu API Utilities
+##### Ray Compatibility API Utilities
 ########################################
 
 

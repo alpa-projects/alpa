@@ -26,7 +26,6 @@ from operator import attrgetter
 import os
 import pickle
 import shutil
-import socket
 import threading
 import time
 from typing import Any, List, Union, Sequence, Tuple, Optional
@@ -56,7 +55,8 @@ from alpa.timer import timers, tracer
 from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
                        update_jax_platform, is_ray_node_resource,
                        try_import_ray_worker, create_placement_group,
-                       get_bundle_idx, retrieve_placement_group, get_bundle2ip)
+                       get_bundle_idx, retrieve_placement_group, get_bundle2ip,
+                       check_server_port)
 
 ray_worker = try_import_ray_worker()
 
@@ -948,16 +948,6 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 def device_id_to_str(host_ip, device_id, device_type="gpu"):
     """Convert device id (int) to a canonical device string."""
     return f"{host_ip}:{device_type}:{device_id}"
-
-
-def check_server_port(address, port):
-    """Checking Port Opening Status """
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        try:
-            s.connect((address, port))
-            return True
-        except socket.error:
-            return False
 
 
 # Used ports for XLA distributed runtime servers.

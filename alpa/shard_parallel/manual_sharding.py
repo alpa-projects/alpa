@@ -8,7 +8,7 @@ from jax._src.util import safe_zip
 from jax.experimental.pjit import (_is_unspecified, _is_auto, _is_from_gda,
                                    _prepare_axis_resources, get_array_mapping,
                                    _UNSPECIFIED)
-from jax.interpreters import mlir, pxla, xla
+from jax.interpreters import mlir, pxla
 from jax.tree_util import tree_unflatten, tree_flatten, tree_map
 
 from alpa.util import undefined_sharding_spec_proto

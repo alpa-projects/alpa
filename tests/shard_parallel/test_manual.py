@@ -12,6 +12,7 @@ import alpa
 from alpa import (AutoShardingOption, LocalPhysicalDeviceMesh,
                   ManualShardingOption, ShardParallel, parallelize)
 
+
 class ManualShardingTest(unittest.TestCase):
 
     def setUp(self):
@@ -32,7 +33,9 @@ class ManualShardingTest(unittest.TestCase):
             auto_sharding_option=self.as_option,
             manual_sharding_option=ms_option,
         )
-        parallelized = parallelize(fn, method=method, batch_argnums=batch_argnums)
+        parallelized = parallelize(fn,
+                                   method=method,
+                                   batch_argnums=batch_argnums)
         return parallelized.get_executable(*args).get_hlo_text()
 
     @staticmethod
@@ -42,15 +45,32 @@ class ManualShardingTest(unittest.TestCase):
         return text
 
     @staticmethod
-    def _get_root_line(text:str):
+    def _get_root_line(text: str):
         text = text[text.find("ENTRY"):]
         text = text[text.find("ROOT"):]
         text = text[:text.find("\n")]
         return text
 
+    @staticmethod
+    def _parse_param_shapes(text: str):
+        # the first one is "ENTRY %xxx ("
+        params = text.split("param")[1:]
+        shapes = tuple(map(lambda x: x[x.find("f32"):x.find("]") + 1], params))
+        return shapes
+
+    @staticmethod
+    def _parse_root_shapes(text: str):
+        tuple_shape = text[text.find("=") + 2:text.find("tuple(")]
+        # the last one is ')'
+        shapes = tuple_shape.split("0}")[:-1]
+        shapes = tuple(map(lambda x: x[x.find("f32"):x.find("{")], shapes))
+        return shapes
+
     def test_set_input(self):
+
         def fn(a, b):
             return a + b
+
         a = jnp.ones((6, 4))
         b = jnp.ones((6, 4))
         in_axis_resources = (PartitionSpec(None, "model"),
@@ -75,8 +95,10 @@ class ManualShardingTest(unittest.TestCase):
         assert "param: f32[6,4]" in text and "param.1: f32[3,4]" in text
 
     def test_set_output(self):
+
         def fn(a):
             return a**2, a + 1, a * 2, a / 2
+
         a = jnp.ones((6, 4))
         out_axis_resources = (PartitionSpec("data", None), None,
                               PartitionSpec(None, "model"),
@@ -89,30 +111,61 @@ class ManualShardingTest(unittest.TestCase):
                 in text)
 
     def test_grad_acc(self):
-        def fn(params, x):
+
+        def fn(params, batch):
+            x, tgt = batch
+
             def loss_fn(params):
                 w1, b1, w2, b2 = params
                 y = jax.nn.relu(x @ w1 + b1)
                 z = jax.nn.softmax(y @ w2 + b2)
-                return jnp.mean(z)
+                return jnp.mean((z - tgt)**2)
 
             grads = alpa.grad(loss_fn)(params)
             new_params = tree_map(lambda p, g: p - g, params, grads)
             return new_params
 
-
-        x = jnp.ones((2, 6))
+        batch_size = 64
+        x = jnp.ones((batch_size, 6))
+        tgt = jnp.ones((batch_size, 10))
         params = (jnp.ones((6, 8)), jnp.ones((8,)), jnp.ones(
             (8, 10)), jnp.ones((10,)))
-        in_axis_resources = None
+        batch = (x, tgt)
+        in_axis_resources = ((PartitionSpec(None,
+                                            "model"), PartitionSpec("model"),
+                              PartitionSpec("model",
+                                            None), PartitionSpec(None)),
+                             (PartitionSpec("data",
+                                            None), PartitionSpec("data", None)))
         ms_option = ManualShardingOption(self.mesh_axis_names,
                                          in_axis_resources)
         text = self._get_fn_manual_sharding_with(fn,
                                                  ms_option,
                                                  params,
-                                                 x,
+                                                 batch,
                                                  num_microbatches=2)
-        # TODO(yonghao): check something here
+        apply_grad_start = text.find("HloModule", 1)
+        acc_grad_text = text[:apply_grad_start]
+        apply_grad_text = text[apply_grad_start:]
+        # 1. Accumulate grad:
+        acc_grad_params = self._get_param_line(acc_grad_text)
+        acc_grad_param_shapes = self._parse_param_shapes(acc_grad_params)
+        acc_grad_root = self._get_root_line(acc_grad_text)
+        acc_grad_root_shapes = self._parse_root_shapes(acc_grad_root)
+
+        param_shape = ("f32[6,4]", "f32[4]", "f32[4,10]", "f32[10]")
+        # batch_size / num_microbatches / data_parallel
+        batch_shape = ("f32[16,6]", "f32[16,10]")
+        assert acc_grad_param_shapes == param_shape + batch_shape + param_shape
+        assert acc_grad_root_shapes == param_shape
+        # 2. Apply grad:
+        apply_grad_params = self._get_param_line(apply_grad_text)
+        apply_grad_param_shapes = self._parse_param_shapes(apply_grad_params)
+        apply_grad_root = self._get_root_line(apply_grad_text)
+        apply_grad_root_shapes = self._parse_root_shapes(apply_grad_root)
+        assert apply_grad_param_shapes == param_shape + param_shape
+        assert apply_grad_root_shapes == param_shape
+
 
 def suite():
     suite = unittest.TestSuite()

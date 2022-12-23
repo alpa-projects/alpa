@@ -949,6 +949,7 @@ def device_id_to_str(host_ip, device_id, device_type="gpu"):
     """Convert device id (int) to a canonical device string."""
     return f"{host_ip}:{device_type}:{device_id}"
 
+
 def check_server_port(address, port):
     """Checking Port Opening Status """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -957,6 +958,7 @@ def check_server_port(address, port):
             return True
         except socket.error:
             return False
+
 
 # Used ports for XLA distributed runtime servers.
 used_port_set = set((None,))

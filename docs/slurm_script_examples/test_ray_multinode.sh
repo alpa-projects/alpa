@@ -12,7 +12,6 @@ source ~/.bashrc
 # start conda
 conda activate dedong_test_p39
 # environment activated, check environment
-echo "python version:"
 python3 -V
 python3 -c "from cupy.cuda import nccl"
 # Getting the node names

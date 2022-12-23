@@ -4,8 +4,6 @@
 #SBATCH -t 1:00
 #SBATCH --gpus=v100-16:1
 
-echo "hello world"
-
 module load cuda
 module load cudnn
 module load nvhpc

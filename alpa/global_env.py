@@ -13,7 +13,8 @@ class GlobalConfig:
         # See https://jax.readthedocs.io/en/latest/gpu_memory_allocation.html
         self.xla_client_mem_fraction = float(
             os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", 0.9))
-
+        self.xla_client_client_preallocate = os.environ.get(
+            "XLA_PYTHON_CLIENT_PREALLOCATE", "true")
         # The threshold to tigger a batched deletion on workers.
         self.delete_remote_arrays_threshold = 50
 

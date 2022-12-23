@@ -10,15 +10,11 @@ module purge
 conda init bash
 source ~/.bashrc
 # start conda
-echo "simple test start"
 conda activate dedong_test_p39
-echo "entered conda env"
 # environment activated, check environment
 echo "python version:"
 python3 -V
-echo "test cupy and nccl"
 python3 -c "from cupy.cuda import nccl"
-echo "---------------"
 # Getting the node names
 nodes=$(scontrol show hostnames "$SLURM_JOB_NODELIST")
 nodes_array=($nodes)

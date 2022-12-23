@@ -308,11 +308,13 @@ def cached_property(fn, *args, **kwargs):
 ########################################
 
 
-def get_compile_options(num_replicas: int, num_partitions: int,
+def get_compile_options(num_replicas: int,
+                        num_partitions: int,
                         device_assignment: np.ndarray,
                         use_spmd_partitioning: bool,
                         parameter_is_tupled_arguments: int,
-                        build_random_seed: int):
+                        build_random_seed: int,
+                        spmd_propagation_to_outputs: bool = False):
     """Return CompileOptions for XLA compilation."""
     compile_options = xb.get_compile_options(
         num_replicas=num_replicas,
@@ -322,7 +324,10 @@ def get_compile_options(num_replicas: int, num_partitions: int,
     )
     compile_options.parameter_is_tupled_arguments = (
         parameter_is_tupled_arguments)
-    compile_options.executable_build_options.seed = build_random_seed
+    build_options = compile_options.executable_build_options
+    build_options.seed = build_random_seed
+    build_options.allow_spmd_sharding_propagation_to_output =\
+        spmd_propagation_to_outputs
     return compile_options
 
 

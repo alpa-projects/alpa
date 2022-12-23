@@ -129,8 +129,10 @@ def shard_parallel_internal(
             avals, out_avals)
         if in_sharding_proto is not None:
             hlo.set_input_shardings(in_sharding_proto)
+            hlo.is_manually_annotated = True
         if out_sharding_proto is not None:
             hlo.set_output_shardings(out_sharding_proto)
+            hlo.is_manually_annotated = True
     flop_count = xe.hlo_module_count_flop_dot_conv_only(hlo.get_module())
 
     # Compile a XLA executable
@@ -164,8 +166,6 @@ def shard_parallel_internal_gradient_accumulation(
     """Compile a gradient accumulation executable with auto-sharding pass."""
     # pylint: disable=unused-argument
     # Split the batch dimension
-    if ms_option is not None:
-        raise NotImplementedError("Unsupported yet.")
     closed_jaxpr, _ = trace_jaxpr_with_micro_batch(fun, batch_invars,
                                                    num_micro_batches, raw_avals)
 
@@ -194,8 +194,10 @@ def shard_parallel_internal_gradient_accumulation(
         if in_sharding_proto is not None:
             in_sharding_proto += tuple(grad_sharding_proto)
             hlo.set_input_shardings(in_sharding_proto)
+            hlo.is_manually_annotated = True
         if out_sharding_proto is not None:
             hlo.set_output_shardings(out_sharding_proto)
+            hlo.is_manually_annotated = True
 
     # pylint: disable=unbalanced-tuple-unpacking
     hlo_stage_names, hlo_stages, stage_plan = run_auto_sharding_pass(

@@ -71,7 +71,7 @@ def flatten_axes(treedef, axis_tree):
     axes = []
 
     def add_leaves(i, x):
-        axes.extend([i] * len(tree_flatten(x))[0])
+        axes.extend([i] * len(tree_flatten(x)[0]))
 
     tree_map(add_leaves, _replace_nones(proxy, axis_tree), dummy)
     axes = [None if a is proxy else a for a in axes]
@@ -91,7 +91,6 @@ def get_manual_sharding_spec(
     if _is_unspecified(sharding_option.in_axis_resources):
         in_op_shardings = None
     else:
-        in_op_shardings = None
         in_axis_resources, _, _, any_auto = _prepare_axis_resources(
             sharding_option.in_axis_resources, "in_axis_resources")
         if any_auto:
@@ -108,7 +107,7 @@ def get_manual_sharding_spec(
 
     # process output
     if _is_unspecified(sharding_option.out_axis_resources):
-        tuple_output_sharding = None
+        out_op_shardings = None
     else:
         out_axis_resources, _, _, _ = _prepare_axis_resources(
             sharding_option.out_axis_resources, "out_axis_resources")
@@ -120,6 +119,4 @@ def get_manual_sharding_spec(
                                           sharding_option.mesh_axis_names, axis,
                                           len(aval.shape))
             for axis, aval in safe_zip(out_axis_flat, out_avals))
-        # Tuple[OpSharding] -> OpSharding w/ type=TUPLE
-        tuple_output_sharding = xla.tuple_sharding_proto(out_op_shardings)
-    return in_op_shardings, tuple_output_sharding
+    return in_op_shardings, out_op_shardings

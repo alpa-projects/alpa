@@ -33,6 +33,7 @@ class WrappedHlo:
             self.module = xe.XlaComputation(module).get_hlo_module()
         self.name = self.module.name
         self.status = status
+        self.is_manually_annotated = False
 
     def get_computation(self) -> xe.XlaComputation:
         return xe.XlaComputation(self.module.as_serialized_hlo_module_proto())

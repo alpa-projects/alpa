@@ -218,7 +218,8 @@ def run_auto_sharding_pass(
         device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
         parameter_is_tupled_arguments=False,
-        build_random_seed=build_random_seed)
+        build_random_seed=build_random_seed,
+        spmd_propagation_to_outputs=hlo.is_manually_annotated)
 
     # Set configs for force_zero_stage_3
     if as_option.force_zero_stage_3:

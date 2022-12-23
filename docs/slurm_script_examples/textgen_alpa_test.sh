@@ -8,13 +8,8 @@ conda init bash
 source ~/.bashrc
 # test nvcc
 nvcc --version
-# start conda
+# start environment using conda
 conda activate dedong_test_p39
-# test nccl
-python3 -c "from cupy.cuda import nccl"
-# environment activated, check environment
-echo "python version:"
-python3 -V
 # start ray on head
 ray start --head
 # start alpa textgen.py

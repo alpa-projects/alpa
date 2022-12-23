@@ -23,11 +23,6 @@ echo "---------------"
 nodes=$(scontrol show hostnames "$SLURM_JOB_NODELIST")
 nodes_array=($nodes)
 
-# Show nodes
-echo "nodes:"
-echo $nodes
-echo "---------------"
-
 head_node=${nodes_array[0]}
 head_node_ip=$(srun --nodes=1 --ntasks=1 -w "$head_node" hostname --ip-address)
 
@@ -68,22 +63,14 @@ for ((i = 1; i <= worker_num; i++)); do
 	--num-gpus $gpus_per_node --block &
     sleep 5
 done
-echo "workers started"
 # try ray
-echo "try list ray nodes" 
+echo "test ray status"
 ray list nodes --address "$ip_head"
-echo "try list nodes =="
 ray list nodes
-echo "try list actors =="
 ray list actors
-echo "try summary jobs =="
 ray summary tasks
-echo "------------------"
 # end ray
-echo "stop ray"
 ray stop
-echo "ray stopped"
 # exit environment
 conda deactivate
-echo "---Finished successfully---"
 exit

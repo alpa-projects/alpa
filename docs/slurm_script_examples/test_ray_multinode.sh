@@ -4,7 +4,6 @@
 #SBATCH --mem-per-cpu=1GB
 #SBATCH --ntasks-per-node=1
 gpus_per_node=0
-echo "test 2 nodes ray setup"
 # load modules
 module purge
 conda init bash
@@ -33,8 +32,6 @@ fi
 echo "IPV6 address detected. We split the IPV4 address as $head_node_ip"
 fi
 
-echo "head ip: ${head_node_ip}"
-
 # start head node
 port=6789
 ip_head=$head_node_ip:$port
@@ -45,7 +42,7 @@ echo "Starting HEAD at $head_node"
 srun --nodes=1 --ntasks=1 -w "$head_node" \
 	ray start --head --node-ip-address="$head_node_ip" --port=$port \
 	--num-cpus "${SLURM_CPUS_PER_TASK}" --num-gpus $gpus_per_node --block &
-echo "head started"
+
 # start worker nodes
 # number of nodes other than the head node
 worker_num=$((SLURM_JOB_NUM_NODES - 1))

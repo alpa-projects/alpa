@@ -905,7 +905,8 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
                                self.donated_invars)
 
         # Delete micro batch buffers
-        if next_batches_uuids is not None:
+        if next_batches_uuids is not None and \
+                next_batches_uuids[0] is not None:
             for i in range(len(next_batches_uuids)):
                 del buffer_dict[next_batches_uuids[i]]
 

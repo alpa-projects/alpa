@@ -55,7 +55,8 @@ from alpa.timer import timers, tracer
 from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
                        update_jax_platform, is_ray_node_resource,
                        try_import_ray_worker, create_placement_group,
-                       get_bundle_idx, retrieve_placement_group, get_bundle2ip)
+                       get_bundle_idx, retrieve_placement_group, get_bundle2ip,
+                       check_server_port)
 
 ray_worker = try_import_ray_worker()
 
@@ -1034,7 +1035,10 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # Launch distributed xla runtime
         port = None
         while port in used_port_set:
-            port = np.random.randint(20000, 25000)
+            port = np.random.randint(global_config.xla_server_port_start,
+                                     global_config.xla_server_port_end)
+            if check_server_port(ray.util.get_node_ip_address(), port):
+                port = None
         used_port_set.add(port)
 
         server_address = f"{ray.util.get_node_ip_address()}:{port}"
@@ -1065,7 +1069,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 "XLA_FLAGS": (os.environ.get("XLA_FLAGS", "") +
                               f" --xla_gpu_autotune_level"
                               f"={global_config.xla_gpu_autotune_level}"),
-
+                "XLA_PYTHON_CLIENT_PREALLOCATE":
+                    global_config.xla_client_client_preallocate,
                 # "NCCL_LAUNCH_MODE": "PARALLEL",
                 # "XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
                 # "NCCL_DEBUG": "INFO" if i == 0 else "VERSION",

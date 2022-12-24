@@ -10,8 +10,8 @@ from jax.tree_util import tree_map
 import jax.numpy as jnp
 
 import alpa
-from alpa import (ManualShardingOption, ManualStageOption, PipeshardParallel,
-                  mark_pipeline_boundary, parallelize)
+from alpa import (AutoShardingOption, ManualShardingOption, ManualStageOption,
+                  PipeshardParallel, mark_pipeline_boundary, parallelize)
 
 
 class PipeshardManualShardingTest(unittest.TestCase):
@@ -25,17 +25,13 @@ class PipeshardManualShardingTest(unittest.TestCase):
     def tearDown(self):
         alpa.shutdown()
 
-    def _get_fn_manual_sharding_with(self,
-                                     fn,
-                                     num_microbatches,
-                                     stage_option,
-                                     ms_option,
-                                     *args,):
+    def _get_fn_manual_sharding_with(self, fn, num_microbatches, stage_option,
+                                     ms_option, *args):
         method = PipeshardParallel(
             num_micro_batches=num_microbatches,
             stage_option=stage_option,
             manual_sharding_option=ms_option,
-        )
+            default_auto_sharding_option=AutoShardingOption(False))
         parallelized = parallelize(fn, method=method)
         return parallelized.get_executable(*args).get_hlo_text()
 
@@ -56,7 +52,8 @@ class PipeshardManualShardingTest(unittest.TestCase):
     def _parse_param_shapes(text: str):
         # the first one is "ENTRY %xxx ("
         params = text.split("param")[1:]
-        shapes = tuple(map(lambda x: x[x.find("f32"):x.find("]") + 1], params))
+        shapes = tuple(
+            map(lambda x: x[x.find(": ") + 2:x.find("]") + 1], params))
         return shapes
 
     @staticmethod
@@ -66,6 +63,14 @@ class PipeshardManualShardingTest(unittest.TestCase):
         shapes = tuple_shape.split("0}")[:-1]
         shapes = tuple(map(lambda x: x[x.find("f32"):x.find("{")], shapes))
         return shapes
+
+    @staticmethod
+    def _is_superset_with_x_more(seq1, seq2, x):
+        set1 = set(seq1)
+        set2 = set(seq2)
+        if set1.issuperset(set2) and len(set1) - len(set2) == x:
+            return True
+        return False
 
     def test_set_input_output(self):
 
@@ -110,35 +115,45 @@ class PipeshardManualShardingTest(unittest.TestCase):
         in_axis_resources = (param_axis_resources, batch_axis_resources)
 
         # options
-        s_option = ManualStageOption([[0], [1]], [(1, 2)] * 2, [(1, 2), (2, 1)],
+        s_option = ManualStageOption([[0], [1]], [(1, 2)] * 2, [(1, 2)] * 2,
                                      [{}] * 2)
-        submesh_axis_names = (("dummy", "model"), ("data", "dummy"))
+        submesh_axis_names = (("dummy", "model"), ("dummy", "data"))
         ms_option = ManualShardingOption(None, submesh_axis_names,
                                          in_axis_resources)
         text = self._get_fn_manual_sharding_with(fn, 2, s_option, ms_option,
                                                  params, batch)
-        print(text)
-        # apply_grad_start = text.find("HloModule", 1)
-        # acc_grad_text = text[:apply_grad_start]
-        # apply_grad_text = text[apply_grad_start:]
-        # # 1. Accumulate grad:
-        # acc_grad_params = self._get_param_line(acc_grad_text)
-        # acc_grad_param_shapes = self._parse_param_shapes(acc_grad_params)
-        # acc_grad_root = self._get_root_line(acc_grad_text)
-        # acc_grad_root_shapes = self._parse_root_shapes(acc_grad_root)
+        l0_fwd, l1_fwd, l1_bwd, l0_bwd, l0_apl, l1_apl = text
+        # layer 0
+        l0_param_shape = ("f32[6,4]", "f32[4]", "f32[4,10]", "f32[10]")
+        l0_batch_shape = ("f32[32,6]",)
+        l0_fwd_param = self._parse_param_shapes(self._get_param_line(l0_fwd))
+        assert sorted(l0_fwd_param) == sorted(l0_param_shape + l0_batch_shape)
+        l0_bwd_param = self._parse_param_shapes(self._get_param_line(l0_bwd))
+        l0_bwd_root = self._parse_root_shapes(self._get_root_line(l0_bwd))
+        # the donated accumulated gradient are at first
+        assert sorted(l0_bwd_param[:4]) == sorted(l0_param_shape)
+        assert sorted(l0_bwd_root) == sorted(l0_param_shape)
+        l0_apl_param = self._parse_param_shapes(self._get_param_line(l0_apl))
+        l0_apl_root = self._parse_root_shapes(self._get_root_line(l0_apl))
+        assert sorted(l0_apl_param) == sorted(l0_param_shape + l0_param_shape)
+        assert sorted(l0_apl_root) == sorted(l0_param_shape)
 
-        # param_shape = ("f32[6,4]", "f32[4]", "f32[4,10]", "f32[10]")
-        # # batch_size / num_microbatches / data_parallel
-        # batch_shape = ("f32[16,6]", "f32[16,10]")
-        # assert acc_grad_param_shapes == param_shape + batch_shape + param_shape
-        # assert acc_grad_root_shapes == param_shape
-        # # 2. Apply grad:
-        # apply_grad_params = self._get_param_line(apply_grad_text)
-        # apply_grad_param_shapes = self._parse_param_shapes(apply_grad_params)
-        # apply_grad_root = self._get_root_line(apply_grad_text)
-        # apply_grad_root_shapes = self._parse_root_shapes(apply_grad_root)
-        # assert apply_grad_param_shapes == param_shape + param_shape
-        # assert apply_grad_root_shapes == param_shape
+        # layer 1
+        l1_param_shape = ("f32[10,12]", "f32[12]", "f32[12,14]", "f32[14]")
+        l1_batch_shape = ("f32[16,14]",)
+        l1_fwd_param = self._parse_param_shapes(self._get_param_line(l1_fwd))
+        assert self._is_superset_with_x_more(l1_fwd_param,
+                                             l1_param_shape + l1_batch_shape, 1)
+        l1_bwd_param = self._parse_param_shapes(self._get_param_line(l1_bwd))
+        l1_bwd_root = self._parse_root_shapes(self._get_root_line(l1_bwd))
+        # the donated accumulated gradient are at first
+        assert sorted(l1_bwd_param[:4]) == sorted(l1_param_shape)
+        assert self._is_superset_with_x_more(l1_bwd_root, l1_param_shape, 1)
+        l1_apl_param = self._parse_param_shapes(self._get_param_line(l1_apl))
+        l1_apl_root = self._parse_root_shapes(self._get_root_line(l1_apl))
+        assert sorted(l1_apl_param) == sorted(l1_param_shape + l1_param_shape)
+        assert sorted(l1_apl_root) == sorted(l1_param_shape)
+
 
 def suite():
     suite = unittest.TestSuite()

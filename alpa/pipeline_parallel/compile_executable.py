@@ -244,7 +244,8 @@ def compile_pipeshard_executable_internal(
         (input_sharding_dicts,
          output_sharding_dicts) = get_manual_input_output_sharding_specs(
              jax_all_stages, [mesh.shape for mesh in sliced_virtual_meshes],
-             parsed_manual_sharding_option, global_invars, global_outvars)
+             parsed_manual_sharding_option, global_invars, global_outvars,
+             schedule.stage_mesh_mapping)
     else:
         input_sharding_dicts = [input_sharding_dict] * num_meshes
         output_sharding_dicts = [output_sharding_dict] * num_meshes
@@ -360,36 +361,56 @@ def get_manual_input_output_sharding_specs(stages, mesh_shapes, ms_option,
     invar_set = set(global_invars)
     outvar_set = set(global_outvars)
     var_to_pspec = {}
+    handle_invar = False
+    handle_outvar = False
     if ms_option.in_parsed_pspec is not None:
         var_to_pspec.update(dict(zip(global_invars, ms_option.in_parsed_pspec)))
+        handle_invar = True
     if ms_option.out_parsed_pspec is not None:
         var_to_pspec.update(
             dict(zip(global_outvars, ms_option.out_parsed_pspec)))
+        handle_outvar = True
+    submesh_axis_names = ms_option.submesh_axis_names
+    if submesh_axis_names is None:
+        submesh_axis_names = [ms_option.mesh_axis_names] * len(mesh_shapes)
 
-    def get_vars_to_sharding_specs(variables, mesh_shape):
+    def get_vars_to_sharding_specs(variables, mesh_shape, mesh_axis_names):
         parsed_specs = [var_to_pspec[v] for v in variables]
-        var_op_shardings = parsed_spec_to_opsharding(parsed_specs, variables,
-                                                     mesh_shape, ms_option)
+        avals = [v.aval for v in variables]
+        var_op_shardings = parsed_spec_to_opsharding(parsed_specs, avals,
+                                                     mesh_shape,
+                                                     mesh_axis_names)
         var_sharding_specs = [
             hlo_sharding_to_sharding_spec(xc.HloSharding.from_proto(ops), aval,
                                           mesh_shape)
-            for ops, aval in zip(variables, var_op_shardings)
+            for ops, aval in zip(var_op_shardings, avals)
         ]
         return dict(zip(variables, var_sharding_specs))
 
     invar_shardings = [{}] * len(mesh_shapes)
     outvar_shardings = [{}] * len(mesh_shapes)
-    for stage_idx, stage in stages:
+    for stage_idx, stage in enumerate(stages):
         mesh_idx = stage_to_mesh[stage_idx]
-        mesh_shape = mesh_shapes[stage_to_mesh[stage_idx]]
+        assert len(mesh_idx) == 1
+        mesh_idx = list(mesh_idx)[0]
+        mesh_shape = mesh_shapes[mesh_idx]
+        mesh_axis_names = submesh_axis_names[mesh_idx]
         # invars
-        invar_in_global = [var for var in stage.invars if var in invar_set]
-        stage_invar_shardings = get_vars_to_sharding_specs(
-            invar_in_global, mesh_shape)
+        if handle_invar:
+            invar_in_global = [var for var in stage.invars if var in invar_set]
+            stage_invar_shardings = get_vars_to_sharding_specs(
+                invar_in_global, mesh_shape, mesh_axis_names)
+        else:
+            stage_invar_shardings = {}
         # outvars
-        outvar_in_global = [var for var in stage.outvars if var in outvar_set]
-        stage_outvar_shardings = get_vars_to_sharding_specs(
-            outvar_in_global, mesh_shape)
+        if handle_outvar:
+            outvar_in_global = [
+                var for var in stage.outvars if var in outvar_set
+            ]
+            stage_outvar_shardings = get_vars_to_sharding_specs(
+                outvar_in_global, mesh_shape, mesh_axis_names)
+        else:
+            stage_outvar_shardings = {}
         invar_shardings[mesh_idx].update(stage_invar_shardings)
         outvar_shardings[mesh_idx].update(stage_outvar_shardings)
     return invar_shardings, outvar_shardings

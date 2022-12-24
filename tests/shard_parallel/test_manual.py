@@ -76,20 +76,20 @@ class ManualShardingTest(unittest.TestCase):
         in_axis_resources = (PartitionSpec(None, "model"),
                              PartitionSpec(None, "model"))
         ms_option = ManualShardingOption(self.mesh_axis_names,
-                                         in_axis_resources)
+                                         in_axis_resources=in_axis_resources)
         text = self._get_fn_manual_sharding_with(fn, ms_option, a, b)
         text = self._get_param_line(text)
         assert "param: f32[6,2]" in text and "param.1: f32[6,2]" in text
         in_axis_resources = (PartitionSpec("data", None),
                              PartitionSpec("data", "model"))
         ms_option = ManualShardingOption(self.mesh_axis_names,
-                                         in_axis_resources)
+                                         in_axis_resources=in_axis_resources)
         text = self._get_fn_manual_sharding_with(fn, ms_option, a, b)
         text = self._get_param_line(text)
         assert "param: f32[3,4]" in text and "param.1: f32[3,2]" in text
         in_axis_resources = (None, PartitionSpec("data", None))
         ms_option = ManualShardingOption(self.mesh_axis_names,
-                                         in_axis_resources)
+                                         in_axis_resources=in_axis_resources)
         text = self._get_fn_manual_sharding_with(fn, ms_option, a, b)
         text = self._get_param_line(text)
         assert "param: f32[6,4]" in text and "param.1: f32[3,4]" in text
@@ -138,7 +138,7 @@ class ManualShardingTest(unittest.TestCase):
                              (PartitionSpec("data",
                                             None), PartitionSpec("data", None)))
         ms_option = ManualShardingOption(self.mesh_axis_names,
-                                         in_axis_resources)
+                                         in_axis_resources=in_axis_resources)
         text = self._get_fn_manual_sharding_with(fn,
                                                  ms_option,
                                                  params,

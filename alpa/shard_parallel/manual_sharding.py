@@ -18,6 +18,7 @@ from alpa.util import undefined_sharding_spec_proto
 class ManualShardingOption:
     """Options to manually set shardings in pjit convention."""
     mesh_axis_names: Tuple[pxla.MeshAxisName, ...] = None
+    submesh_axis_names: Tuple[Tuple[pxla.MeshAxisName, ...], ...] = None
     # According to pjit, None means replicated.
     in_axis_resources: Any = _UNSPECIFIED
     out_axis_resources: Any = _UNSPECIFIED
@@ -27,6 +28,7 @@ class ManualShardingOption:
 class ParsedManualShardingOption:
     """Options """
     mesh_axis_names: Tuple[pxla.MeshAxisName, ...] = None
+    submesh_axis_names: Tuple[Tuple[pxla.MeshAxisName, ...], ...] = None
     # Parsed and flatten status
     in_parsed_pspec: Tuple[ParsedPartitionSpec, ...] = None
     out_parsed_pspec: Tuple[ParsedPartitionSpec, ...] = None
@@ -121,20 +123,21 @@ def get_flatten_axis_resources(
         out_axis_flat = _prepare_axis_and_flatten(
             sharding_option.out_axis_resources, out_tree, "out_axis_resources")
     return ParsedManualShardingOption(sharding_option.mesh_axis_names,
+                                      sharding_option.submesh_axis_names,
                                       in_axis_flat, out_axis_flat)
 
 
-def parsed_spec_to_opsharding(axes, avals, mesh_shape, sharding_option):
+def parsed_spec_to_opsharding(axes, avals, mesh_shape, mesh_axis_names):
     """Translate axis(a sequence of ParsedPartitionSpec) into OpShardings"""
     if axes is None:
         return None
 
     named_mesh_shape = OrderedDict(
         (name, size)
-        for name, size in safe_zip(sharding_option.mesh_axis_names, mesh_shape))
+        for name, size in safe_zip(mesh_axis_names, mesh_shape))
     op_shardings = tuple(
-        _parsed_pspec_to_hlo_sharding(named_mesh_shape, sharding_option.
-                                      mesh_axis_names, axis, len(aval.shape))
+        _parsed_pspec_to_hlo_sharding(named_mesh_shape, mesh_axis_names, axis,
+                                      len(aval.shape))
         for axis, aval in safe_zip(axes, avals))
     return op_shardings
 
@@ -147,9 +150,11 @@ def get_manual_sharding_spec(
                                                   out_tree)
     if parsed_resources is None:
         return None, None
+    assert parsed_resources.mesh_axis_names is not None
+    mesh_axis_names = sharding_option.mesh_axis_names
     in_op_shardings = parsed_spec_to_opsharding(
-        parsed_resources.in_parsed_pspec, in_avals, mesh_shape, sharding_option)
+        parsed_resources.in_parsed_pspec, in_avals, mesh_shape, mesh_axis_names)
     out_op_shardings = parsed_spec_to_opsharding(
         parsed_resources.out_parsed_pspec, out_avals, mesh_shape,
-        sharding_option)
+        mesh_axis_names)
     return in_op_shardings, out_op_shardings

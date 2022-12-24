@@ -102,9 +102,8 @@ def _prepare_axis_and_flatten(axis_resources, tree, name):
     return axis_flat
 
 
-def get_flatten_axis_resources(
-        sharding_option: ManualShardingOption, in_tree,
-        out_tree) -> ParsedManualShardingOption:
+def get_flatten_axis_resources(sharding_option: ManualShardingOption, in_tree,
+                               out_tree) -> ParsedManualShardingOption:
     """Flatten axis resources for pipeline parallel to dispatch."""
     if sharding_option is None:
         return None
@@ -133,8 +132,7 @@ def parsed_spec_to_opsharding(axes, avals, mesh_shape, mesh_axis_names):
         return None
 
     named_mesh_shape = OrderedDict(
-        (name, size)
-        for name, size in safe_zip(mesh_axis_names, mesh_shape))
+        (name, size) for name, size in safe_zip(mesh_axis_names, mesh_shape))
     op_shardings = tuple(
         _parsed_pspec_to_hlo_sharding(named_mesh_shape, mesh_axis_names, axis,
                                       len(aval.shape))

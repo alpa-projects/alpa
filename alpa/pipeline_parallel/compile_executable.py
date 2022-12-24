@@ -105,8 +105,8 @@ def compile_pipeshard_executable(
     out_tree = out_tree_thunk()
     if manual_shard_options is not None:
         assert global_input_shardings is None
-        parsed_ms_option = get_flatten_axis_resources(
-            manual_shard_options, in_tree, out_tree)
+        parsed_ms_option = get_flatten_axis_resources(manual_shard_options,
+                                                      in_tree, out_tree)
     else:
         parsed_ms_option = None
     pipeshard_config = compile_pipeshard_executable_internal(

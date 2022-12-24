@@ -182,16 +182,16 @@ class PipeshardParallel(ParallelMethod):
     """
 
     def __init__(
-        self,
-        devices: Optional[VirtualPhysicalMesh] = None,
-        num_micro_batches: int = 1,
-        default_auto_sharding_option: Optional[AutoShardingOption] = None,
-        pipeline_schedule: str = "1f1b",
-        layer_option: Optional[Union[LayerOption, str]] = None,
-        stage_option: Optional[Union[StageOption, str]] = None,
-        stage_input_shardings: Optional[Sequence[Sequence[
-            pxla.ShardingSpec]]] = None,
-        manual_sharding_option: ManualShardingOption = None):
+            self,
+            devices: Optional[VirtualPhysicalMesh] = None,
+            num_micro_batches: int = 1,
+            default_auto_sharding_option: Optional[AutoShardingOption] = None,
+            pipeline_schedule: str = "1f1b",
+            layer_option: Optional[Union[LayerOption, str]] = None,
+            stage_option: Optional[Union[StageOption, str]] = None,
+            stage_input_shardings: Optional[Sequence[Sequence[
+                pxla.ShardingSpec]]] = None,
+            manual_sharding_option: ManualShardingOption = None):
         self.devices = devices
         self.num_micro_batches = num_micro_batches
         self.as_option = (default_auto_sharding_option or

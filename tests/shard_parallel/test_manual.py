@@ -5,7 +5,7 @@ import unittest
 
 import jax
 from jax.experimental.pjit import PartitionSpec
-from jax.tree_util import tree_flatten, tree_map
+from jax.tree_util import tree_map
 import jax.numpy as jnp
 
 import alpa

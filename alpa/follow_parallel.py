@@ -88,4 +88,4 @@ def compile_follow_parallel_executable(fun, in_tree, out_tree_thunk,
             fun, in_tree, out_tree_thunk, static_argnums, donated_invars,
             batch_invars, mesh, num_micro_batches, pipeline_schedule,
             AutoShardingOption(enable_auto_sharding=False), layer_option,
-            UniformStageOption(), input_shardings, None, *avals)
+            UniformStageOption(), input_shardings, None, None, *avals)

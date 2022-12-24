@@ -7,7 +7,7 @@ from jax._src.tree_util import _replace_nones
 from jax._src.util import safe_zip
 from jax.experimental.pjit import (_is_unspecified, _is_auto, _is_from_gda,
                                    _prepare_axis_resources, get_array_mapping,
-                                   _UNSPECIFIED)
+                                   _UNSPECIFIED, ParsedPartitionSpec)
 from jax.interpreters import mlir, pxla
 from jax.tree_util import tree_unflatten, tree_flatten, tree_map
 
@@ -21,6 +21,15 @@ class ManualShardingOption:
     # According to pjit, None means replicated.
     in_axis_resources: Any = _UNSPECIFIED
     out_axis_resources: Any = _UNSPECIFIED
+
+
+@dataclasses.dataclass
+class ParsedManualShardingOption:
+    """Options """
+    mesh_axis_names: Tuple[pxla.MeshAxisName, ...] = None
+    # Parsed and flatten status
+    in_parsed_pspec: Tuple[ParsedPartitionSpec, ...] = None
+    out_parsed_pspec: Tuple[ParsedPartitionSpec, ...] = None
 
 
 def _parsed_pspec_to_hlo_sharding(
@@ -63,7 +72,7 @@ def _parsed_pspec_to_hlo_sharding(
     return op_sharding
 
 
-def flatten_axes(treedef, axis_tree):
+def _flatten_axes(treedef, axis_tree):
     """Flatten the axis tree and consider None as an effective value."""
     proxy = object()
     dummy = tree_unflatten(treedef, [object()] * treedef.num_leaves)
@@ -79,44 +88,68 @@ def flatten_axes(treedef, axis_tree):
     return axes
 
 
-def get_manual_sharding_spec(
-        sharding_option: ManualShardingOption, mesh_shape, in_tree, out_tree,
-        in_avals, out_avals) -> Tuple[Tuple[xc.OpSharding], xc.OpSharding]:
-    """Create input and output sharding spec from user's in_axis_resources."""
-    named_mesh_shape = OrderedDict(
-        (name, size)
-        for name, size in safe_zip(sharding_option.mesh_axis_names, mesh_shape))
+def _prepare_axis_and_flatten(axis_resources, tree, name):
+    parsed_axis_resources, _, _, any_auto = _prepare_axis_resources(
+        axis_resources, name)
+    if any_auto:
+        raise NotImplementedError(
+            "auto mode in manual partition is unsupported.")
+    axis_flat = tuple(_flatten_axes(tree, parsed_axis_resources))
+    if any(_is_unspecified(in_axis) for in_axis in axis_flat):
+        assert all(_is_unspecified(in_axis) for in_axis in axis_flat)
+    return axis_flat
+
+
+def get_flatten_axis_resources(
+        sharding_option: ManualShardingOption, in_tree,
+        out_tree) -> ParsedManualShardingOption:
+    """Flatten axis resources for pipeline parallel to dispatch."""
+    if sharding_option is None:
+        return None
 
     # process input
     if _is_unspecified(sharding_option.in_axis_resources):
-        in_op_shardings = None
+        in_axis_flat = None
     else:
-        in_axis_resources, _, _, any_auto = _prepare_axis_resources(
-            sharding_option.in_axis_resources, "in_axis_resources")
-        if any_auto:
-            raise NotImplementedError(
-                "auto mode in manual partition is unsupported.")
-        in_axis_flat = tuple(flatten_axes(in_tree, in_axis_resources))
-        if any(_is_unspecified(in_axis) for in_axis in in_axis_flat):
-            assert all(_is_unspecified(in_axis) for in_axis in in_axis_flat)
-        in_op_shardings = tuple(
-            _parsed_pspec_to_hlo_sharding(named_mesh_shape,
-                                          sharding_option.mesh_axis_names, axis,
-                                          len(aval.shape))
-            for axis, aval in safe_zip(in_axis_flat, in_avals))
+        in_axis_flat = _prepare_axis_and_flatten(
+            sharding_option.in_axis_resources, in_tree, "in_axis_resources")
 
     # process output
     if _is_unspecified(sharding_option.out_axis_resources):
-        out_op_shardings = None
+        out_axis_flat = None
     else:
-        out_axis_resources, _, _, _ = _prepare_axis_resources(
-            sharding_option.out_axis_resources, "out_axis_resources")
-        out_axis_flat = tuple(flatten_axes(out_tree, out_axis_resources))
-        if any(_is_unspecified(out_axis) for out_axis in out_axis_flat):
-            assert all(_is_unspecified(out_axis) for out_axis in out_axis_flat)
-        out_op_shardings = tuple(
-            _parsed_pspec_to_hlo_sharding(named_mesh_shape,
-                                          sharding_option.mesh_axis_names, axis,
-                                          len(aval.shape))
-            for axis, aval in safe_zip(out_axis_flat, out_avals))
+        out_axis_flat = _prepare_axis_and_flatten(
+            sharding_option.out_axis_resources, out_tree, "out_axis_resources")
+    return ParsedManualShardingOption(sharding_option.mesh_axis_names,
+                                      in_axis_flat, out_axis_flat)
+
+
+def parsed_spec_to_opsharding(axes, avals, mesh_shape, sharding_option):
+    """Translate axis(a sequence of ParsedPartitionSpec) into OpShardings"""
+    if axes is None:
+        return None
+
+    named_mesh_shape = OrderedDict(
+        (name, size)
+        for name, size in safe_zip(sharding_option.mesh_axis_names, mesh_shape))
+    op_shardings = tuple(
+        _parsed_pspec_to_hlo_sharding(named_mesh_shape, sharding_option.
+                                      mesh_axis_names, axis, len(aval.shape))
+        for axis, aval in safe_zip(axes, avals))
+    return op_shardings
+
+
+def get_manual_sharding_spec(
+        sharding_option: ManualShardingOption, mesh_shape, in_tree, out_tree,
+        in_avals, out_avals) -> Tuple[Tuple[xc.OpSharding, ...], xc.OpSharding]:
+    """Create input and output sharding spec from user's in_axis_resources."""
+    parsed_resources = get_flatten_axis_resources(sharding_option, in_tree,
+                                                  out_tree)
+    if parsed_resources is None:
+        return None, None
+    in_op_shardings = parsed_spec_to_opsharding(
+        parsed_resources.in_parsed_pspec, in_avals, mesh_shape, sharding_option)
+    out_op_shardings = parsed_spec_to_opsharding(
+        parsed_resources.out_parsed_pspec, out_avals, mesh_shape,
+        sharding_option)
     return in_op_shardings, out_op_shardings

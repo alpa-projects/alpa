@@ -21,7 +21,7 @@ from alpa.pipeline_parallel.cross_mesh_resharding import (
     SymbolicReshardingTask, SymbolicBroadcastReshardingTask)
 from alpa.pipeline_parallel.pipeshard_executable import (
     AllocateZeroWorkerExecutableConfig, PipelineInstruction,
-    PipeshardMeshWorkerExecuable)
+    PipeshardMeshWorkerExecutable)
 from alpa.pipeline_parallel.resharding_tensor import VirtualDistributedArray
 from alpa.testing import assert_allclose
 from alpa.util import get_shard_shape
@@ -114,14 +114,14 @@ def test_resharding(var,
     # Compile Pipeline Executable
     for worker in src_mesh.workers:
         exec_uuid = next_mesh_executable_uuid()
-        worker.put_executable.remote(exec_uuid, PipeshardMeshWorkerExecuable,
+        worker.put_executable.remote(exec_uuid, PipeshardMeshWorkerExecutable,
                                      instruction_lists[worker], [src_uuid], [],
                                      [], [], [],
                                      [False] * src_mesh.num_devices_per_host)
         exec_uuids[worker] = exec_uuid
     for worker in dst_mesh.workers:
         exec_uuid = next_mesh_executable_uuid()
-        worker.put_executable.remote(exec_uuid, PipeshardMeshWorkerExecuable,
+        worker.put_executable.remote(exec_uuid, PipeshardMeshWorkerExecutable,
                                      instruction_lists[worker], [], [dst_uuid],
                                      executable_config_lists[worker], [], [],
                                      [False] * dst_mesh.num_devices_per_host)

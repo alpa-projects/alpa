@@ -364,7 +364,10 @@ def data_loader_input_iter_func(start, end, batch_size):
 
 
 class HloParser:
-
+    """
+    Parse Hlo text to check whether the parameter and output has correct
+    sharding.
+    """
     @staticmethod
     def get_param_line(text: str):
         text = text[text.find("ENTRY"):]

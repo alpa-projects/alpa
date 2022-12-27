@@ -1106,7 +1106,7 @@ class AllocZeroBufferWorkerExecutable(MeshWorkerExecutable):
 
 class UtilMeshWorkerExecutable(MeshWorkerExecutable):
     """Worker executable that runs a manually generated function. It is lighter
-    than NoralMeshWorkerExecutable as it does not have a StagePlan.
+    than NormalMeshWorkerExecutable as it does not have a StagePlan.
 
     Currently, it is used for concatenate(will be deprecated after we move it
     to apply_grad) and allgather.

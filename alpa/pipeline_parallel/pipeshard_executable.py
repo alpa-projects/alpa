@@ -104,7 +104,7 @@ class PipeshardDriverExecutable:
                 task.create_resharding_communicators()
 
         self.exec_uuid = next_mesh_executable_uuid()
-        # Create a PipeshardMeshWorkerExecuable for each MeshHostWorker
+        # Create a PipeshardMeshWorkerExecutable for each MeshHostWorker
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
             mesh_grad_uuids = pipeshard_config.grad_uuids[mesh_idx]
             for worker in physical_mesh.workers:
@@ -119,7 +119,7 @@ class PipeshardDriverExecutable:
                         pipeshard_config.reduced_var_uuid_lists[mesh_idx],
                         self.donate_invars[mesh_idx])
                 worker.put_executable.remote(self.exec_uuid,
-                                             PipeshardMeshWorkerExecuable,
+                                             PipeshardMeshWorkerExecutable,
                                              *args)
 
     ##### Compilation Related Functions #####
@@ -425,7 +425,7 @@ class PipeshardDriverExecutable:
             mesh.delete_remote_executable(self.exec_uuid)
 
 
-class PipeshardMeshWorkerExecuable:
+class PipeshardMeshWorkerExecutable:
     """
     An executable that executes static pipeline runtime instructions on a
     worker.

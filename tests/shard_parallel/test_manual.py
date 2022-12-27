@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import alpa
 from alpa import (AutoShardingOption, LocalPhysicalDeviceMesh,
                   ManualShardingOption, ShardParallel, parallelize)
+from alpa.testing import HloParser
 
 
 class ManualShardingTest(unittest.TestCase):
@@ -38,34 +39,6 @@ class ManualShardingTest(unittest.TestCase):
                                    batch_argnums=batch_argnums)
         return parallelized.get_executable(*args).get_hlo_text()
 
-    @staticmethod
-    def _get_param_line(text: str):
-        text = text[text.find("ENTRY"):]
-        text = text[:text.find("\n")]
-        return text
-
-    @staticmethod
-    def _get_root_line(text: str):
-        text = text[text.find("ENTRY"):]
-        text = text[text.find("ROOT"):]
-        text = text[:text.find("\n")]
-        return text
-
-    @staticmethod
-    def _parse_param_shapes(text: str):
-        # the first one is "ENTRY %xxx ("
-        params = text.split("param")[1:]
-        shapes = tuple(map(lambda x: x[x.find("f32"):x.find("]") + 1], params))
-        return shapes
-
-    @staticmethod
-    def _parse_root_shapes(text: str):
-        tuple_shape = text[text.find("=") + 2:text.find("tuple(")]
-        # the last one is ')'
-        shapes = tuple_shape.split("0}")[:-1]
-        shapes = tuple(map(lambda x: x[x.find("f32"):x.find("{")], shapes))
-        return shapes
-
     def test_set_input(self):
 
         def fn(a, b):
@@ -78,20 +51,20 @@ class ManualShardingTest(unittest.TestCase):
         ms_option = ManualShardingOption(self.mesh_axis_names,
                                          in_axis_resources=in_axis_resources)
         text = self._get_fn_manual_sharding_with(fn, ms_option, a, b)
-        text = self._get_param_line(text)
+        text = HloParser.get_param_line(text)
         assert "param: f32[6,2]" in text and "param.1: f32[6,2]" in text
         in_axis_resources = (PartitionSpec("data", None),
                              PartitionSpec("data", "model"))
         ms_option = ManualShardingOption(self.mesh_axis_names,
                                          in_axis_resources=in_axis_resources)
         text = self._get_fn_manual_sharding_with(fn, ms_option, a, b)
-        text = self._get_param_line(text)
+        text = HloParser.get_param_line(text)
         assert "param: f32[3,4]" in text and "param.1: f32[3,2]" in text
         in_axis_resources = (None, PartitionSpec("data", None))
         ms_option = ManualShardingOption(self.mesh_axis_names,
                                          in_axis_resources=in_axis_resources)
         text = self._get_fn_manual_sharding_with(fn, ms_option, a, b)
-        text = self._get_param_line(text)
+        text = HloParser.get_param_line(text)
         assert "param: f32[6,4]" in text and "param.1: f32[3,4]" in text
 
     def test_set_output(self):
@@ -106,7 +79,7 @@ class ManualShardingTest(unittest.TestCase):
         ms_option = ManualShardingOption(self.mesh_axis_names,
                                          out_axis_resources=out_axis_resources)
         text = self._get_fn_manual_sharding_with(fn, ms_option, a)
-        text = self._get_root_line(text)
+        text = HloParser.get_root_line(text)
         assert ("(f32[3,4]{1,0}, f32[6,4]{1,0}, f32[6,2]{1,0}, f32[3,2]{1,0}"
                 in text)
 
@@ -148,10 +121,10 @@ class ManualShardingTest(unittest.TestCase):
         acc_grad_text = text[:apply_grad_start]
         apply_grad_text = text[apply_grad_start:]
         # 1. Accumulate grad:
-        acc_grad_params = self._get_param_line(acc_grad_text)
-        acc_grad_param_shapes = self._parse_param_shapes(acc_grad_params)
-        acc_grad_root = self._get_root_line(acc_grad_text)
-        acc_grad_root_shapes = self._parse_root_shapes(acc_grad_root)
+        acc_grad_params = HloParser.get_param_line(acc_grad_text)
+        acc_grad_param_shapes = HloParser.parse_param_shapes(acc_grad_params)
+        acc_grad_root = HloParser.get_root_line(acc_grad_text)
+        acc_grad_root_shapes = HloParser.parse_root_shapes(acc_grad_root)
 
         param_shape = ("f32[6,4]", "f32[4]", "f32[4,10]", "f32[10]")
         # batch_size / num_microbatches / data_parallel
@@ -159,10 +132,11 @@ class ManualShardingTest(unittest.TestCase):
         assert acc_grad_param_shapes == param_shape + batch_shape + param_shape
         assert acc_grad_root_shapes == param_shape
         # 2. Apply grad:
-        apply_grad_params = self._get_param_line(apply_grad_text)
-        apply_grad_param_shapes = self._parse_param_shapes(apply_grad_params)
-        apply_grad_root = self._get_root_line(apply_grad_text)
-        apply_grad_root_shapes = self._parse_root_shapes(apply_grad_root)
+        apply_grad_params = HloParser.get_param_line(apply_grad_text)
+        apply_grad_param_shapes = HloParser.parse_param_shapes(
+            apply_grad_params)
+        apply_grad_root = HloParser.get_root_line(apply_grad_text)
+        apply_grad_root_shapes = HloParser.parse_root_shapes(apply_grad_root)
         assert apply_grad_param_shapes == param_shape + param_shape
         assert apply_grad_root_shapes == param_shape
 

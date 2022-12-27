@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import alpa
 from alpa import (AutoShardingOption, ManualShardingOption, ManualStageOption,
                   PipeshardParallel, mark_pipeline_boundary, parallelize)
+from alpa.testing import HloParser
 
 
 class PipeshardManualShardingTest(unittest.TestCase):
@@ -34,35 +35,6 @@ class PipeshardManualShardingTest(unittest.TestCase):
             default_auto_sharding_option=AutoShardingOption(False))
         parallelized = parallelize(fn, method=method)
         return parallelized.get_executable(*args).get_hlo_text()
-
-    @staticmethod
-    def _get_param_line(text: str):
-        text = text[text.find("ENTRY"):]
-        text = text[:text.find("\n")]
-        return text
-
-    @staticmethod
-    def _get_root_line(text: str):
-        text = text[text.find("ENTRY"):]
-        text = text[text.find("ROOT"):]
-        text = text[:text.find("\n")]
-        return text
-
-    @staticmethod
-    def _parse_param_shapes(text: str):
-        # the first one is "ENTRY %xxx ("
-        params = text.split("param")[1:]
-        shapes = tuple(
-            map(lambda x: x[x.find(": ") + 2:x.find("]") + 1], params))
-        return shapes
-
-    @staticmethod
-    def _parse_root_shapes(text: str):
-        tuple_shape = text[text.find("=") + 2:text.find("tuple(")]
-        # the last one is ')'
-        shapes = tuple_shape.split("0}")[:-1]
-        shapes = tuple(map(lambda x: x[x.find("f32"):x.find("{")], shapes))
-        return shapes
 
     @staticmethod
     def _is_superset_with_x_more(seq1, seq2, x):
@@ -126,31 +98,41 @@ class PipeshardManualShardingTest(unittest.TestCase):
         # layer 0
         l0_param_shape = ("f32[6,4]", "f32[4]", "f32[4,10]", "f32[10]")
         l0_batch_shape = ("f32[32,6]",)
-        l0_fwd_param = self._parse_param_shapes(self._get_param_line(l0_fwd))
+        l0_fwd_param = HloParser.parse_param_shapes(
+            HloParser.get_param_line(l0_fwd))
         assert sorted(l0_fwd_param) == sorted(l0_param_shape + l0_batch_shape)
-        l0_bwd_param = self._parse_param_shapes(self._get_param_line(l0_bwd))
-        l0_bwd_root = self._parse_root_shapes(self._get_root_line(l0_bwd))
+        l0_bwd_param = HloParser.parse_param_shapes(
+            HloParser.get_param_line(l0_bwd))
+        l0_bwd_root = HloParser.parse_root_shapes(
+            HloParser.get_root_line(l0_bwd))
         # the donated accumulated gradient are at first
         assert sorted(l0_bwd_param[:4]) == sorted(l0_param_shape)
         assert sorted(l0_bwd_root) == sorted(l0_param_shape)
-        l0_apl_param = self._parse_param_shapes(self._get_param_line(l0_apl))
-        l0_apl_root = self._parse_root_shapes(self._get_root_line(l0_apl))
+        l0_apl_param = HloParser.parse_param_shapes(
+            HloParser.get_param_line(l0_apl))
+        l0_apl_root = HloParser.parse_root_shapes(
+            HloParser.get_root_line(l0_apl))
         assert sorted(l0_apl_param) == sorted(l0_param_shape + l0_param_shape)
         assert sorted(l0_apl_root) == sorted(l0_param_shape)
 
         # layer 1
         l1_param_shape = ("f32[10,12]", "f32[12]", "f32[12,14]", "f32[14]")
         l1_batch_shape = ("f32[16,14]",)
-        l1_fwd_param = self._parse_param_shapes(self._get_param_line(l1_fwd))
+        l1_fwd_param = HloParser.parse_param_shapes(
+            HloParser.get_param_line(l1_fwd))
         assert self._is_superset_with_x_more(l1_fwd_param,
                                              l1_param_shape + l1_batch_shape, 1)
-        l1_bwd_param = self._parse_param_shapes(self._get_param_line(l1_bwd))
-        l1_bwd_root = self._parse_root_shapes(self._get_root_line(l1_bwd))
+        l1_bwd_param = HloParser.parse_param_shapes(
+            HloParser.get_param_line(l1_bwd))
+        l1_bwd_root = HloParser.parse_root_shapes(
+            HloParser.get_root_line(l1_bwd))
         # the donated accumulated gradient are at first
         assert sorted(l1_bwd_param[:4]) == sorted(l1_param_shape)
         assert self._is_superset_with_x_more(l1_bwd_root, l1_param_shape, 1)
-        l1_apl_param = self._parse_param_shapes(self._get_param_line(l1_apl))
-        l1_apl_root = self._parse_root_shapes(self._get_root_line(l1_apl))
+        l1_apl_param = HloParser.parse_param_shapes(
+            HloParser.get_param_line(l1_apl))
+        l1_apl_root = HloParser.parse_root_shapes(
+            HloParser.get_root_line(l1_apl))
         assert sorted(l1_apl_param) == sorted(l1_param_shape + l1_param_shape)
         assert sorted(l1_apl_root) == sorted(l1_param_shape)
 

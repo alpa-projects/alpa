@@ -660,6 +660,9 @@ def _cross_mesh_allreduce_xla_translation(c, *args, **kwargs):
 
     # TODO(yonghao): the has_side_effect is to prevent CSE of the allreduce.
     # It might be replaced by adding its outvar to output
+    sharding = xc.OpSharding()
+    sharding.type = sharding.type.REPLICATED
+    c.set_sharding(sharding)
     output = xc.ops.CustomCall(c,
                                call_name,
                                operands=(input_params,),

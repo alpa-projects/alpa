@@ -19,7 +19,7 @@ docker build -t run-alpa-image -f run_alpa_infiniband.Dockerfile .
 This docker file added InfiniBand dependencies in addition to the [default run_alpa.Dockerfile](../run_alpa.Dockerfile).
 
 ## Tag and push your docker image
-Second, tag and push your Alpa docker image to a public repository in docker.com.
+Then tag and push your Alpa docker image to a public repository in docker.com.
 ```bash
 docker tag {image_hash} {your_docker}/{image}:{version}
 ```
@@ -28,7 +28,7 @@ docker push {your_docker}/{image}:{version}
 ```
 
 ## Write cluster.yaml file
-Third, write your deployment script to use the Alpa docker image you just built in a k8s cloud.
+Then write your deployment script to use the Alpa docker image you just built in a k8s cloud.
 The k8s deployment process can be summarized as the following steps in a nutshell:
 
 1. Define service/headnode/worker roles in the k8s deployment for the Ray cluster.

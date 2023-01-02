@@ -260,11 +260,11 @@ class XLANCCLGroup(BaseGroup):
         self._create_nccl_p2p_communicator(comm_key, my_gpu_idx, peer_rank,
                                            peer_gpu_idx, nccl_uid)
 
-    def create_and_set_xla_communicators(self, devices):
-        key = _get_comm_key_from_devices(devices)
-        self._create_nccl_collective_communicator(key, devices)
-        nccl_uid = self._dev_comm_uids[key]
-        xe.set_comm_group_info('1', self.xla_comm_group, nccl_uid)
+    def create_and_set_xla_communicators(self, devices, key):
+        comm_key = _get_comm_key_from_devices(devices)
+        self._create_nccl_collective_communicator(comm_key, devices)
+        nccl_uid = self._dev_comm_uids[comm_key]
+        xe.set_comm_group_info(key, self.xla_comm_group, nccl_uid)
 
     # communicate operations
     def broadcast_partialgpu(self,

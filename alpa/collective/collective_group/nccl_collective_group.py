@@ -482,9 +482,9 @@ class NCCLGroup(BaseGroup):
         key = _get_comm_key_from_devices(devices)
         self._get_nccl_collective_communicator(key, devices)
 
-    def create_and_set_xla_communicators(self, devices):
-        key = _get_comm_key_from_devices(devices)
-        self._get_nccl_collective_communicator(key, devices, "xla")
+    def create_and_set_xla_communicators(self, devices, key):
+        comm_key = _get_comm_key_from_devices(devices)
+        self._get_nccl_collective_communicator(comm_key, devices, "xla")
 
     @staticmethod
     def _sync_streams(device_list, events, streams):

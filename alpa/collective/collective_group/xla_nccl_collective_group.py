@@ -261,8 +261,10 @@ class XLANCCLGroup(BaseGroup):
                                            peer_gpu_idx, nccl_uid)
 
     def create_and_set_xla_communicators(self, devices):
-        self.create_nccl_collective_communicator(devices)
-        # FIXME(yonghao): try to set it here
+        key = _get_comm_key_from_devices(devices)
+        self._create_nccl_collective_communicator(key, devices)
+        nccl_uid = self._dev_comm_uids[key]
+        xe.set_comm_group_info('1', self.xla_comm_group, nccl_uid)
 
     # communicate operations
     def broadcast_partialgpu(self,

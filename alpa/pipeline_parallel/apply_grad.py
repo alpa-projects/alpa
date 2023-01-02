@@ -657,6 +657,7 @@ def _cross_mesh_allreduce_xla_translation(c, *args, **kwargs):
     input_params = args[0]
     input_shape = c.get_shape(input_params)
     op_type = _primitive_to_str[kwargs['type']]
+    opaque = op_type + b';' + b'1'
 
     # TODO(yonghao): the has_side_effect is to prevent CSE of the allreduce.
     # It might be replaced by adding its outvar to output
@@ -668,7 +669,7 @@ def _cross_mesh_allreduce_xla_translation(c, *args, **kwargs):
                                operands=(input_params,),
                                shape=input_shape,
                                has_side_effect=True,
-                               opaque=op_type)
+                               opaque=opaque)
     c.clear_sharding()
     return output
 

@@ -9,7 +9,7 @@ module purge
 conda init bash
 source ~/.bashrc
 # start conda
-conda activate dedong_test_p39
+conda activate alpa_environment
 # environment activated, check environment
 python3 -V
 python3 -c "from cupy.cuda import nccl"

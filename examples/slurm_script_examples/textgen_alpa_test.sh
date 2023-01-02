@@ -9,7 +9,7 @@ source ~/.bashrc
 # test nvcc
 nvcc --version
 # start environment using conda
-conda activate dedong_test_p39
+conda activate alpa_environment
 # start ray on head
 ray start --head
 # start alpa textgen.py

@@ -280,11 +280,11 @@ class XLANCCLGroup(BaseGroup):
         """
         root_rank = 0
 
-        key = self._dev_comm_uids[broadcast_options.comm_key]
         self.create_nccl_broadcast_communicator(
             broadcast_options.comm_key, broadcast_options.world_size,
             broadcast_options.devices_ids,
             broadcast_options.devices_global_rank)
+        key = self._dev_comm_uids[broadcast_options.comm_key]
         is_receiver = broadcast_options.devices_global_rank[0] != 0
         self.xla_comm_group.nccl_broadcast_partial_gpus(
             key, tensors, broadcast_options.local_start_pos_list,

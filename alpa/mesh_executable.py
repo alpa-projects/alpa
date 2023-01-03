@@ -418,6 +418,7 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         with open(f"{prefix}_output_placement_specs.txt", "w") as f:
             f.write(str(self.get_output_placement_specs()) + "\n\n")
 
+
 def delete_donated_buffers(buffer_dict, uuids, donated_invars):
     """Delete the donated buffers from the local buffer dictionary."""
     for uuid, is_donated in zip(uuids, donated_invars):

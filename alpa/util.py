@@ -1696,6 +1696,7 @@ def maybe_numba_jit(func):
         logger.warning("Install numba to jit and accelerate the function.")
         return func
 
+
 def mesh_ids_hash(mesh_ids):
     ret = b""
     for i in sorted(mesh_ids):

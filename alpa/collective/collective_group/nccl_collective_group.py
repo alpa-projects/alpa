@@ -3,11 +3,12 @@ import logging
 
 import ray
 import cupy
-from jax._src.lib import xla_bridge as xb, xla_extension as xe
+from jax._src.lib import xla_extension as xe
 
 from alpa.collective.const import ENV
 from alpa.collective.collective_group import nccl_util
-from alpa.collective.collective_group.base_collective_group import BaseGroup, Rendezvous
+from alpa.collective.collective_group.base_collective_group import (BaseGroup,
+                                                                    Rendezvous)
 from alpa.collective.const import get_store_name
 from alpa.collective.types import (AllReduceOptions, BarrierOptions, Backend,
                                    ReduceOptions, BroadcastOptions,

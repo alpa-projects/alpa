@@ -1697,4 +1697,7 @@ def maybe_numba_jit(func):
         return func
 
 def mesh_ids_hash(mesh_ids):
-    return b'1'
+    ret = b""
+    for i in sorted(mesh_ids):
+        ret += bytes(f"{i}", "utf-8") + b"$"
+    return ret

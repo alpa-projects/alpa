@@ -415,6 +415,8 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
                     f"{self.get_total_allocation_size()/(1024**3):.3f} GB\n")
         with open(f"{prefix}_input_placement_specs.txt", "w") as f:
             f.write(str(self.get_input_placement_specs()) + "\n\n")
+        with open(f"{prefix}_output_placement_specs.txt", "w") as f:
+            f.write(str(self.get_output_placement_specs()) + "\n\n")
 
 def delete_donated_buffers(buffer_dict, uuids, donated_invars):
     """Delete the donated buffers from the local buffer dictionary."""
@@ -813,7 +815,9 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
             f.write(f"total_allocation_size: "
                     f"{self.get_total_allocation_size()/(1024**3):.3f} GB\n")
         with open(f"{prefix}_input_placement_specs.txt", "w") as f:
-                f.write(str(self.get_input_placement_specs()) + "\n\n")
+            f.write(str(self.get_input_placement_specs()) + "\n\n")
+        with open(f"{prefix}_output_placement_specs.txt", "w") as f:
+            f.write(str(self.get_output_placement_specs()) + "\n\n")
 
 
 class GradAccMeshWorkerExecutable(MeshWorkerExecutable):

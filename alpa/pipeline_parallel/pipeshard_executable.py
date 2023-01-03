@@ -377,9 +377,9 @@ class PipeshardDriverExecutable:
                 f.write(str(task) + "\n\n")
 
         with open(f"{prefix}_input_placement_specs.txt", "w") as f:
-            f.write(str(self.get_input_placement_specs()) + "\n\n")
+            f.write(str(self.get_input_placement_specs()))
         with open(f"{prefix}_output_placement_specs.txt", "w") as f:
-            f.write(str(self.get_output_placement_specs()) + "\n\n")
+            f.write(str(self.get_output_placement_specs()))
 
     def dump_stage_execution_trace(self, filename: str):
         exec_info = self.get_stage_execution_info()

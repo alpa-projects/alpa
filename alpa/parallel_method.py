@@ -259,6 +259,7 @@ def get_3d_parallel_method(num_micro_batches: int,
     num_devices_per_host = virtual_mesh.num_devices_per_host
     if data_parallel == -1:
         data_parallel = (num_devices // operator_parallel // pipeline_parallel)
+    print(f"num_devices {num_devices} dp {data_parallel}, op {operator_parallel}, pp {pipeline_parallel}")
     assert num_devices % data_parallel == 0
     assert num_devices % operator_parallel == 0
     assert num_devices % pipeline_parallel == 0

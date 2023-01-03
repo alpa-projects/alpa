@@ -8,7 +8,7 @@ python3 run_clm_flax.py \
     --per_device_train_batch_size="20" \
     --per_device_eval_batch_size="20" \
     --num_micro_batches 4 \
-    --operator_parallel 4 \
+    --operator_parallel 2 \
     --pipeline_parallel 1 \
     --dtype="float16" \
     --learning_rate="5e-4" --warmup_steps="2000" \

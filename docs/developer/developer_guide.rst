@@ -66,11 +66,11 @@ If you want to contribute code to tensorflow-alpa, you can follow the steps belo
 
 
 Building jaxlib from source
---------------------
+---------------------------
 
 In case you need to modify and debug Alpa's jaxlib level of changes, you will need to build jaxlib from source, where Alpa added its auto sharding passes in SPMD.
 
-We have a build python script for you that will help to download bazel and do the building process as following:
+We have a python script for you `build.py` that will help to download bazel and do the building process:
 
 .. code-block:: bash
 

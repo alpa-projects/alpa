@@ -18,12 +18,13 @@ from benchmark_parallel_utils import (
 
 def create_infer_params_aval(rngkey, model, batch):
     params = jax.eval_shape(model.init, rngkey, batch["input_ids"],
-                            batch["attention_mask"],
-                            batch["token_type_ids"], batch["position_ids"])
+                            batch["attention_mask"], batch["token_type_ids"],
+                            batch["position_ids"])
     params = jax.eval_shape(
         lambda p: jax.tree_util.tree_map(
             lambda x: jnp.asarray(x, dtype=jnp.float16), p), params)
-    return params    
+    return params
+
 
 def get_infer_step(parallel_method, model):
 
@@ -41,7 +42,7 @@ def get_infer_step(parallel_method, model):
         loss = -jnp.sum(labels * jax.nn.log_softmax(logits, axis=-1), axis=-1)
         loss = (label_mask * loss).sum() / label_mask.sum()
         return loss
-    
+
     return parallelize(infer_step, method=parallel_method, donate_argnums=())
 
 
@@ -60,8 +61,8 @@ def prepare_moe_inference_input_and_model(benchmark_case,
     if correct_expert_group_size:
         rang_factor = 1
         expected_expert_group_size = min(
-            expert_group_size,
-            batch_size * seq_len // benchmark_case.num_micro_batches // 1 // rang_factor)
+            expert_group_size, batch_size * seq_len //
+            benchmark_case.num_micro_batches // 1 // rang_factor)
         if expected_expert_group_size != expert_group_size:
             print("- Expected expert group size should be {}, "
                   "but got {}. Will reset it".format(expected_expert_group_size,
@@ -152,8 +153,8 @@ def benchmark_moe_inference_internal(benchmark_case,
 
     infer_step = get_infer_step(method, model)
 
-    (latencies, max_mem_allocated, compilation_times,
-     executable, per_stage_weight_mem,
+    (latencies, max_mem_allocated, compilation_times, executable,
+     per_stage_weight_mem,
      per_stage_peak_mem) = compile_and_benchmark_pipeshard_inference_executable(
          benchmark_case.parallel_mode,
          niter,

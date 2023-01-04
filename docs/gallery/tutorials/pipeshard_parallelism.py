@@ -164,7 +164,7 @@ def manual_pipeline_train_step(state, batch):
         loss = jnp.mean((out - batch["y"])**2)
         return loss
 
-    # We use `alpa.grad` here to seperate the apply gradient stage with the
+    # We use `alpa.grad` here to separate the apply gradient stage with the
     # forward/backward stages in the pipeline. This is necessary to ensure that
     # the gradient accumulation is correct.
     grads = alpa.grad(loss_func)(state.params)
@@ -227,7 +227,7 @@ def auto_pipeline_train_step(state, batch):
         loss = jnp.mean((out - batch["y"])**2)
         return loss
 
-    # Again, we use `alpa.grad` here to seperate the apply gradient stage with
+    # Again, we use `alpa.grad` here to separate the apply gradient stage with
     # the forward/backward stages in the pipeline.
     grads = alpa.grad(loss_func)(state.params)
     new_state = state.apply_gradients(grads=grads)

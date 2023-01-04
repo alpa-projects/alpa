@@ -9,19 +9,31 @@ class GlobalConfig:
         ########## Options of device mesh ##########
         self.backend = "gpu"
         self.has_cuda = os.system("nvidia-smi > /dev/null 2>&1") == 0
+
         # See https://jax.readthedocs.io/en/latest/gpu_memory_allocation.html
         self.xla_client_mem_fraction = float(
             os.environ.get("XLA_PYTHON_CLIENT_MEM_FRACTION", 0.9))
-        self.xla_gpu_autotune_level = 4
+        self.xla_client_client_preallocate = os.environ.get(
+            "XLA_PYTHON_CLIENT_PREALLOCATE", "true")
         # The threshold to tigger a batched deletion on workers.
         self.delete_remote_arrays_threshold = 50
-        # Whether to use AWS EFA network interface
-        self.use_aws_efa = os.environ.get("ALPA_USE_AWS_EFA",
-                                          "").lower() in ["true", "1"]
+
         # Random seed used for compilation
         self.compile_random_seed = 42
         # Random seed used for runtime
         self.runtime_random_seed = 42
+
+        # XLA server port range
+        self.xla_server_port_start = int(
+            os.environ.get("XLA_SERVER_PORT_START", "20000").lower())
+        self.xla_server_port_end = int(
+            os.environ.get("XLA_SERVER_PORT_END", "25000").lower())
+        # XLA gpu kernel auto-tuning level
+        self.xla_gpu_autotune_level = 4
+
+        # Whether to use AWS EFA network interface
+        self.use_aws_efa = os.environ.get("ALPA_USE_AWS_EFA",
+                                          "").lower() in ["true", "1"]
 
         ########## Options of shard_parallel ##########
         # Whether to sync before and after the executable for accurate internal
@@ -45,19 +57,19 @@ class GlobalConfig:
         self.always_donate_micro_batch_vars = True
 
         ########## Options of pipeline runtime ##########
-        self.pipeline_check_alive = False
         # Whether to sync before and after the executable for accurate internal
         # timer
         self.pipeline_sync_for_timer = False
         # Whether to use distributed compilation in pipeline parallel for
         # each stage. Disabling it helps debug.
         self.pipeline_distributed_compile = True
+        self.eagerly_create_communicators = True
+        self.pipeline_check_alive = False
         # Whether to use single-byte signal tensor for send/recv.
         # This is a debug option.
         self.pipeline_use_signal_send_recv = False
         # Whether to use the scatter-gater/local-all-gather optimization.
         self.use_local_allgather = True
-        self.eagerly_create_communicators = True
         # Cross mesh resharding mode. Possible choices: {"send_recv",
         # "broadcast"}
         self.resharding_mode = "send_recv"
@@ -65,6 +77,11 @@ class GlobalConfig:
         # "xla_extension"}
         self.nccl_mode = "cupy"
         self.enable_overlapping = False
+        # Cross mesh resharding load balancing mode.
+        # Possible choices: {"normal", "no_loadbalance",
+        # "loadbalance_size", "loadbalance_order"}
+        self.resharding_loadbalance_mode = "normal"
+        self.loadbalance_order_algo = "greedy"
 
         ########## Options of benchmark ##########
         # If true, the system is allowed to use dummy values during

@@ -413,6 +413,10 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         with open(f"{prefix}.mem_usage.txt", "w") as f:
             f.write(f"total_allocation_size: "
                     f"{self.get_total_allocation_size()/(1024**3):.3f} GB\n")
+        with open(f"{prefix}_input_placement_specs.txt", "w") as f:
+            f.write(str(self.get_input_placement_specs()))
+        with open(f"{prefix}_output_placement_specs.txt", "w") as f:
+            f.write(str(self.get_output_placement_specs()))
 
 
 def delete_donated_buffers(buffer_dict, uuids, donated_invars):
@@ -811,6 +815,10 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         with open(f"{prefix}.mem_usage.txt", "w") as f:
             f.write(f"total_allocation_size: "
                     f"{self.get_total_allocation_size()/(1024**3):.3f} GB\n")
+        with open(f"{prefix}_input_placement_specs.txt", "w") as f:
+            f.write(str(self.get_input_placement_specs()))
+        with open(f"{prefix}_output_placement_specs.txt", "w") as f:
+            f.write(str(self.get_output_placement_specs()))
 
 
 class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
@@ -905,7 +913,8 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
                                self.donated_invars)
 
         # Delete micro batch buffers
-        if next_batches_uuids is not None:
+        if next_batches_uuids is not None and \
+                next_batches_uuids[0] is not None:
             for i in range(len(next_batches_uuids)):
                 del buffer_dict[next_batches_uuids[i]]
 
@@ -1105,7 +1114,7 @@ class AllocZeroBufferWorkerExecutable(MeshWorkerExecutable):
 
 class UtilMeshWorkerExecutable(MeshWorkerExecutable):
     """Worker executable that runs a manually generated function. It is lighter
-    than NoralMeshWorkerExecutable as it does not have a StagePlan.
+    than NormalMeshWorkerExecutable as it does not have a StagePlan.
 
     Currently, it is used for concatenate(will be deprecated after we move it
     to apply_grad) and allgather.

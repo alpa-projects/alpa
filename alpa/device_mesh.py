@@ -55,7 +55,8 @@ from alpa.timer import timers, tracer
 from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
                        update_jax_platform, is_ray_node_resource,
                        try_import_ray_worker, create_placement_group,
-                       get_bundle_idx, retrieve_placement_group, get_bundle2ip)
+                       get_bundle_idx, retrieve_placement_group, get_bundle2ip,
+                       check_server_port)
 
 ray_worker = try_import_ray_worker()
 
@@ -599,10 +600,14 @@ class MeshHostWorker:
         return list(self.buffers.keys())
 
     ##### Other Functions #####
-    def sync(self):
+    def sync(self, sync_all_devices=False):
         # We sync one device instead of all for smaller runtime overhead.
         # This is correct because of SPMD.
-        self.local_devices[0].synchronize_all_activity()
+        if sync_all_devices:
+            for device in self.local_devices:
+                device.synchronize_all_activity()
+        else:
+            self.local_devices[0].synchronize_all_activity()
 
     def sync_all(self):
         for device in self.local_devices:
@@ -1030,7 +1035,10 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # Launch distributed xla runtime
         port = None
         while port in used_port_set:
-            port = np.random.randint(20000, 25000)
+            port = np.random.randint(global_config.xla_server_port_start,
+                                     global_config.xla_server_port_end)
+            if check_server_port(ray.util.get_node_ip_address(), port):
+                port = None
         used_port_set.add(port)
 
         server_address = f"{ray.util.get_node_ip_address()}:{port}"
@@ -1061,7 +1069,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 "XLA_FLAGS": (os.environ.get("XLA_FLAGS", "") +
                               f" --xla_gpu_autotune_level"
                               f"={global_config.xla_gpu_autotune_level}"),
-
+                "XLA_PYTHON_CLIENT_PREALLOCATE":
+                    global_config.xla_client_client_preallocate,
                 # "NCCL_LAUNCH_MODE": "PARALLEL",
                 # "XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
                 # "NCCL_DEBUG": "INFO" if i == 0 else "VERSION",
@@ -1396,8 +1405,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             ray.get(worker.reset_memory_stats.remote())
 
     ##### Other Functions #####
-    def sync_workers(self):
-        ray.get([w.sync.remote() for w in self.workers])
+    def sync_workers(self, sync_all_devices=False):
+        ray.get([w.sync.remote(sync_all_devices) for w in self.workers])
 
     def sync_move_workers(self):
         ray.get([w.sync_move_worker.remote() for w in self.workers])
@@ -2140,7 +2149,9 @@ class DeviceCluster:
 
         for node in ray.nodes():
             for key in node["Resources"]:
-                if is_ray_node_resource(key):
+                if (is_ray_node_resource(key) and
+                        global_config.ray_accelerator_name
+                        in node["Resources"]):
                     all_host_info.append(node)
                     all_host_ips.append(key.split("node:")[-1])
 

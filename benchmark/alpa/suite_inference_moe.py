@@ -35,12 +35,13 @@ def get_config(model_config,
                                              "uniform", parallel_args)
                         profile_suite[num_gpus].append(case)
 
+
 ## generate inference profiling results
 get_config(moe_specs["1.3B"], [1, 2, 4, 8, 16], [1], [1, 2, 4, 8], [1],
-          [1, 2, 4, 8, 16])
+           [1, 2, 4, 8, 16])
 get_config(moe_specs["2.4B"], [1, 2, 4, 8, 16], [1], [1, 2, 4, 8], [1],
-          [1, 2, 4, 8, 16])
+           [1, 2, 4, 8, 16])
 get_config(moe_specs["7.1B"], [1, 2, 4, 8, 16], [1], [1, 2, 4, 8], [1],
-          [1, 2, 4, 8, 16])
+           [1, 2, 4, 8, 16])
 get_config(moe_specs["10B"], [1, 2, 4, 8, 16], [1], [1, 2, 4, 8], [1],
-          [1, 2, 4, 8, 16])
+           [1, 2, 4, 8, 16])

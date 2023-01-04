@@ -6,6 +6,7 @@ import logging
 import os
 import subprocess
 import re
+import socket
 import time
 from collections import OrderedDict
 from functools import partial, partialmethod
@@ -308,11 +309,13 @@ def cached_property(fn, *args, **kwargs):
 ########################################
 
 
-def get_compile_options(num_replicas: int, num_partitions: int,
+def get_compile_options(num_replicas: int,
+                        num_partitions: int,
                         device_assignment: np.ndarray,
                         use_spmd_partitioning: bool,
                         parameter_is_tupled_arguments: int,
-                        build_random_seed: int):
+                        build_random_seed: int,
+                        spmd_propagation_to_outputs: bool = False):
     """Return CompileOptions for XLA compilation."""
     compile_options = xb.get_compile_options(
         num_replicas=num_replicas,
@@ -322,7 +325,10 @@ def get_compile_options(num_replicas: int, num_partitions: int,
     )
     compile_options.parameter_is_tupled_arguments = (
         parameter_is_tupled_arguments)
-    compile_options.executable_build_options.seed = build_random_seed
+    build_options = compile_options.executable_build_options
+    build_options.seed = build_random_seed
+    build_options.allow_spmd_sharding_propagation_to_output =\
+        spmd_propagation_to_outputs
     return compile_options
 
 
@@ -1285,14 +1291,24 @@ def to_str_round(x: Any, decimal: int = 6):
         return "[" + tmp_str + "]"
     if isinstance(x, dict):
         return str({k: to_str_round(v, decimal=decimal) for k, v in x.items()})
-    if isinstance(x, int):
+    if isinstance(x, (int, np.int32, np.int64)):
         return str(x)
-    if isinstance(x, float):
+    if isinstance(x, (float, np.float32, np.float64)):
         format_str = f"%.{decimal}f"
         return format_str % x
     if x is None:
         return str(x)
     raise ValueError("Invalid value: " + str(x))
+
+
+def check_server_port(address, port):
+    """Checking Port Opening Status """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.connect((address, port))
+            return True
+        except socket.error:
+            return False
 
 
 _tic = None
@@ -1307,7 +1323,7 @@ def print_used_time(message: str):
 
 
 ########################################
-##### Ray Compatibilityu API Utilities
+##### Ray Compatibility API Utilities
 ########################################
 
 

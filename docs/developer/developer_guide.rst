@@ -63,3 +63,31 @@ If you want to contribute code to tensorflow-alpa, you can follow the steps belo
 2. Maintainers review the pull request and merge it to tensorflow-alpa.
 3. Contributors send a pull request to alpa. The pull request should update the stored hash commit of the submodule and other modifications to alpa if necessary.
 4. Maintainers review the pull request and merge it to alpa.
+
+
+Building jaxlib from source
+--------------------
+
+In case you need to modify and debug Alpa's jaxlib level of changes, you will need to build jaxlib from source, where Alpa added its auto sharding passes in SPMD.
+
+We have a build python script for you that will help to download bazel and do the building process as following:
+
+.. code-block:: bash
+
+    cd alpa/build_jaxlib
+    python3 build/build.py --enable_cuda --dev_install --bazel_options=--override_repository=org_tensorflow=$TF_PATH
+
+TF_PATH here points to the tensorflow-alpa folder such as `alpa/third_party/tensorflow-alpa`
+
+.. warning::
+
+    Building Alpa with gcc 9.4.0 might lead to build issues, which happens to be a common default gcc verison on public cloud containers.
+
+In this case you will need to update your gcc version to another one, such as gcc-10 to re-build by executing `build.py` above again with clean bazel cache.
+
+.. code-block:: bash
+
+    sudo apt install gcc-8 g++-8 gcc-9 g++-9 gcc-10 g++-10
+    sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 100 --slave /usr/bin/g++ g++ /usr/bin/g++-10 --slave /usr/bin/gcov gcov /usr/bin/gcov-10
+    # Clean bazel cache
+    rm -rf ~/.cache/bazel

@@ -251,7 +251,7 @@ if __name__ == "__main__":
             env_vars = {
                 "NCCL_SOCKET_NTHREADS": "4",
                 "NCCL_NSOCKS_PERTHREAD": "4",
-                "NCCL_IB_HCA": "ibp",  # Change this to align with your IB interface name
+                "NCCL_IB_HCA": "mlx5,ibp",  # Change this to align with your IB interface name
                 "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
             }
         else:

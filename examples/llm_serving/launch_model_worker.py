@@ -1,7 +1,8 @@
 import asyncio
 import argparse
-from collections import defaultdict, namedtuple
+from collections import defaultdict, deque, namedtuple
 from dataclasses import dataclass, field
+from enum import Enum
 import json
 import time
 from typing import Any
@@ -22,11 +23,46 @@ from llm_serving.service.utils import build_logger
 @dataclass(order=True)
 class PrioritizedItem:
     priority: int
-    item: Any=field(compare=False)
+    item: Any = field(compare=False)
+
+
+class RequestType(Enum):
+    INTERACTIVE_JOB = 1
+    BACKGROUND_JOB = 2
+
+
+class WeightedQueue:
+    """
+    A simple wrapper around a PriorityQueue to set
+    a weight for the PriorityQueue.
+    This is supposed to be used with a WRR algorithm.
+    """
+    def __init__(self, weight, queue: asyncio.PriorityQueue = None):
+        if queue is not None:
+            self.queue = queue
+        else:
+            self.queue = asyncio.PriorityQueue()
+        self.weight = weight
+
+    def get_priority_queue(self) -> asyncio.PriorityQueue:
+        return self.queue
+
+    def get_weight(self):
+        return self.weight
 
 
 GenerateItem = namedtuple("GenerateItem", ["uid", "return_queue", "data"])
 LogprobsItem = namedtuple("LogprobsItem", ["uid", "return_queue", "data"])
+
+GENERATE_ITEM_PRIORITY = 0
+LOGPROBS_ITEM_PRIORITY = 50
+
+# Interactive requests have higher priority than
+# background requests.
+# In this case, we serve 1 background request every
+# 2 interactive requests (prevents starvation)
+INTERACTIVE_REQUESTS_PRIORITY = 2
+BACKGROUND_REQUESTS_PRIORITY = 1
 
 
 class LangaugeModelWorker:
@@ -48,16 +84,33 @@ class LangaugeModelWorker:
         self.num_return_sequences = num_return_sequences
         self.max_seq_len = max_seq_len
 
+        # Job type queues
+        # Note: the all_requests_queue is used as a "global counter" of requests
+        # so that the main loops waits until there is at least one request
+        # to satisfy
+        self.all_requests_queue = asyncio.PriorityQueue()
+        self.interactive_request_queue = asyncio.PriorityQueue()
+        self.background_request_queue = asyncio.PriorityQueue()
+
+        # Add the priority queues as weighted queues in priority queue list.
+        # Interactive requests have higher priority than background requests
+        self.wighted_queue_list = deque(
+            [WeightedQueue(weight=INTERACTIVE_REQUESTS_PRIORITY, queue=self.interactive_request_queue),
+             WeightedQueue(weight=BACKGROUND_REQUESTS_PRIORITY, queue=self.background_request_queue)])
+
+        # Parameters for the WRR algorithm
+        self.wrr_queue_idx = 0
+        self.total_queue_weight = self.wighted_queue_list[self.wrr_queue_idx].weight
+
         # Batch queues
         self.max_bs = max_batch_size
         self.batch_timeout = batch_timeout
-        self.request_queue = asyncio.PriorityQueue()
         self.logprobs_past_cache = defaultdict(lambda: (0, None))
         self.logprobs_past_cache_size_limit = logprobs_past_cache_size_limit
         asyncio.get_event_loop().create_task(self.batch_loop())
 
         # Load model
-        if num_beams > 1: # beam search is on, disable sampling
+        if num_beams > 1:   # beam search is on, disable sampling
             do_sample = False
         else:
             do_sample = True
@@ -79,22 +132,66 @@ class LangaugeModelWorker:
             keys = json.load(open(KEYS_FILENAME, "r"))
             self.allowed_api_keys = keys["allowed_api_keys"]
 
+    def get_priority_queue(self) -> asyncio.PriorityQueue:
+        # Fetch the current priority queue
+        current_queue = self.wighted_queue_list[self.wrr_queue_idx]
+
+        # Prepare the index for the next iteration:
+        # The index remains the same unless we decide to also iterate over the priority queues.
+        # If so, implement an incremental iteration like the following:
+        # self.wrr_queue_idx = (self.wrr_queue_idx + 1) % len(self.wighted_queue_list)
+        # Decrement the total weight.
+        self.total_queue_weight -= 1
+        if self.total_queue_weight <= 0:
+            # If the total weight reaches 0, rotate the queue and start over
+            # with the next one, updating the total queue weight
+            self.wighted_queue_list.rotate(-1)
+            self.total_queue_weight = self.wighted_queue_list[self.wrr_queue_idx].weight
+
+        # Return the current selected queue
+        return current_queue.get_priority_queue()
+
     async def batch_loop(self):
         while True:
-            pri_item = await self.request_queue.get()
+            # Get the next item from the queues.
+            # Note: fetch the items given their priority,
+            # e.g., interactive requests vs background requests
+            # Note: here we wait instead of looping until there is
+            # something in the queue
+            await self.all_requests_queue.get()
+
+            # Here there is an element in one of the (weighted ordered) queues.
+            # Loop until we find that queue
+            request_queue = self.get_priority_queue()
+            while request_queue.empty():
+                # Note: get_priority_queue already returns the right queue
+                # based on the WRR algorithm
+                request_queue = self.get_priority_queue()
+
+            # The nowait should not throw since there is at least one item
+            # in the current request queue
+            pri_item = request_queue.get_nowait()
+            if pri_item is None:
+                # The current queue can be empty,
+                # e.g., for interactive jobs that are low-frequency.
+                # In this case continue until there is a queue with an item
+                continue
 
             # Get the next batch
             generate_batch = []
             logprobs_item = None
             non_batch = []
             if isinstance(pri_item.item, GenerateItem):
-                # Wait for batch opportunity
+                # The item is for a Generate request:
+                # wait for batch opportunity
                 await asyncio.sleep(self.batch_timeout)
                 generate_batch.append(pri_item.item)
 
-                while (not self.request_queue.empty() and
+                # Loop through the request queue and append the Generate items into the batch list.
+                # Everything else (non Generate items) go back into the queue
+                while (not request_queue.empty() and
                        len(generate_batch) < self.max_bs):
-                    pri_item = self.request_queue.get_nowait()
+                    pri_item = request_queue.get_nowait()
                     if isinstance(pri_item.item, GenerateItem):
                         generate_batch.append(pri_item.item)
                     else:
@@ -103,13 +200,14 @@ class LangaugeModelWorker:
 
                 # Put non-batch items back to request queue
                 for x in non_batch:
-                    self.request_queue.put_nowait(x)
+                    request_queue.put_nowait(x)
             elif isinstance(pri_item.item, LogprobsItem):
+                # The item is for a Logprobs request: just get it (no batch whatsoever)
                 logprobs_item = pri_item.item
             else:
                 raise RuntimeError(f"Invalid item: {pri_item.item}")
 
-            # Process this batch
+            # Process this (Generate) batch
             if generate_batch:
                 args = {
                     "inputs": [],
@@ -129,6 +227,7 @@ class LangaugeModelWorker:
                 for item, res in zip(generate_batch, results):
                     item.return_queue.put_nowait((item.uid, res))
 
+            # Process this logprob item
             if logprobs_item:
                 logprobs_past_cache = self.logprobs_past_cache
                 arg = logprobs_item.data
@@ -139,7 +238,7 @@ class LangaugeModelWorker:
                 output = self.generator.forward(inputs, cache_id, pasts=logprobs_past_cache)
                 # add to or update the cache with newly computed values
                 logprobs_past_cache[cache_id] = (time.time(), output.past_key_values)
-                # delete oldest key in cache if cache too big
+                # delete the oldest key in cache if cache is too big
                 if len(logprobs_past_cache) > self.logprobs_past_cache_size_limit:
                     oldest_key = min(list(logprobs_past_cache.keys()), key=lambda k: logprobs_past_cache[k][0])
                     del logprobs_past_cache[oldest_key]
@@ -158,12 +257,12 @@ class LangaugeModelWorker:
 
     async def handle_request(self, request):
         args = await request.json()
-        self.check_authorization(args, request)
+        request_type = self.check_authorization(args, request)
 
         if "completions" in request.url.path:
-            return await self.completions(args, request)
+            return await self.completions(args, request, request_type)
         elif "logprobs" in request.url.path:
-            return await self.logprobs(args, request)
+            return await self.logprobs(args, request, request_type)
         else:
             raise ValueError("Invalid url: {request.url}")
 
@@ -187,12 +286,22 @@ class LangaugeModelWorker:
             raise ValueError("The prompt must be nonempty.")
         return prompts
 
-    async def completions(self, args, request):
+    def add_request_to_queue(self, request, request_type: RequestType):
+        if request_type is RequestType.INTERACTIVE_JOB:
+            self.interactive_request_queue.put_nowait(request)
+            self.all_requests_queue.put_nowait(1)
+        elif request_type is RequestType.BACKGROUND_JOB:
+            self.background_request_queue.put_nowait(request)
+            self.all_requests_queue.put_nowait(1)
+        else:
+            raise ValueError("Invalid request type")
+
+    async def completions(self, args, request, request_type):
         logger = self.logger
 
         if "redirect_logprobs" in args:
-            # A redirection to workaround some security settings.
-            return await self.logprobs(args, request)
+            # A redirection to work around some security settings.
+            return await self.logprobs(args, request, request_type)
 
         # Normalize prompts
         prompts = args["prompt"]
@@ -236,9 +345,12 @@ class LangaugeModelWorker:
         return_queue = asyncio.Queue()
         for i, prompt in enumerate(prompts):
             data = {"input": prompt, **args}
-            priority = 0
-            self.request_queue.put_nowait(PrioritizedItem(
-                priority, GenerateItem(i, return_queue, data)))
+            priority = GENERATE_ITEM_PRIORITY
+
+            # Add the request to the request queue: this is a GenerateItem request
+            request = PrioritizedItem(
+                priority, GenerateItem(i, return_queue, data))
+            self.add_request_to_queue(request, request_type)
 
         unordered_results = []
         for i in range(len(prompts)):
@@ -263,7 +375,7 @@ class LangaugeModelWorker:
             ],
         }
 
-    async def logprobs(self, args, request):
+    async def logprobs(self, args, request, request_type):
         logger = self.logger
 
         # Normalize prompts
@@ -300,8 +412,13 @@ class LangaugeModelWorker:
         cache_id = args["cache_id"] if "cache_id" in args else str(uuid.uuid4())
         ret_queue = asyncio.Queue()
         data = {"input": prompts, "cache_id": cache_id, **args}
-        self.request_queue.put_nowait(PrioritizedItem(
-            50, LogprobsItem(0, ret_queue, data)))
+
+        # Add the request to the request queue according to the request type:
+        # this is a LogprobsItem request
+        request = PrioritizedItem(
+            LOGPROBS_ITEM_PRIORITY, LogprobsItem(0, ret_queue, data))
+        self.add_request_to_queue(request, request_type)
+
         results = await ret_queue.get()
         return {
             "cache_id": cache_id,
@@ -318,9 +435,9 @@ class LangaugeModelWorker:
                              f"If you want to try longer sequence length, "
                              f"please consider hosting your own service using Alpa.")
 
-    def check_authorization(self, args, request):
+    def check_authorization(self, args, request) -> RequestType:
         if args.get("api_key", None) in self.allowed_api_keys:
-            return
+            return RequestType.BACKGROUND_JOB
 
         if not self.recaptcha.verify(
                 args.get("g-recaptcha-response", ""),
@@ -329,6 +446,8 @@ class LangaugeModelWorker:
             raise ValueError("Invalid captcha. If you are using the website, please click the "
                              "\"I'm not a robot\" button. If you are using client APIs, please "
                              "contact alpa developers to get an API key.")
+        # There is a captcha, it is assumed that the request comes from the website
+        return RequestType.INTERACTIVE_JOB
 
     def get_remote_ip(self, request):
         for x in request.scope['headers']:

@@ -1695,3 +1695,10 @@ def maybe_numba_jit(func):
     except ImportError:
         logger.warning("Install numba to jit and accelerate the function.")
         return func
+
+
+def mesh_ids_hash(mesh_ids):
+    ret = b""
+    for i in sorted(mesh_ids):
+        ret += bytes(f"{i}", "utf-8") + b"$"
+    return ret

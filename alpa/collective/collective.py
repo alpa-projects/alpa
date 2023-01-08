@@ -13,34 +13,23 @@ from alpa.util import try_import_ray_worker
 
 ray_worker = try_import_ray_worker()
 
-_NCCL_AVAILABLE = True
+_CUPY_NCCL_AVAILABLE = True
+_XLA_NCCL_AVAILABLE = True
 _GLOO_AVAILABLE = True
 
 logger = logging.getLogger(__name__)
 
-if global_config.nccl_mode == "cupy":
-    try:
-        from alpa.collective.collective_group.nccl_collective_group import (
-            NCCLGroup)
-    except ImportError:
-        _NCCL_AVAILABLE = False
-        logger.warning("NCCL seems unavailable. Please install Cupy "
-                       "following the guide at: "
-                       "https://docs.cupy.dev/en/stable/install.html.")
-else:
-    assert global_config.nccl_mode == "xla_extension"
-    try:
-        from alpa.collective.collective_group.xla_nccl_collective_group import (
-            XLANCCLGroup as NCCLGroup)
-        from alpa.collective.collective_group.xla_nccl_util import get_nccl_runtime_version
-        nccl_version = get_nccl_runtime_version()
-    except AttributeError:
-        _NCCL_AVAILABLE = False
-        logger.warning("NCCL from xla_extention seems unavailable! "
-                       "Please check whether your local tensorflow-alpa "
-                       "has already been up-to-date. You could also set "
-                       "global_config.nccl_mode == \"cupy\" to "
-                       "use another set of nccl apis from cupy. ")
+try:
+    from alpa.collective.collective_group.nccl_collective_group import (
+        NCCLGroup as CupyNcclGroup)
+except ImportError:
+    _CUPY_NCCL_AVAILABLE = False
+
+try:
+    from alpa.collective.collective_group.xla_nccl_collective_group import (
+        XLANCCLGroup as XlaNcclGroup)
+except AttributeError:
+    _XLA_NCCL_AVAILABLE = False
 
 try:
     from alpa.collective.collective_group.gloo_collective_group import (
@@ -50,7 +39,32 @@ except ImportError:
 
 
 def nccl_available():
-    return _NCCL_AVAILABLE
+    if global_config.nccl_mode == "cupy":
+        if not _CUPY_NCCL_AVAILABLE:
+            logger.warning("NCCL seems unavailable. Please install Cupy "
+                           "following the guide at: "
+                           "https://docs.cupy.dev/en/stable/install.html.")
+        return _CUPY_NCCL_AVAILABLE
+    elif global_config.nccl_mode == "xla_extension":
+        if not _XLA_NCCL_AVAILABLE:
+            logger.warning("NCCL from xla_extention seems unavailable! "
+                           "Please check whether your local tensorflow-alpa "
+                           "has already been up-to-date. You could also set "
+                           "global_config.nccl_mode == \"cupy\" to "
+                           "use another set of nccl apis from cupy. ")
+        return _XLA_NCCL_AVAILABLE
+    else:
+        raise ValueError(f"nccl mode {global_config.nccl_mode} is illegal")
+
+
+def get_nccl_group(world_size, rank, group_name):
+    assert nccl_available()
+    if global_config.nccl_mode == "cupy":
+        return CupyNcclGroup(world_size, rank, group_name)
+    elif global_config.nccl_mode == "xla_extension":
+        return XlaNcclGroup(world_size, rank, group_name)
+    else:
+        raise ValueError(f"nccl mode {global_config.nccl_mode} is illegal")
 
 
 def gloo_available():
@@ -89,7 +103,7 @@ class GroupManager:
             self._group_name_map[g] = group_name
         if backend == types.Backend.NCCL:
             logger.debug(f"Creating NCCL group: '{group_name}'...")
-            g = NCCLGroup(world_size, rank, group_name)
+            g = get_nccl_group(world_size, rank, group_name)
             self._name_group_map[group_name] = g
             self._group_name_map[g] = group_name
         return self._name_group_map[group_name]

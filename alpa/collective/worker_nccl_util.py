@@ -1,8 +1,10 @@
+"""Unified Nccl APIs for cross-mesh resharding."""
 from typing import Sequence
 
 import alpa.collective.worker_nccl_util_cupy as cupy_impl
 import alpa.collective.worker_nccl_util_xla as xla_impl
 from alpa.global_env import global_config
+
 
 def _switch_impl(cupy_fn, xla_fn, *args):
     if global_config.nccl_mode == "cupy":
@@ -17,6 +19,7 @@ def send_tile(worker, uuid: int, device_id: int, offset: Sequence[slice],
               dst_rank: int, dst_gpu_idx: int, group_name: str):
     return _switch_impl(cupy_impl.send_tile, xla_impl.send_tile, worker, uuid,
                         device_id, offset, dst_rank, dst_gpu_idx, group_name)
+
 
 def recv_tile(worker, uuid: int, device_id: int,
               indices_in_dst_tile: Sequence[slice], src_rank: int,
@@ -33,10 +36,12 @@ def broadcast(worker, uuid: int, comm_key: str, world_size: int,
                         comm_key, world_size, devices_ids, devices_global_rank,
                         tensor_slices, group_name)
 
+
 def allgather(worker, uuid: int, device_ids: Sequence[int],
               tensor_slices: Sequence[Sequence[slice]], output_slice):
     return _switch_impl(cupy_impl.allgather, xla_impl.allgather, worker, uuid,
                         device_ids, tensor_slices, output_slice)
+
 
 def to_signal_buffer(jax_tensor):
     return _switch_impl(cupy_impl.to_signal_buffer, xla_impl.to_signal_buffer,

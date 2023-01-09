@@ -61,7 +61,7 @@ from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
 ray_worker = try_import_ray_worker()
 
 if global_config.backend == "gpu" and global_config.has_cuda:
-    import alpa.collective.worker_nccl_util
+    from alpa.collective import worker_nccl_util
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

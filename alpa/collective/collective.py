@@ -41,7 +41,7 @@ except ImportError:
 def nccl_available():
     if global_config.nccl_mode == "cupy":
         if not _CUPY_NCCL_AVAILABLE:
-            logger.warning("NCCL seems unavailable. Please install Cupy "
+            logger.warning("Cupy's NCCL seems unavailable. Please install Cupy "
                            "following the guide at: "
                            "https://docs.cupy.dev/en/stable/install.html.")
         return _CUPY_NCCL_AVAILABLE

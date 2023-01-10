@@ -97,7 +97,7 @@ def recv_tile(worker, uuid: int, device_id: int,
 
 
 def allgather(worker, uuid: int, device_ids: Sequence[int],
-              tensor_slices: Sequence[slice], output_slice):
+              tensor_slices: Sequence[Sequence[slice]], output_slice):
     # FIXME: handle the case that local device ids are the same but global ids
     # are different
     communicators = worker.allgather_communicators[repr(sorted(device_ids))]

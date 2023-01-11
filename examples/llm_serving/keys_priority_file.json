@@ -1,0 +1,10 @@
+[
+  {
+    "key": "key",
+    "priority": 100
+  },
+    {
+    "key": "other_key",
+    "priority": 23
+  }
+]

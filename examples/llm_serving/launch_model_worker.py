@@ -15,7 +15,9 @@ import torch
 
 from llm_serving.generator import Generator
 from llm_serving.service.constants import (
-    NUM_BEAMS, NUM_RETURN_SEQ, ALPA_SERVE_PORT, USE_RECAPTCHA, KEYS_FILENAME)
+    NUM_BEAMS, NUM_RETURN_SEQ, ALPA_SERVE_PORT, USE_RECAPTCHA, KEYS_FILENAME,
+    INTERACTIVE_REQUESTS_PRIORITY, BACKGROUND_REQUESTS_PRIORITY, KEYS_PRIORITY_FILENAME,
+    DEFAULT_BACKGROUND_REQUESTS_PRIORITY)
 from llm_serving.service.recaptcha import load_recaptcha
 from llm_serving.service.utils import build_logger
 
@@ -37,14 +39,12 @@ class WeightedQueue:
     a weight for the PriorityQueue.
     This is supposed to be used with a WRR algorithm.
     """
-    def __init__(self, weight, queue: asyncio.PriorityQueue = None):
-        if queue is not None:
-            self.queue = queue
-        else:
-            self.queue = asyncio.PriorityQueue()
+    def __init__(self, weight, queue: asyncio.PriorityQueue):
+        assert queue is not None
+        self.queue = queue
         self.weight = weight
 
-    def get_priority_queue(self) -> asyncio.PriorityQueue:
+    def get_priority_queue(self):
         return self.queue
 
     def get_weight(self):
@@ -53,16 +53,6 @@ class WeightedQueue:
 
 GenerateItem = namedtuple("GenerateItem", ["uid", "return_queue", "data"])
 LogprobsItem = namedtuple("LogprobsItem", ["uid", "return_queue", "data"])
-
-GENERATE_ITEM_PRIORITY = 0
-LOGPROBS_ITEM_PRIORITY = 50
-
-# Interactive requests have higher priority than
-# background requests.
-# In this case, we serve 1 background request every
-# 2 interactive requests (prevents starvation)
-INTERACTIVE_REQUESTS_PRIORITY = 2
-BACKGROUND_REQUESTS_PRIORITY = 1
 
 
 class LangaugeModelWorker:
@@ -87,7 +77,11 @@ class LangaugeModelWorker:
         # Job type queues
         # Note: the all_requests_queue is used as a "global counter" of requests
         # so that the main loops waits until there is at least one request
-        # to satisfy
+        # to satisfy.
+        # Note: background requests require a priority queue since each "API" request
+        # has a request that has priority based on their API key.
+        # Interactive requests could use a FIFO but that would require too many branching
+        # paths in the code (e.g., when getting the item) and a PriorityQueue does its job as well.
         self.all_requests_queue = asyncio.PriorityQueue()
         self.interactive_request_queue = asyncio.PriorityQueue()
         self.background_request_queue = asyncio.PriorityQueue()
@@ -132,6 +126,15 @@ class LangaugeModelWorker:
             keys = json.load(open(KEYS_FILENAME, "r"))
             self.allowed_api_keys = keys["allowed_api_keys"]
 
+        # Load keys priorities
+        self.keys_priorities = dict()
+        try:
+            keys_prio_list = json.load(open(KEYS_PRIORITY_FILENAME, "r"))
+            for key_prio in keys_prio_list:
+                self.keys_priorities[key_prio['key']] = key_prio['priority']
+        except Exception as e:
+            print(e)
+
     def get_priority_queue(self) -> asyncio.PriorityQueue:
         # Fetch the current priority queue
         current_queue = self.wighted_queue_list[self.wrr_queue_idx]
@@ -171,11 +174,7 @@ class LangaugeModelWorker:
             # The nowait should not throw since there is at least one item
             # in the current request queue
             pri_item = request_queue.get_nowait()
-            if pri_item is None:
-                # The current queue can be empty,
-                # e.g., for interactive jobs that are low-frequency.
-                # In this case continue until there is a queue with an item
-                continue
+            assert pri_item is not None
 
             # Get the next batch
             generate_batch = []
@@ -296,6 +295,16 @@ class LangaugeModelWorker:
         else:
             raise ValueError("Invalid request type")
 
+    def get_background_request_priority(self, api_key):
+        if api_key is None:
+            # Return default (interactive) priority.
+            # Priority doesn't matter here since the requests end up in a FIFO anyway
+            return 1
+        else:
+            if api_key in self.keys_priorities:
+                return self.keys_priorities[api_key]
+            return DEFAULT_BACKGROUND_REQUESTS_PRIORITY
+
     async def completions(self, args, request, request_type):
         logger = self.logger
 
@@ -329,12 +338,13 @@ class LangaugeModelWorker:
         if "stop" in args:
             raise NotImplementedError("The stop argument is not implemented")
 
+        api_key = args.get('api_key', None)
         logger.info(f"Received new generate request: "
                     f"prompt length {[len(p) for p in prompts]}, "
                     f"max_len: {args.get('max_tokens', 0)}, "
                     f"temperature: {args['temperature']}, "
                     f"top_p: {args['top_p']}, "
-                    f"api_key: {args.get('api_key', None)}, "
+                    f"api_key: {api_key}, "
                     f"ip: {self.get_remote_ip(request)}, "
                     f"tstamp: {request.scope['tstamp']}")
 
@@ -345,11 +355,10 @@ class LangaugeModelWorker:
         return_queue = asyncio.Queue()
         for i, prompt in enumerate(prompts):
             data = {"input": prompt, **args}
-            priority = GENERATE_ITEM_PRIORITY
+            priority = self.get_background_request_priority(api_key)
 
             # Add the request to the request queue: this is a GenerateItem request
-            request = PrioritizedItem(
-                priority, GenerateItem(i, return_queue, data))
+            request = PrioritizedItem(priority, GenerateItem(i, return_queue, data))
             self.add_request_to_queue(request, request_type)
 
         unordered_results = []
@@ -398,10 +407,11 @@ class LangaugeModelWorker:
         args["temperature"] = -1
         args["n"] = int(args.get("n", self.num_return_sequences))
 
+        api_key = args.get('api_key', None)
         logger.info(f"Received new logprobs request: "
                     f"prompt length {[len(p) for p in prompts]}, "
                     f"top_k: {args['top_k']}, "
-                    f"api_key: {args.get('api_key', None)}, "
+                    f"api_key: {api_key}, "
                     f"ip: {self.get_remote_ip(request)}, "
                     f"tstamp: {request.scope['tstamp']}")
 
@@ -415,8 +425,8 @@ class LangaugeModelWorker:
 
         # Add the request to the request queue according to the request type:
         # this is a LogprobsItem request
-        request = PrioritizedItem(
-            LOGPROBS_ITEM_PRIORITY, LogprobsItem(0, ret_queue, data))
+        priority = self.get_background_request_priority(api_key)
+        request = PrioritizedItem(priority, LogprobsItem(0, ret_queue, data))
         self.add_request_to_queue(request, request_type)
 
         results = await ret_queue.get()

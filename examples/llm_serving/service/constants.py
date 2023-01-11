@@ -15,3 +15,11 @@ KEYS_FILENAME = "/home/ubuntu/efs/alpa/examples/llm_serving/keys_file.json"
 
 # Logging params
 LOGDIR = "weblogs"
+
+# Priority queue params
+# Note: Here we serve 1 background request every 50 interactive requests
+INTERACTIVE_REQUESTS_PRIORITY = 50
+BACKGROUND_REQUESTS_PRIORITY = 1
+DEFAULT_BACKGROUND_REQUESTS_PRIORITY = 1
+
+KEYS_PRIORITY_FILENAME = "/home/ubuntu/efs/alpa/examples/llm_serving/keys_priority_file.json"

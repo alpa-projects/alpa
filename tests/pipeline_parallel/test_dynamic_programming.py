@@ -4,7 +4,7 @@ import numpy as np
 import unittest
 
 import alpa
-from alpa.pipeline_parallel.stage_construction import (dp as
+from alpa.pipeline_parallel.stage_construction import (training_dp as
                                                        stage_construction_dp,
                                                        get_submesh_choices)
 from alpa.testing import assert_allclose

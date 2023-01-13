@@ -1,0 +1,163 @@
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: tenant-jiaohpc-jd  # TODO: Change to your namespace
+  name: service-ray-cluster
+  labels:
+    app: ray-cluster
+spec:
+  ports:
+  - name: dashboard
+    protocol: TCP
+    port: 8265
+    targetPort: 8265
+  - name: gcs-server
+    protocol: TCP
+    port: 6380
+    targetPort: 6380
+  selector:
+    app: ray-cluster
+    component: ray-head
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: tenant-jiaohpc-jd  # TODO: Change to your namespace
+  name: deployment-ray-head
+  labels:
+    app: ray-cluster
+    ray-node: head
+spec:
+  # Do not change this - Ray currently only supports one head node per cluster.
+  replicas: 1
+  selector:
+    matchLabels:
+      component: ray-head
+      type: ray
+      app: ray-cluster
+  template:
+    metadata:
+      labels:
+        component: ray-head
+        type: ray
+        app: ray-cluster
+    spec:
+      # If the head node goes down, the entire cluster (including all worker
+      # nodes) will go down as well. If you want Kubernetes to bring up a new
+      # head node in this case, set this to "Always," else set it to "Never."
+      restartPolicy: Always
+
+      # This volume allocates shared memory for Ray to use for its plasma
+      # object store. If you do not provide this, Ray will fall back to
+      # /tmp which cause slowdowns if is not a shared memory volume.
+      volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory
+      containers:
+        - name: ray-head
+          image: jiaodong/alpa:v1  # TODO: Change to your Alpa docker image
+          imagePullPolicy: IfNotPresent
+          # This volume allocates shared memory for Ray to use for its plasma]
+          # --login in required to have access to conda to activate alpa env
+          command: ["/bin/bash", "-l", "-c", "--"]
+          args:
+            - "conda activate alpa && ray start --head --port=6380 --num-cpus=$MY_CPU_REQUEST --dashboard-host=0.0.0.0 --object-manager-port=8076 --node-manager-port=8077 --dashboard-agent-grpc-port=8078 --dashboard-agent-listen-port=8079 --min-worker-port=10002 --max-worker-port=19999 --redis-password='' --block"
+          # This volume allocates shared memory for Ray to use for its plasma
+          # object store. If you do not provide this, Ray will fall back to
+          # /tmp which cause slowdowns if is not a shared memory volume.
+          volumeMounts:
+            - mountPath: /dev/shm
+              name: dshm
+          env:
+            # This is used in the ray start command so that Ray can spawn the
+            # correct number of processes. Omitting this may lead to degraded
+            # performance.
+            - name: MY_CPU_REQUEST
+              valueFrom:
+                resourceFieldRef:
+                  resource: requests.cpu
+          resources:
+            limits:
+              cpu: 32
+              memory: 64Gi
+              nvidia.com/gpu: 8
+              rdma/ib: 1
+      # Refer to CoreWeave's documentation for more details about GPU node types and placement
+      # https://docs.coreweave.com/coreweave-kubernetes/node-types
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: gpu.nvidia.com/class
+                operator: In
+                values:
+                  - A100_NVLINK_80GB
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: tenant-jiaohpc-jd  # TODO: Change to your namespace
+  name: deployment-ray-worker
+  labels:
+    app: ray-cluster
+spec:
+  # Change this to scale the number of worker nodes started in the Ray cluster.
+  replicas: 3
+  selector:
+    matchLabels:
+      component: ray-worker
+      type: ray
+      app: ray-cluster
+  template:
+    metadata:
+      labels:
+        component: ray-worker
+        type: ray
+        app: ray-cluster
+    spec:
+      restartPolicy: Always
+      volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory
+      containers:
+      - name: ray-worker
+        image: jiaodong/alpa:v1  # TODO: Change to your Alpa docker image
+        imagePullPolicy: IfNotPresent
+        # --login in required to have access to conda to activate alpa env
+        command: ["/bin/bash", "-l", "-c", "--"]
+        args:
+          - "conda activate alpa && ray start --num-cpus=$MY_CPU_REQUEST --address=service-ray-cluster:6380 --object-manager-port=8076 --node-manager-port=8077 --dashboard-agent-grpc-port=8078 --dashboard-agent-listen-port=8079 --min-worker-port=10002 --max-worker-port=19999 --block"
+        # This volume allocates shared memory for Ray to use for its plasma
+        # object store. If you do not provide this, Ray will fall back to
+        # /tmp which cause slowdowns if is not a shared memory volume.
+        volumeMounts:
+          - mountPath: /dev/shm
+            name: dshm
+        env:
+          # This is used in the ray start command so that Ray can spawn the
+          # correct number of processes. Omitting this may lead to degraded
+          # performance.
+          - name: MY_CPU_REQUEST
+            valueFrom:
+              resourceFieldRef:
+                resource: requests.cpu
+        resources:
+          limits:
+            cpu: 32
+            memory: 64Gi
+            nvidia.com/gpu: 8
+            rdma/ib: 1
+      # Refer to CoreWeave's documentation for more details about GPU node types and placement
+      # https://docs.coreweave.com/coreweave-kubernetes/node-types
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: gpu.nvidia.com/class
+                operator: In
+                values:
+                  - A100_NVLINK_80GB

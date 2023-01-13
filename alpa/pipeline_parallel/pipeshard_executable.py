@@ -7,16 +7,18 @@ import time
 from typing import Optional, Sequence
 
 from jax._src import traceback_util
+from jax._src.lib import xla_extension as xe
 from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves, PyTreeDef
 import numpy as np
 import ray.exceptions
 
-from alpa.device_mesh import MeshHostWorker, RemoteArrayRef, create_and_record_cross_mesh_collective_communicators, next_array_uuids
+from alpa.device_mesh import (
+    MeshHostWorker, RemoteArrayRef,
+    create_and_record_cross_mesh_collective_communicators, next_array_uuids)
 from alpa.global_env import global_config
 from alpa.device_mesh import PhysicalDeviceMeshGroup
 from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
                                   UtilMeshWorkerExecutable,
-                                  MemzeroWorkerExecutable,
                                   PartialGradAccMeshWorkerExecutable,
                                   next_mesh_executable_uuid,
                                   get_execution_timer_name)
@@ -24,12 +26,11 @@ from alpa.parallel_plan import ClusterInfo, PipelinePlan, ParallelPlan
 from alpa.pipeline_parallel.layer_construction import LayerOption
 from alpa.pipeline_parallel.runtime_emitter import (
     AllocateZeroWorkerExecutableConfig, ConcatWorkerExecutableConfig,
-    ExecutableConfig, MemZeroWorkerExecutableConfig,
-    PartialGradWorkerExecutableConfig, PipelineInstType, PipelineInstruction,
-    PipeshardConfig)
+    ExecutableConfig, PartialGradWorkerExecutableConfig, PipelineInstType,
+    PipelineInstruction, PipeshardConfig)
 from alpa.shard_parallel.auto_sharding import HloStatus
 from alpa.timer import timers, tracer
-from alpa.util import OrderedSet
+from alpa.util import OrderedSet, mesh_ids_hash
 
 traceback_util.register_exclusion(__file__)
 
@@ -97,13 +98,14 @@ class PipeshardDriverExecutable:
         self.resharding_tasks = pipeshard_config.resharding_tasks
         for mesh_ids in pipeshard_config.allreduce_groups:
             meshes = [self.mesh_group.meshes[idx] for idx in mesh_ids]
-            create_and_record_cross_mesh_collective_communicators(meshes)
+            key = mesh_ids_hash(mesh_ids)
+            create_and_record_cross_mesh_collective_communicators(meshes, key)
         if global_config.eagerly_create_communicators:
             for task in self.resharding_tasks:
                 task.create_resharding_communicators()
 
         self.exec_uuid = next_mesh_executable_uuid()
-        # Create a PipeshardMeshWorkerExecuable for each MeshHostWorker
+        # Create a PipeshardMeshWorkerExecutable for each MeshHostWorker
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
             mesh_grad_uuids = pipeshard_config.grad_uuids[mesh_idx]
             for worker in physical_mesh.workers:
@@ -118,7 +120,7 @@ class PipeshardDriverExecutable:
                         pipeshard_config.reduced_var_uuid_lists[mesh_idx],
                         self.donate_invars[mesh_idx])
                 worker.put_executable.remote(self.exec_uuid,
-                                             PipeshardMeshWorkerExecuable,
+                                             PipeshardMeshWorkerExecutable,
                                              *args)
 
     ##### Compilation Related Functions #####
@@ -375,6 +377,11 @@ class PipeshardDriverExecutable:
             for task in self.resharding_tasks:
                 f.write(str(task) + "\n\n")
 
+        with open(f"{prefix}_input_placement_specs.txt", "w") as f:
+            f.write(str(self.get_input_placement_specs()))
+        with open(f"{prefix}_output_placement_specs.txt", "w") as f:
+            f.write(str(self.get_output_placement_specs()))
+
     def dump_stage_execution_trace(self, filename: str):
         exec_info = self.get_stage_execution_info()
         dump_stage_execution_trace_internal(exec_info, filename)
@@ -424,7 +431,7 @@ class PipeshardDriverExecutable:
             mesh.delete_remote_executable(self.exec_uuid)
 
 
-class PipeshardMeshWorkerExecuable:
+class PipeshardMeshWorkerExecutable:
     """
     An executable that executes static pipeline runtime instructions on a
     worker.
@@ -447,7 +454,6 @@ class PipeshardMeshWorkerExecuable:
         # Buffer management
         self.worker = worker
         self.global_buffers = worker.buffers
-        self.acc_grad_buffers = {}
         self.acc_in_uuids = acc_local_uuids
         self.acc_out_uuids = acc_out_uuids
         self.donate_invars = donate_invars
@@ -455,7 +461,6 @@ class PipeshardMeshWorkerExecuable:
         # Executable management
         self._related_exec_uuids = []
         self.partial_grad_exec_uuids = OrderedSet()
-        self.use_memzero = False
 
         # Compile executables
         for task_config in executable_configs:
@@ -463,28 +468,8 @@ class PipeshardMeshWorkerExecuable:
             if isinstance(task_config, PartialGradWorkerExecutableConfig):
                 self.worker.put_executable(task_config.exec_uuid,
                                            PartialGradAccMeshWorkerExecutable,
-                                           task_config.hlo,
-                                           task_config.stage_plan,
-                                           task_config.donated_invars)
+                                           *task_config[1:])
                 self.partial_grad_exec_uuids.add(task_config.exec_uuid)
-            elif isinstance(task_config, MemZeroWorkerExecutableConfig):
-                assert len(self.acc_grad_buffers) == 0
-                # allocate buffers
-                self.use_memzero = True
-                self.worker.put_executable(task_config.exec_uuid,
-                                           AllocZeroBufferWorkerExecutable,
-                                           task_config.grad_shard_shapes,
-                                           task_config.grad_shard_dtypes)
-                self.worker.buffers = self.acc_grad_buffers
-                self.worker.run_executable(task_config.exec_uuid, [],
-                                           acc_local_uuids)
-                self.worker.buffers = self.global_buffers
-                self.worker.delete_executable(task_config.exec_uuid)
-                # replace the temp AllocZeroExecutable by Memzero ones
-                self.worker.put_executable(task_config.exec_uuid,
-                                           MemzeroWorkerExecutable,
-                                           task_config.grad_shard_shapes,
-                                           task_config.grad_shard_dtypes)
             elif isinstance(task_config, AllocateZeroWorkerExecutableConfig):
                 self.worker.put_executable(task_config.exec_uuid,
                                            AllocZeroBufferWorkerExecutable,
@@ -507,8 +492,8 @@ class PipeshardMeshWorkerExecuable:
         for local_id, global_id in zip(self.input_local_uuids,
                                        input_global_uuids):
             buffers[local_id] = self.global_buffers[global_id]
-        # add preallocated buffers for gradient accumulation
-        buffers.update(self.acc_grad_buffers)
+        if global_config.enable_overlapping:
+            xe.reset_event_context(self.worker.backend)
         # donate invars
         for global_id, donate in zip(input_global_uuids, self.donate_invars):
             if donate:
@@ -576,15 +561,11 @@ class PipeshardMeshWorkerExecuable:
         for local_id, global_id in zip(self.output_local_uuids,
                                        output_global_uuids):
             self.global_buffers[global_id] = buffers[local_id]
-        # now acc_grad_buffers are those after grad acc, before apply grad
-        # with memzero. These buffers are reused in the next iteration.
-        # TODO(yonghao): never donate them
-        if self.use_memzero:
-            for in_uuid, out_uuid in zip(self.acc_in_uuids, self.acc_out_uuids):
-                self.acc_grad_buffers[in_uuid] = buffers[out_uuid]
         # restore global environment
         self.worker.buffers = self.global_buffers
         buffers.clear()
+        if global_config.enable_overlapping:
+            xe.reset_event_context(self.worker.backend)
 
     def profile_with_dummy_inputs(self):
         """Profile the executable with dummy inputs."""

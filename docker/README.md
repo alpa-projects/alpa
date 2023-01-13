@@ -2,14 +2,14 @@
 This directory contains Alpa's docker infrastructure. Alpa uses docker to provide environment to build and release Python wheels and to perform unit tests.
 Most docker files in this directory depend on [nvidia-docker](https://github.com/NVIDIA/nvidia-docker/).
 
-Below we provide instructions on 
-- How to build Alpa-modified jaxlib in a docker container 
+Below we provide instructions on
+- How to build Alpa-modified jaxlib in a docker container
 - How to run Alpa in a docker container
 
 More docker examples can be found in the directory of [Alpa CI/CD](../.github/workflows).
 
 ## Build Jaxlib-alpa wheels using Docker
-We provide a Docker image to build the Alpa-modified jaxlib wheels inside a container. 
+We provide a Docker image to build the Alpa-modified jaxlib wheels inside a container.
 
 
 ### Steps
@@ -29,11 +29,11 @@ docker build -t build-jaxlib-image -f build_jaxlib.Dockerfile . --build-arg JAX_
 
 #### Build the wheels inside a container
 ```bash
-# create a subfolder for the specific wheel version. 
+# create a subfolder for the specific wheel version.
 mkdir -p dist/cuda111
 
 # build the wheel in a container using the selected Python and CUDA versions
-docker run --tmpfs /build:exec --rm -v $(pwd)/dist:/dist build-jaxlib-image 3.8 cuda 11.1 master
+docker run --tmpfs /build:exec --rm -v $(pwd)/dist:/dist build-jaxlib-image 3.8 cuda 11.1 main
 
 # Move the output wheel
 mv -f dist/*.whl dist/cuda111/
@@ -44,8 +44,13 @@ Check out the wheel under the folder ``alpa/build/dist/cuda111/``.
 You can run Alpa inside a docker container. Below are steps on how to run Alpa in a docker container in the interactive mode.
 
 First, build a docker image based on the provided dockerfile:
-```bash 
-docker build -t run-alpa-image -f run_alpa.Dockerfile . 
+```bash
+docker build -t run-alpa-image -f run_alpa.Dockerfile .
+```
+
+For cloud provider with InfiniBand (such as CoreWeave) we need to include additional dependencies:
+ ```bash
+docker build -t run-alpa-image -f run_alpa_infiniband.Dockerfile .
 ```
 
 Second, build a container from the image and enter the container's interactive shell:

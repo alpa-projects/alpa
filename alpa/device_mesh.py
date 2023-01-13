@@ -55,16 +55,13 @@ from alpa.timer import timers, tracer
 from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
                        update_jax_platform, is_ray_node_resource,
                        try_import_ray_worker, create_placement_group,
-                       get_bundle_idx, retrieve_placement_group, get_bundle2ip)
+                       get_bundle_idx, retrieve_placement_group, get_bundle2ip,
+                       check_server_port)
 
 ray_worker = try_import_ray_worker()
 
 if global_config.backend == "gpu" and global_config.has_cuda:
-    if global_config.nccl_mode == "cupy":
-        import alpa.collective.worker_nccl_util_cupy as worker_nccl_util
-    else:
-        assert global_config.nccl_mode == "xla_extension"
-        import alpa.collective.worker_nccl_util_xla as worker_nccl_util
+    from alpa.collective import worker_nccl_util
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -137,6 +134,8 @@ class MeshHostWorker:
         set_override_backend(self.backend)
         self.local_devices = self.backend.local_devices()
         self.num_devices = len(self.local_devices)
+        if global_config.enable_overlapping:
+            xe.set_num_device_on_host(self.num_devices)
 
         self.buffers = {}  # Dict[uuid -> Sequence[DeviceArray]]
         self.executables = {}  # Dict[uud -> MeshWorkerExecutable]
@@ -182,6 +181,7 @@ class MeshHostWorker:
             device_id, batch_id = divmod(i, num_batch)
             arys[batch_id][device_id] = (self.backend.buffer_from_pyval(
                 data, self.local_devices[device_id]))
+
         for uuid, ary in zip(uuids, arys):
             self.buffers[uuid] = ary
 
@@ -209,6 +209,8 @@ class MeshHostWorker:
 
     def _get_buffers_with_local_ids(self, uuid: int, device_ids: Sequence[int]):
         bufs = self.buffers[uuid]
+        # TODO(yonghao): sync communication events. Currently it's safe because
+        # we never get values immediately after a cross-mesh communication.
         if device_ids is None:
             return map(np.asarray, bufs)
         elif not isinstance(device_ids, Iterable):
@@ -394,22 +396,21 @@ class MeshHostWorker:
         """Initialize the P2P communicator from within the mesh workers."""
         assert col.is_group_initialized(group_name)
         g = col.check_and_get_group(group_name)
-        g._get_nccl_broadcast_communicator(comm_key, world_size, device_ids,
-                                           devices_global_rank, nccl_uid)
+        g.create_nccl_broadcast_communicator(comm_key, world_size, device_ids,
+                                             devices_global_rank, nccl_uid)
 
     @staticmethod
     def destroy_collective_group(group_name: str = "default"):
         col.destroy_collective_group(group_name)
 
     def create_and_set_cross_mesh_communicators(self, world_size, rank, backend,
-                                                group_name):
+                                                group_name, key):
         """Create collective communicators for the cross mesh group."""
         if not col.is_group_initialized(group_name):
             self.init_collective_group(world_size, rank, backend, group_name)
         g = col.check_and_get_group(group_name)
         devices = list(range(self.num_devices))
-        comms = g.get_nccl_collective_communicator(devices, "xla")
-        xe.set_cross_mesh_communicator(comms, "")
+        g.create_and_set_xla_communicators(devices, key)
 
     def put_resharding_send_task(self, uuid, tasks, group_name):
         self.send_tasks[uuid] = ReshardingSendTask(tile_specs=tasks,
@@ -421,6 +422,10 @@ class MeshHostWorker:
 
     def run_resharding_send_task(self, uuid, ary_uuid):
         task: ReshardingSendTask = self.send_tasks[uuid]
+        group_name = task.group_name
+        if global_config.enable_overlapping:
+            col.wait_events(group_name, [ary_uuid], self.num_devices, True)
+
         for send_tile_spec in task.tile_specs:
             send_tile_spec: ReshardingSendSpec
             self.send_tile(ary_uuid, send_tile_spec.device_id,
@@ -430,8 +435,14 @@ class MeshHostWorker:
 
     def run_resharding_recv_task(self, uuid, ary_uuid, set_empty_buffer=True):
         task: ReshardingRecvTask = self.recv_tasks[uuid]
+        group_name = task.group_name
         if set_empty_buffer and ary_uuid not in self.buffers:
+            assert not global_config.enable_overlapping, "Unsupported."
             self.buffers[ary_uuid] = [None] * self.num_devices
+
+        if global_config.enable_overlapping:
+            col.wait_events(group_name, [ary_uuid], self.num_devices, False)
+
         buffers = self.buffers[ary_uuid]
         for recv_spec in task.recv_specs:
             recv_spec: ReshardingRecvSpec
@@ -440,11 +451,15 @@ class MeshHostWorker:
                 buffers[device_id] = self.backend.buffer_from_pyval(
                     np.full(recv_spec.shape, 1e-8, recv_spec.dtype),
                     self.local_devices[device_id])
+
             for recv_tile_spec in recv_spec.tile_specs:
                 recv_tile_spec: ReshardingTileSpec
                 self.recv_tile(ary_uuid, device_id, recv_tile_spec.offset,
                                recv_tile_spec.rank, recv_tile_spec.gpu_idx,
                                task.group_name)
+
+        if global_config.enable_overlapping:
+            col.record_events(group_name, [ary_uuid], self.num_devices, False)
 
     def send_tile(self, uuid: int, device_id: int, offset: Sequence[slice],
                   dst_rank: int, dst_gpu_idx: int, group_name: str):
@@ -488,8 +503,10 @@ class MeshHostWorker:
                                       ary_uuid,
                                       set_empty_buffer=True):
         task: ReshardingBroadcastTask = self.broadcast_tasks[uuid]
+        group_name = task.group_name
         broadcast_specs = task.broadcast_specs
         if set_empty_buffer and ary_uuid not in self.buffers:
+            assert not global_config.enable_overlapping, "Unsupported."
             picked_spec = list(broadcast_specs.values())[0]
             shape = picked_spec.recv_tile_shape
             dtype = picked_spec.dtype
@@ -498,8 +515,15 @@ class MeshHostWorker:
                                                self.local_devices[device_id])
                 for device_id in range(self.num_devices)
             ]
+
+        has_recv = False
         for group_idx in broadcast_specs:
             broadcast_spec: ReshardingBroadcastSpec = broadcast_specs[group_idx]
+            is_send = broadcast_spec.devices_global_rank[0] == 0
+            has_recv = has_recv or not is_send
+            if global_config.enable_overlapping:
+                col.wait_events(group_name, [ary_uuid], self.num_devices,
+                                is_send)
 
             worker_nccl_util.broadcast(self, ary_uuid, broadcast_spec.comm_key,
                                        broadcast_spec.world_size,
@@ -507,6 +531,8 @@ class MeshHostWorker:
                                        broadcast_spec.devices_global_rank,
                                        broadcast_spec.tensor_slices,
                                        task.group_name)
+        if global_config.enable_overlapping and has_recv:
+            col.record_events(group_name, [ary_uuid], self.num_devices, False)
 
     ##### Profiling and Debugging Related Functions #####
     def profile_hlo_ops(self, op_infos: Sequence[Any], cache_filename: str,
@@ -570,10 +596,18 @@ class MeshHostWorker:
         return list(self.buffers.keys())
 
     ##### Other Functions #####
-    def sync(self):
+    def sync(self, sync_all_devices=False):
         # We sync one device instead of all for smaller runtime overhead.
         # This is correct because of SPMD.
-        self.local_devices[0].synchronize_all_activity()
+        if sync_all_devices:
+            for device in self.local_devices:
+                device.synchronize_all_activity()
+        else:
+            self.local_devices[0].synchronize_all_activity()
+
+    def sync_all(self):
+        for device in self.local_devices:
+            device.synchronize_all_activity()
 
     @staticmethod
     def check_alive():
@@ -925,7 +959,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
     def __init__(self,
                  host_ids: Sequence[int],
                  host_info: Sequence[dict],
-                 head_ip: str,
                  num_devices_per_host: int,
                  parent: Optional["VirtualPhysicalMesh"] = None,
                  devices: Optional[Sequence[Sequence[int]]] = None,
@@ -934,7 +967,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # host_ids are the indices of hosts in the global DeviceCluster
         self.host_ids = host_ids
         self.host_info = host_info
-        self.head_ip = head_ip
         self.num_hosts = len(host_ids)
         self.num_devices_per_host = num_devices_per_host
         self.parent = parent
@@ -999,10 +1031,13 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         # Launch distributed xla runtime
         port = None
         while port in used_port_set:
-            port = np.random.randint(20000, 25000)
+            port = np.random.randint(global_config.xla_server_port_start,
+                                     global_config.xla_server_port_end)
+            if check_server_port(ray.util.get_node_ip_address(), port):
+                port = None
         used_port_set.add(port)
 
-        server_address = f"{self.head_ip}:{port}"
+        server_address = f"{ray.util.get_node_ip_address()}:{port}"
         logger.debug(f"Trying to start XLA gRPC server on port: {port}...")
         service_server = xla_client._xla.get_distributed_runtime_service(
             server_address, self.num_hosts, use_coordination_service=False)
@@ -1030,7 +1065,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                 "XLA_FLAGS": (os.environ.get("XLA_FLAGS", "") +
                               f" --xla_gpu_autotune_level"
                               f"={global_config.xla_gpu_autotune_level}"),
-
+                "XLA_PYTHON_CLIENT_PREALLOCATE":
+                    global_config.xla_client_client_preallocate,
                 # "NCCL_LAUNCH_MODE": "PARALLEL",
                 # "XLA_FLAGS": "--xla_dump_to=hlo --xla_dump_hlo_pass_re=.*"
                 # "NCCL_DEBUG": "INFO" if i == 0 else "VERSION",
@@ -1094,7 +1130,6 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         return VirtualPhysicalMesh(
             host_ids=self.host_ids,
             host_info=self.host_info,
-            head_ip=self.head_ip,
             num_devices_per_host=self.num_devices_per_host,
             parent=self,
             devices=self.devices)
@@ -1366,8 +1401,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
             ray.get(worker.reset_memory_stats.remote())
 
     ##### Other Functions #####
-    def sync_workers(self):
-        ray.get([w.sync.remote() for w in self.workers])
+    def sync_workers(self, sync_all_devices=False):
+        ray.get([w.sync.remote(sync_all_devices) for w in self.workers])
 
     def sync_move_workers(self):
         ray.get([w.sync_move_worker.remote() for w in self.workers])
@@ -1762,14 +1797,12 @@ class VirtualPhysicalMesh:
     def __init__(self,
                  host_ids: Sequence[int],
                  host_info: Sequence[dict],
-                 head_ip,
                  num_devices_per_host,
                  parent: "VirtualPhysicalMesh" = None,
                  devices: Sequence[Sequence[int]] = None):
         # host_ids are the indices of hosts in the global DeviceCluster
         self.host_ids = host_ids
         self.host_info = host_info
-        self.head_ip = head_ip
         self.num_devices_per_host = num_devices_per_host
         self.parent = parent
 
@@ -1827,7 +1860,6 @@ class VirtualPhysicalMesh:
             return VirtualPhysicalMesh(
                 host_ids=host_ids,
                 host_info=host_info,
-                head_ip=self.head_ip,
                 num_devices_per_host=self.num_devices_per_host,
                 parent=self)
         else:
@@ -1840,7 +1872,6 @@ class VirtualPhysicalMesh:
 
             return VirtualPhysicalMesh(host_ids=self.host_ids,
                                        host_info=self.host_info,
-                                       head_ip=self.head_ip,
                                        num_devices_per_host=len(indices[0]),
                                        parent=self,
                                        devices=indices)
@@ -1856,7 +1887,6 @@ class VirtualPhysicalMesh:
 
         return VirtualPhysicalMesh(host_ids=host_ids,
                                    host_info=host_info,
-                                   head_ip=self.head_ip,
                                    num_devices_per_host=len(device_indices[0]),
                                    parent=self,
                                    devices=device_indices)
@@ -1906,7 +1936,6 @@ class VirtualPhysicalMesh:
         self.launched_physical_mesh = DistributedPhysicalDeviceMesh(
             host_ids=self.host_ids,
             host_info=self.host_info,
-            head_ip=self.head_ip,
             num_devices_per_host=self.num_devices_per_host,
             parent=self,
             devices=self.devices,
@@ -2109,43 +2138,46 @@ class DeviceCluster:
             raise RuntimeError(
                 "Cannot access ray global node. Did you call ray.init?") \
                 from ae
-        self.head_ip = self.head_info["node_ip_address"]
 
         # Gather host ids
-        self.host_info = []
-        self.host_ips = []
+        all_host_info = []
+        all_host_ips = []
 
         for node in ray.nodes():
             for key in node["Resources"]:
-                if is_ray_node_resource(key):
-                    self.host_info.append(node)
-                    self.host_ips.append(key.split("node:")[-1])
+                if (is_ray_node_resource(key) and
+                        global_config.ray_accelerator_name
+                        in node["Resources"]):
+                    all_host_info.append(node)
+                    all_host_ips.append(key.split("node:")[-1])
 
         # Gather device info
-        self.host_num_devices = []
-        for host_info in self.host_info:
+        all_host_num_devices = []
+        for host_info in all_host_info:
             number = host_info["Resources"][global_config.ray_accelerator_name]
             assert number.is_integer()
-            self.host_num_devices.append(int(number))
+            all_host_num_devices.append(int(number))
 
         # adjust the resource allocations
         # if `num_nodes` is set, use it.
         # otherwise, use the number of nodes in cluster
         if num_nodes:
-            num_hosts = min(num_nodes, self.num_hosts)
+            num_hosts = min(num_nodes, len(all_host_info))
         else:
-            num_hosts = self.num_hosts
+            num_hosts = len(all_host_info)
 
         # if `devices_per_node` is set, use it.
         if num_devices_per_node:
             # verify that the number of devices per node is valid
             num_valid = sum(num_device >= num_devices_per_node
-                            for num_device in self.host_num_devices)
+                            for num_device in all_host_num_devices)
             if num_valid < num_nodes:
                 raise RuntimeError("The number of devices per node is invalid. "
                                    f"There are only {num_valid} valid nodes.")
             # NOTE: for simplicity, we assume `num_devices_per_node` are equal.
             self.host_num_devices = [num_devices_per_node] * num_hosts
+        else:
+            self.host_num_devices = all_host_num_devices
 
         # Create placement group
         self.namespace = namespace
@@ -2162,31 +2194,31 @@ class DeviceCluster:
             self.placement_group = pg
         else:
             self.placement_group = create_placement_group(
-                self.num_hosts, self.host_num_devices, pg_name)
-            # update the Device Cluster info
-            if num_devices_per_node or num_nodes:
-                self._update_cluster_resource_from_placement_group()
+                num_hosts, self.host_num_devices, pg_name)
 
-    def _update_cluster_resource_from_placement_group(self):
-        """Update the cluster resource from the placement group."""
-        # map: host ip to host info
-        self.dict_host_ip2info = dict(zip(self.host_ips, self.host_info))
+        # Update the Device Cluster info from placement group
+        if num_devices_per_node or num_nodes:
+            # map: host ip to host info
+            host_ip2info = dict(zip(all_host_ips, all_host_info))
 
-        # get bundle's ip address
-        ips = get_bundle2ip(self.placement_group)
-        bundle_specs = self.placement_group.bundle_specs
+            # get bundle's ip address
+            ips = get_bundle2ip(self.placement_group)
+            bundle_specs = self.placement_group.bundle_specs
 
-        # filter out the bundle index with device (GPUs)
-        device_bundle_idx_list = [
-            i for i, bundle_spec in enumerate(bundle_specs)
-            if bundle_spec.get("GPU", 0) > 0
-        ]
-        self.host_ips = [
-            ips[bundle_idx] for bundle_idx in device_bundle_idx_list
-        ]
+            # filter out the bundle index with device (GPUs)
+            device_bundle_idx_list = [
+                i for i, bundle_spec in enumerate(bundle_specs)
+                if bundle_spec.get("GPU", 0) > 0
+            ]
 
-        # filter nodes according to the placment group
-        self.host_info = [self.dict_host_ip2info[ip] for ip in ips]
+            # filter nodes according to the placement group
+            self.host_info = [host_ip2info[ip] for ip in ips]
+            self.host_ips = [
+                ips[bundle_idx] for bundle_idx in device_bundle_idx_list
+            ]
+        else:
+            self.host_info = all_host_info
+            self.host_ips = all_host_ips
 
     def delete_placement_group(self):
         """remove the placement group for the current device cluster."""
@@ -2232,7 +2264,6 @@ class DeviceCluster:
         return DistributedPhysicalDeviceMesh(
             host_ids=host_ids,
             host_info=host_info,
-            head_ip=self.head_ip,
             num_devices_per_host=num_devices_per_host,
             parent=self,
             namespace=self.namespace)
@@ -2256,7 +2287,6 @@ class DeviceCluster:
 
         return VirtualPhysicalMesh(host_ids=host_ids,
                                    host_info=host_info,
-                                   head_ip=self.head_ip,
                                    num_devices_per_host=num_devices_per_host,
                                    parent=self)
 
@@ -2366,7 +2396,7 @@ def get_global_num_devices():
 
 
 def create_and_record_cross_mesh_collective_communicators(
-        meshes: Sequence[DistributedPhysicalDeviceMesh]):
+        meshes: Sequence[DistributedPhysicalDeviceMesh], key):
     workers = []
     device_strs = []
     for mesh in meshes:
@@ -2378,7 +2408,7 @@ def create_and_record_cross_mesh_collective_communicators(
     refs = []
     for rank, worker in enumerate(workers):
         ref = worker.create_and_set_cross_mesh_communicators.remote(
-            world_size, rank, backend, group_name)
+            world_size, rank, backend, group_name, key)
         refs.append(ref)
     return refs
 

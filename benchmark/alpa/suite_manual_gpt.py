@@ -67,9 +67,17 @@ perf_test_suite = {
         BenchmarkCase(16, gpt_specs["350M"], 1, "uniform",
                       UniformParallelArgs(True, True, 1, 1, 1, True))
     ],
+    4: [
+        BenchmarkCase(16 * 4, gpt_specs["1.3B"], 1 * 4, "uniform",
+                      UniformParallelArgs(True, True, 1, 2, 2, True)),
+    ],
     8: [
         BenchmarkCase(32, gpt_specs["2.6B"], 4, "uniform",
                       UniformParallelArgs(True, True, 2, 2, 2, True))
+        #BenchmarkCase(32 * 32, gpt_specs["2.6B"], 2 * 32, "uniform",
+        #              UniformParallelArgs(True, True, 2, 2, 2, True)),
+        #BenchmarkCase(32 * 32, gpt_specs["2.6B"], 4 * 32, "uniform",
+        #              UniformParallelArgs(True, True, 2, 1, 4, True))
     ],
     64: [
         BenchmarkCase(1024, gpt_specs["39B"], 1024, "uniform",

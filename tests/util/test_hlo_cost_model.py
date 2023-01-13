@@ -65,17 +65,19 @@ class HloCostModelTest(unittest.TestCase):
     def test_cluster_profling(self):
         init(cluster="ray")
         cluster = get_global_cluster()
-        global_config.overwrite_submesh_choices = [
+        manually_specified_submeshes = [
             (1, 1),
             cluster.get_virtual_physical_mesh().shape,
         ]
 
-        prof_database = cluster.profile_all("p3.16",
-                                            2,
-                                            2,
-                                            max_fail_retry=5,
-                                            cache_filename="tmp_cache.pkl",
-                                            dot_range=(0, 1))
+        prof_database = cluster.profile_all(
+            "p3.16",
+            2,
+            2,
+            max_fail_retry=5,
+            cache_filename="tmp_cache.pkl",
+            dot_range=(0, 1),
+            mesh_size_choices=manually_specified_submeshes)
         prof_database.save("tmp_prof_database.pkl")
 
     @unittest.skip("Temporary disabled due to being flaky")

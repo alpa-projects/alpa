@@ -228,6 +228,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--efa", action="store_true",
         help="Use AWS EFS on p3.24 or p4.24 instances")
+    parser.add_argument("--ib", action="store_true",
+        help="Use InfiniBand for NCCL communcation")
     parser.add_argument("--debug", action="store_true",
         help="Print nccl debug information")
     args = parser.parse_args()
@@ -244,6 +246,13 @@ if __name__ == "__main__":
                 "FI_PROVIDER": "efa",
                 "FI_EFA_USE_DEVICE_RDMA": "1",
                 "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),  # For libnccl-net.so
+            }
+        elif args.ib:
+            env_vars = {
+                "NCCL_SOCKET_NTHREADS": "4",
+                "NCCL_NSOCKS_PERTHREAD": "4",
+                "NCCL_IB_HCA": "mlx5,ibp",  # Change this to align with your IB interface name
+                "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
             }
         else:
             env_vars = {

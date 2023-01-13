@@ -53,8 +53,8 @@ class GlobalNormTest(PipelineBasicTest):
 
         hlos = self.run_n_layer_bert(num_layers=2, inject_train_step=train_step)
         for x in hlos[-2:]:
-            assert 'backend_config="SUM"' in x
-            assert 'backend_config="AND"' in x
+            assert 'backend_config="SUM;' in x
+            assert 'backend_config="AND;' in x
             assert x.count("CrossMeshAllReduce") == 2
 
 

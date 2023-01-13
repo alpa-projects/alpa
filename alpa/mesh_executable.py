@@ -21,6 +21,7 @@ from jax.interpreters import pxla
 from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves, PyTreeDef
 import numpy as np
 import ray
+from alpa.util import XlaPassContext
 
 from alpa.device_mesh import (LocalPhysicalDeviceMesh,
                               DistributedPhysicalDeviceMesh, RemoteArrayRef,
@@ -34,8 +35,7 @@ from alpa.shard_parallel.auto_sharding import (AutoShardingOption,
                                                run_backend_compilation,
                                                run_spmd_partitioner_pass)
 from alpa.timer import timers
-from alpa.util import (compile_allocate_zero_buffers,
-                       compile_memset_zero_buffers, get_compile_options,
+from alpa.util import (compile_allocate_zero_buffers, get_compile_options,
                        get_index_select_computation, get_shard_shape,
                        get_microbatch_sharding_spec, profile_xla_executable)
 from alpa.wrapped_hlo import HloStatus, WrappedHlo
@@ -413,6 +413,10 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         with open(f"{prefix}.mem_usage.txt", "w") as f:
             f.write(f"total_allocation_size: "
                     f"{self.get_total_allocation_size()/(1024**3):.3f} GB\n")
+        with open(f"{prefix}_input_placement_specs.txt", "w") as f:
+            f.write(str(self.get_input_placement_specs()))
+        with open(f"{prefix}_output_placement_specs.txt", "w") as f:
+            f.write(str(self.get_output_placement_specs()))
 
 
 def delete_donated_buffers(buffer_dict, uuids, donated_invars):
@@ -449,6 +453,9 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
         # Sequence[Sequence[DeviceBuffer]], shape(num_args, num_devices)
         input_bufs = [buffer_dict[x] for x in input_uuids]
 
+        if global_config.enable_overlapping:
+            xe.computation_wait_events(input_uuids, self.worker.backend)
+            xe.set_idx_to_uuid(output_uuids)
         # Execute the executable
         timers(self.timer_name).start(self.sync_func if sync_before else None)
         try:
@@ -808,6 +815,10 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         with open(f"{prefix}.mem_usage.txt", "w") as f:
             f.write(f"total_allocation_size: "
                     f"{self.get_total_allocation_size()/(1024**3):.3f} GB\n")
+        with open(f"{prefix}_input_placement_specs.txt", "w") as f:
+            f.write(str(self.get_input_placement_specs()))
+        with open(f"{prefix}_output_placement_specs.txt", "w") as f:
+            f.write(str(self.get_output_placement_specs()))
 
 
 class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
@@ -902,7 +913,8 @@ class GradAccMeshWorkerExecutable(MeshWorkerExecutable):
                                self.donated_invars)
 
         # Delete micro batch buffers
-        if next_batches_uuids is not None:
+        if next_batches_uuids is not None and \
+                next_batches_uuids[0] is not None:
             for i in range(len(next_batches_uuids)):
                 del buffer_dict[next_batches_uuids[i]]
 
@@ -933,10 +945,7 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
     def __init__(self, physical_mesh: "PhysicalDeviceMesh", hlo: WrappedHlo,
                  stage_plan: StagePlan, avals: Sequence[ShapedArray],
                  out_avals: Sequence[ShapedArray],
-                 donated_invars: Sequence[bool],
-                 out_acc_grad_indices: Sequence[int]):
-        self.out_acc_grad_indices = out_acc_grad_indices
-
+                 donated_invars: Sequence[bool]):
         super().__init__(physical_mesh, hlo, stage_plan, avals, out_avals,
                          donated_invars)
 
@@ -1090,6 +1099,8 @@ class AllocZeroBufferWorkerExecutable(MeshWorkerExecutable):
         buffer_dict = self.worker.buffers
 
         # Execute
+        if global_config.enable_overlapping:
+            xe.set_idx_to_uuid(output_uuids)
         timers(self.timer_name).start(self.sync_func if sync_before else None)
         output_bufs = (
             self.allocate_zero_buffers.execute_sharded_on_local_devices([]))
@@ -1101,43 +1112,9 @@ class AllocZeroBufferWorkerExecutable(MeshWorkerExecutable):
         self.allocate_zero_buffers.delete()
 
 
-class MemzeroWorkerExecutable(MeshWorkerExecutable):
-    """The worker part of an executable that sets all input tensors to zeros."""
-
-    def __init__(self, worker: "MeshHostWorker", uuid: int,
-                 buffer_shard_shapes: Sequence[Sequence[int]],
-                 buffer_shard_dtypes: Sequence[jnp.dtype]):
-        num_devices = len(worker.backend.devices())
-        self.memzero = compile_memset_zero_buffers(worker.backend, num_devices,
-                                                   buffer_shard_shapes,
-                                                   buffer_shard_dtypes)
-        self.worker = worker
-
-        self.timer_name = get_execution_timer_name(uuid)
-        self.sync_func = get_sync_func_worker(worker)
-
-    def execute_on_worker(self, input_uuids: Sequence[int],
-                          output_uuids: Sequence[int], sync_before: bool,
-                          sync_after: bool):
-        """Run the executable on the worker."""
-        # pylint: disable=unused-argument
-        buffer_dict = self.worker.buffers
-
-        # Get input
-        input_bufs = [buffer_dict[x] for x in input_uuids]
-
-        # Execute
-        timers(self.timer_name).start(self.sync_func if sync_before else None)
-        _ = self.memzero.execute_sharded_on_local_devices(input_bufs)
-        timers(self.timer_name).stop(self.sync_func if sync_after else None)
-
-    def __del__(self):
-        self.memzero.delete()
-
-
 class UtilMeshWorkerExecutable(MeshWorkerExecutable):
     """Worker executable that runs a manually generated function. It is lighter
-    than NoralMeshWorkerExecutable as it does not have a StagePlan.
+    than NormalMeshWorkerExecutable as it does not have a StagePlan.
 
     Currently, it is used for concatenate(will be deprecated after we move it
     to apply_grad) and allgather.
@@ -1154,7 +1131,10 @@ class UtilMeshWorkerExecutable(MeshWorkerExecutable):
             build_random_seed=global_config.compile_random_seed)
         xla_computation = hlo.get_computation()
 
-        self.exec = worker.backend.compile(xla_computation, compile_options)
+        with XlaPassContext({
+                "done-event::enable": global_config.enable_overlapping,
+        }):
+            self.exec = worker.backend.compile(xla_computation, compile_options)
 
         self.worker = worker
         self.timer_name = get_execution_timer_name(uuid)
@@ -1168,6 +1148,10 @@ class UtilMeshWorkerExecutable(MeshWorkerExecutable):
 
         # Get input
         input_bufs = [buffer_dict[x] for x in input_uuids]
+
+        if global_config.enable_overlapping:
+            xe.computation_wait_events(input_uuids, self.worker.backend)
+            xe.set_idx_to_uuid(output_uuids)
 
         # Execute
         timers(self.timer_name).start(self.sync_func if sync_before else None)

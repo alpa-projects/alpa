@@ -8,7 +8,6 @@ from jax._src.lib import xla_extension as xe
 import numpy as np
 
 import alpa.collective as col
-from alpa.collective.const import ENV
 from alpa.util import (jax_tensor_set, jax_tensor_index,
                        xla_buffer_to_jax_tensor, jax_tensor_to_xla_buffer,
                        is_continuous_subset, infer_offset_and_n_elements,
@@ -42,6 +41,11 @@ def send_tile(worker, uuid: int, device_id: int, offset: Sequence[slice],
                                       start_indices, slice_sizes)
         to_send = jax_tensor_to_xla_buffer(src_buffer)
         n_elements = np.prod(slice_sizes)
+        # dummy_compute_on_default_stream(device_id)
+
+        # let send stream wait for compute stream
+        col.comm_wait_compute(group_name, True, True, device_id)
+
         col.send_multigpu(to_send,
                           dst_rank,
                           dst_gpu_idx,
@@ -70,12 +74,20 @@ def recv_tile(worker, uuid: int, device_id: int,
                                 worker.local_devices[device_id])
         to_recv = jax_tensor_to_xla_buffer(tmp_buffer)
         n_elements = np.prod(slice_shape)
+        # let recv stream wait for d2d stream
+        col.comm_wait_compute(group_name, False, False, device_id)
+        # let recv stream wait for compute stream
+        col.comm_wait_compute(group_name, False, True, device_id)
+
         col.recv_multigpu(to_recv,
                           src_rank,
                           src_gpu_idx,
                           group_name,
                           start_pos=0,
                           n_elements=n_elements)
+        # let compute stream wait for recv stream
+        col.compute_wait_comm(group_name, False, True, device_id)
+
         start_indices = tuple(
             ind_in_dst.start for ind_in_dst in indices_in_dst_tile)
         new_buffer = jax_tensor_set(xla_buffer_to_jax_tensor(buffer),
@@ -85,7 +97,9 @@ def recv_tile(worker, uuid: int, device_id: int,
 
 
 def allgather(worker, uuid: int, device_ids: Sequence[int],
-              tensor_slices: Sequence[slice], output_slice):
+              tensor_slices: Sequence[Sequence[slice]], output_slice):
+    # FIXME: handle the case that local device ids are the same but global ids
+    # are different
     communicators = worker.allgather_communicators[repr(sorted(device_ids))]
     tensor_shape = worker.buffers[uuid][device_ids[0]].shape
     global_start_pos, _ = infer_start_pos_and_n_elements(
@@ -134,6 +148,12 @@ def broadcast(worker, uuid, comm_key, world_size, devices_ids,
             else:
                 tmp = device_put(jnp.ones(slice_shape, dtype=buffer.dtype),
                                  worker.local_devices[device_id])
+            # let communicate stream wait for compute stream
+            is_send = global_rank == 0
+            col.comm_wait_compute(group_name, is_send, True, device_id)
+            # let communicate stream wait for d2d stream
+            col.comm_wait_compute(group_name, is_send, False, device_id)
+
             local_start_pos_list.append(0)
             buffers.append(jax_tensor_to_xla_buffer(tmp))
 
@@ -153,15 +173,14 @@ def broadcast(worker, uuid, comm_key, world_size, devices_ids,
         else:
             start_indices = tuple(
                 ind_in_dst.start for ind_in_dst in tensor_slice)
+            # let compute stream wait for communicator stream
+            is_send = global_rank == 0
+            col.compute_wait_comm(group_name, is_send, True, device_id)
             new_buffer = jax_tensor_set(xla_buffer_to_jax_tensor(buffer),
                                         xla_buffer_to_jax_tensor(xla_buffer),
                                         start_indices)
             new_buffer = jax_tensor_to_xla_buffer(new_buffer)
         worker.buffers[uuid][device_id] = new_buffer
-
-
-def init_local_comm(device_ids):
-    return xe.nccl_init_communicator(device_ids, ENV.NCCL_USE_MULTISTREAM.val)
 
 
 to_signal_buffer = jax_tensor_to_xla_buffer

@@ -274,6 +274,20 @@ class PipeDreamFlush(PipelineSchedule):
         return "1f1b"
 
     def _generate_schedule(self):
+        """
+        Using the same notation as GPipeSchedule but adding the F for forward
+        and B for backward, this schedule can be represented as
+        k (i,j)   (i,j)   (i,j)
+        - ------- ------- -------
+        0 (0,0,F)
+        1 (1,0,F) (0,1,F)
+        2 (2,0,F) (1,1,F) (0,2,F)
+        3                 (0,2,B)
+        4         (0,1,B) (1,2,F)
+        5 (0,0,B) (2,1,F) (1,2,B)
+        6 (3,0,F) (1,1,B) (2,2,F)
+        ...
+        """
         m = self.num_batch
         n = self.num_mesh
 
@@ -427,3 +441,72 @@ class InferenceSchedule(PipelineSchedule):
         """Return the index of the previous microbatch at backward pass."""
         assert batch_idx > 0
         return batch_idx - 1
+
+
+class OverlapFriendlyPipeDreamSchedule(PipeDreamFlush):
+    """
+    Generate a PipeDream-Flush schedule (a.k.a. 1F1B) but is more communication-
+    computation-overlap-friendly.
+
+    It has similar latency to 1F1B but costs more memory to store intermediates.
+    """
+
+    def _generate_schedule(self):
+        """
+        This schedule is very close to that of PipeDream, but runs forward
+        microbatches as much as possible to create more opportunity for
+        overlapping communication and computation. The trade-off is it uses more
+        memory to store intermediate activations for more microbatches.
+
+        Using the same notation as PipeDreamFlush, this schedule is as:
+        k (i,j)   (i,j)   (i,j)
+        - ------- ------- -------
+        0 (0,0,F)
+        1 (1,0,F) (0,1,F)
+        2 (2,0,F) (1,1,F) (0,2,F)
+        3 (3,0,F) (2,1,F) (0,2,B)
+        4 (4,0,F) (0,1,B) (1,2,F)
+        5 (0,0,B) (3,1,F) (1,2,B)
+        6 (5,0,F) (1,1,B) (2,2,F)
+        ...
+        The overlapping is only for forward communication but not for backward
+        due to data dependency.
+        """
+        batch = self.num_batch
+        mesh = self.num_mesh
+
+        num_clock = (mesh + batch - 1) * 2
+        schedules = [[None] * mesh for _ in range(num_clock)]
+        for mesh_idx in range(mesh):
+            # The warmup batch number doubles
+            num_warmup_batch = min(batch, 2 * (mesh - mesh_idx) - 1)
+            fwd_stage_idx = mesh_idx
+            bwd_stage_idx = mesh * 2 - mesh_idx - 1
+            tic = mesh_idx
+            is_forward = True
+            fwd_idx = -1
+            bwd_idx = -1
+            for exec_idx in range(batch * 2):
+                if exec_idx >= num_warmup_batch:
+                    if ((is_forward and bwd_idx < batch - 1) or
+                        (not is_forward and fwd_idx < batch - 1)):
+                        is_forward = not is_forward
+                if is_forward:
+                    fwd_idx += 1
+                    schedules[tic][mesh_idx] = (fwd_idx, fwd_stage_idx)
+                else:
+                    bwd_idx += 1
+                    # Do not launch too early at cooldown period. This is for
+                    # potential use of centralized runtime or debug.
+                    min_available_tic = ((mesh - 1) + (bwd_idx * 2 + 1) +
+                                         (mesh - 1 - mesh_idx))
+                    final_tic = max(tic, min_available_tic)
+                    schedules[final_tic][mesh_idx] = (bwd_idx, bwd_stage_idx)
+                tic += 1
+
+        # append apply_grad schedules
+        scheds = [None] * mesh
+        for stage_idx, mesh_idx in self.apply_grad_placement.items():
+            scheds[mesh_idx] = (self.last_backward_batch_index, stage_idx)
+        schedules.append(scheds)
+        return schedules

@@ -129,7 +129,7 @@ def recv_tile(worker, uuid: int, device_id: int,
 
 
 def allgather(worker, uuid: int, device_ids: Sequence[int],
-              tensor_slices: Sequence[slice], output_slice):
+              tensor_slices: Sequence[Sequence[slice]], output_slice):
     cupy_buffers = []
     communicators = worker.allgather_communicators[repr(sorted(device_ids))]
     relative_idx = dict(zip(sorted(device_ids), range(len(device_ids))))
@@ -213,9 +213,6 @@ def broadcast(worker, uuid, comm_key, world_size, devices_ids,
         if is_bool:
             new_buffer = _uint8_to_bool(new_buffer)
         worker.buffers[uuid][device_id] = new_buffer
-
-
-init_local_comm = cupy.cuda.nccl.NcclCommunicator.initAll
 
 
 def to_signal_buffer(jax_tensor):

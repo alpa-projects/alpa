@@ -218,7 +218,8 @@ def run_auto_sharding_pass(
         device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
         parameter_is_tupled_arguments=False,
-        build_random_seed=build_random_seed)
+        build_random_seed=build_random_seed,
+        spmd_propagation_to_outputs=hlo.is_manually_annotated)
 
     # Set configs for force_zero_stage_3
     if as_option.force_zero_stage_3:
@@ -381,7 +382,7 @@ def run_spmd_partitioner_pass(
       rewrite_grad_acc_indices: The indices of tensors in output that are
         gradients.
     """
-    assert hlo.is_sharding_annotated(), f"{hlo.status}"
+    assert hlo.is_sharding_annotated(), hlo.status
     compile_options = get_compile_options(
         num_replicas=1,
         num_partitions=num_devices,
@@ -438,6 +439,8 @@ def run_backend_compilation(backend: xe.Client,
                 stage_plan.all_gather_threshold,
             "combiner::all_reduce_threshold":
                 stage_plan.all_reduce_threshold,
+            "done-event::enable":
+                global_config.enable_overlapping,
     }):
         compiled = backend.compile(hlo.get_computation(), compile_options)
 

@@ -6,6 +6,7 @@ import logging
 import os
 import subprocess
 import re
+import socket
 import time
 from collections import OrderedDict
 from functools import partial, partialmethod
@@ -308,11 +309,13 @@ def cached_property(fn, *args, **kwargs):
 ########################################
 
 
-def get_compile_options(num_replicas: int, num_partitions: int,
+def get_compile_options(num_replicas: int,
+                        num_partitions: int,
                         device_assignment: np.ndarray,
                         use_spmd_partitioning: bool,
                         parameter_is_tupled_arguments: int,
-                        build_random_seed: int):
+                        build_random_seed: int,
+                        spmd_propagation_to_outputs: bool = False):
     """Return CompileOptions for XLA compilation."""
     compile_options = xb.get_compile_options(
         num_replicas=num_replicas,
@@ -322,7 +325,10 @@ def get_compile_options(num_replicas: int, num_partitions: int,
     )
     compile_options.parameter_is_tupled_arguments = (
         parameter_is_tupled_arguments)
-    compile_options.executable_build_options.seed = build_random_seed
+    build_options = compile_options.executable_build_options
+    build_options.seed = build_random_seed
+    build_options.allow_spmd_sharding_propagation_to_output =\
+        spmd_propagation_to_outputs
     return compile_options
 
 
@@ -449,46 +455,10 @@ def compile_allocate_zero_buffers(backend, num_devices: int,
         device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
     )
-    compiled = backend.compile(c, compile_options)
-    return compiled
-
-
-def compile_memset_zero_buffers(backend, num_devices: int,
-                                shapes: Sequence[Sequence[int]],
-                                dtypes: Sequence[jnp.dtype]):
-    """
-    Compile an XLA executable that memset zero buffers with given shape and
-    dtypes. Try to avoid memcpy
-    """
-    c = xc.XlaBuilder("allocate_zero_buffers")
-    args = []
-    sharding = xc.OpSharding()
-    sharding.type = sharding.type.REPLICATED
-    c.set_sharding(sharding)
-    for shape, dtype in zip(shapes, dtypes):
-        args.append(
-            xc.ops.Parameter(c, len(args),
-                             xc.shape_from_pyval(np.ones(shape, dtype))))
-    sharding_tuple = xc.OpSharding()
-    sharding_tuple.type = sharding.type.TUPLE
-    sharding_tuple.tuple_shardings = [sharding for _ in shapes]
-    c.set_sharding(sharding_tuple)
-    input_params = xc.ops.Tuple(c, args)
-    c.set_sharding(sharding)
-    output_shape = xc.Shape.scalar_shape(np.dtype(np.float32))
-    output_tuple = xc.ops.CustomCall(c,
-                                     b"__builtin$MemZero",
-                                     operands=(input_params,),
-                                     shape=output_shape)
-    c = c.build(output_tuple)
-
-    compile_options = xb.get_compile_options(
-        num_replicas=1,
-        num_partitions=num_devices,
-        device_assignment=np.arange(num_devices).reshape((1, -1)),
-        use_spmd_partitioning=True,
-    )
-    compiled = backend.compile(c, compile_options)
+    with XlaPassContext({
+            "done-event::enable": global_config.enable_overlapping,
+    }):
+        compiled = backend.compile(c, compile_options)
     return compiled
 
 
@@ -654,11 +624,11 @@ def clone_jaxpr(closed_jaxpr: ClosedJaxpr,
                 constvars: Sequence[Var] = None,
                 consts: Sequence = None):
     """Clone a jaxpr and replace members if they are provided."""
-    constvars = constvars or closed_jaxpr.jaxpr.constvars
-    invars = invars or closed_jaxpr.jaxpr.invars
-    outvars = outvars or closed_jaxpr.jaxpr.outvars
-    eqns = eqns or closed_jaxpr.jaxpr.eqns
-    consts = consts or closed_jaxpr.consts
+    constvars = closed_jaxpr.jaxpr.constvars if constvars is None else constvars
+    invars = closed_jaxpr.jaxpr.invars if invars is None else invars
+    outvars = closed_jaxpr.jaxpr.outvars if outvars is None else outvars
+    eqns = closed_jaxpr.jaxpr.eqns if eqns is None else eqns
+    consts = closed_jaxpr.consts if consts is None else consts
     jaxpr = Jaxpr(constvars, invars, outvars, eqns)
     return ClosedJaxpr(jaxpr, consts)
 
@@ -1321,14 +1291,24 @@ def to_str_round(x: Any, decimal: int = 6):
         return "[" + tmp_str + "]"
     if isinstance(x, dict):
         return str({k: to_str_round(v, decimal=decimal) for k, v in x.items()})
-    if isinstance(x, int):
+    if isinstance(x, (int, np.int32, np.int64)):
         return str(x)
-    if isinstance(x, float):
+    if isinstance(x, (float, np.float32, np.float64)):
         format_str = f"%.{decimal}f"
         return format_str % x
     if x is None:
         return str(x)
     raise ValueError("Invalid value: " + str(x))
+
+
+def check_server_port(address, port):
+    """Checking Port Opening Status """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.connect((address, port))
+            return True
+        except socket.error:
+            return False
 
 
 _tic = None
@@ -1343,7 +1323,7 @@ def print_used_time(message: str):
 
 
 ########################################
-##### Ray Compatibilityu API Utilities
+##### Ray Compatibility API Utilities
 ########################################
 
 
@@ -1715,3 +1695,10 @@ def maybe_numba_jit(func):
     except ImportError:
         logger.warning("Install numba to jit and accelerate the function.")
         return func
+
+
+def mesh_ids_hash(mesh_ids):
+    ret = b""
+    for i in sorted(mesh_ids):
+        ret += bytes(f"{i}", "utf-8") + b"$"
+    return ret

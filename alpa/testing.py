@@ -44,7 +44,7 @@ def assert_allclose(x, y, rtol=1e-4, atol=1e-4):
         np.testing.assert_allclose(x, y, rtol, atol)
     elif isinstance(x, TrainState):
         assert isinstance(y, TrainState)
-        assert_allclose(tree_leaves(x), tree_leaves(y))
+        assert_allclose(tree_leaves(x), tree_leaves(y), rtol, atol)
     elif x == y:
         return
     else:
@@ -361,3 +361,38 @@ def data_loader_input_iter_func(start, end, batch_size):
     for i in range(num_batches):
         idx = start + i * batch_size
         yield dataset_x[idx:idx + batch_size], dataset_y[idx:idx + batch_size]
+
+
+class HloParser:
+    """
+    Parse Hlo text to check whether the parameter and output has correct
+    sharding.
+    """
+
+    @staticmethod
+    def get_param_line(text: str):
+        text = text[text.find("ENTRY"):]
+        text = text[:text.find("\n")]
+        return text
+
+    @staticmethod
+    def get_root_line(text: str):
+        text = text[text.find("ENTRY"):]
+        text = text[text.find("ROOT"):]
+        text = text[:text.find("\n")]
+        return text
+
+    @staticmethod
+    def parse_param_shapes(text: str):
+        # the first one is "ENTRY %xxx ("
+        params = text.split("param")[1:]
+        shapes = tuple(map(lambda x: x[x.find("f32"):x.find("]") + 1], params))
+        return shapes
+
+    @staticmethod
+    def parse_root_shapes(text: str):
+        tuple_shape = text[text.find("=") + 2:text.find("tuple(")]
+        # the last one is ')'
+        shapes = tuple_shape.split("0}")[:-1]
+        shapes = tuple(map(lambda x: x[x.find("f32"):x.find("{")], shapes))
+        return shapes

@@ -728,7 +728,8 @@ def profile_all(device_cluster,
                 max_comm_size_inter_node,
                 max_fail_retry,
                 cache_filename,
-                dot_range=(0, 1024)):
+                dot_range=(0, 1024),
+                mesh_size_choices=None):
     """Profile costs for all dot and communication primitives."""
     #  pylint: disable=import-outside-toplevel
     from alpa.pipeline_parallel.stage_construction import get_submesh_choices
@@ -740,11 +741,17 @@ def profile_all(device_cluster,
 
     ##### Profile communication cost
     virtual_mesh = device_cluster.get_virtual_physical_mesh()
-    submesh_choices = list(
-        reversed(
-            get_submesh_choices(virtual_mesh.num_hosts,
-                                virtual_mesh.num_devices_per_host, "all")))
-
+    if mesh_size_choices is None:
+        submesh_choices = list(
+            reversed(
+                get_submesh_choices(virtual_mesh.num_hosts,
+                                    virtual_mesh.num_devices_per_host, "all")))
+    else:
+        submesh_choices = list(
+            reversed(
+                get_submesh_choices(virtual_mesh.num_hosts,
+                                    virtual_mesh.num_devices_per_host, "manual",
+                                    mesh_size_choices)))
     # Load failed batch keys
     failed_batch_keys_filename = "tmp/failed_batch_keys.pkl"
     if os.path.exists(failed_batch_keys_filename):

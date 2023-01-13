@@ -70,7 +70,7 @@ def get_pipeshard_parallel_method(benchmark_case: BenchmarkCase,
         num_manual_pipeline_stages = None
         add_manual_remat = None
         remat_mode = "coarse_grained_remat" if use_remat else "none"
-        auto_stage_option["cached_compute_cost"] = None
+        auto_stage_option["cached_profile_result"] = None
         method = PipeshardParallel(
             num_micro_batches=num_micro_batches,
             default_auto_sharding_option=AutoShardingOption(

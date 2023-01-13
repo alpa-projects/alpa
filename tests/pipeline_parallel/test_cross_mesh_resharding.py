@@ -21,7 +21,7 @@ from alpa.pipeline_parallel.cross_mesh_resharding import (
     SymbolicReshardingTask, SymbolicBroadcastReshardingTask)
 from alpa.pipeline_parallel.pipeshard_executable import (
     AllocateZeroWorkerExecutableConfig, PipelineInstruction,
-    PipeshardMeshWorkerExecuable)
+    PipeshardMeshWorkerExecutable)
 from alpa.pipeline_parallel.resharding_tensor import VirtualDistributedArray
 from alpa.testing import assert_allclose
 from alpa.util import get_shard_shape
@@ -44,7 +44,7 @@ def test_resharding(var,
     dst_loads = dst_loads or {dst: 0 for dst in dst_mesh.device_strs}
     if resharding_mode == "send_recv":
         rewrite_dst_sharding_spec = CrossMeshCommunicator._rewrite_allgather_spec(
-            dst_sharding_spec, dst_mesh, var.aval.shape)
+            dst_sharding_spec, dst_mesh.num_hosts, var.aval.shape)
     else:
         rewrite_dst_sharding_spec = dst_sharding_spec
     src_array = VirtualDistributedArray(device_mesh=src_mesh,
@@ -114,14 +114,14 @@ def test_resharding(var,
     # Compile Pipeline Executable
     for worker in src_mesh.workers:
         exec_uuid = next_mesh_executable_uuid()
-        worker.put_executable.remote(exec_uuid, PipeshardMeshWorkerExecuable,
+        worker.put_executable.remote(exec_uuid, PipeshardMeshWorkerExecutable,
                                      instruction_lists[worker], [src_uuid], [],
                                      [], [], [],
                                      [False] * src_mesh.num_devices_per_host)
         exec_uuids[worker] = exec_uuid
     for worker in dst_mesh.workers:
         exec_uuid = next_mesh_executable_uuid()
-        worker.put_executable.remote(exec_uuid, PipeshardMeshWorkerExecuable,
+        worker.put_executable.remote(exec_uuid, PipeshardMeshWorkerExecutable,
                                      instruction_lists[worker], [], [dst_uuid],
                                      executable_config_lists[worker], [], [],
                                      [False] * dst_mesh.num_devices_per_host)
@@ -208,7 +208,8 @@ class ReshardingTest(unittest.TestCase):
         src_mesh.shutdown()
         dst_mesh.shutdown()
 
-    def test_4gpu_send_recv(self):
+    def _test_4gpu_send_recv(self, nccl_mode):
+        global_config.nccl_mode = nccl_mode
         src_shape = (1, 2)
         dst_shape = (1, 2)
         tensor_shape = (4, 8, 16)
@@ -235,7 +236,8 @@ class ReshardingTest(unittest.TestCase):
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
                                  tensor_shape, False)
 
-    def test_4gpu_allgather(self):
+    def _test_4gpu_allgather(self, nccl_mode):
+        global_config.nccl_mode = nccl_mode
         src_shape = (1, 2)
         dst_shape = (1, 2)
         tensor_shape = (4, 8, 16)
@@ -261,8 +263,8 @@ class ReshardingTest(unittest.TestCase):
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
                                  tensor_shape)
 
-    @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
-    def test_8gpu_2_dim_allgather(self):
+    def _test_8gpu_2_dim_allgather(self, nccl_mode):
+        global_config.nccl_mode = nccl_mode
         src_shape = (1, 4)
         dst_shape = (1, 4)
         tensor_shape = (6, 8, 16)
@@ -275,7 +277,8 @@ class ReshardingTest(unittest.TestCase):
         self.run_resharding_task(src_shape, dst_shape, src_spec, dst_spec,
                                  tensor_shape)
 
-    def test_4gpu_broadcast(self):
+    def _test_4gpu_broadcast(self, nccl_mode):
+        global_config.nccl_mode = nccl_mode
         src_shape = (1, 2)
         dst_shape = (1, 2)
         tensor_shape = (4, 8, 16)
@@ -309,7 +312,8 @@ class ReshardingTest(unittest.TestCase):
                                  resharding_mode="broadcast")
 
     @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
-    def test_8gpu_broadcast(self):
+    def _test_8gpu_broadcast(self, nccl_mode):
+        global_config.nccl_mode = nccl_mode
         src_shape = (1, 4)
         dst_shape = (1, 4)
         tensor_shape = (2, 64, 64)
@@ -340,6 +344,26 @@ class ReshardingTest(unittest.TestCase):
                                  dst_spec,
                                  tensor_shape,
                                  resharding_mode="broadcast")
+
+    def test_4gpu_send_recv(self):
+        self._test_4gpu_send_recv("cupy")
+        self._test_4gpu_send_recv("xla_extension")
+
+    def test_4gpu_allgather(self):
+        self._test_4gpu_allgather("cupy")
+        self._test_4gpu_allgather("xla_extension")
+
+    @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
+    def test_8gpu_2_dim_allgather(self):
+        self._test_8gpu_2_dim_allgather("cupy")
+
+    def test_4gpu_broadcast(self):
+        self._test_4gpu_broadcast("cupy")
+        self._test_4gpu_broadcast("xla_extension")
+
+    @unittest.skipIf(jax.device_count('gpu') < 8, "no enough device")
+    def test_8gpu_broadcast(self):
+        self._test_8gpu_broadcast("cupy")
 
 
 def suite():

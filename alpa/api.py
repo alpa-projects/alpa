@@ -213,6 +213,11 @@ def _compile_parallel_executable(
     for store in fun.stores:
         if store:
             store.reset()
+    batch_invars = list(batch_invars)
+    for idx, aval in enumerate(avals):
+        if len(aval.shape) == 0:
+            batch_invars[idx] = False
+    batch_invars = tuple(batch_invars)
 
     # Compile a callable
     return method.compile_executable(fun, in_tree, out_tree_thunk,

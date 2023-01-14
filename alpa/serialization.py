@@ -15,7 +15,7 @@ import msgpack
 import numpy as np
 
 from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
-                              get_global_virtual_physical_mesh)
+                              get_global_virtual_physical_mesh, get_global_physical_mesh)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -156,7 +156,6 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
     flat_info = tree_leaves(placement_specs)
     flat_load_state = []
     mesh_group = get_global_virtual_physical_mesh().launched_physical_mesh_group
-    assert mesh_group is not None
 
     for path, info in zip(state_paths, flat_info):
         if info is None:
@@ -165,7 +164,7 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
         if len(info.mesh_ids) == 1:
             dist_arr = DistributedArray.load(os.path.join(ckpt_dir,
                                                           path), info.aval,
-                                             mesh_group[info.mesh_ids[0]],
+                                             mesh_group[info.mesh_ids[0]] if mesh_group else get_global_physical_mesh(),
                                              info.sharding_specs[0])
             flat_load_state.append(dist_arr)
         else:

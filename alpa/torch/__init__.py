@@ -14,6 +14,7 @@ except ImportError as e:
 from typing import Any, Callable, Union, Tuple
 from functools import partial, wraps
 
+from packaging import version
 import numpy as np
 
 import alpa
@@ -66,12 +67,31 @@ def functorch_value_and_grad(func: Callable,
     @wraps(func)
     def wrapper(*args, **kwargs):
         # pylint: disable=import-outside-toplevel
-        from functorch._C import (_grad_increment_nesting,
-                                  _grad_decrement_nesting)
-        from functorch._src.eager_transforms import (
-            _wrap_all_tensors, _slice_argnums, _create_differentiable,
-            _as_tuple, _autograd_grad, _undo_create_differentiable)
-        from functorch._src.pytree_hacks import tree_map_
+        # functorch imports based on PT version
+        if version.parse(torch.__version__) < version.parse("1.13"):
+            from functorch._C import (_grad_increment_nesting,
+                                      _grad_decrement_nesting)
+            from functorch._src.eager_transforms import (
+                _wrap_all_tensors, _slice_argnums, _create_differentiable,
+                _as_tuple, _autograd_grad, _undo_create_differentiable)
+            from functorch._src.pytree_hacks import tree_map_
+
+        elif version.parse(torch.__version__) == version.parse("1.13"):
+            from torch._C._functorch import (_grad_increment_nesting,
+                                             _grad_decrement_nesting)
+            from functorch._src.eager_transforms import (
+                _wrap_all_tensors, _slice_argnums, _create_differentiable,
+                _as_tuple, _autograd_grad, _undo_create_differentiable)
+            from functorch._src.pytree_hacks import tree_map_
+
+        else:
+            from torch._C._functorch import (_grad_increment_nesting,
+                                             _grad_decrement_nesting)
+            from torch._functorch.eager_transforms import (
+                _wrap_all_tensors, _slice_argnums, _create_differentiable,
+                _as_tuple, _autograd_grad, _undo_create_differentiable)
+            from torch._functorch.pytree_hacks import tree_map_
+
         from torch.utils._pytree import tree_flatten, tree_unflatten
         level = _grad_increment_nesting()
         try:

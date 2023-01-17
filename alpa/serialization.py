@@ -166,8 +166,8 @@ def restore_checkpoint(ckpt_dir: Union[str, os.PathLike], step: int,
             logger.warning("Variable is not used, skip loading it")
             flat_load_state.append(None)
         elif mesh_group is None:
-            dist_arr = DistributedArray.load(os.path.join(ckpt_dir,
-                                                          path), info.aval,
+            dist_arr = DistributedArray.load(os.path.join(ckpt_dir, path),
+                                             info.aval, physical_mesh,
                                              physical_mesh,
                                              info.sharding_specs[0])
             flat_load_state.append(dist_arr)

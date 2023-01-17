@@ -83,10 +83,7 @@ RUN . /opt/conda/etc/profile.d/conda.sh && \
     pip3 install --upgrade pip && \
     pip3 install cupy-cuda113 && \
     pip3 install alpa && \
-    pip3 install jaxlib==0.3.22+cuda113.cudnn820 -f https://alpa-projects.github.io/wheels.html
-
-# install additional deps for opt finetuning
-RUN conda activate alpa && \
+    pip3 install jaxlib==0.3.22+cuda113.cudnn820 -f https://alpa-projects.github.io/wheels.html && \
     pip3 install datasets && \
     pip3 install transformers && \
     pip3 install tensorflow-gpu

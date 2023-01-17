@@ -32,7 +32,7 @@ from enum import Enum
 import functools
 from itertools import chain
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple, Dict
 
 import datasets
 import numpy as np
@@ -41,7 +41,7 @@ from tqdm import tqdm
 
 import alpa
 from alpa.model.model_util import DynamicScale, TrainState
-from alpa import AutoShardingOption, AutoLayerOption, ManualStageOption
+from alpa import AutoShardingOption, AutoLayerOption, ManualStageOption, mark_pipeline_boundary
 import jax
 import jax.numpy as jnp
 import optax
@@ -50,6 +50,7 @@ import tensorflow as tf
 from flax import jax_utils, traverse_util
 from flax.training import train_state
 from flax.training.common_utils import onehot, shard, shard_prng_key
+from flax.core.frozen_dict import unfreeze, FrozenDict
 from huggingface_hub import Repository
 from transformers import (
     CONFIG_MAPPING,
@@ -61,6 +62,8 @@ from transformers import (
     is_tensorboard_available,
     set_seed,
 )
+
+from examples.opt_finetune.load_params import load_params_dis_array
 
 alpa.init(cluster="ray")
 
@@ -91,6 +94,8 @@ class TrainingArguments:
     )
     do_train: bool = field(default=False, metadata={"help": "Whether to run training."})
     do_eval: bool = field(default=False, metadata={"help": "Whether to run eval on the dev set."})
+    use_manual_layer: bool = field(default=False, metadata={"help": "Whether to use manual layer annotation."})
+    alpa_init: bool = field(default=False, metadata={"help": "Whether to use Alpa's distributed gpu init."})
     per_device_train_batch_size: int = field(
         default=8, metadata={"help": "Batch size per GPU/TPU core/CPU for training."}
     )
@@ -320,7 +325,7 @@ def create_learning_rate_fn(
     return schedule_fn
 
 
-def monkey_patch_remat():
+def monkey_patch_remat(use_manual_layer=False):
     # Use monkey patch to add remat for all transformer layers.
     from transformers.models.opt.modeling_flax_opt import FlaxOPTDecoderLayer, FlaxOPTDecoderLayerCollection
     from flax.linen.partitioning import remat
@@ -349,7 +354,7 @@ def monkey_patch_remat():
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
 
-        for decoder_layer in self.layers:
+        for i, decoder_layer in enumerate(self.layers):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -364,6 +369,10 @@ def monkey_patch_remat():
             hidden_states = layer_outputs[0]
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
+
+            # add manual layer annotations
+            if use_manual_layer and i != len(self.layers) - 1:
+                mark_pipeline_boundary()
 
         outputs = [hidden_states, all_hidden_states, all_self_attns]
         return outputs
@@ -512,6 +521,11 @@ def main():
             use_auth_token=True if model_args.use_auth_token else None,
         )
     elif model_args.model_name_or_path:
+        if "175b" in model_args.model_name_or_path.lower():
+            raise RuntimeError("HuggingFace hub does not have OPT-175B model. If you want to finetune OPT-175B, "
+                               "please pass --config_name instead and set it as the path to the config file "
+                               "provided at examples/opt_finetune/config_175b.json. Please obtain the weights"
+                               "by contacting Meta Inc.")
         config = AutoConfig.from_pretrained(
             model_args.model_name_or_path,
             cache_dir=model_args.cache_dir,
@@ -522,7 +536,7 @@ def main():
         logger.warning("You are instantiating a new config instance from scratch.")
 
     if training_args.use_remat:
-        monkey_patch_remat()
+        monkey_patch_remat(training_args.use_manual_layer)
 
     if model_args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(
@@ -545,6 +559,7 @@ def main():
             "You can do it from another script, save it, and load it from here, using --tokenizer_name."
         )
 
+    do_init = not training_args.alpa_init
     if model_args.model_name_or_path:
         model = FlaxAutoModelForCausalLM.from_pretrained(
             model_args.model_name_or_path,
@@ -552,6 +567,7 @@ def main():
             seed=training_args.seed,
             dtype=getattr(jnp, model_args.dtype),
             use_auth_token=True if model_args.use_auth_token else None,
+            _do_init=do_init
         )
         #from transformers import FlaxOPTForCausalLM
         #config.num_hidden_layers = 2
@@ -565,6 +581,7 @@ def main():
             config,
             seed=training_args.seed,
             dtype=getattr(jnp, model_args.dtype),
+            _do_init=do_init
         )
 
     # Preprocessing the datasets.
@@ -654,13 +671,12 @@ def main():
             max_train_samples = min(len(train_dataset), data_args.max_train_samples)
             train_dataset = train_dataset.select(range(max_train_samples))
 
-    if training_args.do_eval:
-        if "validation" not in tokenized_datasets:
-            raise ValueError("--do_eval requires a validation dataset")
-        eval_dataset = lm_datasets["validation"]
-        if data_args.max_eval_samples is not None:
-            max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
-            eval_dataset = eval_dataset.select(range(max_eval_samples))
+    if "validation" not in tokenized_datasets:
+        raise ValueError("--do_eval requires a validation dataset")
+    eval_dataset = lm_datasets["validation"]
+    if data_args.max_eval_samples is not None:
+        max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
+        eval_dataset = eval_dataset.select(range(max_eval_samples))
 
     # Adjust batch size and num_micro_batches for small datasets
     num_devices = alpa.get_global_num_devices()
@@ -698,8 +714,19 @@ def main():
 
     # Store some constant
     num_epochs = int(training_args.num_train_epochs)
-    train_batch_size = int(training_args.per_device_train_batch_size) * num_devices
-    eval_batch_size = int(training_args.per_device_eval_batch_size) * num_devices
+    # Infer data parallel
+    op = training_args.operator_parallel
+    pp = training_args.pipeline_parallel
+    dp = num_devices // op // pp
+    assert dp >= 1, "You settings of `operator_parallel` or `pipeline_parallel` is problematic. " \
+                    "Please make sure op * pp is divisible by num_devices"
+    # Copy the parallel config into configs
+    setattr(config, "op", op)
+    setattr(config, "pp", pp)
+    setattr(config, "dp", dp)
+
+    train_batch_size = int(training_args.per_device_train_batch_size) * dp
+    eval_batch_size = int(training_args.per_device_eval_batch_size) * dp
     steps_per_epoch = len(train_dataset) // train_batch_size
     total_train_steps = steps_per_epoch * num_epochs
 
@@ -754,8 +781,6 @@ def main():
         alpa.global_config.flax_always_use_fp16_embedding = True
     else:
         use_master_copy = dynamic_scale = None
-    state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer,
-                              dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
 
     def loss_fn(logits, labels):
         shift_logits = logits[..., :-1, :]
@@ -806,24 +831,91 @@ def main():
         labels = batch.pop("labels")
         logits = model(**batch, params=params, deterministic=True)[0]
         loss = loss_fn(logits, labels)
-
         # summarize metrics
         metrics = {"loss": loss}
         return metrics
 
-    # Create parallel version of the train and eval step
-    method = alpa.get_3d_parallel_method(
-            num_micro_batches=training_args.num_micro_batches,
-            data_parallel=-1,
-            operator_parallel=training_args.operator_parallel,
-            pipeline_parallel=training_args.pipeline_parallel)
+    if training_args.alpa_init:
+        # In this case, params are not initialized yet, and we use shaped array to trigger alpa compilation
+        rngkey = jax.core.ShapedArray((2,), jnp.uint32)
+        input_ids = jax.core.ShapedArray((1, 128), jnp.int32)
+        attention_mask = jax.core.ShapedArray((1, 128), jnp.int32)
+        position_ids = jax.core.ShapedArray((1, 128), jnp.int32)
+        params_aval = unfreeze(jax.eval_shape(model.module.init, rngkey, input_ids, attention_mask, position_ids)["params"])
+        state_aval = TrainState.create_aval(apply_fn=model.__call__, params=params_aval, tx=optimizer,
+                                            dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
+        # params_aval = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, getattr(jnp, model_args.dtype)), params_aval)
+    else:
+        # In this case, params have been initialized by HF in the CPU memory of the driver node.
+        state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer,
+                                  dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
 
+    # Create parallel version of the train and eval step
+    if training_args.use_manual_layer:
+    # make layer-stage aassignments
+        assert config.num_hidden_layers % pp == 0, f"There are {config.num_hidden_layers} layers but {pp} stages."
+        n_layers_per_stage = config.num_hidden_layers // pp
+        forward_stage_layer_ids = [list(range(i * n_layers_per_stage, (i + 1) * n_layers_per_stage)) for i in range(pp)]
+        print(f"n_layers_per_stage {n_layers_per_stage}, forward_stage_layer_ids {forward_stage_layer_ids}")
+        method = alpa.get_3d_parallel_method(
+                num_micro_batches=training_args.num_micro_batches,
+                data_parallel=-1,
+                operator_parallel=training_args.operator_parallel,
+                pipeline_parallel=training_args.pipeline_parallel,
+                use_manual_layer_option=True,
+                forward_stage_layer_ids=forward_stage_layer_ids)
+    else:
+        method = alpa.get_3d_parallel_method(
+                num_micro_batches=training_args.num_micro_batches,
+                data_parallel=-1,
+                operator_parallel=training_args.operator_parallel,
+                pipeline_parallel=training_args.pipeline_parallel)
     p_train_step = alpa.parallelize(train_step,
                                     method=method,
                                     donate_argnums=(0,))
     p_eval_step = alpa.parallelize(eval_step,
                                    method=alpa.FollowParallel(
                                        p_train_step, num_micro_batches=eval_num_micro_batches))
+
+    if training_args.alpa_init:
+        print(f" - Compile executables. ", end="", flush=True)
+        tic = time.time()
+        # trigger compile
+        seq_len = config.max_position_embeddings
+        train_input_shape = (train_batch_size, seq_len)
+        batch = {"input_ids":
+                    jax.core.ShapedArray(
+                        train_input_shape, jnp.int32),
+                 "position_ids":
+                    jax.core.ShapedArray(
+                        train_input_shape, jnp.int32),
+                 "attention_mask":
+                   jax.core.ShapedArray(
+                        train_input_shape, jnp.int32),
+                 "labels":
+                     jax.core.ShapedArray(
+                         train_input_shape, jnp.int32),
+                }
+        train_executable = p_train_step.get_executable(state_aval, batch)
+        eval_executable = p_eval_step.get_executable(state_aval.params, batch)
+        # load params using compiled sharding specs1
+        print(f" Compilation takes {time.time() - tic:.2f} seconds.")
+
+        # def init_weights(self, rng: jax.random.PRNGKey, input_shape: Tuple, params: FrozenDict = None) -> Dict:
+
+        print(" - Load parameters. ", end="", flush=True)
+        tic = time.time()
+        # params = load_multi_executable_params_dis_array(path, exectuables, params_aval, config, dummy)
+        assert config.weight_path and os.path.exists(config.weight_path), f"Cannot find weight at {config.weight_path}"
+        params = load_params_dis_array(config.weight_path, train_executable, params_aval, config, dummy=False)
+        # from alpa.serialization import restore_checkpoint
+        # params = restore_checkpoint(path, )
+        # Work around the model._initialized in HF
+        model._is_initialized = True
+        model.params = params
+        state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer,
+                                  dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
+        print(f" Load parameters takes {time.time() - tic:.2f} seconds.")
 
     dump_debug_info_train_step = dump_debug_info_eval_step = True
 

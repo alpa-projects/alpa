@@ -13,7 +13,7 @@ Based on this, alpa provides two base parallel methods:
 - PipeshardParallel: which combines pipeline parallelism and shard parallelism.
 """
 from abc import ABC, abstractmethod
-from typing import Callable, Optional, Sequence, Union, Any
+from typing import Callable, Optional, Sequence, Union, Any, List
 
 from jax import linear_util as lu
 from jax._src import traceback_util
@@ -248,9 +248,11 @@ def get_3d_parallel_method(num_micro_batches: int,
                            data_parallel: int,
                            operator_parallel: int,
                            pipeline_parallel: int,
-                           allow_degenerate_into_shard_parallel: bool = True):
+                           allow_degenerate_into_shard_parallel: bool = True,
+                           use_manual_layer_option: bool = False,
+                           forward_stage_layer_ids: List[List[int]] = None):
     """
-    Get a parallel method for 3D parallelism, which reguarlly combines
+    Get a parallel method for 3D parallelism, which regularly combines
     data parallelism, operator parallelism and pipeline parallelism.
     """
     # Validity check
@@ -288,7 +290,15 @@ def get_3d_parallel_method(num_micro_batches: int,
                                      [data_parallel, operator_parallel]))
 
     # Return pipeshard parallel
-    layer_option = AutoLayerOption(layer_num=pp, eps=0.1)
+    if use_manual_layer_option:
+        # We assume each layer has been annotated using the mark_pipeline_boundary()
+        layer_option = ManualLayerOption()
+        assert forward_stage_layer_ids, "forward_stage_layer_ids must be provided " \
+                                        "when using manual annotation."
+    else:
+        # Note: this eps need some tuning.
+        layer_option = AutoLayerOption(layer_num=pp, eps=0.1)
+        forward_stage_layer_ids = [[i] for i in range(pp)]
     return PipeshardParallel(
         devices=virtual_mesh,
         num_micro_batches=num_micro_batches,
@@ -298,7 +308,7 @@ def get_3d_parallel_method(num_micro_batches: int,
         ),
         layer_option=layer_option,
         stage_option=ManualStageOption(
-            forward_stage_layer_ids=[[i] for i in range(pp)],
+            forward_stage_layer_ids=forward_stage_layer_ids,
             submesh_physical_shapes=[physical_mesh_shape] * pp,
             submesh_logical_shapes=[logical_mesh_shape] * pp,
             submesh_autosharding_option_dicts=[{}] * pp))

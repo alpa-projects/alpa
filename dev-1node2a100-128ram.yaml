@@ -59,7 +59,7 @@ spec:
           claimName: alpa-opt
       containers:
         - name: ray-head
-          image: jiaodong/alpa:v1  # TODO: Change to your Alpa docker image
+          image: zhisbug/alpa-opt-finetune-dev:1
           imagePullPolicy: IfNotPresent
           # This volume allocates shared memory for Ray to use for its plasma]
           # --login in required to have access to conda to activate alpa env
@@ -72,7 +72,7 @@ spec:
             conda activate alpa;
             cd /mnt/alpa-opt/alpa;
             pip install -e .;
-            ray start --head --port=6380 --num-cpus=$MY_CPU_REQUEST --dashboard-host=0.0.0.0 --object-manager-port=8076 --node-manager-port=8077 --dashboard-agent-grpc-port=8078 --dashboard-agent-listen-port=8079 --min-worker-port=10002 --max-worker-port=19999 --redis-password='';
+            ray start --head --port=6380 --num-cpus=$MY_CPU_REQUEST --dashboard-host=0.0.0.0 --object-manager-port=8076 --node-manager-port=8077 --dashboard-agent-grpc-port=8078 --dashboard-agent-listen-port=8079 --min-worker-port=10002 --max-worker-port=19999 --redis-password='' --block;
           # This volume allocates shared memory for Ray to use for its plasma
           # object store. If you do not provide this, Ray will fall back to
           # /tmp which cause slowdowns if is not a shared memory volume.
@@ -92,7 +92,7 @@ spec:
           resources:
             limits:
               cpu: 32
-              memory: 128Gi
+              memory: 256Gi
               nvidia.com/gpu: 2
               rdma/ib: 1
       # Refer to CoreWeave's documentation for more details about GPU node types and placement

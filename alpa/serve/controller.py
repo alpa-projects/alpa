@@ -193,10 +193,11 @@ class Controller:
 
             response = await manager.handle_request.remote(
                 name, request_wrapper)
-            if isinstance(response, Exception):
-                raise response
-
-            status_code = 200
+            if isinstance(response, RelayException):
+                response = make_error_response(response)
+                status_code = 400
+            else:
+                status_code = 200
         except Exception as e:  # pylint: disable=broad-except
             response = make_error_response(e)
             status_code = 400

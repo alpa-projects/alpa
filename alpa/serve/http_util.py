@@ -371,8 +371,7 @@ class RelayException:
 def make_error_response(e):
     if isinstance(e, RelayException):
         msg = str(e.e)
-        stacktrace = "".join(traceback.format_tb(
-            e.__traceback__)) + e.stacktrace
+        stacktrace = e.stacktrace
     else:
         msg = str(e)
         stacktrace = "".join(traceback.format_tb(e.__traceback__))

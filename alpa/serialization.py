@@ -15,7 +15,7 @@ import msgpack
 import numpy as np
 
 from alpa.device_mesh import (DistributedArray, ReplicatedDistributedArray,
-                              get_global_virtual_physical_mesh, 
+                              get_global_virtual_physical_mesh,
                               get_global_physical_mesh)
 
 logger = logging.getLogger(__name__)

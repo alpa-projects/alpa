@@ -14,8 +14,9 @@ import numpy as np
 from alpa.pipeline_parallel.computation import JaxPipelineComputation
 from alpa.pipeline_parallel.primitive_def import (pipeline_p,
                                                   mark_pipeline_jaxpreqn)
-from alpa.util import (clone_jaxpr, clone_jaxpr_eqn, slices_to_jaxpr,
-                       OrderedSet, get_var_mapping, new_jaxpr_eqn)
+from alpa.util import (OrderedSet, clone_jaxpr, clone_jaxpr_eqn,
+                       get_var_mapping, mesh_ids_hash, new_jaxpr_eqn,
+                       slices_to_jaxpr)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -657,15 +658,19 @@ def _cross_mesh_allreduce_xla_translation(c, *args, **kwargs):
     input_params = args[0]
     input_shape = c.get_shape(input_params)
     op_type = _primitive_to_str[kwargs['type']]
+    opaque = op_type + b';' + mesh_ids_hash(kwargs['group_meshes'])
 
     # TODO(yonghao): the has_side_effect is to prevent CSE of the allreduce.
     # It might be replaced by adding its outvar to output
+    sharding = xc.OpSharding()
+    sharding.type = sharding.type.REPLICATED
+    c.set_sharding(sharding)
     output = xc.ops.CustomCall(c,
                                call_name,
                                operands=(input_params,),
                                shape=input_shape,
                                has_side_effect=True,
-                               opaque=op_type)
+                               opaque=opaque)
     c.clear_sharding()
     return output
 

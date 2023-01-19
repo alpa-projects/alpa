@@ -61,11 +61,7 @@ from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
 ray_worker = try_import_ray_worker()
 
 if global_config.backend == "gpu" and global_config.has_cuda:
-    if global_config.nccl_mode == "cupy":
-        import alpa.collective.worker_nccl_util_cupy as worker_nccl_util
-    else:
-        assert global_config.nccl_mode == "xla_extension"
-        import alpa.collective.worker_nccl_util_xla as worker_nccl_util
+    from alpa.collective import worker_nccl_util
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -408,13 +404,13 @@ class MeshHostWorker:
         col.destroy_collective_group(group_name)
 
     def create_and_set_cross_mesh_communicators(self, world_size, rank, backend,
-                                                group_name):
+                                                group_name, key):
         """Create collective communicators for the cross mesh group."""
         if not col.is_group_initialized(group_name):
             self.init_collective_group(world_size, rank, backend, group_name)
         g = col.check_and_get_group(group_name)
         devices = list(range(self.num_devices))
-        g.create_and_set_xla_communicators(devices)
+        g.create_and_set_xla_communicators(devices, key)
 
     def put_resharding_send_task(self, uuid, tasks, group_name):
         self.send_tasks[uuid] = ReshardingSendTask(tile_specs=tasks,
@@ -1096,6 +1092,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                     "FI_EFA_USE_DEVICE_RDMA": "1",
                     "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH",
                                                       ""),  # For libnccl-net.so
+                    "NCCL_PROTO": "simple",
                 })
 
             bundle_index = device_bundle_idx_list[i]
@@ -2400,7 +2397,7 @@ def get_global_num_devices():
 
 
 def create_and_record_cross_mesh_collective_communicators(
-        meshes: Sequence[DistributedPhysicalDeviceMesh]):
+        meshes: Sequence[DistributedPhysicalDeviceMesh], key):
     workers = []
     device_strs = []
     for mesh in meshes:
@@ -2412,7 +2409,7 @@ def create_and_record_cross_mesh_collective_communicators(
     refs = []
     for rank, worker in enumerate(workers):
         ref = worker.create_and_set_cross_mesh_communicators.remote(
-            world_size, rank, backend, group_name)
+            world_size, rank, backend, group_name, key)
         refs.append(ref)
     return refs
 

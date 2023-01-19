@@ -190,10 +190,6 @@ class LangaugeModelWorker:
     async def completions(self, args, request):
         logger = self.logger
 
-        if "redirect_logprobs" in args:
-            # A redirection to workaround some security settings.
-            return await self.logprobs(args, request)
-
         # Normalize prompts
         prompts = args["prompt"]
         prompts = self.normalize_prompts(prompts)

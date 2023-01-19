@@ -243,7 +243,7 @@ def compile_pipeshard_executable_internal(
                 global_output_shardings is None)
         (input_sharding_dicts,
          output_sharding_dicts) = get_manual_input_output_sharding_specs(
-             jax_all_stages, [mesh.shape for mesh in sliced_virtual_meshes],
+             jax_all_stages, manual_stage_option.submesh_logical_shapes,
              parsed_manual_sharding_option, global_invars, global_outvars,
              schedule.stage_mesh_mapping)
     else:

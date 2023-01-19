@@ -89,24 +89,8 @@ class XLANCCLGroup(BaseGroup):
         for d in devices_ids:
             self._used_gpu_indices.add(d)
 
-        group_key = self._generate_group_key(comm_key)
-        if devices_global_rank[0] == 0:
-            if nccl_uid is None:
-                nccl_uid = self._generate_nccl_uid(group_key)
-        else:
-            if nccl_uid is None:
-                rendezvous = Rendezvous(group_key)
-                rendezvous.meet()
-                nccl_uid = rendezvous.get_nccl_id()
-
-                # Recycle the NCCLUniqueIDStore named actor *pro-activately* to
-                # avoid named actor leak.
-                if rendezvous.get_access_counter() == self.world_size:
-                    logger.debug(
-                        "NCCLUniqueID has been broadcasted. The "
-                        "NCCLUniqueIDStore will go out of context and be "
-                        "destroyed.")
-                    rendezvous.destroy_store()
+        nccl_uid = self._rendezvous_nccl_uid(devices_global_rank[0], comm_key,
+                                             self.world_size, nccl_uid)
 
         self.xla_comm_group.nccl_create_communicators(world_size,
                                                       devices_global_rank,
@@ -130,28 +114,16 @@ class XLANCCLGroup(BaseGroup):
         """
         if not comm_key:
             raise RuntimeError("Got empty communicator key.")
-        for d in device_list:
-            self._used_gpu_indices.add(d)
 
         # TODO(Hao): lock the _dev_comm_map here.
         if comm_key in self._dev_comm_uids:
             return
 
-        group_key = self._generate_group_key(comm_key)
-        if self.rank == 0:
-            nccl_uid = self._generate_nccl_uid(group_key)
-        else:
-            rendezvous = Rendezvous(group_key)
-            rendezvous.meet()
-            nccl_uid = rendezvous.get_nccl_id()
+        for d in device_list:
+            self._used_gpu_indices.add(d)
 
-            # Recycle the NCCLUniqueIDStore named actor *pro-activately* to
-            # avoid named actor leak.
-            if rendezvous.get_access_counter() == self.world_size:
-                logger.debug(
-                    "NCCLUniqueID has been broadcasted. The NCCLUniqueIDStore "
-                    "will go out of context and be destroyed.")
-                rendezvous.destroy_store()
+        nccl_uid = self._rendezvous_nccl_uid(self.rank, comm_key,
+                                             self.world_size)
 
         # Now create the communicators
         actual_world_size = len(device_list) * self.world_size
@@ -216,23 +188,7 @@ class XLANCCLGroup(BaseGroup):
                 "Send and recv happens on the same process! "
                 "alpa.collective does not support this case as of now. "
                 "Alternatively, consider doing GPU to GPU memcpy?")
-        group_key = self._generate_group_key(comm_key)
-        if my_p2p_rank == 0:
-            if nccl_uid is None:
-                nccl_uid = self._generate_nccl_uid(group_key)
-        else:
-            if nccl_uid is None:
-                rendezvous = Rendezvous(group_key)
-                rendezvous.meet(timeout_s=3000)
-                nccl_uid = rendezvous.get_nccl_id()
-                # Recycle the NCCLUniqueIDStore named actor *pro-activately* to
-                # avoid named actor leak.
-                if rendezvous.get_access_counter() == 2:
-                    logger.debug(
-                        "NCCLUniqueID has been broadcasted. The "
-                        "NCCLUniqueIDStore will go out of context and be "
-                        "destroyed.")
-                    rendezvous.destroy_store()
+        nccl_uid = self._rendezvous_nccl_uid(my_p2p_rank, comm_key, 2, nccl_uid)
 
         self.xla_comm_group.nccl_create_communicators(2, [my_p2p_rank],
                                                       [my_gpu_idx], nccl_uid)
@@ -260,9 +216,11 @@ class XLANCCLGroup(BaseGroup):
         self._create_nccl_p2p_communicator(comm_key, my_gpu_idx, peer_rank,
                                            peer_gpu_idx, nccl_uid)
 
-    def create_and_set_xla_communicators(self, devices):
-        self.create_nccl_collective_communicator(devices)
-        # FIXME(yonghao): try to set it here
+    def create_and_set_xla_communicators(self, devices, key):
+        comm_key = _get_comm_key_from_devices(devices)
+        self._create_nccl_collective_communicator(comm_key, devices)
+        nccl_uid = self._dev_comm_uids[comm_key]
+        xe.set_comm_group_info(key, self.xla_comm_group, nccl_uid)
 
     # communicate operations
     def broadcast_partialgpu(self,
@@ -280,11 +238,11 @@ class XLANCCLGroup(BaseGroup):
         """
         root_rank = 0
 
-        key = self._dev_comm_uids[broadcast_options.comm_key]
         self.create_nccl_broadcast_communicator(
             broadcast_options.comm_key, broadcast_options.world_size,
             broadcast_options.devices_ids,
             broadcast_options.devices_global_rank)
+        key = self._dev_comm_uids[broadcast_options.comm_key]
         is_receiver = broadcast_options.devices_global_rank[0] != 0
         self.xla_comm_group.nccl_broadcast_partial_gpus(
             key, tensors, broadcast_options.local_start_pos_list,
@@ -440,6 +398,27 @@ class XLANCCLGroup(BaseGroup):
     @classmethod
     def backend(cls):
         return Backend.NCCL
+
+    def _rendezvous_nccl_uid(self, rank, comm_key, max_counter, nccl_uid=None):
+        group_key = self._generate_group_key(comm_key)
+        if rank == 0:
+            if nccl_uid is None:
+                nccl_uid = self._generate_nccl_uid(group_key)
+        else:
+            if nccl_uid is None:
+                rendezvous = Rendezvous(group_key)
+                rendezvous.meet(timeout_s=3000)
+                nccl_uid = rendezvous.get_nccl_id()
+
+                # Recycle the NCCLUniqueIDStore named actor *pro-activately* to
+                # avoid named actor leak.
+                if rendezvous.get_access_counter() == max_counter:
+                    logger.debug(
+                        "NCCLUniqueID has been broadcasted. The "
+                        "NCCLUniqueIDStore will go out of context and be "
+                        "destroyed.")
+                    rendezvous.destroy_store()
+        return nccl_uid
 
 
 def _get_comm_key_from_devices(devices):

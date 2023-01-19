@@ -534,32 +534,32 @@ class FlaxBloomForCausalLMModule(nn.Module):
 
 
 def get_config(name, **kwargs):
-    if name == "bloom-560m":
+    if name in ["bloom-560m", "bloomz-560m"]:
         config = BloomConfig(
             hidden_size=1024, n_head=16, num_hidden_layers=24,
             pretraining_tp=1, use_cache=True
         )
-    elif name == "bloom-1b1":
+    elif name in ["bloom-1b1", "bloomz-1b1"]:
         config = BloomConfig(
             hidden_size=1536, n_head=16, num_hidden_layers=24,
             pretraining_tp=1, use_cache=True
         )
-    elif name == "bloom-1b7":
+    elif name in ["bloom-1b7", "bloomz-1b7"]:
         config = BloomConfig(
             hidden_size=2048, n_head=16, num_hidden_layers=24,
             pretraining_tp=2, use_cache=True
         )
-    elif name == "bloom-3b":
+    elif name in ["bloom-3b", "bloomz-3b"]:
         config = BloomConfig(
             hidden_size=2560, n_head=32, num_hidden_layers=30,
             pretraining_tp=4, use_cache=True
         )
-    elif name == "bloom-7b1":
+    elif name in ["bloom-7b1", "bloomz-7b1"]:
         config = BloomConfig(
             hidden_size=4096, n_head=32, num_hidden_layers=30,
             pretraining_tp=4, use_cache=True
         )
-    elif name == "bloom":
+    elif name in ["bloom", "bloomz"]:
         config = BloomConfig(
             hidden_size=14336, n_head=112, num_hidden_layers=70,
             pretraining_tp=4, use_cache=True

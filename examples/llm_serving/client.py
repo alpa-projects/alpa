@@ -3,7 +3,7 @@ from typing import Dict, Optional, Union, Sequence
 
 import requests
 
-DEFAULT_URL = "https://opt.alpa.ai"
+DEFAULT_URL = "https://api.alpa.ai"
 
 headers = {"User-Agent": "Alpa Client"}
 

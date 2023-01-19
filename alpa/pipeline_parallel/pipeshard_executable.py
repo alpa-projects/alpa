@@ -30,7 +30,7 @@ from alpa.pipeline_parallel.runtime_emitter import (
     PipelineInstruction, PipeshardConfig)
 from alpa.shard_parallel.auto_sharding import HloStatus
 from alpa.timer import timers, tracer
-from alpa.util import OrderedSet
+from alpa.util import OrderedSet, mesh_ids_hash
 
 traceback_util.register_exclusion(__file__)
 
@@ -98,7 +98,8 @@ class PipeshardDriverExecutable:
         self.resharding_tasks = pipeshard_config.resharding_tasks
         for mesh_ids in pipeshard_config.allreduce_groups:
             meshes = [self.mesh_group.meshes[idx] for idx in mesh_ids]
-            create_and_record_cross_mesh_collective_communicators(meshes)
+            key = mesh_ids_hash(mesh_ids)
+            create_and_record_cross_mesh_collective_communicators(meshes, key)
         if global_config.eagerly_create_communicators:
             for task in self.resharding_tasks:
                 task.create_resharding_communicators()
@@ -375,6 +376,11 @@ class PipeshardDriverExecutable:
         with open(f"{prefix}_resharding_tasks.txt", "w") as f:
             for task in self.resharding_tasks:
                 f.write(str(task) + "\n\n")
+
+        with open(f"{prefix}_input_placement_specs.txt", "w") as f:
+            f.write(str(self.get_input_placement_specs()))
+        with open(f"{prefix}_output_placement_specs.txt", "w") as f:
+            f.write(str(self.get_output_placement_specs()))
 
     def dump_stage_execution_trace(self, filename: str):
         exec_info = self.get_stage_execution_info()

@@ -991,7 +991,8 @@ def main():
                     f"Loss: {train_metric['loss'].mean():.4f}, "
                     f"Learning Rate: {train_metric['learning_rate'].mean():.5f}, "
                     f"Throughput: {throughput_tokens:.2f} token/s, "
-                    f"{throughput_tflops:.2f} TFLOP/s"
+                    f"{throughput_tflops:.2f} TFLOP/s, "
+                    f"{throughput_tflops * 4 / 3:.2f} TFLOP/s."
                 )
 
                 train_metrics = []

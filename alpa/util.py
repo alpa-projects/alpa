@@ -443,7 +443,10 @@ def compile_allocate_zero_buffers(backend, num_devices: int,
     c.set_sharding(sharding)
     ret = []
     for shape, dtype in zip(shapes, dtypes):
-        zero = xc.ops.Constant(c, np.array(0, dtype=dtype))
+        if dtype == "V2":
+            dtype = jnp.bfloat16
+
+        zero = xc.ops.Constant(c, jnp.array(0, dtype=dtype))
         zero = xc.ops.Broadcast(zero, shape)
         ret.append(zero)
     c.clear_sharding()

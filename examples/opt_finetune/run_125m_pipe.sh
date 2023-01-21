@@ -1,20 +1,22 @@
 python3 run_clm_flax.py \
     --output_dir="./output" \
-    --model_name_or_path="facebook/opt-2.7b" \
+    --config_name="./config_125m.json" \
+    --tokenizer_name="facebook/opt-30b" \
+    --alpa_init \
     --dataset_name="wikitext" \
     --dataset_config_name="wikitext-2-raw-v1" \
-    --do_train --do_eval \
+    --do_train \
     --block_size="1024" \
-    --per_device_train_batch_size="20" \
+    --per_device_train_batch_size="64" \
     --per_device_eval_batch_size="20" \
     --num_micro_batches 4 \
-    --operator_parallel 2 \
-    --pipeline_parallel 1 \
+    --operator_parallel 1 \
+    --pipeline_parallel 4 \
     --dtype="float16" \
     --learning_rate="5e-4" --warmup_steps="2000" \
     --adam_beta1="0.9" --adam_beta2="0.98" --weight_decay="0.01" \
     --overwrite_output_dir \
     --num_train_epochs="8" \
-    --logging_steps="16" \
-    --save_steps="2500" \
-    --eval_steps="2500"
+    --logging_steps="1" \
+    --save_steps="888" \
+    --eval_steps="888"

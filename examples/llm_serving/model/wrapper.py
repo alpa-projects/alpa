@@ -13,7 +13,9 @@ from llm_serving.model.opt_utils import (TransformerModelConfig,
                                          jax_index_select)
 from tqdm import tqdm
 from transformers import OPTForCausalLM, BloomForCausalLM
-from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
+from transformers import GenerationMixin
+from transformers.utils import ModelOutput
+from dataclasses import dataclass
 
 import alpa
 from alpa.device_mesh import DistributedArray

@@ -248,7 +248,9 @@ def get_3d_parallel_method(num_micro_batches: int,
                            data_parallel: int,
                            operator_parallel: int,
                            pipeline_parallel: int,
-                           allow_degenerate_into_shard_parallel: bool = True):
+                           allow_degenerate_into_shard_parallel: bool = True,
+                           manual_layer_num: int = None,
+                           manual_sharding_option: Any = None):
     """
     Get a parallel method for 3D parallelism, which reguarlly combines
     data parallelism, operator parallelism and pipeline parallelism.
@@ -287,7 +289,27 @@ def get_3d_parallel_method(num_micro_batches: int,
                                      [data_parallel, operator_parallel]))
 
     # Return pipeshard parallel
-    layer_option = AutoLayerOption(layer_num=pp, eps=0.1)
+    if manual_layer_num is not None:
+        assert manual_layer_num % pp == 0
+        layer_per_stage = manual_layer_num // pp
+        # TODO(yonghao): evenly divides by tflops instead of layers.
+        forward_stage_layer_ids = [
+            range(i * layer_per_stage, (i + 1) * layer_per_stage)
+            for i in range(pp)
+        ]
+        layer_option = ManualLayerOption()
+        stage_option = ManualShardingOption(
+            forward_stage_layer_ids=forward_stage_layer_ids,
+            submesh_physical_shapes=[physical_mesh_shape] * pp,
+            submesh_logical_shapes=[logical_mesh_shape] * pp,
+            submesh_autosharding_option_dicts=[{}] * pp)
+    else:
+        layer_option = AutoLayerOption(layer_num=pp, eps=0.1)
+        stage_option = ManualStageOption(
+            forward_stage_layer_ids=[[i] for i in range(pp)],
+            submesh_physical_shapes=[physical_mesh_shape] * pp,
+            submesh_logical_shapes=[logical_mesh_shape] * pp,
+            submesh_autosharding_option_dicts=[{}] * pp)
     return PipeshardParallel(
         devices=virtual_mesh,
         num_micro_batches=num_micro_batches,
@@ -296,11 +318,8 @@ def get_3d_parallel_method(num_micro_batches: int,
             force_batch_dim_to_mesh_dim=0,
         ),
         layer_option=layer_option,
-        stage_option=ManualStageOption(
-            forward_stage_layer_ids=[[i] for i in range(pp)],
-            submesh_physical_shapes=[physical_mesh_shape] * pp,
-            submesh_logical_shapes=[logical_mesh_shape] * pp,
-            submesh_autosharding_option_dicts=[{}] * pp))
+        stage_option=stage_option,
+        manual_sharding_option=manual_sharding_option)
 
 
 class LocalPipelineParallel(ParallelMethod):

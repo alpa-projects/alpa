@@ -250,7 +250,7 @@ def get_3d_parallel_method(num_micro_batches: int,
                            pipeline_parallel: int,
                            allow_degenerate_into_shard_parallel: bool = True,
                            manual_layer_num: int = None,
-                           manual_sharding_option: Any = None):
+                           manual_sharding_option: ManualShardingOption = None):
     """
     Get a parallel method for 3D parallelism, which reguarlly combines
     data parallelism, operator parallelism and pipeline parallelism.
@@ -298,7 +298,7 @@ def get_3d_parallel_method(num_micro_batches: int,
             for i in range(pp)
         ]
         layer_option = ManualLayerOption()
-        stage_option = ManualShardingOption(
+        stage_option = ManualStageOption(
             forward_stage_layer_ids=forward_stage_layer_ids,
             submesh_physical_shapes=[physical_mesh_shape] * pp,
             submesh_logical_shapes=[logical_mesh_shape] * pp,

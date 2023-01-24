@@ -75,7 +75,7 @@ class UniformStageOption:
     # The logical shape of all submeshes.
     submesh_logical_shape: Sequence[int] = None
     # The auto-sharding option of all stages.
-    submesh_autosharding_option: dict = {}
+    submesh_autosharding_option: dict = None
 
 
 StageOption = Union[AutoStageOption, ManualStageOption, UniformStageOption]
@@ -703,9 +703,10 @@ def cluster_layers_and_slice_mesh(
                 submesh_logical_shape) * num_stages
             forward_stage_layer_ids = _cluster_layers_with_even_tflops(
                 layers[:num_layers], num_stages)
-            autosharding_option_dicts = [
-                stage_option.submesh_autosharding_option
-            ] * num_stages
+            autosharding_option = stage_option.submesh_autosharding_option
+            if autosharding_option is None:
+                autosharding_option = {}
+            autosharding_option_dicts = [autosharding_option] * num_stages
         else:
             if given_mesh:
                 submesh_shapes = [

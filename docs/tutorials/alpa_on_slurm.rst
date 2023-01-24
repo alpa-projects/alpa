@@ -294,7 +294,7 @@ After we have a head node, we spawn HEAD on head node:
 
         Note here the argument :code:`gpus_per_node` should not exceed the number of GPU you have on each node.
 
-Then we spawn worker nodes on other nodes we have and connect then to HEAD:
+Then we spawn worker nodes on other nodes we have and connect them to HEAD:
 
     .. code:: bash
 

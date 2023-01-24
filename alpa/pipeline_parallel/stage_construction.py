@@ -2,11 +2,11 @@
 Core implementations for stage construction algorithms.
 The algorithm groups layers into pipeline stages.
 """
-from collections import namedtuple
 from dataclasses import dataclass
 import logging
 from typing import Sequence, List, Tuple, Dict, Union, Optional
 
+from jax._src.lib import xla_extension as xe
 from jax.core import Var
 import numpy as np
 
@@ -18,7 +18,7 @@ from alpa.pipeline_parallel.stage_profiling import (get_compute_cost,
                                                     last_compute_cost_file_name)
 from alpa.shard_parallel.auto_sharding import AutoShardingOption
 from alpa.timer import timers
-from alpa.util import OrderedSet, maybe_numba_jit
+from alpa.util import OrderedSet, maybe_numba_jit, jaxpr_to_hlo
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -66,7 +66,17 @@ class ManualStageOption:
     submesh_autosharding_option_dicts: Sequence[dict]
 
 
-UniformStageOption = namedtuple("UniformStageOption", [])
+@dataclass
+class UniformStageOption:
+    # The number of stages.
+    num_stages: int = None
+    # The physical shape of all submeshes.
+    submesh_physical_shape: Sequence[int] = None
+    # The logical shape of all submeshes.
+    submesh_logical_shape: Sequence[int] = None
+    # The auto-sharding option of all stages.
+    submesh_autosharding_option: dict = {}
+
 
 StageOption = Union[AutoStageOption, ManualStageOption, UniformStageOption]
 
@@ -683,35 +693,47 @@ def cluster_layers_and_slice_mesh(
         autosharding_option_dicts = (
             stage_option.submesh_autosharding_option_dicts)
     elif isinstance(stage_option, UniformStageOption):
-        if given_mesh:
-            num_stages = num_layers
-            submesh_shapes = [
-                x.shape
-                for x in virtual_mesh.launched_physical_mesh_group.meshes
-            ]
-            logical_mesh_shapes = submesh_shapes
+        num_stages = stage_option.num_stages or num_layers
+        if stage_option.submesh_physical_shape is not None:
+            assert stage_option.submesh_logical_shape is not None
+            submesh_logical_shape = stage_option.submesh_logical_shape
+            submesh_shapes = [stage_option.submesh_physical_shape] * num_stages
+            logical_mesh_shapes = [submesh_logical_shape] * num_stages
+            assert virtual_mesh.num_devices == np.prod(
+                submesh_logical_shape) * num_stages
+            forward_stage_layer_ids = _cluster_layers_with_even_tflops(
+                layers[:num_layers], num_stages)
+            autosharding_option_dicts = [
+                stage_option.submesh_autosharding_option
+            ] * num_stages
         else:
-            num_devices = virtual_mesh.num_devices
-            num_stages = num_layers
-
-            assert num_devices >= num_stages, "No enough devices"
-            assert num_devices % num_stages == 0
-            num_devices_per_mesh = num_devices // num_stages
-            if num_devices_per_mesh > virtual_mesh.num_devices_per_host:
-                assert (num_devices_per_mesh %
-                        virtual_mesh.num_devices_per_host == 0)
-                submesh_shape = (num_devices_per_mesh //
-                                 virtual_mesh.num_devices_per_host,
-                                 virtual_mesh.num_devices_per_host)
+            if given_mesh:
+                submesh_shapes = [
+                    x.shape
+                    for x in virtual_mesh.launched_physical_mesh_group.meshes
+                ]
+                logical_mesh_shapes = submesh_shapes
             else:
-                assert (virtual_mesh.num_devices_per_host %
-                        num_devices_per_mesh == 0)
-                submesh_shape = (1, num_devices_per_mesh)
-            submesh_shapes = [submesh_shape] * num_stages
-            logical_mesh_shapes = [submesh_shape] * num_stages
+                num_devices = virtual_mesh.num_devices
 
-        forward_stage_layer_ids = [[i] for i in range(num_layers)]
-        autosharding_option_dicts = [{}] * num_stages
+                assert num_devices >= num_stages, "No enough devices"
+                assert num_devices % num_stages == 0
+                num_devices_per_mesh = num_devices // num_stages
+                if num_devices_per_mesh > virtual_mesh.num_devices_per_host:
+                    assert (num_devices_per_mesh %
+                            virtual_mesh.num_devices_per_host == 0)
+                    submesh_shape = (num_devices_per_mesh //
+                                    virtual_mesh.num_devices_per_host,
+                                    virtual_mesh.num_devices_per_host)
+                else:
+                    assert (virtual_mesh.num_devices_per_host %
+                            num_devices_per_mesh == 0)
+                    submesh_shape = (1, num_devices_per_mesh)
+                submesh_shapes = [submesh_shape] * num_stages
+                logical_mesh_shapes = [submesh_shape] * num_stages
+
+            forward_stage_layer_ids = [[i] for i in range(num_layers)]
+            autosharding_option_dicts = [{}] * num_stages
     else:
         raise ValueError(f"Invalid pipeline stage option: {stage_option}")
 
@@ -799,3 +821,34 @@ def get_stage_outvars(layers: Sequence[JaxPipelineComputation],
             for var in layers[layer_id].invars:
                 used.add(var)
     return stage_outvars
+
+
+def _cluster_layers_with_even_tflops(layers, num_stage):
+    # prefix sum: total flops till layer_i
+    flops = [0]
+    for layer in layers:
+        hlo = jaxpr_to_hlo("tmp", layer.closed_jaxpr(),
+                           [False] * len(layer.invars))
+        layer_flops = xe.hlo_module_count_flop_dot_conv_only(hlo.get_module())
+        flops.append(flops[-1] + layer_flops)
+    avg_flop = flops[-1] / num_stage
+    # the last one is to avoid IndexError
+    flops = flops[1:] + [flops[-1] + 1]
+    forward_layer_ids = [[-1]]
+    cnt = 1
+    start_layer_flops = 0
+    for i in range(len(layers)):
+        # if flops already exceeds boundary or cutting at current layer is
+        # closer to the ideal average, then choose it to cut.
+        # The first condition is to avoid a too large layer that occupies
+        # several times of average flops
+        cur_flops = flops[i] - start_layer_flops
+        nxt_flops = flops[i + 1] - start_layer_flops
+        if ((flops[i] >= avg_flop * cnt * (1 - 1e-5))
+                or (abs(cur_flops - avg_flop) < abs(nxt_flops - avg_flop))):
+            cnt += 1
+            forward_layer_ids.append(
+                tuple(range(forward_layer_ids[-1][-1] + 1, i + 1)))
+            start_layer_flops = flops[i]
+    forward_layer_ids = forward_layer_ids[1:]
+    return forward_layer_ids

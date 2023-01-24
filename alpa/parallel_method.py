@@ -291,18 +291,9 @@ def get_3d_parallel_method(num_micro_batches: int,
     # Return pipeshard parallel
     if manual_layer_num is not None:
         assert manual_layer_num % pp == 0
-        layer_per_stage = manual_layer_num // pp
-        # TODO(yonghao): evenly divides by tflops instead of layers.
-        forward_stage_layer_ids = [
-            range(i * layer_per_stage, (i + 1) * layer_per_stage)
-            for i in range(pp)
-        ]
         layer_option = ManualLayerOption()
-        stage_option = ManualStageOption(
-            forward_stage_layer_ids=forward_stage_layer_ids,
-            submesh_physical_shapes=[physical_mesh_shape] * pp,
-            submesh_logical_shapes=[logical_mesh_shape] * pp,
-            submesh_autosharding_option_dicts=[{}] * pp)
+        stage_option = UniformStageOption(pp, physical_mesh_shape,
+                                          logical_mesh_shape, {})
     else:
         layer_option = AutoLayerOption(layer_num=pp, eps=0.1)
         stage_option = ManualStageOption(

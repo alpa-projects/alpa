@@ -723,8 +723,8 @@ def cluster_layers_and_slice_mesh(
                     assert (num_devices_per_mesh %
                             virtual_mesh.num_devices_per_host == 0)
                     submesh_shape = (num_devices_per_mesh //
-                                    virtual_mesh.num_devices_per_host,
-                                    virtual_mesh.num_devices_per_host)
+                                     virtual_mesh.num_devices_per_host,
+                                     virtual_mesh.num_devices_per_host)
                 else:
                     assert (virtual_mesh.num_devices_per_host %
                             num_devices_per_mesh == 0)
@@ -844,8 +844,8 @@ def _cluster_layers_with_even_tflops(layers, num_stage):
         # several times of average flops
         cur_flops = flops[i] - start_layer_flops
         nxt_flops = flops[i + 1] - start_layer_flops
-        if ((flops[i] >= avg_flop * cnt * (1 - 1e-5))
-                or (abs(cur_flops - avg_flop) < abs(nxt_flops - avg_flop))):
+        if ((flops[i] >= avg_flop * cnt * (1 - 1e-5)) or
+            (abs(cur_flops - avg_flop) < abs(nxt_flops - avg_flop))):
             cnt += 1
             forward_layer_ids.append(
                 tuple(range(forward_layer_ids[-1][-1] + 1, i + 1)))

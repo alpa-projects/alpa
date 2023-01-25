@@ -1,5 +1,6 @@
 import os
 import itertools
+import time
 
 import numpy as np
 import alpa
@@ -11,7 +12,7 @@ from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves
 from jax.interpreters import pxla
 
 
-def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
+def load_opt_params_worker_func_66b(self, path, prefix_to_idx, config, shapes,
                                 uuids, indices, mesh_ids):
     """The worker function to load OPT parameters."""
 
@@ -23,7 +24,6 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
 
         for j in range(len(mesh_ids[i])):
             if self.mesh_id != mesh_ids[i][j]:
-                print(f"skipped because  self.mesh_id {self.mesh_id}, mesh_ids: {mesh_ids[i][j]}")
                 continue
 
             if not is_position_embedding:
@@ -40,6 +40,109 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
                 datas.append(loaded_array[indices[i][j][idx]])
             self.put_buffers(uuid, datas)
 
+    # print(f" === Reading on {self.mesh_id} ===")
+    tic = time.time()
+    load_param("model.decoder.embed_tokens.embedding",
+               load_array("decoder.embed_tokens.embedding"))
+    load_param("model.decoder.embed_positions.embedding",
+               load_array("decoder.embed_positions.embedding"),
+               is_position_embedding=True)
+
+    # if config.version > 2:
+    load_param("model.decoder.final_layer_norm.scale",
+               load_array("decoder.final_layer_norm.scale"))
+    load_param("model.decoder.final_layer_norm.bias",
+               load_array("decoder.final_layer_norm.bias"))
+
+    layers_per_stage = config.num_hidden_layers // config.pp
+
+    for i in range(config.num_hidden_layers):
+        stage_id = i // layers_per_stage
+        if stage_id != self.mesh_id:
+            continue
+
+        # print(f"===>Reading layer {i} for mesh {self.mesh_id}")
+        tic1 = time.time()
+        param_prefix = f"model.decoder.layers.{i}."
+        load_prefix = f"decoder.layers.{i}."
+        # Attention weights
+        wq = load_array(load_prefix + "self_attn.q_proj.kernel")
+        wk = load_array(load_prefix + "self_attn.k_proj.kernel")
+        wv = load_array(load_prefix + "self_attn.v_proj.kernel")
+        # dim = wq.shape[-1]
+        # w_qkv = np.concatenate([wq, wk, wv], axis=0).reshape(
+        #     (3, -1, dim)).transpose([2, 1, 0]).reshape((dim, -1))
+        # load_param(param_prefix + "attention.self.qkv_combined.kernel", w_qkv)
+        load_param(param_prefix + "self_attn.q_proj.kernel", wq)
+        load_param(param_prefix + "self_attn.k_proj.kernel", wk)
+        load_param(param_prefix + "self_attn.v_proj.kernel", wv)
+
+
+        bq = load_array(load_prefix + "self_attn.q_proj.bias")
+        bk = load_array(load_prefix + "self_attn.k_proj.bias")
+        bv = load_array(load_prefix + "self_attn.v_proj.bias")
+        # b_qkv = np.concatenate([bq, bk, bv], axis=0).reshape(
+        #     (3, dim)).transpose([1, 0]).reshape((-1,))
+        load_param(param_prefix + "self_attn.q_proj.bias", bq)
+        load_param(param_prefix + "self_attn.k_proj.bias", bk)
+        load_param(param_prefix + "self_attn.v_proj.bias", bv)
+        # load_param(param_prefix + "attention.self.qkv_combined.bias", b_qkv)
+        load_param(
+            param_prefix + "self_attn.out_proj.kernel",
+            load_array(load_prefix + "self_attn.out_proj.kernel"))
+        load_param(param_prefix + "self_attn.out_proj.bias",
+                   load_array(load_prefix + "self_attn.out_proj.bias"))
+        load_param(param_prefix + "self_attn_layer_norm.scale",
+                   load_array(load_prefix + "self_attn_layer_norm.scale"))
+        load_param(param_prefix + "self_attn_layer_norm.bias",
+                   load_array(load_prefix + "self_attn_layer_norm.bias"))
+        # FFN weights
+        load_param(param_prefix + "fc1.bias",
+                   load_array(load_prefix + "fc1.bias"))
+        load_param(param_prefix + "fc1.kernel",
+                   load_array(load_prefix + "fc1.kernel"))
+        load_param(param_prefix + "fc2.bias",
+                   load_array(load_prefix + "fc2.bias"))
+        load_param(param_prefix + "fc2.kernel",
+                   load_array(load_prefix + "fc2.kernel"))
+        load_param(param_prefix + "final_layer_norm.scale",
+                   load_array(load_prefix + "final_layer_norm.scale"))
+        load_param(param_prefix + "final_layer_norm.bias",
+                   load_array(load_prefix + "final_layer_norm.bias"))
+        # print(f"===>Reading layer {i} for mesh {self.mesh_id} done: {time.time() - tic1}")
+    print(f" === Reading on {self.mesh_id} done: {time.time() - tic} ===")
+
+
+def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
+                                uuids, indices, mesh_ids):
+    """The worker function to load OPT parameters."""
+
+    def load_array(key):
+        return np.load(os.path.join(path, key))
+
+    def load_param(param_key, loaded_array, is_position_embedding=False):
+        i = prefix_to_idx[param_key]
+
+        for j in range(len(mesh_ids[i])):
+            if self.mesh_id != mesh_ids[i][j]:
+                continue
+
+            if not is_position_embedding:
+                assert shapes[i][j] == loaded_array.shape, (
+                    f"{shapes[i][j]} vs. {loaded_array.shape}")
+            else:
+                if shapes[i][j] != loaded_array.shape:
+                    assert shapes[i][j][1] == loaded_array.shape[1]
+                    loaded_array = loaded_array[:shapes[i][j][0], :]
+            uuid = uuids[i][j]
+            datas = []
+            for k in range(len(self.local_devices)):
+                idx = self.host_id * len(self.local_devices) + k
+                datas.append(loaded_array[indices[i][j][idx]])
+            self.put_buffers(uuid, datas)
+
+    # print(f" === Reading on {self.mesh_id} ===")
+    tic = time.time()
     load_param("model.decoder.embed_tokens.embedding",
                load_array("decoder.embed_tokens.weight"))
     load_param("model.decoder.embed_positions.embedding",
@@ -55,12 +158,12 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
     layers_per_stage = config.num_hidden_layers // config.pp
 
     for i in range(config.num_hidden_layers):
-        if i == 16:
-            print(f"stage_id: {i // layers_per_stage}, mesh id: {self.mesh_id}")
         stage_id = i // layers_per_stage
         if stage_id != self.mesh_id:
             continue
 
+        # print(f"===>Reading layer {i} for mesh {self.mesh_id}")
+        tic1 = time.time()
         param_prefix = f"model.decoder.layers.{i}."
         load_prefix = f"decoder.layers.{i}."
         # Attention weights
@@ -107,10 +210,14 @@ def load_opt_params_worker_func(self, path, prefix_to_idx, config, shapes,
                    load_array(load_prefix + "final_layer_norm.weight"))
         load_param(param_prefix + "final_layer_norm.bias",
                    load_array(load_prefix + "final_layer_norm.bias"))
-
+        # print(f"===>Reading layer {i} for mesh {self.mesh_id} done: {time.time() - tic1}")
+    print(f" === Reading on {self.mesh_id} done: {time.time() - tic} ===")
 
 setattr(MeshHostWorker, "load_opt_params_worker_func",
         load_opt_params_worker_func)
+# setattr(MeshHostWorker, "load_opt_params_worker_func",
+#         load_opt_params_worker_func_66b)
+
 
 def load_params_dis_array(path, executable, params_aval, config, dummy=False):
     """Load parameters with distributed arrays."""

@@ -41,7 +41,8 @@ from tqdm import tqdm
 
 import alpa
 from alpa.model.model_util import DynamicScale, TrainState
-from alpa import AutoShardingOption, AutoLayerOption, ManualStageOption, mark_pipeline_boundary
+from alpa import AutoShardingOption, AutoLayerOption, ManualStageOption, mark_pipeline_boundary, CreateStateParallel
+from alpa import global_config
 import jax
 import jax.numpy as jnp
 import optax
@@ -94,6 +95,7 @@ class TrainingArguments:
     )
     do_train: bool = field(default=False, metadata={"help": "Whether to run training."})
     do_eval: bool = field(default=False, metadata={"help": "Whether to run eval on the dev set."})
+    use_dummy_value: bool = field(default=False, metadata={"help": "Whether to use dummy values for debugging."})
     use_manual_layer: bool = field(default=False, metadata={"help": "Whether to use manual layer annotation."})
     alpa_init: bool = field(default=False, metadata={"help": "Whether to use Alpa's distributed gpu init."})
     per_device_train_batch_size: int = field(
@@ -584,6 +586,30 @@ def main():
             _do_init=do_init
         )
 
+    # from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves
+    #
+    # file_path = "/tmp/66B_np"
+    # os.makedirs(file_path, exist_ok=True)
+    #
+    # def save_to_disk(params, prefix=""):
+    #     if isinstance(params, dict):
+    #         for key in params:
+    #             if key == "model":
+    #                 new_prefix = prefix
+    #             elif len(prefix) > 0:
+    #                 new_prefix = prefix + "." + key
+    #             else:
+    #                 new_prefix = key
+    #             save_to_disk(params[key], new_prefix)
+    #     if isinstance(params, jax.numpy.DeviceArray):
+    #         print(f"Save the tensor {prefix} to {file_path}")
+    #         with open(os.path.join(file_path, prefix), "wb") as g:
+    #             jnp.save(g, params)
+    #         return
+    #
+    # save_to_disk(model.params)
+    # exit(1)
+
     # Preprocessing the datasets.
     # First we tokenize all the texts.
     if training_args.do_train:
@@ -782,6 +808,9 @@ def main():
     else:
         use_master_copy = dynamic_scale = None
 
+    if training_args.use_dummy_value:
+        alpa.global_config.use_dummy_value_for_benchmarking = True
+
     def loss_fn(logits, labels):
         shift_logits = logits[..., :-1, :]
         shift_labels = labels[..., 1:]
@@ -844,7 +873,6 @@ def main():
         params_aval = unfreeze(jax.eval_shape(model.module.init, rngkey, input_ids, attention_mask, position_ids)["params"])
         state_aval = TrainState.create_aval(apply_fn=model.__call__, params=params_aval, tx=optimizer,
                                             dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
-        # params_aval = jax.tree_map(lambda x: jax.ShapeDtypeStruct(x.shape, getattr(jnp, model_args.dtype)), params_aval)
     else:
         # In this case, params have been initialized by HF in the CPU memory of the driver node.
         state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer,
@@ -852,7 +880,6 @@ def main():
 
     # Create parallel version of the train and eval step
     if training_args.use_manual_layer:
-    # make layer-stage aassignments
         assert config.num_hidden_layers % pp == 0, f"There are {config.num_hidden_layers} layers but {pp} stages."
         n_layers_per_stage = config.num_hidden_layers // pp
         forward_stage_layer_ids = [list(range(i * n_layers_per_stage, (i + 1) * n_layers_per_stage)) for i in range(pp)]
@@ -881,9 +908,9 @@ def main():
         print(f" - Compile executables. ", end="", flush=True)
         tic = time.time()
         # trigger compile
-        seq_len = config.max_position_embeddings
+        seq_len = 1024
         train_input_shape = (train_batch_size, seq_len)
-        batch = {"input_ids":
+        batch_aval = {"input_ids":
                     jax.core.ShapedArray(
                         train_input_shape, jnp.int32),
                  "position_ids":
@@ -896,26 +923,36 @@ def main():
                      jax.core.ShapedArray(
                          train_input_shape, jnp.int32),
                 }
-        train_executable = p_train_step.get_executable(state_aval, batch)
-        eval_executable = p_eval_step.get_executable(state_aval.params, batch)
-        # load params using compiled sharding specs1
+        train_executable = p_train_step.get_executable(state_aval, batch_aval)
+        eval_executable = p_eval_step.get_executable(state_aval.params, batch_aval)
+        train_executable.sync()
+        model._is_initialized = True
         print(f" Compilation takes {time.time() - tic:.2f} seconds.")
 
         # def init_weights(self, rng: jax.random.PRNGKey, input_shape: Tuple, params: FrozenDict = None) -> Dict:
 
-        print(" - Load parameters. ", end="", flush=True)
-        tic = time.time()
-        # params = load_multi_executable_params_dis_array(path, exectuables, params_aval, config, dummy)
-        assert config.weight_path and os.path.exists(config.weight_path), f"Cannot find weight at {config.weight_path}"
-        params = load_params_dis_array(config.weight_path, train_executable, params_aval, config, dummy=False)
-        # from alpa.serialization import restore_checkpoint
-        # params = restore_checkpoint(path, )
-        # Work around the model._initialized in HF
-        model._is_initialized = True
-        model.params = params
-        state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer,
-                                  dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
-        print(f" Load parameters takes {time.time() - tic:.2f} seconds.")
+        # def create_state():
+        #     return TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer,
+        #                              dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
+        # p_create_state = alpa.parallelize(create_state, method=CreateStateParallel(p_train_step, batch))
+        # state = p_create_state()
+        if not training_args.use_dummy_value:
+            print(" - Load parameters. ", end="", flush=True)
+            tic = time.time()
+            # params = load_multi_executable_params_dis_array(path, exectuables, params_aval, config, dummy)
+            assert config.weight_path and os.path.exists(config.weight_path), f"Cannot find weight at {config.weight_path}"
+            params = load_params_dis_array(config.weight_path, train_executable, params_aval, config, dummy=False)
+            train_executable.sync()
+            print(f" Load parameters takes {time.time() - tic:.2f} seconds.")
+            # from alpa.serialization import restore_checkpoint
+            # params = restore_checkpoint(path, )
+            # Work around the model._initialized in HF
+            model._is_initialized = True
+            model.params = params
+            tic = time.time()
+            state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer,
+                                      dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
+            print(f" Create train states takes {time.time() - tic:.2f} seconds.")
 
     dump_debug_info_train_step = dump_debug_info_eval_step = True
 
@@ -951,7 +988,10 @@ def main():
             batch = next(train_loader)
             batch["position_ids"] = (batch["attention_mask"].cumsum(axis=1) *
                                      batch["attention_mask"]) - 1
-            state, train_metric = p_train_step(state, batch)
+            if training_args.use_dummy_value:
+                state_aval, train_metric = p_train_step(state_aval, batch_aval)
+            else:
+                state, train_metric = p_train_step(state, batch)
             train_metrics.append(train_metric)
 
             cur_step = epoch * (len(train_dataset) // train_batch_size) + step
@@ -960,7 +1000,7 @@ def main():
                 dump_debug_info_train_step = False
                 executable = p_train_step.get_last_executable()
                 executable.sync()
-                executable.dump_debug_info("alpa_debug_info")
+                executable.dump_debug_info("/tmp/alpa_debug_info")
                 epochs.write(f"Initial compilation completed. "
                              f"Time elapsed: {time.time() - train_start:.2f} s")
 

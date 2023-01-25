@@ -1,6 +1,5 @@
 {
-"_name_or_path": "facebook/opt-2.7b",
-"weight_path": "/home/hao/opt_weights/2.7B_np",
+"weight_path": "/home/ubuntu/tmp_dataset/opt_weights/2.7B_np",
 "_remove_final_layer_norm": false,
 "activation_dropout": 0,
 "activation_function": "relu",

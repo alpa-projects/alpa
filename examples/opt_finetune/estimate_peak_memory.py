@@ -1,5 +1,6 @@
 import dataclasses
 from dataclasses import dataclass
+import jax.numpy as jnp
 
 @dataclass(frozen=True)
 class OPTConfig:
@@ -88,12 +89,18 @@ def estimate_peak_memory(model_name: str, mbs: int, seq_len: int):
     n_layer = config.num_hidden_layers
     n_head = config.n_head
     h = config.hidden_size
-    n_params = float(model_name.split("-")[:-1]) * 1e9
+    n_params = float(model_name.split("-")[-1][:-1]) * 1e9
 
     n_bytes = 16 * n_params + 2 * n_layer * mbs * seq_len * h + \
               seq_len * mbs * h * (34 + 5.0 * n_head  * seq_len / h)
-    return n_bytes / 1e9
+    mem_gb = n_bytes / 1e9
+    print(f"model: {model_name}, micro bs: {mbs}, seq_len: {seq_len}, memory lower bound: {mem_gb} GB.")
+    return mem_gb
 
 
-
-estimate_peak_memory("opt-125m", 2, 1024)
+# estimate_peak_memory("opt-2.7b", 2, 1024)
+estimate_peak_memory("opt-30b", 2, 1024)
+estimate_peak_memory("opt-175b", 2, 1024)
+estimate_peak_memory("opt-66b", 2, 1024)
+estimate_peak_memory("opt-66b", 8, 1024)
+estimate_peak_memory("opt-66b", 16, 1024)

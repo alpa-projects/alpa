@@ -3,6 +3,7 @@ python3 run_clm_flax.py \
     --config_name="./config_125m.json" \
     --tokenizer_name="facebook/opt-30b" \
     --alpa_init \
+    --use_manual_layer \
     --dataset_name="wikitext" \
     --dataset_config_name="wikitext-2-raw-v1" \
     --do_train \

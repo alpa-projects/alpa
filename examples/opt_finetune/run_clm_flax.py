@@ -982,14 +982,21 @@ def main():
         # Generate an epoch by shuffling sampling indices from the train dataset
         train_loader = data_loader(input_rng, train_dataset, train_batch_size,
                                    train_min_batch_size, shuffle=True)
-        steps_per_epoch = len(train_dataset) // train_batch_size
+
+        if training_args.use_dummy_value:
+            steps_per_epoch = 50
+        else:
+            steps_per_epoch = len(train_dataset) // train_batch_size
         # train
         for step in tqdm(range(steps_per_epoch), desc="Training...", position=1, leave=False):
-            batch = next(train_loader)
-            batch["position_ids"] = (batch["attention_mask"].cumsum(axis=1) *
-                                     batch["attention_mask"]) - 1
+            if not training_args.use_dummy_value:
+                batch = next(train_loader)
+                batch["position_ids"] = (batch["attention_mask"].cumsum(axis=1) *
+                                         batch["attention_mask"]) - 1
+            else:
+                batch = batch_aval
             if training_args.use_dummy_value:
-                state_aval, train_metric = p_train_step(state_aval, batch_aval)
+                state_aval, train_metric = p_train_step(state_aval, batch)
             else:
                 state, train_metric = p_train_step(state, batch)
             train_metrics.append(train_metric)
@@ -1116,11 +1123,12 @@ def main():
             json.dump(eval_metrics, f, indent=4, sort_keys=True)
 
     # Save the final model
-    epochs.write("\nSave the final model...")
-    alpa.prefetch(state.params)
-    params = alpa.util.map_to_nparray(state.params)
-    model.save_pretrained(training_args.output_dir, params=params)
-    tokenizer.save_pretrained(training_args.output_dir)
+    if not training_args.use_dummy_value:
+        epochs.write("\nSave the final model...")
+        alpa.prefetch(state.params)
+        params = alpa.util.map_to_nparray(state.params)
+        model.save_pretrained(training_args.output_dir, params=params)
+        tokenizer.save_pretrained(training_args.output_dir)
 
 
 if __name__ == "__main__":

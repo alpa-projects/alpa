@@ -113,6 +113,7 @@ class Rendezvous:
     def destroy_store(self):
         """Delete the named actor."""
         ray.kill(self._store)
+        # ray.get(self._store.__ray_terminate__.remote())
         self._store = None
 
 

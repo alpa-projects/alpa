@@ -8,11 +8,11 @@ python3 run_clm_flax.py \
     --dataset_config_name="wikitext-2-raw-v1" \
     --do_train \
     --block_size="1024" \
-    --per_device_train_batch_size="64" \
+    --per_device_train_batch_size="1024" \
     --per_device_eval_batch_size="64" \
-    --num_micro_batches 16 \
+    --num_micro_batches 256 \
     --operator_parallel 1 \
-    --pipeline_parallel 4 \
+    --pipeline_parallel 16 \
     --dtype="float16" \
     --learning_rate="5e-4" --warmup_steps="2000" \
     --adam_beta1="0.9" --adam_beta2="0.98" --weight_decay="0.01" \

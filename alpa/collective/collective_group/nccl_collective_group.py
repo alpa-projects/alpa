@@ -725,7 +725,7 @@ class NCCLGroup(BaseGroup):
                         "NCCLUniqueID has been broadcasted. The "
                         "NCCLUniqueIDStore will go out of context and be "
                         "destroyed.")
-                    rendezvous.destroy_store()
+                    # rendezvous.destroy_store()
         return nccl_uid
 
 

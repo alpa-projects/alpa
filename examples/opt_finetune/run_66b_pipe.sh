@@ -1,6 +1,6 @@
 python3 run_clm_flax.py \
     --output_dir="./output" \
-    --config_name="./config_175b.json" \
+    --config_name="./config_66b.json" \
     --tokenizer_name="facebook/opt-30b" \
     --alpa_init \
     --use_manual_layer \
@@ -9,10 +9,10 @@ python3 run_clm_flax.py \
     --dataset_config_name="wikitext-2-raw-v1" \
     --do_train \
     --block_size="1024" \
-    --per_device_train_batch_size="8" \
+    --per_device_train_batch_size="1024" \
     --per_device_eval_batch_size="64" \
-    --num_micro_batches 8 \
-    --operator_parallel 8 \
+    --num_micro_batches 512 \
+    --operator_parallel 4 \
     --pipeline_parallel 8 \
     --dtype="float16" \
     --learning_rate="5e-4" --warmup_steps="2000" \

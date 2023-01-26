@@ -1092,6 +1092,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                     "FI_EFA_USE_DEVICE_RDMA": "1",
                     "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH",
                                                       ""),  # For libnccl-net.so
+                    "NCCL_PROTO": "simple",
                 })
 
             bundle_index = device_bundle_idx_list[i]

@@ -246,6 +246,7 @@ if __name__ == "__main__":
                 "FI_PROVIDER": "efa",
                 "FI_EFA_USE_DEVICE_RDMA": "1",
                 "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),  # For libnccl-net.so
+                "NCCL_PROTO": "simple",
             }
         elif args.ib:
             env_vars = {

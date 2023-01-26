@@ -33,6 +33,7 @@ import functools
 from itertools import chain
 from pathlib import Path
 from typing import Callable, Optional, Tuple, Dict
+import copy
 
 import datasets
 import numpy as np
@@ -696,6 +697,10 @@ def main():
         if data_args.max_train_samples is not None:
             max_train_samples = min(len(train_dataset), data_args.max_train_samples)
             train_dataset = train_dataset.select(range(max_train_samples))
+        new_datasets = []
+        for i in range(10):
+            new_datasets.append(copy.deepcopy(train_dataset))
+        train_dataset = datasets.concatenate_datasets(new_datasets)
 
     if "validation" not in tokenized_datasets:
         raise ValueError("--do_eval requires a validation dataset")

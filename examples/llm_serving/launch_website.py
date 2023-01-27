@@ -40,7 +40,7 @@ import asyncio
 import pickle
 import time
 
-from alpa.serve.http_util import HTTPRequestWrapper, make_error_response
+from alpa.serve.http_util import HTTPRequestWrapper, make_error_response, RelayException
 import ray
 from starlette.responses import JSONResponse
 ray.init(address="auto", namespace="alpa_serve")
@@ -69,7 +69,7 @@ async def redirect(request):
         ret = await manager.handle_request.remote("default", request)
     except ray.exceptions.RayActorError:
         manager = None
-    if isinstance(ret, Exception):
+    if isinstance(ret, RelayException):
         ret = make_error_response(ret)
         ret = JSONResponse(ret, status_code=400)
     return ret

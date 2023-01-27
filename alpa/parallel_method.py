@@ -248,7 +248,9 @@ def get_3d_parallel_method(num_micro_batches: int,
                            data_parallel: int,
                            operator_parallel: int,
                            pipeline_parallel: int,
-                           allow_degenerate_into_shard_parallel: bool = True):
+                           allow_degenerate_into_shard_parallel: bool = True,
+                           manual_layer_num: int = None,
+                           manual_sharding_option: ManualShardingOption = None):
     """
     Get a parallel method for 3D parallelism, which reguarlly combines
     data parallelism, operator parallelism and pipeline parallelism.
@@ -287,20 +289,27 @@ def get_3d_parallel_method(num_micro_batches: int,
                                      [data_parallel, operator_parallel]))
 
     # Return pipeshard parallel
-    layer_option = AutoLayerOption(layer_num=pp, eps=0.1)
-    return PipeshardParallel(
-        devices=virtual_mesh,
-        num_micro_batches=num_micro_batches,
-        default_auto_sharding_option=AutoShardingOption(
-            prefer_reduce_scatter=True,
-            force_batch_dim_to_mesh_dim=0,
-        ),
-        layer_option=layer_option,
-        stage_option=ManualStageOption(
+    if manual_layer_num is not None:
+        assert manual_layer_num % pp == 0
+        layer_option = ManualLayerOption()
+        stage_option = UniformStageOption(pp, physical_mesh_shape,
+                                          logical_mesh_shape, {})
+    else:
+        layer_option = AutoLayerOption(layer_num=pp, eps=0.1)
+        stage_option = ManualStageOption(
             forward_stage_layer_ids=[[i] for i in range(pp)],
             submesh_physical_shapes=[physical_mesh_shape] * pp,
             submesh_logical_shapes=[logical_mesh_shape] * pp,
-            submesh_autosharding_option_dicts=[{}] * pp))
+            submesh_autosharding_option_dicts=[{}] * pp)
+    return PipeshardParallel(devices=virtual_mesh,
+                             num_micro_batches=num_micro_batches,
+                             default_auto_sharding_option=AutoShardingOption(
+                                 prefer_reduce_scatter=True,
+                                 force_batch_dim_to_mesh_dim=0,
+                             ),
+                             layer_option=layer_option,
+                             stage_option=stage_option,
+                             manual_sharding_option=manual_sharding_option)
 
 
 class LocalPipelineParallel(ParallelMethod):

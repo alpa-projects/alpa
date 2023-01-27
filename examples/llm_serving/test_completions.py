@@ -2,7 +2,7 @@
 Usage:
 
 python3 test_completions.py --url http://localhost:20001
-python3 test_completions.py --url https://opt.alpa.ai --api-key YOUR_KEY
+python3 test_completions.py --url https://api.alpa.ai --api-key YOUR_KEY
 """
 import argparse
 

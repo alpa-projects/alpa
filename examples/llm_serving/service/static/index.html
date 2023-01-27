@@ -181,14 +181,14 @@
                       msg.includes("is not registered") ||
                       msg.includes("object has no attribute")) {
                     msg += "\nThe server is probably under regular maintenance. " +
-                           "Please come back 10 minutes later.";
+                           "Please come back later.";
                   }
                   $("#error").text(msg);
                 } else {
                   $("#error").text(
                       "Cannot connect to the server due to unknown errors. " +
                       "\nThe server is probably under regular maintenance. " +
-                      "Please come back 10 minutes later.");
+                      "Please come back later.");
                 }
             }
         });

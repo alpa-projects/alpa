@@ -20,8 +20,8 @@ Regardless of installing from wheels or from source, there are a few prerequisit
     # Update pip
     pip3 install --upgrade pip
 
-    # Use your own CUDA version. Here cuda-cuda114 means cuda 11.4
-    pip3 install cupy-cuda114
+    # Install cupy
+    pip3 install cupy-cuda11x
 
   Then, check whether your system already has NCCL installed.
 
@@ -32,6 +32,9 @@ Regardless of installing from wheels or from source, there are a few prerequisit
   If it prints nothing, then NCCL has already been installed.
   Otherwise, follow the printed instructions to install NCCL.
 
+  .. code:: bash
+
+    python3 -m cupyx.tools.install_library --cuda 11.x --library nccl
 
 Methods
 -------

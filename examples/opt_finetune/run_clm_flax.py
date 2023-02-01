@@ -698,7 +698,7 @@ def main():
             max_train_samples = min(len(train_dataset), data_args.max_train_samples)
             train_dataset = train_dataset.select(range(max_train_samples))
         new_datasets = []
-        for i in range(10):
+        for i in range(50):
             new_datasets.append(copy.deepcopy(train_dataset))
         train_dataset = datasets.concatenate_datasets(new_datasets)
 
@@ -999,7 +999,12 @@ def main():
                 batch["position_ids"] = (batch["attention_mask"].cumsum(axis=1) *
                                          batch["attention_mask"]) - 1
             else:
-                batch = batch_aval
+                # batch = batch_aval
+                batch = next(train_loader)
+                batch["position_ids"] = (batch["attention_mask"].cumsum(axis=1) *
+                                         batch["attention_mask"]) - 1
+                for b in batch:
+                    batch[b] = batch[b].astype(jnp.int32)
             if training_args.use_dummy_value:
                 state_aval, train_metric = p_train_step(state_aval, batch)
             else:

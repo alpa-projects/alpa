@@ -202,7 +202,8 @@ class MeshHostWorker:
                     dim_size = len(range(*filled_slice))
                     shard_shape.append(dim_size)
                 arys[b][device_id] = (self.backend.buffer_from_pyval(
-                    np.full(shard_shape, 1e-8, dtype),
+                    # np.full(shard_shape, 1e-8, dtype),
+                    np.random.normal(0, 0.0006, shard_shape).astype(dtype),
                     self.local_devices[device_id]))
         for uuid, ary in zip(uuids, arys):
             self.buffers[uuid] = ary

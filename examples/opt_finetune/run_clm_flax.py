@@ -913,7 +913,7 @@ def main():
         print(f" - Compile executables. ", end="", flush=True)
         tic = time.time()
         # trigger compile
-        seq_len = 1024
+        seq_len = 2048
         train_input_shape = (train_batch_size, seq_len)
         batch_aval = {"input_ids":
                     jax.core.ShapedArray(

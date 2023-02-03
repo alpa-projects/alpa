@@ -32,10 +32,6 @@ Regardless of installing from wheels or from source, there are a few prerequisit
   If it prints nothing, then NCCL has already been installed.
   Otherwise, follow the printed instructions to install NCCL.
 
-  .. code:: bash
-
-    python3 -m cupyx.tools.install_library --cuda 11.x --library nccl
-
 Methods
 -------
 Choose one of the methods below.

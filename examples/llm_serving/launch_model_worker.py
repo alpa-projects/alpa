@@ -17,7 +17,7 @@ from llm_serving.service.constants import (
     NUM_BEAMS, NUM_RETURN_SEQ, ALPA_SERVE_PORT, USE_RECAPTCHA, USE_API_KEYS,
     ALLOW_NON_KEY_ACCESS, KEYS_FILENAME, AuthGroups, AUTH_GROUP_WEIGHTS,
     AUTH_GROUP_SCHEDULER_SCALE, API_KEY_SCHEDULER_SCALE,
-    API_KEY_DEFAULT_WEIGHT)
+    API_KEY_DEFAULT_WEIGHT, LOGPROBS_PRIORITY_TIME_LIMIT_S)
 from llm_serving.service.recaptcha import load_recaptcha
 from llm_serving.service.scheduler import (
     WeightedRoundRobin, NestedScheduler, FrontQueueScheduler, AsyncWrapper)
@@ -56,7 +56,7 @@ class LangaugeModelWorker:
         self.batch_wait_size_mult = batch_wait_size_mult
         self.batch_timeout = batch_timeout
         self.queue_timeout = queue_timeout
-        self.logprobs_past_cache = defaultdict(lambda: (0, None))
+        self.logprobs_past_cache = defaultdict(lambda: (0, None, (), 0))
         self.logprobs_past_cache_size_limit = logprobs_past_cache_size_limit
         asyncio.get_event_loop().create_task(self.batch_loop())
 
@@ -88,8 +88,8 @@ class LangaugeModelWorker:
                 api_key_weights = keys["api_key_weights"]
 
         # Scheduling
-        # Each authentication choice - endpoint pair contains a separate queue,
-        # and these queues are given fixed weights independent of how many
+        # Each authentication choice is assigned a separate queue, and
+        # these queues are given fixed weights independent of how many
         # requests are within each group. Requests that use API keys are
         # further organized based on the API key weights.
         inner_schedulers = {}
@@ -169,18 +169,38 @@ class LangaugeModelWorker:
                 for item, res in zip(generate_batch, results):
                     item.return_queue.put_nowait((item.uid, res))
 
-            if logprobs_item:
+            elif logprobs_item:
                 logprobs_past_cache = self.logprobs_past_cache
                 arg = logprobs_item.data
                 inputs = arg["input"]
+                inputs_copy = tuple(tuple(s) for s in inputs)
                 num_inputs = len(inputs)
                 cache_id = arg["cache_id"]
+                first_entry_time = None
+                if cache_id in self.logprobs_past_cache:
+                    prev_inputs = logprobs_past_cache[cache_id][2]
+                    try:
+                        assert len(prev_inputs) == num_inputs
+                        assert all(pl == cl[:-1] for (pl, cl) in
+                                   zip(prev_inputs, inputs_copy))
+                    except AssertionError:
+                        logprobs_item.return_queue.put_nowait(
+                            ValueError("Request does not extend cached request "
+                                       "by one token; you are probably using "
+                                       "the logprobs endpoint incorrectly."))
+                        del logprobs_past_cache[cache_id]
+                        continue
+                    first_entry_time = logprobs_past_cache[cache_id][3]
                 # do the actual generations
                 output = self.generator.forward(inputs, cache_id, pasts=logprobs_past_cache)
                 # add to or update the cache with newly computed values
-                logprobs_past_cache[cache_id] = (time.time(), output.past_key_values)
+                curr_time = time.time()
+                if first_entry_time is None:
+                    first_entry_time = curr_time
+                logprobs_past_cache[cache_id] = (
+                    curr_time, output.past_key_values, inputs_copy, first_entry_time)
                 # delete oldest key in cache if cache too big
-                if len(logprobs_past_cache) > self.logprobs_past_cache_size_limit:
+                while len(logprobs_past_cache) > self.logprobs_past_cache_size_limit:
                     oldest_key = min(list(logprobs_past_cache.keys()), key=lambda k: logprobs_past_cache[k][0])
                     del logprobs_past_cache[oldest_key]
 
@@ -345,13 +365,26 @@ class LangaugeModelWorker:
 
         # Push the request to the batch queue
         cache_id = str(args["cache_id"]) if "cache_id" in args else str(uuid.uuid4())
+        try:
+            uuid.UUID(cache_id)
+        except ValueError:
+            raise ValueError("Malformed \"cache_id\", you must use the "
+                             "the value returned in a prior server response")
         ret_queue = asyncio.Queue()
         data = {"input": prompts, "cache_id": cache_id, **args}
         queue_entry = LogprobsItem(0, ret_queue, data)
         auth_group, api_key = authorization
         queue_entry = (auth_group, (api_key, queue_entry))
-        self.request_queue.put_nowait(queue_entry)
+        earliest_allowed = time.time() - LOGPROBS_PRIORITY_TIME_LIMIT_S
+        if cache_id in self.logprobs_past_cache and \
+                self.logprobs_past_cache[cache_id][3] >= earliest_allowed:
+            self.request_queue.put_nowait_special(
+                lambda scheduler, arg: scheduler.appendleft(arg), queue_entry)
+        else:
+            self.request_queue.put_nowait(queue_entry)
         results = await ret_queue.get()
+        if isinstance(results, Exception):
+            raise results
         return {
             "cache_id": cache_id,
             "logprobs": results[1]['logprobs'],

@@ -52,7 +52,6 @@ class CodeGenLMOutput(ModelOutput):
     attention_cache: Optional[Tuple[Tuple[jax_xla.DeviceArray]]] = None
 
 
-# TODO(chris): figure out which config params need to be pruned
 @dataclass(frozen=True)
 class CodeGenConfig:
     pad: int = 1
@@ -163,7 +162,8 @@ class CodeGenAttention(nn.Module):
         key_length = attention_mask.shape[-1]
         causal_attention_mask = make_causal_mask(jnp.ones((batch_size, key_length)), dtype="bool")
 
-        sincos = jnp.take(self.embed_positions, position_ids, axis=0)
+        expanded = jax.nn.one_hot(position_ids, self.embed_positions.shape[0], dtype=self.dtype)
+        sincos = expanded @ jnp.asarray(self.embed_positions, self.dtype)
         sincos = jnp.split(sincos, 2, axis=-1)
         if self.rotary_dim is not None:
             k_rot = key[:, :, :, : self.rotary_dim]
@@ -507,27 +507,26 @@ class CodeGenForLMModule(nn.Module):
             attention_cache=outputs.attention_cache,
         )
 
-# TODO(chris) refactor: replace with hyperparameters from the paper
 def get_config(name, **kwargs):
-    if name == "codegen-350m-mono":
+    if name in ["codegen-350m-mono", "codegen-350m-multi", "codegen-350m-nl"]:
         config = CodeGenConfig(
             max_seq_len=2048, num_hidden_layers=20, n_head=16,
             hidden_size=1024, decoder_input_dim=1024, decoder_ffn_embed_dim=1024 * 4,
             rotary_dim=32, bos_token_id=1, vocab_size=51200
         )
-    elif name == "codegen-2b-mono":
+    elif name in ["codegen-2b-mono", "codegen-2b-multi", "codegen-2b-nl"]:
         config = CodeGenConfig(
             max_seq_len=2048, num_hidden_layers=32, n_head=32,
             hidden_size=2560, decoder_input_dim=2560, decoder_ffn_embed_dim=2560 * 4,
             rotary_dim=64, bos_token_id=1, vocab_size=51200
         )
-    elif name == "codegen-6b-mono":
+    elif name in ["codegen-6b-mono", "codegen-6b-multi", "codegen-6b-nl"]:
         config = CodeGenConfig(
             max_seq_len=2048, num_hidden_layers=33, n_head=16,
             hidden_size=4096, decoder_input_dim=4096, decoder_ffn_embed_dim=4096 * 4,
             rotary_dim=64, bos_token_id=1, vocab_size=51200
         )
-    elif name == "codegen-16b-mono":
+    elif name in ["codegen-16b-mono", "codegen-16b-multi", "codegen-16b-nl"]:
         config = CodeGenConfig(
             max_seq_len=2048, num_hidden_layers=34, n_head=24,
             hidden_size=6144, decoder_input_dim=6144, decoder_ffn_embed_dim=6144 * 4,

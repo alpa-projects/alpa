@@ -11,7 +11,7 @@ def main(args):
     if "codegen" in args.model:
         name = args.model.replace("alpa", "Salesforce")\
                          .replace("jax", "Salesforce")
-        tokenizer = AutoTokenizer.from_pretrained(name, padding_side="left")
+        tokenizer = AutoTokenizer.from_pretrained(name, padding_side = "left")
         tokenizer.pad_token = 50256
     generate_params = {
         "do_sample": args.do_sample,

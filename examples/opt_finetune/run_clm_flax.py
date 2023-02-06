@@ -980,7 +980,7 @@ def main():
             print(" - Load parameters. ", end="", flush=True)
             tic = time.time()
             assert config.weight_path and os.path.exists(config.weight_path), f"Cannot find weight at {config.weight_path}"
-            params = load_params_dis_array(config.weight_path, train_executable, params_aval, config, dummy=False)
+            params = load_params_dis_array(config.weight_path, train_executable, state_aval.params, config, dummy=False)
             train_executable.sync()
             print(f" Load parameters takes {time.time() - tic:.2f} seconds.")
             # from alpa.serialization import restore_checkpoint

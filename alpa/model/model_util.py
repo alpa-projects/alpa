@@ -5,6 +5,7 @@ import functools
 from typing import Any, Callable, Optional, Tuple, Optional, Union, Sequence
 
 from alpa.api import value_and_grad
+from alpa.device_mesh import copy_distributed_array
 import flax
 from flax.training import train_state, dynamic_scale as dynamic_scale_lib
 from flax.training.dynamic_scale import DynamicScaleResult
@@ -338,6 +339,30 @@ class TrainState(train_state.TrainState):
             master_copy = None
             opt_state = tx.init(params)
 
+        return cls(
+            step=np.array(0, dtype=np.int32),
+            apply_fn=apply_fn,
+            params=params,
+            master_copy=master_copy,
+            tx=tx,
+            opt_state=opt_state,
+            **kwargs,
+        )
+
+    @classmethod
+    def create_distributed(cls, *, apply_fn, params, tx, use_master_copy=False, **kwargs):
+        """The distributed version of create. It assumes the inputs are DistributedArrays."""
+        if use_master_copy:
+            dtype = jax.tree_util.tree_flatten(params)[0][0].dtype
+            assert dtype == jnp.float16
+            # create the master copy distributedly
+            master_copy = jax.tree_util.tree_map(
+                lambda x: copy_distributed_array(x, jnp.float32), params)
+            # TODO (Hao): handle opt_state
+            opt_state = tx.init(master_copy)
+        else:
+            master_copy = None
+            opt_state = tx.init(params)
         return cls(
             step=np.array(0, dtype=np.int32),
             apply_fn=apply_fn,

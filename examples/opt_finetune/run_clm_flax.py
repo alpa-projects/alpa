@@ -955,8 +955,8 @@ def main():
             model._is_initialized = True
             model.params = params
             tic = time.time()
-            state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer,
-                                      dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
+            state = TrainState.create_distributed(apply_fn=model.__call__, params=model.params, tx=optimizer,
+                                                  dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
             print(f" Create train states takes {time.time() - tic:.2f} seconds.")
 
     dump_debug_info_train_step = dump_debug_info_eval_step = True

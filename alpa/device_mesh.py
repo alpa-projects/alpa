@@ -30,6 +30,7 @@ import threading
 import time
 from typing import Any, List, Union, Sequence, Tuple, Optional
 
+import jax
 from jax import core, xla, device_put
 from jax._src.api import ShapeDtypeStruct
 from jax._src.lib import xla_bridge as xb, xla_extension as xe
@@ -231,6 +232,24 @@ class MeshHostWorker:
             self._get_buffers_with_local_ids(uuid, local_ids)
             for uuid, local_ids in zip(uuids, device_indices)
         ]
+
+    def copy_buffer(self,
+                     target_uuid,
+                     src_uuid,
+                     dtype):
+        # print(f"target_uuid: {target_uuid}, src_uuid: {src_uuid}...")
+        datas = self.buffers[src_uuid]
+        # print(f"old data: {datas} , size: {len(datas)}")
+        assert len(datas) == self.num_devices
+        new_datas = []
+        for i, data in enumerate(datas):
+            # print(f"device_id {data.device()}")
+            if data.dtype != dtype:
+                new_data = np.asarray(data, dtype)
+                # print(f"new_data: {new_data}, dtype: {new_data.dtype}...")
+            new_datas.append(self.backend.buffer_from_pyval(new_data, data.device()))
+        self.buffers[target_uuid] = new_datas
+        # print(f"putted: {self.buffers[target_uuid]}...")
 
     def delete_buffers(self, uuids: Union[Sequence[int], int]):
         if isinstance(uuids, Iterable):
@@ -1486,9 +1505,9 @@ class DistributedArray:
     a normal numpy array.
 
     Internally, it stores a pointer to all remote buffers.
-    The buffers are stored distributedly on remote workers' device memeory.
+    The buffers are stored distributedly on remote workers' device memory.
     When users require the value of the array. These buffers will be gathered
-    to the dirver.
+    to the driver.
     """
 
     def __init__(self,
@@ -1777,6 +1796,29 @@ def prefetch(dis_arrays: Sequence[Union[ShardedDeviceArray, DistributedArray,
 
         for array, np_value in zip(arrays, np_arrays):
             array._fetched_np_buffers = np_value  # pylint: disable=protected-access
+
+
+def copy_distributed_array(src_array: Union[DistributedArray, ReplicatedDistributedArray], target_dtype: jnp.dtype):
+    aval = jax.core.ShapedArray(src_array.aval.shape, target_dtype)
+    if isinstance(src_array, DistributedArray):
+        mesh = src_array.device_mesh
+        spec = src_array.sharding_spec
+        ary_refs, ary_uuid = create_remote_array_refs(mesh)
+        dst_array = DistributedArray(mesh, aval, spec, ary_refs[0])
+        # Do actual copy
+        for w in mesh.workers:
+            w.copy_buffer.remote(dst_array.remote_ref.uuid, src_array.remote_ref.uuid,
+                                 target_dtype)
+    else:
+        assert isinstance(src_array, ReplicatedDistributedArray)
+        meshes = []
+        arrays = []
+        for mesh in src_array._mesh_array_map:
+            meshes.append(mesh)
+            ary = copy_distributed_array(src_array._mesh_array_map[mesh], target_dtype)
+            arrays.append(ary)
+        dst_array = ReplicatedDistributedArray(meshes, arrays)
+    return dst_array
 
 
 ########################################

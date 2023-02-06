@@ -869,7 +869,9 @@ def main():
         metrics = {"loss": loss}
         return metrics
 
-    if training_args.alpa_init:
+    use_create_state_parallel = True
+
+    if not use_create_state_parallel and training_args.alpa_init:
         # In this case, params are not initialized yet, and we use shaped array to trigger alpa compilation
         rngkey = jax.core.ShapedArray((2,), jnp.uint32)
         input_ids = jax.core.ShapedArray((1, 128), jnp.int32)
@@ -878,6 +880,34 @@ def main():
         params_aval = unfreeze(jax.eval_shape(model.module.init, rngkey, input_ids, attention_mask, position_ids)["params"])
         state_aval = TrainState.create_aval(apply_fn=model.__call__, params=params_aval, tx=optimizer,
                                             dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
+    elif use_create_state_parallel:
+        def create_state():
+            model = FlaxAutoModelForCausalLM.from_config(
+                config,
+                seed=training_args.seed,
+                dtype=getattr(jnp, model_args.dtype),
+                _do_init=do_init
+            )
+            optimizer = optax.chain(
+                optax.clip_by_global_norm(1.0),
+                optax.adamw(
+                    learning_rate=linear_decay_lr_schedule_fn,
+                    b1=training_args.adam_beta1,
+                    b2=training_args.adam_beta2,
+                    eps=training_args.adam_epsilon,
+                    weight_decay=training_args.weight_decay,
+                    mask=decay_mask_fn)
+            )
+            rngkey = jnp.ones((2,), jnp.uint32)
+            input_ids = jnp.ones((1, 128), jnp.int32)
+            attention_mask = jnp.ones((1, 128), jnp.int32)
+            position_ids = jnp.ones((1, 128), jnp.int32)
+            # params_aval = unfreeze(
+            #     jax.eval_shape(model.module.init, rngkey, input_ids, attention_mask, position_ids)["params"])
+            params = unfreeze(model.module.init(rngkey, input_ids, attention_mask, position_ids)["params"])
+            state_aval = TrainState.create(apply_fn=model.__call__, params=params, tx=optimizer,
+                                                dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
+            return state_aval
     else:
         # In this case, params have been initialized by HF in the CPU memory of the driver node.
         state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer,
@@ -913,7 +943,7 @@ def main():
         print(f" - Compile executables. ", end="", flush=True)
         tic = time.time()
         # trigger compile
-        seq_len = 2048
+        seq_len = data_args.block_size
         train_input_shape = (train_batch_size, seq_len)
         batch_aval = {"input_ids":
                     jax.core.ShapedArray(
@@ -928,25 +958,29 @@ def main():
                      jax.core.ShapedArray(
                          train_input_shape, jnp.int32),
                 }
+
+        batch_aval = {
+            "input_ids": jnp.ones(train_input_shape, jnp.int32),
+            "position_ids": jnp.ones(train_input_shape, jnp.int32),
+            "attention_mask": jnp.ones(train_input_shape, jnp.int32),
+            "labels": jnp.ones(train_input_shape, jnp.int32),
+        }
+
+        if use_create_state_parallel:
+            p_create_state = alpa.parallelize(create_state, method=CreateStateParallel(p_train_step, batch_aval))
+            state_aval = p_create_state()
+
         train_executable = p_train_step.get_executable(state_aval, batch_aval)
         eval_executable = p_eval_step.get_executable(state_aval.params, batch_aval)
         train_executable.sync()
         model._is_initialized = True
         print(f" Compilation takes {time.time() - tic:.2f} seconds.")
 
-        # def init_weights(self, rng: jax.random.PRNGKey, input_shape: Tuple, params: FrozenDict = None) -> Dict:
-
-        # def create_state():
-        #     return TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer,
-        #                              dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
-        # p_create_state = alpa.parallelize(create_state, method=CreateStateParallel(p_train_step, batch))
-        # state = p_create_state()
         if not training_args.use_dummy_value:
             print(" - Load parameters. ", end="", flush=True)
             tic = time.time()
-            # params = load_multi_executable_params_dis_array(path, exectuables, params_aval, config, dummy)
             assert config.weight_path and os.path.exists(config.weight_path), f"Cannot find weight at {config.weight_path}"
-            params = load_params_dis_array(config.weight_path, train_executable, params_aval, config, dummy=False)
+            params = load_params_dis_array(config.weight_path, train_executable, state_aval.params, config, dummy=False)
             train_executable.sync()
             print(f" Load parameters takes {time.time() - tic:.2f} seconds.")
             # from alpa.serialization import restore_checkpoint
@@ -955,8 +989,10 @@ def main():
             model._is_initialized = True
             model.params = params
             tic = time.time()
-            state = TrainState.create_distributed(apply_fn=model.__call__, params=model.params, tx=optimizer,
-                                                  dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
+            # state = TrainState.create_distributed(apply_fn=model.__call__, params=model.params, tx=optimizer,
+            #                                       dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
+            state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer,
+                                      dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
             print(f" Create train states takes {time.time() - tic:.2f} seconds.")
 
     dump_debug_info_train_step = dump_debug_info_eval_step = True
@@ -999,12 +1035,12 @@ def main():
                 batch["position_ids"] = (batch["attention_mask"].cumsum(axis=1) *
                                          batch["attention_mask"]) - 1
             else:
-                # batch = batch_aval
-                batch = next(train_loader)
-                batch["position_ids"] = (batch["attention_mask"].cumsum(axis=1) *
-                                         batch["attention_mask"]) - 1
-                for b in batch:
-                    batch[b] = batch[b].astype(jnp.int32)
+                batch = batch_aval
+                # batch = next(train_loader)
+                # batch["position_ids"] = (batch["attention_mask"].cumsum(axis=1) *
+                #                          batch["attention_mask"]) - 1
+                # for b in batch:
+                #     batch[b] = batch[b].astype(jnp.int32)
             if training_args.use_dummy_value:
                 state_aval, train_metric = p_train_step(state_aval, batch)
             else:
@@ -1046,7 +1082,7 @@ def main():
                 epochs.write(
                     f"Step... {cur_step} | "
                     f"Loss: {train_metric['loss'].mean():.4f}, "
-                    f"Learning Rate: {train_metric['learning_rate'].mean():.5f}, "
+                    f"Learning Rate: {train_metric['learning_rate'].mean():.8f}, "
                     f"Throughput: {throughput_tokens:.2f} token/s, "
                     f"{throughput_tflops:.2f} TFLOP/s, "
                     f"{throughput_tflops * 4 / 3:.2f} TFLOP/s."

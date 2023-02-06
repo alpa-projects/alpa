@@ -28,7 +28,7 @@ from alpa.util import (OrderedSet, clone_jaxpr, clone_jaxpr_eqn,
                        get_compile_options, jaxpr_to_hlo,
                        setup_computation_alias, compile_dummy_zero_constant,
                        get_var_mapping, undefined_sharding_spec_proto,
-                       new_jaxpr_eqn)
+                       new_jaxpr_eqn, replicated_sharding_spec_proto)
 from alpa.wrapped_hlo import HloStatus, WrappedHlo
 
 # pylint: disable=redefined-builtin
@@ -750,9 +750,13 @@ def generate_sharded_xla_computations_arguments(
         hlo.set_input_shardings(sharding_protos)
 
     if output_sharding_dict:
-        sharding_protos = [
-            output_sharding_dict[x].sharding_proto() for x in outvars
-        ]
+        sharding_protos = []
+        for x in outvars:
+            spec = output_sharding_dict.get(x, None)
+            if spec is None:
+                sharding_protos.append(replicated_sharding_spec_proto())
+            else:
+                sharding_protos.append(spec.sharding_proto())
         hlo.set_output_shardings(sharding_protos)
 
     if stage_input_sharding:

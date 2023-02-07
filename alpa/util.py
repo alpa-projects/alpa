@@ -617,6 +617,13 @@ def undefined_sharding_spec_proto():
     return proto
 
 
+def replicated_sharding_spec_proto():
+    """Return a proto of ShardingSpec which represents a replicated spec."""
+    proto = xc.OpSharding()
+    proto.type = xc.OpSharding.Type.REPLICATED
+    return proto
+
+
 ########################################
 ##### Jaxpr Utilities
 ########################################

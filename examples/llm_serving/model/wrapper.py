@@ -8,11 +8,11 @@ import jax.numpy as jnp
 import numpy as np
 import os
 import torch
-from llm_serving.model import opt_model, bloom_model
+from llm_serving.model import opt_model, bloom_model, codegen_model
 from llm_serving.model.opt_utils import (TransformerModelConfig,
                                          jax_index_select)
 from tqdm import tqdm
-from transformers import OPTForCausalLM, BloomForCausalLM
+from transformers import OPTForCausalLM, BloomForCausalLM, CodeGenForCausalLM
 from transformers.generation_utils import GenerationMixin, ModelOutput, dataclass
 
 import alpa
@@ -189,6 +189,8 @@ def get_hf_model(model_name, device):
         model_class = OPTForCausalLM
     elif "bloom" in model_name:
         model_class = BloomForCausalLM
+    elif "codegen" in model_name:
+        model_class = CodeGenForCausalLM
     else:
         raise ValueError(f"Invalid model name: {model_name}")
 
@@ -279,6 +281,8 @@ def get_alpa_model(model_name: str,
             embed_weight = os.path.join(path, "decoder.embed_tokens.weight")
         elif "bloom" in name:
             embed_weight = os.path.join(path, "word_embeddings.weight")
+        elif "codegen" in name:
+            embed_weight = os.path.join(path, "wte.weight")
         assert os.path.exists(embed_weight), f"No such file or directory: '{embed_weight}'"
 
     # Figure out the actual input size
@@ -296,6 +300,8 @@ def get_alpa_model(model_name: str,
             m = opt_model
         elif "bloom" in model_name:
             m = bloom_model
+        elif "codegen" in model_name:
+            m = codegen_model
         config = m.get_config(name,
                               num_pp_stages=None,
                               mark_boundary=False,
@@ -322,6 +328,8 @@ def get_alpa_model(model_name: str,
             m = opt_model
         elif "bloom" in model_name:
             m = bloom_model
+        elif "codegen" in model_name:
+            m = codegen_model
 
         alpa.init()
 
@@ -479,6 +487,10 @@ def get_alpa_model(model_name: str,
         inference_func_config.eos_token_id = 2
         inference_func_config.pad_token_id = 3
         inference_func_config.unk_token_id = 0
+    elif "codegen" in model_name:
+        inference_func_config.bos_token_id = 1
+        inference_func_config.eos_token_id = 50256
+        inference_func_config.pad_token_id = 50256
     return WrappedInferenceFunc(inference_func,
                                 inference_func_config,
                                 executables[1],
@@ -524,10 +536,11 @@ def get_model(model_name: str,
           by pytorch. Alpa always runs on GPU.
         other parameters: shared with huggingface's model.generate API.
     """
-    if "facebook/opt" in model_name or "bigscience/bloom" in model_name:
+    if "facebook/opt" in model_name or "bigscience/bloom" in model_name or "Salesforce/codegen" in model_name:
         return get_hf_model(model_name, torch_device)
     elif ("jax/opt" in model_name or "alpa/opt" in model_name or
-          "jax/bloom" in model_name or "alpa/bloom" in model_name):
+          "jax/bloom" in model_name or "alpa/bloom" in model_name or
+          "jax/codegen" in model_name or "alpa/codegen" in model_name):
         return get_alpa_model(
               model_name,
               path,
@@ -591,6 +604,9 @@ def download_weights(model_name, path):
     elif "bloom" in model_name:
         hf_model_name = "bigscience/" + model_name
         model_class = BloomForCausalLM
+    elif "codegen" in model_name:
+        hf_model_name = "Salesforce/" + model_name
+        model_class = CodeGenForCausalLM
 
     print(f"Load the pre-trained pytorch weights of {model_name} from huggingface. "
           f"The downloading and cpu loading can take dozens of minutes. "
@@ -616,6 +632,13 @@ def download_weights(model_name, path):
             param_path = os.path.join(path, name)
             with open(param_path, "wb") as f:
                 np.save(f, param.cpu().detach().numpy())
+    elif "codegen" in model_name:
+        for name, param in tqdm(list(model.named_parameters())):
+            name = name.replace("transformer.", "")
+            param_path = os.path.join(path, name)
+            with open(param_path, "wb") as f:
+                np.save(f, param.cpu().detach().numpy())
+
 
 
 global torch_linear_init_backup

@@ -26,6 +26,7 @@ import ray
 import torch
 from tqdm import tqdm
 from llm_serving.model.opt_model import (init_cache_aval, init_mask_aval)
+from warnings import warn
 
 ACT2FN = {
     "gelu": partial(nn.gelu, approximate=False),
@@ -353,14 +354,15 @@ class CodeGenTransformerLayerCollection(nn.Module):
         new_attention_cache = () if attention_cache is not None else None
 
         if self.config.num_pp_stages is not None:
-            assert self.config.num_hidden_layers % self.config.num_pp_stages == 0
+            if self.config.num_hidden_layers % self.config.num_pp_stages != 0:
+                warn("The number of hidden layers is not divisible by the number of stages")
             layers_per_stage = self.config.num_hidden_layers // self.config.num_pp_stages
 
         for i, layer in enumerate(self.layers):
             if self.config.num_pp_stages is not None:
                 if i % layers_per_stage == 0 and i != 0:
                     stage_id = i // layers_per_stage
-                    if self.config.mark_boundary:
+                    if self.config.mark_boundary and i // layers_per_stage < self.config.num_pp_stages:
                         mark_pipeline_boundary()
 
             if output_hidden_states:
@@ -766,8 +768,9 @@ def load_codegen_params_worker_func(self, path, prefix_to_idx, config, shapes,
 
         for j in range(len(mesh_ids[i])):
             if self.mesh_id != mesh_ids[i][j]:
+                # print(f"skipping {param_key} on mesh {self.mesh_id} which is on  {mesh_ids[i][j]} and {uuids[i][j]}")
                 continue
-
+            
             if not is_position_embedding:
                 assert shapes[i][j] == loaded_array.shape, (
                     f"{shapes[i][j]} vs. {loaded_array.shape}")
@@ -792,6 +795,8 @@ def load_codegen_params_worker_func(self, path, prefix_to_idx, config, shapes,
     
     for i in range(config.num_hidden_layers):
         stage_id = i // layers_per_stage
+        if i // layers_per_stage  == config.num_pp_stages: # special case for codegen-6b
+            stage_id = config.num_pp_stages - 1
         if stage_id != self.mesh_id:
             continue
 

@@ -21,7 +21,7 @@ def main(args):
     
     # Load the model
     model = get_model(model_name=args.model,
-                      path="~/opt_weights",
+                      path="/data/chris/opt_weights",
                       batch_size=args.n_prompts,
                       **generate_params)
 

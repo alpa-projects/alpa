@@ -379,8 +379,8 @@
       </div>
 
       <div class="d-grid gap-4 d-sm-flex justify-content-sm-center">
-        <a href="#generation" class="btn btn-primary px-4 btn-lg">Try Live Generation</a>
-        <a href="https://alpa-projects.github.io/tutorials/opt_serving.html" class="btn btn-outline-primary px-4 btn-lg" target="_blank">Host Your Own Service</a>
+        <a href="#generation" class="btn btn-primary px-4 btn-lg">Try Live Generation (OPT-175B)</a>
+        <a href="https://alpa-projects.github.io/tutorials/opt_serving.html" class="btn btn-outline-primary px-4 btn-lg" target="_blank">Host Your Own Service (OPT, BLOOM, CodeGen)</a>
       </div>
   </div>
 
@@ -433,10 +433,10 @@
     <div class="form-group row" data-html2canvas-ignore="true" style="{{sampling_css}}">
         <label for="topp_slider" class="col col-form-label text-end fw-bold">Top-p:</label>
         <div class="col my-2">
-        <input type="range" value="0.5" min="{{ '0.1' if num_return_sequences > 1 else '0.0' }}" max="1.0" step="0.1" class="form-range"
+        <input type="range" value="0.7" min="{{ '0.1' if num_return_sequences > 1 else '0.0' }}" max="1.0" step="0.1" class="form-range"
             oninput="this.parentNode.nextElementSibling.value = this.value" name="top_p" id="topp_slider">
         </div>
-       <output class='col col-form-label'>0.5</output>
+       <output class='col col-form-label'>0.7</output>
     </div>
 
     <div>

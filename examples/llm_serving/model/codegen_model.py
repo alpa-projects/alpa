@@ -25,8 +25,9 @@ import numpy as np
 import ray
 import torch
 from tqdm import tqdm
-from llm_serving.model.opt_model import (init_cache_aval, init_mask_aval)
 from warnings import warn
+
+from llm_serving.model.opt_model import init_cache_aval, init_mask_aval
 
 ACT2FN = {
     "gelu": partial(nn.gelu, approximate=False),

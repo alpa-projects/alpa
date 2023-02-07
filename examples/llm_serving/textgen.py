@@ -17,6 +17,7 @@ def main(args):
         name = args.model.replace("alpa", "bigscience")\
                          .replace("jax", "bigscience")
         tokenizer = AutoTokenizer.from_pretrained(name)
+
     generate_params = {
         "do_sample": args.do_sample,
         "num_beams": args.num_beams,

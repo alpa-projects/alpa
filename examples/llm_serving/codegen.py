@@ -18,19 +18,19 @@ def main(args):
         "num_beams": args.num_beams,
         "num_return_sequences": args.num_return_sequences
     }
-    
+
     # Load the model
     model = get_model(model_name=args.model,
-                      path="/data/chris/opt_weights",
+                      path="~/codegen_weights",
                       batch_size=args.n_prompts,
                       **generate_params)
 
     # Generate
     prompts = [
-        "def helloworld():",
-        "Create a function that solves the two sum problem",
-        "Create a function that solves the fibonacci sequence problem",
-        "Create an array that contains the numbers 1 to 10"
+        "# This function prints hello world.\n",
+        "def fib(k):\n    # Returns the k-th Fibonacci number.\n",
+        "def is_prime(n):\n    # Return whether n is a prime number.\n",
+        "def return_len(s):\n    # Return the length of s.\n",
     ]
     prompts = prompts[:args.n_prompts]
 
@@ -39,18 +39,20 @@ def main(args):
     output_ids = model.generate(input_ids=input_ids,
                                 max_length=64,
                                 **generate_params)
-    outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
-    
+    outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True,
+                                     truncate_before_pattern=[r"\n\n^#", "^'''", "\n\n\n"])
+
     # Print results
     print("Outputs:\n" + 100 * '-')
     for i, output in enumerate(outputs):
         print(f"{i}: {output}")
         print(100 * '-')
-    
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="alpa/opt-1.3b")
+    parser.add_argument("--model", type=str, default="alpa/codegen-2B-mono")
+    # help: see https://github.com/salesforce/CodeGen for a list of available models.
     parser.add_argument('--do-sample', action='store_true')
     parser.add_argument('--num-beams', type=int, default=1)
     parser.add_argument('--num-return-sequences', type=int, default=1)

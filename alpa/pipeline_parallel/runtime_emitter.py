@@ -186,7 +186,12 @@ class PipelineInstEmitterHelper:
 
     def get_var_mesh_uuid(self, var, batch_idx, mesh_idx) -> int:
         key = self._get_var_key(var, batch_idx)
-        return self.env[key][mesh_idx]
+        try:
+            return self.env[key][mesh_idx]
+        except KeyError as e:
+            print(key, var, batch_idx, mesh_idx)
+            print(self.env[key])
+            raise e
 
     def get_var_meshes(self, var, batch_idx) -> Dict[int, int]:
         key = self._get_var_key(var, batch_idx)
@@ -1117,7 +1122,6 @@ class OverlapFriendlyPipelineInstEmitter(PipelineInstEmitter):
         # Dict[int, Dict[int, Tuple(List, List)]]
         # src_mesh_idx -> (dst_mesh_idx -> (Vars, Sharding Specs))
         self.stage_send_vars = [[] for _ in range(len(self.stages))]
-        self.send_var_sets = [{} for _ in range(len(self.stages))]
         self._get_stage_send_vars(outvar_def_order)
 
     def _get_stage_send_vars(self, outvar_def_order):
@@ -1132,6 +1136,8 @@ class OverlapFriendlyPipelineInstEmitter(PipelineInstEmitter):
             for var_idx, var in enumerate(stage.invars):
                 if (var in global_invar_set or var in self.grad_dummy_invars or
                         mesh_idx in var_at_mesh[var]):
+                    if str(var) == "cus":
+                        print("skip at mesh", stage_idx, mesh_idx)
                     continue
                 else:
                     # Currently we use the first mesh, since there is almost no
@@ -1149,22 +1155,25 @@ class OverlapFriendlyPipelineInstEmitter(PipelineInstEmitter):
             for var in stage.outvars:
                 var_defined.setdefault(var, OrderedSet()).add(stage_idx)
                 var_at_mesh.setdefault(var, OrderedSet()).add(mesh_idx)
+        print(self.stage_send_vars[0])
         # Reorder send and merge
         for stage_idx, stage in enumerate(self.stages):
             send_vars = self.stage_send_vars[stage_idx]
-            var_send_as = {v: (idx, spec) for (idx, v, spec) in send_vars}
+            var_def_order = {
+                k: i for i, k in enumerate(outvar_def_order[stage_idx])
+            }
+            send_vars = sorted(send_vars,
+                               key=lambda i, v, _, order=var_def_order:
+                               (order[v], i))
             final_send_seq = []
-            for v in outvar_def_order[stage_idx]:
-                if v in var_send_as:
-                    recv_stage_idx, spec = var_send_as[v]
-                    if (len(final_send_seq) != 0 and
-                        (final_send_seq[-1][0] == recv_stage_idx)):
-                        final_send_seq[-1][1].append(v)
-                        final_send_seq[-1][2].append(spec)
-                    else:
-                        final_send_seq.append((recv_stage_idx, [v], [spec]))
+            for recv_stage_idx, v, spec in send_vars:
+                if (len(final_send_seq) != 0 and
+                    (final_send_seq[-1][0] == recv_stage_idx)):
+                    final_send_seq[-1][1].append(v)
+                    final_send_seq[-1][2].append(spec)
+                else:
+                    final_send_seq.append((recv_stage_idx, [v], [spec]))
             self.stage_send_vars[stage_idx] = final_send_seq
-            self.send_var_sets[stage_idx] = set(var_send_as.keys())
 
     def _compile_exec_one_tick(self, sched, donation_mapping, instruction_lists,
                                executable_uuids, executable_config_lists):

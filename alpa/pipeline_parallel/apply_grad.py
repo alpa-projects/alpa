@@ -299,9 +299,47 @@ def _rewrite_cross_layer_grad(compute_eqns, microbatch_bound, apply_eqns,
                                eqns=new_compute_eqns + [new_microbatch_bound] +
                                new_apply_eqns,
                                outvars=new_global_outvars)
-    return closed_jaxpr, [
-        new_compute_eqns, [new_microbatch_bound], new_apply_eqns
+    return closed_jaxpr
+
+
+def _remove_replicated_marked_var(closed_jaxpr: ClosedJaxpr):
+    """Some variables are marked multiple times with the same marker.
+    This pass removes them.
+    """
+    new_eqns = []
+    var_map = {}
+    mb_idx = None
+    for eqn in closed_jaxpr.eqns:
+        if eqn.primitive == pipeline_p:
+            eqn_map = {}
+            new_invars = []
+            new_outvars = []
+            if eqn.params['mark_type'] == 'grad':
+                mb_idx = len(new_eqns)
+            for inv, outv in zip(eqn.invars, eqn.outvars):
+                if isinstance(outv, DropVar):
+                    continue
+                if isinstance(inv, Var):
+                    if inv in var_map:
+                        var_map[outv] = var_map[inv]
+                        continue
+                    elif inv in eqn_map:
+                        var_map[outv] = eqn_map[inv]
+                        continue
+                if isinstance(inv, Var):
+                    eqn_map[inv] = outv
+                new_invars.append(inv)
+                new_outvars.append(outv)
+            new_eqns.append(clone_jaxpr_eqn(eqn, new_invars, new_outvars))
+            continue
+        new_invars = [get_var_mapping(var_map, v) for v in eqn.invars]
+        new_eqns.append(clone_jaxpr_eqn(eqn, new_invars))
+    sliced_eqns = new_eqns[:mb_idx], [new_eqns[mb_idx]], new_eqns[mb_idx + 1:]
+    new_outvars = [
+        get_var_mapping(var_map, v) for v in closed_jaxpr.jaxpr.outvars
     ]
+    return clone_jaxpr(closed_jaxpr, outvars=new_outvars,
+                       eqns=new_eqns), sliced_eqns
 
 
 def jaxpr_have_apply_grad(closed_jaxpr: ClosedJaxpr):
@@ -342,8 +380,9 @@ def split_compute_grad_and_apply_grad(closed_jaxpr: ClosedJaxpr, gensym_fn,
     ]
     # Some equations are not marked. This pass moves them either into apply grad
     # or a layer.
-    closed_jaxpr, sliced_eqns = _rewrite_cross_layer_grad(
-        *sliced_eqns, gensym_fn, closed_jaxpr)
+    closed_jaxpr = _rewrite_cross_layer_grad(*sliced_eqns, gensym_fn,
+                                             closed_jaxpr)
+    closed_jaxpr, sliced_eqns = _remove_replicated_marked_var(closed_jaxpr)
     # Reconstruct jaxpr
     sliced_jaxprs = slices_to_jaxpr(closed_jaxpr, sliced_eqns)
     compute_grad, _, apply_grad = sliced_jaxprs  # pylint: disable=unbalanced-tuple-unpacking

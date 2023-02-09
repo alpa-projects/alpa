@@ -307,12 +307,12 @@ def split_and_process_layers(closed_jaxpr, full_batch_closed_jaxpr,
        start of accumulate gradient.
 
     """
-    global_outvars = closed_jaxpr.jaxpr.outvars
 
     # Split the jaxpr into compute_grad and apply_grad
     (closed_jaxpr, compute_grad_jaxpr, apply_grad_jaxpr,
      microbatch_bound) = split_compute_grad_and_apply_grad(
          closed_jaxpr, gensym_func, num_microbatch, inference_mode)
+    global_outvars = closed_jaxpr.jaxpr.outvars
 
     # Transform compute_grad to accumulate_grad
     # FIXME(yonghao): use apply grad jaxpr returned by this function

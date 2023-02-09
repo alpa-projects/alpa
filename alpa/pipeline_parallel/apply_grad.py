@@ -314,7 +314,7 @@ def _remove_replicated_marked_var(closed_jaxpr: ClosedJaxpr):
             eqn_map = {}
             new_invars = []
             new_outvars = []
-            if eqn.params["mark_type"] == "grad":
+            if eqn.params['mark_type'] == 'grad':
                 mb_idx = len(new_eqns)
             for inv, outv in zip(eqn.invars, eqn.outvars):
                 if isinstance(outv, DropVar):

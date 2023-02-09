@@ -1159,10 +1159,12 @@ class OverlapFriendlyPipelineInstEmitter(PipelineInstEmitter):
         # Reorder send and merge
         for stage_idx, stage in enumerate(self.stages):
             send_vars = self.stage_send_vars[stage_idx]
-            def_order = {
+            var_def_order = {
                 k: i for i, k in enumerate(outvar_def_order[stage_idx])
             }
-            send_vars = sorted(send_vars, key=lambda x: (def_order[x[1]], x[0]))
+            send_vars = sorted(send_vars,
+                               key=lambda i, v, _, order=var_def_order:
+                               (order[v], i))
             final_send_seq = []
             for recv_stage_idx, v, spec in send_vars:
                 if (len(final_send_seq) != 0 and

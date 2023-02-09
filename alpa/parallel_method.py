@@ -301,15 +301,17 @@ def get_3d_parallel_method(num_micro_batches: int,
             submesh_physical_shapes=[physical_mesh_shape] * pp,
             submesh_logical_shapes=[logical_mesh_shape] * pp,
             submesh_autosharding_option_dicts=[{}] * pp)
-    return PipeshardParallel(devices=virtual_mesh,
-                             num_micro_batches=num_micro_batches,
-                             default_auto_sharding_option=AutoShardingOption(
-                                 prefer_reduce_scatter=True,
-                                 force_batch_dim_to_mesh_dim=0,
-                             ),
-                             layer_option=layer_option,
-                             stage_option=stage_option,
-                             manual_sharding_option=manual_sharding_option)
+    return PipeshardParallel(
+        devices=virtual_mesh,
+        num_micro_batches=num_micro_batches,
+        default_auto_sharding_option=AutoShardingOption(
+            enable_auto_sharding=manual_sharding_option is None,
+            prefer_reduce_scatter=True,
+            force_batch_dim_to_mesh_dim=0,
+        ),
+        layer_option=layer_option,
+        stage_option=stage_option,
+        manual_sharding_option=manual_sharding_option)
 
 
 class LocalPipelineParallel(ParallelMethod):

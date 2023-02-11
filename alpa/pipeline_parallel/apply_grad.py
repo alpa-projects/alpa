@@ -893,24 +893,42 @@ class ApplyGradRewriter:
         self.eqn_mesh = {}
         self.var_use = {}
         self.var_def = {}
+        for eqn_idx, eqn in enumerate(self.eqns):
+            for invar in _filter_literal(eqn.invars):
+                self.var_use.setdefault(invar, OrderedSet()).add(eqn_idx)
+            for outvar in _filter_droped(eqn.outvars):
+                self.var_def[outvar] = eqn_idx
+        has_color = OrderedSet([
+            self.var_def[k]
+            for k in self.var_mesh
+            if (len(self.var_mesh[k]) > 0 and k in self.var_def)
+        ])
+        q = list(has_color)
+        while len(q) > 0:
+            for outv in _filter_droped(self.eqns[q[0]].outvars):
+                if outv not in self.var_use:
+                    continue
+                used_eqns = self.var_use[outv]
+                has_color.update(used_eqns)
+                for e_id in used_eqns.difference(has_color):
+                    q.append(e_id)
+            q = q[1:]
+
         # Propagate the first round
         for eqn_idx, eqn in enumerate(self.eqns):
             at_mesh = OrderedSet()
-            for invar in eqn.invars:
-                if isinstance(invar, Var):
-                    at_mesh.update(self.var_mesh.setdefault(
-                        invar, OrderedSet()))
-                    self.var_use.setdefault(invar, OrderedSet()).add(eqn_idx)
+            for invar in _filter_literal(eqn.invars):
+                at_mesh.update(self.var_mesh.setdefault(invar, OrderedSet()))
+            # TODO(yonghao): round robin this and use it in later positions
+            if len(at_mesh) == 0 and eqn_idx not in has_color:
+                at_mesh = OrderedSet([0])
             if len(at_mesh) == 1:
-                for invar in eqn.invars:
-                    if isinstance(invar, Var):
-                        self.var_mesh.setdefault(invar,
-                                                 OrderedSet()).update(at_mesh)
+                for invar in _filter_literal(eqn.invars):
+                    self.var_mesh.setdefault(invar,
+                                             OrderedSet()).update(at_mesh)
             self.eqn_mesh[eqn_idx] = list(at_mesh)
-            for outvar in eqn.outvars:
-                if not isinstance(outvar, DropVar):
-                    self.var_mesh[outvar] = OrderedSet(at_mesh)
-                    self.var_def[outvar] = eqn_idx
+            for outvar in _filter_droped(eqn.outvars):
+                self.var_mesh[outvar] = OrderedSet(at_mesh)
 
     def _reducable_chain_lookup(self, eqn_idx, num_mesh):
         """

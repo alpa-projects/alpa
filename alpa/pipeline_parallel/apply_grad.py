@@ -898,12 +898,17 @@ class ApplyGradRewriter:
                 self.var_use.setdefault(invar, OrderedSet()).add(eqn_idx)
             for outvar in _filter_droped(eqn.outvars):
                 self.var_def[outvar] = eqn_idx
-        has_color = OrderedSet(
-            [k for k in self.var_mesh if len(self.var_mesh[k]) > 0])
+        has_color = OrderedSet([
+            self.var_def[k]
+            for k in self.var_mesh
+            if (len(self.var_mesh[k]) > 0 and k in self.var_def)
+        ])
         q = list(has_color)
         while len(q) > 0:
-            if q[0] in self.var_use:
-                used_eqns = self.var_use[q[0]]
+            for outv in _filter_droped(self.eqns[q[0]].outvars):
+                if outv not in self.var_use:
+                    continue
+                used_eqns = self.var_use[outv]
                 has_color.update(used_eqns)
                 for e_id in used_eqns.difference(has_color):
                     q.append(e_id)

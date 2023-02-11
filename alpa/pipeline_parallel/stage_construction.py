@@ -836,20 +836,17 @@ def _cluster_layers_with_even_tflops(layers, num_stage):
     # the last one is to avoid IndexError
     flops = flops[1:] + [flops[-1] + 1]
     forward_layer_ids = [[-1]]
-    cnt = 1
-    start_layer_flops = 0
+    nxt_bound = avg_flop
     for i in range(len(layers)):
-        # if flops already exceeds boundary or cutting at current layer is
+        # if flops already exceeds threshold or cutting at current layer is
         # closer to the ideal average, then choose it to cut.
         # The first condition is to avoid a too large layer that occupies
         # several times of average flops
-        cur_flops = flops[i] - start_layer_flops
-        nxt_flops = flops[i + 1] - start_layer_flops
-        if ((flops[i] >= avg_flop * cnt * (1 - 1e-5)) or
-            (abs(cur_flops - avg_flop) < abs(nxt_flops - avg_flop))):
-            cnt += 1
+        if ((flops[i] >= nxt_bound * (1 - 1e-5)) or
+            (flops[i + 1] >= nxt_bound and
+             abs(flops[i + 1] - nxt_bound) > abs(flops[i] - nxt_bound))):
+            nxt_bound += avg_flop
             forward_layer_ids.append(
                 tuple(range(forward_layer_ids[-1][-1] + 1, i + 1)))
-            start_layer_flops = flops[i]
     forward_layer_ids = forward_layer_ids[1:]
     return forward_layer_ids

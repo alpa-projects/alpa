@@ -919,7 +919,7 @@ class ApplyGradRewriter:
             at_mesh = OrderedSet()
             for invar in _filter_literal(eqn.invars):
                 at_mesh.update(self.var_mesh.setdefault(invar, OrderedSet()))
-            # TODO(yonghao): round robin this and use the result in later positions
+            # TODO(yonghao): round robin this and use it in later positions
             if len(at_mesh) == 0 and eqn_idx not in has_color:
                 at_mesh = OrderedSet([0])
             if len(at_mesh) == 1:

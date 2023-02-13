@@ -31,7 +31,6 @@ class DebugInfoTest(unittest.TestCase):
         # Dump final HLO and other debug info
         executable.dump_debug_info("alpa_debug_info")
 
-
     def test_2_pipeline_parallel(self):
         init(cluster="ray")
         state, batch, train_step = get_mlp_train_state_and_step(batch_size=128,

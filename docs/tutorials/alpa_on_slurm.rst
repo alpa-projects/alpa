@@ -165,7 +165,7 @@ These usually includes the name of the job, partition the job should go to, CPU 
 
     .. code:: bash
 
-        #SBATCH --job-name=textgen_multinode_test
+        #SBATCH --job-name=alpa_multinode_test
         #SBATCH --partition=GPU
         #SBATCH --nodes=2
         #SBATCH --tasks-per-node=1
@@ -332,11 +332,7 @@ Then it's time to run Alpa:
 
     .. code:: bash
 
-        python3 alpa/examples/llm_serving/textgen.py --model alpa/bloom-560m --n-prompts 1
-
-    .. note::
-
-        To run text generation using Alpa, please first install llm_serving in your environment. The installation follws from `here <https://alpa.ai/tutorials/opt_serving.html#requirements>`_.
+        python3 -m alpa.test_install
 
 Submit Job
 **********
@@ -394,7 +390,7 @@ Putting things together, a sample sbatch script that runs Alpa is as follows:
     .. code:: bash
 
         #!/bin/bash
-        #SBATCH --job-name=textgen_multinode_test
+        #SBATCH --job-name=alpa_multinode_test
         #SBATCH --partition=GPU
         #SBATCH --nodes=2
         #SBATCH --tasks-per-node=1
@@ -445,8 +441,8 @@ Putting things together, a sample sbatch script that runs Alpa is as follows:
             sleep 5
         done
 
-        # Run Alpa textgen
-        python3 alpa/examples/llm_serving/textgen.py --model alpa/bloom-560m --n-prompts 1
+        # Run Alpa test
+        python3 -m alpa.test_install
 
         # Optional. Slurm will terminate all processes automatically
         ray stop
@@ -461,7 +457,7 @@ For running Alpa on Slurm with only one node or shared node, the following scrip
     .. code:: bash
 
         #!/bin/bash
-        #SBATCH --job-name=textgen_uninode_test
+        #SBATCH --job-name=alpa_uninode_test
         #SBATCH -p GPU-shared
         #SBATCH -N 1
         #SBATCH --gpus=v100-16:1
@@ -478,8 +474,8 @@ For running Alpa on Slurm with only one node or shared node, the following scrip
         # Start Ray on HEAD
         ray start --head
 
-        # Run Alpa textgen
-        python3 alpa/examples/llm_serving/textgen.py --model alpa/bloom-560m --n-prompts 1
+        # Run Alpa test
+        python3 -m alpa.test_install
 
         # Optional. Slurm will terminate all processes automatically
         ray stop

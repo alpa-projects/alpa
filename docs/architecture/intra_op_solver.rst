@@ -30,6 +30,7 @@ Key Pointers
 
 How to Read and Learn the Code
 ==============================
+.. _learn-intra-op-solver:
 
 Run some simple examples
 ~~~~~~~~~~~~~~~~~~~~~~~~

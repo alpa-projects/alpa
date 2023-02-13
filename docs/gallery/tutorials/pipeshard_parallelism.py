@@ -6,7 +6,7 @@ Alpa can automatically parallelizes jax functions with both shard
 parallelism (a.k.a. intra-operator parallelism) and pipeline parallelism
 (a.k.a. inter-operator parallelism). Shard parallelism includes
 data parallelism, operator parallelism, and their combinations.
-The :ref:`quick start <Alpa Quickstart>` focuses on using Alpa for shard parallelism.
+The :ref:`quick start <alpa-quickstart>` focuses on using Alpa for shard parallelism.
 
 In this tutorial, we show how to use Alpa with both shard and pipeline parallelism.
 First, we show how to use Alpa to manually assign stages for pipeline parallelism.

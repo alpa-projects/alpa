@@ -1,5 +1,5 @@
 """
-.. _Alpa Quickstart:
+.. _alpa-quickstart:
 
 Alpa Quickstart
 ===============

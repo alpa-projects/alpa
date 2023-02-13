@@ -51,3 +51,15 @@ This architecture is easier to use and understand but can potentially lead to si
 To reduce the overhead, we should avoid frequent synchronization, so we can overlap the computation with runtime scheduling.
 Printing or accessing the value of a ``DistributedArray`` is a case of synchronization because we have to fetch the data from workers' GPUs to the driver's CPU.
 However, accessing metadata such as `shape` and `dtype` does not need synchronization because the metadata is stored on the driver.
+
+Inspect the parallelization strategy
+------------------------------------
+If you want to inspect the parallelization strategies, Alpa provides several
+debug options to dump the intermediate representations. You can see example usages
+at https://github.com/alpa-projects/alpa/blob/main/tests/runtime/test_debug_info.py.
+The key interfaces include functions ``dump_debug_info``, ``get_last_dp_result`` and
+environment variable ``ALPA_DEBUG_PRINT_AS_STRATEGY``.
+Note that Alpa does not provide nice visualization tools currently, so understanding
+these intermediate representations requires some knowledge of HLO and Alpa algorithms.
+
+See also :ref:`intra-op solver guidance <learn-intra-op-solver>`.

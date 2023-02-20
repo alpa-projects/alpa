@@ -906,7 +906,7 @@ def main():
             #     jax.eval_shape(model.module.init, rngkey, input_ids, attention_mask, position_ids)["params"])
             params = unfreeze(model.module.init(rngkey, input_ids, attention_mask, position_ids)["params"])
             state_aval = TrainState.create(apply_fn=model.__call__, params=params, tx=optimizer,
-                                                dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
+                                           dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
             return state_aval
     else:
         # In this case, params have been initialized by HF in the CPU memory of the driver node.
@@ -959,14 +959,13 @@ def main():
                          train_input_shape, jnp.int32),
                 }
 
-        batch_aval = {
-            "input_ids": jnp.ones(train_input_shape, jnp.int32),
-            "position_ids": jnp.ones(train_input_shape, jnp.int32),
-            "attention_mask": jnp.ones(train_input_shape, jnp.int32),
-            "labels": jnp.ones(train_input_shape, jnp.int32),
-        }
-
         if use_create_state_parallel:
+            # batch_aval = {
+            #     "input_ids": jnp.ones(train_input_shape, jnp.int32),
+            #     "position_ids": jnp.ones(train_input_shape, jnp.int32),
+            #     "attention_mask": jnp.ones(train_input_shape, jnp.int32),
+            #     "labels": jnp.ones(train_input_shape, jnp.int32),
+            # }
             p_create_state = alpa.parallelize(create_state, method=CreateStateParallel(p_train_step, batch_aval))
             state_aval = p_create_state()
 
@@ -989,10 +988,32 @@ def main():
             model._is_initialized = True
             model.params = params
             tic = time.time()
+            # state = TrainState.create_from(train_state=state_aval,
+            #                                params=params,
+            #                                dynamic_scale=dynamic_scale,
+            #                                use_master_copy=True)
+
+            state = TrainState.create(apply_fn=model.__call__, params=params, tx=optimizer,
+                                       dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
+
+            def compare_dict(state1, state2):
+                print("Compare params: ")
+                params1 = jax.tree_util.tree_flatten(state1)
+                params2 = jax.tree_util.tree_flatten(state2)
+                for p1, p2 in zip(params1[0], params2[0]):
+                    assert type(p1) == type(p2)
+                    if isinstance(p1, alpa.device_mesh.DistributedArray):
+                        print(f"Sharding spec 1: {p1.sharding_spec}, sharding spec 2 {p2.sharding_spec}")
+                        assert p1.sharding_spec == p2.sharding_spec, f"wrong at {p1} and {p2}"
+                    else:
+                        assert isinstance(p1, alpa.device_mesh.ReplicatedDistributedArray)
+                        print(f"Sharding spec 1: {p1.replica.sharding_spec}, sharding spec 2 {p2.replica.sharding_spec}")
+                        assert p1.replica.sharding_spec == p2.replica.sharding_spec, f"wrong at {p1} and {p2}"
+
+
+
             # state = TrainState.create_distributed(apply_fn=model.__call__, params=model.params, tx=optimizer,
             #                                       dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
-            state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer,
-                                      dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
             print(f" Create train states takes {time.time() - tic:.2f} seconds.")
 
     dump_debug_info_train_step = dump_debug_info_eval_step = True

@@ -4,6 +4,7 @@ from dataclasses import fields
 import functools
 from typing import Any, Callable, Optional, Tuple, Optional, Union, Sequence
 
+import alpa.device_mesh
 from alpa.api import value_and_grad
 from alpa.device_mesh import copy_distributed_array
 import flax
@@ -402,6 +403,39 @@ class TrainState(train_state.TrainState):
             **kwargs,
         )
 
+    @classmethod
+    def create_from(cls,
+                    *,
+                    train_state,
+                    params,
+                    use_master_copy=False,
+                    **kwargs):
+        """Create a new instance where everything except master_copy is given."""
+        if use_master_copy:
+            dtype = jax.tree_util.tree_flatten(params)[0][0].dtype
+            assert dtype == jnp.float16
+
+            def get_sharding_spec(array):
+                if isinstance(array, alpa.device_mesh.DistributedArray):
+                    return array.sharding_spec
+                else:
+                    assert isinstance(array, alpa.device_mesh.ReplicatedDistributedArray)
+                    return array.replica.sharding_spec
+
+            # create the master copy distributedly
+            master_copy = jax.tree_util.tree_map(
+                lambda x, y: copy_distributed_array(x, get_sharding_spec(y), jnp.float32), params, train_state.master_copy)
+        else:
+            master_copy = None
+        return cls(
+            step=train_state.step,
+            apply_fn=train_state.apply_fn,
+            params=params,
+            master_copy=master_copy,
+            tx=train_state.tx,
+            opt_state=train_state.opt_state,
+            **kwargs
+        )
 
 class DynamicScale(struct.PyTreeNode):
     """This is the same as flax.optim.DynamicScale, except that

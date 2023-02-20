@@ -234,22 +234,32 @@ class MeshHostWorker:
         ]
 
     def copy_buffer(self,
-                     target_uuid,
-                     src_uuid,
-                     dtype):
+                    shape,
+                    src_indices,
+                    dst_indices,
+                    target_uuid,
+                    src_uuid,
+                    dtype):
         # print(f"target_uuid: {target_uuid}, src_uuid: {src_uuid}...")
         datas = self.buffers[src_uuid]
         # print(f"old data: {datas} , size: {len(datas)}")
         assert len(datas) == self.num_devices
+        assert len(datas) == len(src_indices)
+        assert len(datas) == len(dst_indices)
         new_datas = []
-        for i, data in enumerate(datas):
-            # print(f"device_id {data.device()}")
-            if data.dtype != dtype:
-                new_data = np.asarray(data, dtype)
-                # print(f"new_data: {new_data}, dtype: {new_data.dtype}...")
-            new_datas.append(self.backend.buffer_from_pyval(new_data, data.device()))
+
+        if src_indices == dst_indices:
+            logger.debug("Indices are the same...")
+            for i, data in enumerate(datas):
+                new_datas.append(self.backend.buffer_from_pyval(np.array(data, dtype=dtype), data.device()))
+        else:
+            logger.debug("Indices are different... Resharding!")
+            src_array = np.zeros(shape, dtype=dtype)
+            for device_id, ind in enumerate(src_indices):
+                src_array[ind] = np.array(datas[device_id])
+            for i, data in enumerate(datas):
+                new_datas.append(self.backend.buffer_from_pyval(src_array[dst_indices[i]], data.device()))
         self.buffers[target_uuid] = new_datas
-        # print(f"putted: {self.buffers[target_uuid]}...")
 
     def delete_buffers(self, uuids: Union[Sequence[int], int]):
         if isinstance(uuids, Iterable):
@@ -1798,16 +1808,27 @@ def prefetch(dis_arrays: Sequence[Union[ShardedDeviceArray, DistributedArray,
             array._fetched_np_buffers = np_value  # pylint: disable=protected-access
 
 
-def copy_distributed_array(src_array: Union[DistributedArray, ReplicatedDistributedArray], target_dtype: jnp.dtype):
+def copy_distributed_array(src_array: Union[DistributedArray, ReplicatedDistributedArray],
+                           target_sharding_spec: ShardingSpec,
+                           target_dtype: jnp.dtype):
     aval = jax.core.ShapedArray(src_array.aval.shape, target_dtype)
     if isinstance(src_array, DistributedArray):
         mesh = src_array.device_mesh
-        spec = src_array.sharding_spec
+        src_spec = src_array.sharding_spec
         ary_refs, ary_uuid = create_remote_array_refs(mesh)
-        dst_array = DistributedArray(mesh, aval, spec, ary_refs[0])
+        dst_array = DistributedArray(mesh, aval, target_sharding_spec, ary_refs[0])
+        if src_array.sharding_spec != target_sharding_spec:
+            print("Sharding spec changed. Will need resharding..."
+                  f"src: {src_array.sharding_spec}, dst: {dst_array.sharding_spec}")
+        print(f"src_shape {src_array.aval.shape}, dst_shape {dst_array.aval.shape}, "
+              f"src_array_indices: {src_array.indices}, dst_array indices: {dst_array.indices}")
         # Do actual copy
         for w in mesh.workers:
-            w.copy_buffer.remote(dst_array.remote_ref.uuid, src_array.remote_ref.uuid,
+            w.copy_buffer.remote(dst_array.aval.shape,
+                                 src_array.indices,
+                                 dst_array.indices,
+                                 dst_array.remote_ref.uuid,
+                                 src_array.remote_ref.uuid,
                                  target_dtype)
     else:
         assert isinstance(src_array, ReplicatedDistributedArray)
@@ -1815,7 +1836,9 @@ def copy_distributed_array(src_array: Union[DistributedArray, ReplicatedDistribu
         arrays = []
         for mesh in src_array._mesh_array_map:
             meshes.append(mesh)
-            ary = copy_distributed_array(src_array._mesh_array_map[mesh], target_dtype)
+            ary = copy_distributed_array(src_array._mesh_array_map[mesh],
+                                         target_sharding_spec,
+                                         target_dtype)
             arrays.append(ary)
         dst_array = ReplicatedDistributedArray(meshes, arrays)
     return dst_array

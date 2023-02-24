@@ -244,3 +244,20 @@ assert_allclose(expected_state.params,
                 atol=5e-3)
 
 alpa.shutdown()
+
+################################################################################
+# Interpret the Results
+# ---------------------
+# **Some basic concepts**
+# - Cluster mesh and submeshes
+#     - Cluster mesh is a computer cluster that contains GPUs. A ``N×M`` cluster mesh means the cluster has ``N`` physical machines and each machine has ``M`` GPUs.
+#     - Submeshes can be obtained by slicing from the cluster mesh. For example, given a ``N×M`` cluster mesh, a submesh ``(1, M)`` means using all GPUs in one physical machine.
+#     - For more details on how Alpa uses submeshes to solve *inter-operator parallelism*, you can read the **Section 5: Inter-Operator Parallelism** in the `Alpa paper <https://arxiv.org/pdf/2201.12023.pdf>`_.
+# - Device mesh and logical mesh
+#     - A device mesh is a 2-dimensional logical view of a set of physical devices.
+#     - For a set of physical devices, there can be multiple logical views. For example, given 2 nodes and 8 GPUs per node (i.e., 16 devices in total), we can view them as a 2×8, 1×16, 4×4, 8×2, or 16×1 device mesh.
+#     - The mapping between physical devices and the logical device mesh view is optimized by the inter-op pass
+#         - Hence, you can see ``Result mesh_shapes`` and the corresponding ``Result logical_mesh_shapes`` in the optimization output.
+#
+# With the basic concepts in mind, you now can better understand the ``ModuleProfileResult``:
+# - ``ModuleProfileResult``: ``result[(i, j, s, c), m]`` means this stage contains forward layers ``i, i+1, ..., j`` and corresponding backward layers, and runs under the ``s``-th submesh and the ``c``-th auto sharding config for the submesh. The ``m = 0`` means the result is for the forward pass, and ``m = 1`` for backward pass.

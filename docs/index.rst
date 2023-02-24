@@ -30,17 +30,23 @@ Alpa is a system for training and serving large-scale neural networks.
 
 .. toctree::
    :maxdepth: 1
+   :caption: Architecture
+
+   architecture/overview.rst
+   architecture/alpa_compiler_walk_through.rst
+   architecture/intra_op_solver.rst
+
+.. toctree::
+   :maxdepth: 1
    :caption: Benchmark
 
    benchmark/benchmark.rst
 
 .. toctree::
    :maxdepth: 1
-   :caption: Architecture
+   :caption: Publications
 
-   architecture/overview.rst
-   architecture/alpa_compiler_walk_through.rst
-   architecture/intra_op_solver.rst
+   publications/publications.rst
 
 .. toctree::
    :maxdepth: 1

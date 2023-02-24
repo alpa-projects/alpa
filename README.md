@@ -76,11 +76,11 @@ for batch in data_loader:
 ```
 
 ## Learning more
-- [OSDI 2022 paper](https://arxiv.org/abs/2201.12023)
+- [Papers](docs/publications/publications.rst)
 - [Google AI blog](https://ai.googleblog.com/2022/05/alpa-automated-model-parallel-deep.html)
-- [Talk slides](https://docs.google.com/presentation/d/1CQ4S1ff8yURk9XmL5lpQOoMMlsjw4m0zPS6zYDcyp7Y/edit?usp=sharing)
-- [ICML 2022 Big Model Tutorial slides](https://sites.google.com/view/icml-2022-big-model/home)
-- [ICML 2022 Big Model Tutorial video recording](https://icml.cc/virtual/2022/tutorial/18440)
+- [OSDI 2022 talk slides](https://docs.google.com/presentation/d/1CQ4S1ff8yURk9XmL5lpQOoMMlsjw4m0zPS6zYDcyp7Y/edit?usp=sharing)
+- [ICML 2022 big model tutorial slides](https://sites.google.com/view/icml-2022-big-model/home)
+- [ICML 2022 big Model tutorial video recording](https://icml.cc/virtual/2022/tutorial/18440)
 - [Prof. Ion Stoica introduces the system](https://www.youtube.com/watch?v=qzYoMldlyoA)
 
 ## Getting Involved

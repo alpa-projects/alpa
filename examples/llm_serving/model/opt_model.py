@@ -548,6 +548,42 @@ def get_config(name, **kwargs):
             hidden_size=12288, input_dim=12288, ffn_embed_dim=12288 * 4,
             version=3,
         )
+    elif name == "opt-iml-1.3b":
+        config = OPTConfig(
+            max_seq_len=2048, num_hidden_layers=24, n_head=32,
+            hidden_size=2048, input_dim=2048, ffn_embed_dim=2048 * 4,
+            version=3,
+        )
+    elif name == "opt-iml-30b":
+        config = OPTConfig(
+            max_seq_len=2048, num_hidden_layers=48, n_head=56,
+            hidden_size=7168, input_dim=7168, ffn_embed_dim=7168 * 4,
+            version=3,
+        )
+    elif name == "opt-iml-175b":
+        config = OPTConfig(
+            max_seq_len=2048, num_hidden_layers=96, n_head=96,
+            hidden_size=12288, input_dim=12288, ffn_embed_dim=12288 * 4,
+            version=3,
+        )
+    elif name == "opt-iml-max-1.3b":
+        config = OPTConfig(
+            max_seq_len=2048, num_hidden_layers=24, n_head=32,
+            hidden_size=2048, input_dim=2048, ffn_embed_dim=2048 * 4,
+            version=3,
+        )
+    elif name == "opt-iml-max-30b":
+        config = OPTConfig(
+            max_seq_len=2048, num_hidden_layers=48, n_head=56,
+            hidden_size=7168, input_dim=7168, ffn_embed_dim=7168 * 4,
+            version=3,
+        )
+    elif name == "opt-iml-max-175b":
+        config = OPTConfig(
+            max_seq_len=2048, num_hidden_layers=96, n_head=96,
+            hidden_size=12288, input_dim=12288, ffn_embed_dim=12288 * 4,
+            version=3,
+        )
     else:
         raise ValueError(f"Invalid model name: {name}")
 

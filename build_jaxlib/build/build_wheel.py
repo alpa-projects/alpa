@@ -48,6 +48,10 @@ parser.add_argument(
   default=None,
   required=True,
   help="Target CPU architecture. Required.")
+parser.add_argument(
+  "--dev_install",
+  action="store_true",
+  help="Do not build wheel. Use dev install")
 args = parser.parse_args()
 
 r = runfiles.Create()
@@ -78,6 +82,14 @@ def copy_file(src_file, dst_dir, dst_filename=None, from_runfiles=True):
     shutil.copyfile(src_file, dst_file)
   else:
     shutil.copy(src_file, dst_file)
+
+
+def dev_install(sources_path, output_path):
+  sys.stderr.write("Dev Install:\n")
+  sys.stderr.write(f'Run "pip install -e ." once in {output_path}\n')
+  os.system(f"rm -rf {output_path}/*")
+  os.system(f"cp -r {sources_path}/* {output_path}")
+  return
 
 
 _XLA_EXTENSION_STUBS = [
@@ -308,7 +320,10 @@ if sources_path is None:
 try:
   os.makedirs(args.output_path, exist_ok=True)
   prepare_wheel(sources_path)
-  build_wheel(sources_path, args.output_path, args.cpu)
+  if args.dev_install:
+    dev_install(sources_path, args.output_path)
+  else:
+    build_wheel(sources_path, args.output_path, args.cpu)
 finally:
   if tmpdir:
     tmpdir.cleanup()

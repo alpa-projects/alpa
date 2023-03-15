@@ -284,6 +284,11 @@ def write_bazelrc(*, python_bin_path, remote_build,
       f.write("build --config=cuda\n")
       if not enable_nccl:
         f.write("build --config=nonccl\n")
+      else:
+        from cupy.cuda import nccl
+        nccl_version = str(nccl.get_version())
+        nccl_version = f"{nccl_version[0]}.{int(nccl_version[1:-2])}.{int(nccl_version[-2:])}"
+        f.write(f'build --action_env TF_NCCL_VERSION="{nccl_version}"\n')
     if enable_tpu:
       f.write("build --config=tpu\n")
     if enable_remote_tpu:
@@ -451,6 +456,10 @@ def main():
       "configure_only",
       default=False,
       help_str="If true, writes a .bazelrc file but does not build jaxlib.")
+  parser.add_argument(
+      "--dev_install",
+      action="store_true",
+      help="Do not build wheel. Use dev install")
   args = parser.parse_args()
 
   if is_windows() and args.enable_cuda:
@@ -558,6 +567,8 @@ def main():
     [":build_wheel", "--",
     f"--output_path={output_path}",
     f"--cpu={wheel_cpu}"])
+  if args.dev_install:
+    command += ["--dev_install"]
   print(" ".join(command))
   shell(command)
   shell([bazel_path] + args.bazel_startup_options + ["shutdown"])

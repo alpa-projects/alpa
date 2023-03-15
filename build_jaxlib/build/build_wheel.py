@@ -48,10 +48,6 @@ parser.add_argument(
   default=None,
   required=True,
   help="Target CPU architecture. Required.")
-parser.add_argument(
-  "--dev_install",
-  action="store_true",
-  help="Do not build wheel. Use dev install")
 args = parser.parse_args()
 
 r = runfiles.Create()
@@ -83,12 +79,6 @@ def copy_file(src_file, dst_dir, dst_filename=None, from_runfiles=True):
   else:
     shutil.copy(src_file, dst_file)
 
-def dev_install(sources_path, output_path):
-  sys.stderr.write("Dev Install:\n")
-  sys.stderr.write(f'Run "pip install -e ." once in {output_path}\n')
-  os.system(f"rm -rf {output_path}/*")
-  os.system(f"cp -r {sources_path}/* {output_path}")
-  return
 
 _XLA_EXTENSION_STUBS = [
     "__init__.pyi",
@@ -179,38 +169,42 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib("__main__/jaxlib/init.py", dst_filename="__init__.py")
   copy_to_jaxlib(f"__main__/jaxlib/cpu_feature_guard.{pyext}")
   copy_to_jaxlib("__main__/jaxlib/lapack.py")
-  copy_to_jaxlib(f"__main__/jaxlib/_lapack.{pyext}")
-  copy_to_jaxlib("__main__/jaxlib/mhlo_helpers.py")
-  copy_to_jaxlib(f"__main__/jaxlib/_ducc_fft.{pyext}")
+  copy_to_jaxlib("__main__/jaxlib/hlo_helpers.py")
   copy_to_jaxlib("__main__/jaxlib/ducc_fft.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_prng.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_linalg.py")
+  copy_to_jaxlib("__main__/jaxlib/gpu_rnn.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_solver.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_sparse.py")
   copy_to_jaxlib("__main__/jaxlib/version.py")
   copy_to_jaxlib("__main__/jaxlib/xla_client.py")
   copy_to_jaxlib(f"__main__/jaxlib/xla_extension.{pyext}")
+  cpu_dir = os.path.join(jaxlib_dir, "cpu")
+  os.makedirs(cpu_dir)
+  copy_file(f"__main__/jaxlib/cpu/_lapack.{pyext}", dst_dir=cpu_dir)
+  copy_file(f"__main__/jaxlib/cpu/_ducc_fft.{pyext}", dst_dir=cpu_dir)
 
   cuda_dir = os.path.join(jaxlib_dir, "cuda")
-  if exists(f"__main__/jaxlib/cuda/_cusolver.{pyext}"):
+  if exists(f"__main__/jaxlib/cuda/_solver.{pyext}"):
     libdevice_dir = os.path.join(cuda_dir, "nvvm", "libdevice")
     os.makedirs(libdevice_dir)
     copy_file("local_config_cuda/cuda/cuda/nvvm/libdevice/libdevice.10.bc", dst_dir=libdevice_dir)
-    copy_file(f"__main__/jaxlib/cuda/_cusolver.{pyext}", dst_dir=cuda_dir)
-    copy_file(f"__main__/jaxlib/cuda/_cublas.{pyext}", dst_dir=cuda_dir)
-    copy_file(f"__main__/jaxlib/cuda/_cuda_linalg.{pyext}", dst_dir=cuda_dir)
-    copy_file(f"__main__/jaxlib/cuda/_cuda_prng.{pyext}", dst_dir=cuda_dir)
+    copy_file(f"__main__/jaxlib/cuda/_solver.{pyext}", dst_dir=cuda_dir)
+    copy_file(f"__main__/jaxlib/cuda/_blas.{pyext}", dst_dir=cuda_dir)
+    copy_file(f"__main__/jaxlib/cuda/_linalg.{pyext}", dst_dir=cuda_dir)
+    copy_file(f"__main__/jaxlib/cuda/_prng.{pyext}", dst_dir=cuda_dir)
+    copy_file(f"__main__/jaxlib/cuda/_rnn.{pyext}", dst_dir=cuda_dir)
   rocm_dir = os.path.join(jaxlib_dir, "rocm")
-  if exists(f"__main__/jaxlib/rocm/_hipsolver.{pyext}"):
+  if exists(f"__main__/jaxlib/rocm/_solver.{pyext}"):
     os.makedirs(rocm_dir)
-    copy_file(f"__main__/jaxlib/rocm/_hipsolver.{pyext}", dst_dir=rocm_dir)
-    copy_file(f"__main__/jaxlib/rocm/_hipblas.{pyext}", dst_dir=rocm_dir)
-    copy_file(f"__main__/jaxlib/rocm/_hip_linalg.{pyext}", dst_dir=rocm_dir)
-    copy_file(f"__main__/jaxlib/rocm/_hip_prng.{pyext}", dst_dir=rocm_dir)
-  if exists(f"__main__/jaxlib/cuda/_cusparse.{pyext}"):
-    copy_file(f"__main__/jaxlib/cuda/_cusparse.{pyext}", dst_dir=cuda_dir)
-  if exists(f"__main__/jaxlib/rocm/_hipsparse.{pyext}"):
-    copy_file(f"__main__/jaxlib/rocm/_hipsparse.{pyext}", dst_dir=rocm_dir)
+    copy_file(f"__main__/jaxlib/rocm/_solver.{pyext}", dst_dir=rocm_dir)
+    copy_file(f"__main__/jaxlib/rocm/_blas.{pyext}", dst_dir=rocm_dir)
+    copy_file(f"__main__/jaxlib/rocm/_linalg.{pyext}", dst_dir=rocm_dir)
+    copy_file(f"__main__/jaxlib/rocm/_prng.{pyext}", dst_dir=rocm_dir)
+  if exists(f"__main__/jaxlib/cuda/_sparse.{pyext}"):
+    copy_file(f"__main__/jaxlib/cuda/_sparse.{pyext}", dst_dir=cuda_dir)
+  if exists(f"__main__/jaxlib/rocm/_sparse.{pyext}"):
+    copy_file(f"__main__/jaxlib/rocm/_sparse.{pyext}", dst_dir=rocm_dir)
 
 
   mlir_dir = os.path.join(jaxlib_dir, "mlir")
@@ -225,6 +219,7 @@ def prepare_wheel(sources_path):
   copy_file("__main__/jaxlib/mlir/dialects/_builtin_ops_gen.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/_chlo_ops_gen.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/_mhlo_ops_gen.py", dst_dir=mlir_dialects_dir)
+  copy_file("__main__/jaxlib/mlir/dialects/_stablehlo_ops_gen.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/_ods_common.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/_func_ops_ext.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/_func_ops_gen.py", dst_dir=mlir_dialects_dir)
@@ -235,6 +230,7 @@ def prepare_wheel(sources_path):
   copy_file("__main__/jaxlib/mlir/dialects/builtin.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/chlo.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/mhlo.py", dst_dir=mlir_dialects_dir)
+  copy_file("__main__/jaxlib/mlir/dialects/stablehlo.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/func.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/ml_program.py", dst_dir=mlir_dialects_dir)
 
@@ -299,7 +295,7 @@ def build_wheel(sources_path, output_path, cpu):
     output_file = os.path.join(output_path, os.path.basename(wheel))
     sys.stderr.write(f"Output wheel: {output_file}\n\n")
     sys.stderr.write("To install the newly-built jaxlib wheel, run:\n")
-    sys.stderr.write(f"  pip install {output_file}\n\n")
+    sys.stderr.write(f"  pip install {output_file} --force-reinstall\n\n")
     shutil.copy(wheel, output_path)
 
 
@@ -312,10 +308,7 @@ if sources_path is None:
 try:
   os.makedirs(args.output_path, exist_ok=True)
   prepare_wheel(sources_path)
-  if args.dev_install:
-    dev_install(sources_path, args.output_path)
-  else:
-    build_wheel(sources_path, args.output_path, args.cpu)
+  build_wheel(sources_path, args.output_path, args.cpu)
 finally:
   if tmpdir:
     tmpdir.cleanup()

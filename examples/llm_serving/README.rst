@@ -4,7 +4,7 @@ Serving OPT-175B, BLOOM-176B and CodeGen-16B using Alpa
 
 This tutorial shows how to setup a serving system to serve one of the largest available pretrained language models `OPT-175B <https://github.com/facebookresearch/metaseq/tree/main/projects/OPT>`_. The instructions for other models (BLOOM and CodeGen) are also listed at the end.
 
-👉 Try a live demo at `Alpa-OPT Demo <https://opt.alpa.ai>`_ 👈
+👉 Try a live demo at `Alpa-OPT Demo <https://alpa-projects.github.io/opt>`_ 👈
 
 Overview
 ========

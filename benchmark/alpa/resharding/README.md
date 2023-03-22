@@ -60,7 +60,7 @@ If you only want to run one test case,
 ```
 python3 benchmark_cross_mesh_resharding.py --suite n-to-m --case case1 --resharding-mode send_recv --resharding-loadbalance-mode normal
 ```
-Here, I take case1 as example and you could choose other cases by refering to `suite.py`. Same as above, you could 
+Here, I take case1 as example and you could choose other cases by referring to `suite.py`. Same as above, you could 
 specify the configurations for cross mesh resharding.
 
 ## Result

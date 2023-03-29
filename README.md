@@ -22,11 +22,8 @@ The key features of Alpa include:
 ✨ **Tight Integration with Machine Learning Ecosystem**. Alpa is backed by open-source, high-performance, and production-ready libraries such as [Jax](https://github.com/google/jax), [XLA](https://www.tensorflow.org/xla), and [Ray](https://github.com/ray-project/ray).
 
 ## Serving
-Alpa provides a free, unlimited OPT-175B text generation service.
-Try the service at [https://opt.alpa.ai/](https://opt.alpa.ai/) and share your [prompting results](examples/llm_serving/service/img.png)!
-
 The code below shows how to use huggingface/transformers interface and Alpa distributed backend for large model inference.
-Detailed documentation is in [Serving OPT-175B using Alpa](https://alpa.ai/tutorials/opt_serving.html).
+Detailed documentation is in [Serving OPT-175B using Alpa](https://alpa-projects.github.io/tutorials/opt_serving.html).
 
 ```python
 from transformers import AutoTokenizer

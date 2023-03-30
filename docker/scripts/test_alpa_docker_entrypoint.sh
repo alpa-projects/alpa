@@ -32,7 +32,7 @@ pip install /alpa-dist/jaxlib-alpa-ci/jaxlib-0.3.22+cuda111.cudnn805-cp38-cp38-m
 pip install jax==0.3.22
 
 # install cupy
-pip install cupy-cuda111
+pip install cupy-cuda11x
 python -m cupyx.tools.install_library --library nccl --cuda 11.1
 pip install -e .[dev]
 ray start --head

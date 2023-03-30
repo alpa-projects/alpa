@@ -159,9 +159,7 @@ perf_1_to_m_suite = {(n_node, gpu_per_node): BenchmarkCase(
     (1 << 28,),
     ShardingSpec([NoSharding()], [Replicated(1)]),
     ShardingSpec([NoSharding()], [Replicated(n_node * gpu_per_node)]),
-) for n_node, gpu_per_node in [(1, 1), (1, 2), (1, 3), (1, 4), (2,
-                                                                2), (3,
-                                                                     2), (4, 2)]
+) for n_node, gpu_per_node in [(1, 1), (1, 2), (1, 3), (1, 4)]
                     }
 
 resharding_1_to_m_configs = [

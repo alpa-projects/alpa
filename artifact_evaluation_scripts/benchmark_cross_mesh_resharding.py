@@ -11,7 +11,9 @@ import ray
 
 from alpa import init
 from alpa.device_mesh import (create_remote_array_refs,
-                              get_global_virtual_physical_mesh)
+                              get_global_cluster,
+                              get_global_virtual_physical_mesh,
+                              set_global_virtual_physical_mesh)
 from alpa.mesh_executable import next_mesh_executable_uuid
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.runtime_emitter import PipelineInstEmitter

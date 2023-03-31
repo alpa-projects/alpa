@@ -14,8 +14,8 @@ import suite_manual_gpt
 import suite_unet
 
 benchmark_suites = {
-    "gpt.perf_test_manual": suite_manual_gpt.perf_test_suite,
-    "unet.perf_test_auto": suite_unet.perf_test_auto_suite
+    "gpt": suite_manual_gpt.perf_test_suite,
+    "unet": suite_unet.perf_test_auto_suite
 }
 
 

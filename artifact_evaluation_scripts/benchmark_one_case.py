@@ -3,19 +3,16 @@ import os
 import argparse
 import multiprocessing as mp
 
-import jax
-
-from alpa import (init, global_config, get_global_cluster,
-                  LocalPhysicalDeviceMesh)
+from alpa import init, global_config
 from alpa.util import disable_tqdm_globally
 
-from benchmark_one_case_gpt_bert import (benchmark_gpt_bert_3d_internal,
-                                         benchmark_gpt_bert_2d_internal)
+from benchmark_one_case_gpt_bert import benchmark_gpt_bert_3d_internal
 from benchmark_one_case_unet import benchmark_unet_3d_internal
 
 
 def benchmark_one_case_internal(model,
                                 case,
+                                comm_overlap_level,
                                 niter,
                                 num_hosts,
                                 num_devices_per_host,
@@ -27,6 +24,15 @@ def benchmark_one_case_internal(model,
 
     # local mode does not support dummy value
     global_config.use_dummy_value_for_benchmarking = True
+    # Select the communication pattern based on pipeline schedule
+    global_config.nccl_mode = "xla_extension"
+    global_config.resharding_mode = "broadcast"
+    if comm_overlap_level > 0:
+        global_config.enable_overlapping = True
+    if comm_overlap_level > 1:
+        pipeline_schedule = "1f1b_overlap_friendly"
+    else:
+        pipeline_schedule = "1f1b"
 
     global_config.pipeline_sync_for_timer = True
     if profile_stage_execution_time:
@@ -38,6 +44,7 @@ def benchmark_one_case_internal(model,
         result = benchmark_gpt_bert_3d_internal(
             model,
             case,
+            pipeline_schedule,
             niter,
             num_hosts,
             num_devices_per_host,
@@ -47,6 +54,7 @@ def benchmark_one_case_internal(model,
         global_config.xla_gpu_autotune_level = 0
         result = benchmark_unet_3d_internal(
             case,
+            pipeline_schedule,
             niter,
             num_hosts,
             num_devices_per_host,

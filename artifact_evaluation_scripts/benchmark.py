@@ -20,6 +20,7 @@ benchmark_suites = {
 
 
 def benchmark_suite(suite_name,
+                    comm_overlap_level,
                     num_hosts,
                     num_devices_per_host,
                     exp_name="default",
@@ -51,6 +52,7 @@ def benchmark_suite(suite_name,
         result = benchmark_one_case(
             model_type,
             benchmark_case,
+            comm_overlap_level,
             niter,
             num_hosts,
             num_devices_per_host,
@@ -84,6 +86,14 @@ if __name__ == "__main__":
                         choices=list(benchmark_suites.keys()),
                         type=str,
                         required=True)
+    parser.add_argument(
+        "--comm-overlap-level",
+        choices=[0, 1, 2],
+        type=int,
+        required=True,
+        help="Level 0: no overlap between communication and computation; "
+        "Level 1: overlap communication and computation; "
+        "Level 2: use overlap friendly pipeline schedule.")
     parser.add_argument("--niter",
                         type=int,
                         default=3,
@@ -111,7 +121,7 @@ if __name__ == "__main__":
 
     num_hosts, num_devices_per_host = get_num_hosts_and_num_devices(args)
 
-    benchmark_suite(args.suite, num_hosts, num_devices_per_host, args.exp_name,
-                    args.niter, args.profile_driver_time,
-                    args.profile_stage_execution_time, args.disable_tqdm,
-                    args.use_separate_process)
+    benchmark_suite(args.suite, args.comm_overlap_level, num_hosts,
+                    num_devices_per_host, args.exp_name, args.niter,
+                    args.profile_driver_time, args.profile_stage_execution_time,
+                    args.disable_tqdm, args.use_separate_process)

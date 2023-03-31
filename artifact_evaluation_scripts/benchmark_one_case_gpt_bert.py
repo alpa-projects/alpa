@@ -6,8 +6,7 @@ import optax
 
 import alpa
 from alpa import (parallelize, get_global_cluster,
-                  set_global_virtual_physical_mesh, automatic_remat,
-                  global_config)
+                  set_global_virtual_physical_mesh)
 from alpa.model.bert_model import BertConfig, FlaxBertForMaskedLMModule
 from alpa.model.model_util import TrainState
 from alpa.model.gpt_model import FlaxGPTForLMModule
@@ -16,9 +15,8 @@ from alpa.util import print_used_time
 
 from util import compute_gpt_parameter_count, compute_gpt_tflops
 from benchmark_parallel_utils import (
-    get_pipeshard_parallel_method, get_shard_parallel_method,
-    compile_and_benchmark_pipeshard_training_executable,
-    compile_and_benchmark_shard_training_executable)
+    get_pipeshard_parallel_method,
+    compile_and_benchmark_pipeshard_training_executable)
 
 
 def report_pipeline_breakdown(executable, timer_names, niter):
@@ -199,6 +197,7 @@ def compute_gpt_bert_statistics(benchmark_case, latencies, num_devices):
 
 def benchmark_gpt_bert_3d_internal(model_type,
                                    benchmark_case,
+                                   pipeline_schedule,
                                    niter,
                                    num_hosts,
                                    num_devices_per_host,
@@ -211,8 +210,6 @@ def benchmark_gpt_bert_3d_internal(model_type,
     set_global_virtual_physical_mesh(virtual_mesh)
 
     # Parallel configs
-    pipeline_schedule = ("1f1b_overlap_friendly"
-                         if global_config.enable_overlapping else "1f1b")
     (method, add_manual_remat, add_manual_layer_marker,
      num_manual_pipeline_stages) = get_pipeshard_parallel_method(
          benchmark_case,
@@ -258,34 +255,3 @@ def benchmark_gpt_bert_3d_internal(model_type,
     }
 
     return parameter_count, max_mem_allocated, latencies, tflops, metadata
-
-
-def benchmark_gpt_bert_2d_internal(physical_mesh,
-                                   model_type,
-                                   benchmark_case,
-                                   niter,
-                                   profile_driver_time=False):
-    method, grad_func = get_shard_parallel_method(benchmark_case, physical_mesh)
-
-    state, batch, rngkey = prepare_gpt_bert_input_and_model(
-        model_type,
-        benchmark_case,
-        add_manual_remat=benchmark_case.parallel_args.use_remat,
-        aval_train_state=global_config.use_dummy_value_for_benchmarking)
-
-    train_step = get_train_step(method, grad_func=grad_func)
-
-    (latencies, ilp_objective, peak_mem,
-     executable) = compile_and_benchmark_shard_training_executable(
-         physical_mesh,
-         niter,
-         train_step,
-         state, (batch, rngkey),
-         profile_driver_time=profile_driver_time)
-
-    tflops, parameter_count = compute_gpt_bert_statistics(
-        benchmark_case, latencies, physical_mesh.num_devices)
-    metadata = {
-        "ilp_objective": ilp_objective,
-    }
-    return parameter_count, peak_mem, latencies, tflops, metadata

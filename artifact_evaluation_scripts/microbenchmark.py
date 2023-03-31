@@ -31,9 +31,9 @@ def benchmark_one_case(*args, use_separate_process=False, **kwargs):
 
 
 def benchmark_n_to_m_suite(functional_test):
-    os.makedirs("tmp", exist_ok=True)
+    os.makedirs("result", exist_ok=True)
 
-    result_file = "tmp/n_to_m_result.json"
+    result_file = "result/n_to_m_result.json"
     result = []
 
     benchmark_cases = suite.perf_n_to_m_suite
@@ -60,9 +60,9 @@ def benchmark_n_to_m_suite(functional_test):
 
 
 def benchmark_1_to_m_suite(functional_test):
-    os.makedirs("tmp", exist_ok=True)
+    os.makedirs("result", exist_ok=True)
 
-    result_file = "tmp/1_to_m_result.json"
+    result_file = "result/1_to_m_result.json"
     result = []
 
     benchmark_cases = suite.perf_1_to_m_suite

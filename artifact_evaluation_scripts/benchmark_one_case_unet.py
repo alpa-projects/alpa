@@ -1,6 +1,5 @@
 """Benchmark one case of inter-op + intra-op parallelism."""
 from alpa.pipeline_parallel.layer_construction import ManualLayerOption
-from flax.training import common_utils
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -8,8 +7,7 @@ import optax
 
 import alpa
 from alpa import (parallelize, get_global_cluster,
-                  set_global_virtual_physical_mesh, ShardParallel,
-                  automatic_remat, global_config)
+                  set_global_virtual_physical_mesh)
 from alpa.model.unet_2d import get_unet_2d
 from alpa.model.model_util import TrainState
 from alpa.pipeline_parallel.stage_construction import get_last_dp_result
@@ -80,9 +78,6 @@ def get_train_step(learning_rate_fn,
             metrics = {"loss": loss, "lr": learning_rate_fn(step)}
             return loss, metrics
 
-        if isinstance(method, ShardParallel) and use_remat:
-            loss_fn = automatic_remat(loss_fn, layer_num=num_remat_layers)
-
         step = state.step
 
         grad_fn = grad_func(loss_fn, has_aux=True)
@@ -149,6 +144,7 @@ def prepare_unet_input_and_model(benchmark_case):
 
 
 def benchmark_unet_3d_internal(benchmark_case,
+                               pipeline_schedule,
                                niter,
                                num_hosts,
                                num_devices_per_host,
@@ -162,8 +158,6 @@ def benchmark_unet_3d_internal(benchmark_case,
 
     # Parallel configs
     allow_mixed_mesh_shape = True
-    pipeline_schedule = ("1f1b_overlap_friendly"
-                         if global_config.enable_overlapping else "1f1b")
     (method, _, _, _) = get_pipeshard_parallel_method(
         benchmark_case,
         virtual_mesh.num_devices_per_host,
@@ -199,7 +193,7 @@ def benchmark_unet_3d_internal(benchmark_case,
     #     for k in profiled:
     #         pstr += f"Exec {k}: {profiled[k][0]}s; "
     #     print(pstr)
-    executable.dump_debug_info("tmp")
+    # executable.dump_debug_info("tmp")
 
     # Compute statistics
     num_gpus = virtual_mesh.num_devices

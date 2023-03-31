@@ -1528,7 +1528,7 @@ class DistributedArray:
 
     def block_until_ready(self):
         """Block until all remote buffers of this array are ready."""
-        self.device_mesh.block_until_ready_remote_buffers(self.uuid)
+        self.device_mesh.block_until_ready_remote_buffers([self.remote_ref])
 
     def delete(self):
         self.remote_ref = None

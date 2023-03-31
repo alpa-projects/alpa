@@ -39,7 +39,7 @@ def get_device_meshes(src_mesh_shape, dst_mesh_shape, functional_test):
     if functional_test:
         assert virtual_mesh.num_hosts >= src_num_host
         assert virtual_mesh.num_hosts >= dst_num_host
-        assert virtual_mesh.num_devices_per_host > src_mesh_shape[1] + dst_mesh_shape[1]
+        assert virtual_mesh.num_devices_per_host >= src_mesh_shape[1] + dst_mesh_shape[1]
         src_host_indices = range(src_num_host)
         dst_host_indices = range(dst_num_host)
         src_device_indices = [range(src_mesh_shape[1])] * src_num_host

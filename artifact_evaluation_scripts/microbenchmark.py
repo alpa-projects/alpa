@@ -30,7 +30,7 @@ def benchmark_one_case(*args, use_separate_process=False, **kwargs):
     return result_namespace.result
 
 
-def benchmark_n_to_m_suite():
+def benchmark_n_to_m_suite(functional_test):
     os.makedirs("tmp", exist_ok=True)
 
     result_file = "tmp/n_to_m_result.json"
@@ -50,7 +50,7 @@ def benchmark_n_to_m_suite():
                 benchmark_case.src_sharding_spec,
                 benchmark_case.dst_sharding_spec, benchmark_case.tensor_shape,
                 config["resharding_mode"], config["use_local_allgather"],
-                config["resharding_loadbalance_mode"])
+                config["resharding_loadbalance_mode"], functional_test)
 
             print(one_result)
             result.append(one_result)
@@ -59,7 +59,7 @@ def benchmark_n_to_m_suite():
             time.sleep(0.1)  # for ctrl+c to work
 
 
-def benchmark_1_to_m_suite():
+def benchmark_1_to_m_suite(functional_test):
     os.makedirs("tmp", exist_ok=True)
 
     result_file = "tmp/1_to_m_result.json"
@@ -79,7 +79,7 @@ def benchmark_1_to_m_suite():
                 benchmark_case.src_sharding_spec,
                 benchmark_case.dst_sharding_spec, benchmark_case.tensor_shape,
                 config["resharding_mode"], config["use_local_allgather"],
-                config["resharding_loadbalance_mode"])
+                config["resharding_loadbalance_mode"], functional_test)
             print(one_result)
             result.append(one_result)
             json.dump(result, open(result_file, "w"), indent=4)
@@ -93,9 +93,10 @@ if __name__ == "__main__":
                         choices=["1-to-m", "n-to-m"],
                         type=str,
                         required=True)
+    parser.add_argument("--functional-test", action="store_true")
     args = parser.parse_args()
 
     if args.suite == "1-to-m":
-        benchmark_1_to_m_suite()
+        benchmark_1_to_m_suite(args.functional_test)
     else:
-        benchmark_n_to_m_suite()
+        benchmark_n_to_m_suite(args.functional_test)

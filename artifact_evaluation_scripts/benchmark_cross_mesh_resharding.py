@@ -11,9 +11,7 @@ import ray
 
 from alpa import init
 from alpa.device_mesh import (create_remote_array_refs,
-                              get_global_cluster,
-                              get_global_virtual_physical_mesh,
-                              set_global_virtual_physical_mesh)
+                              get_global_virtual_physical_mesh)
 from alpa.mesh_executable import next_mesh_executable_uuid
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.runtime_emitter import PipelineInstEmitter
@@ -30,19 +28,31 @@ from alpa.timer import timers
 import suite
 
 
-def get_device_meshes(src_mesh_shape, dst_mesh_shape):
+def get_device_meshes(src_mesh_shape, dst_mesh_shape, functional_test):
+    """
+    If there is no enough nodes, one can use functioning test, where src and dst
+    meshes can share some nodes(which will make communication faster).
+    """
     virtual_mesh = get_global_virtual_physical_mesh()
     src_num_host = src_mesh_shape[0]
     dst_num_host = dst_mesh_shape[0]
-    assert virtual_mesh.num_hosts >= src_num_host+dst_num_host,\
-        "Error: There are not enough nodes for this test case"
-    src_mesh = virtual_mesh.slice_2d(range(src_num_host),
-                                     [range(src_mesh_shape[1])] *
-                                     src_num_host).get_physical_mesh()
-    dst_host_indices = range(src_num_host, src_num_host + dst_num_host)
-    dst_device_indices = [range(dst_mesh_shape[1])] * dst_num_host
-    dst_mesh = virtual_mesh.slice_2d(dst_host_indices,
-                                     dst_device_indices).get_physical_mesh()
+    if functional_test:
+        assert virtual_mesh.num_hosts >= src_num_host
+        assert virtual_mesh.num_hosts >= dst_num_host
+        assert virtual_mesh.num_devices_per_host > src_mesh_shape[1] + dst_mesh_shape[1]
+        src_host_indices = range(src_num_host)
+        dst_host_indices = range(dst_num_host)
+        src_device_indices = [range(src_mesh_shape[1])] * src_num_host
+        dst_device_indices = [range(src_mesh_shape[1], src_mesh_shape[1] + dst_mesh_shape[1])] * dst_num_host
+    else:
+        assert virtual_mesh.num_hosts >= src_num_host+dst_num_host,\
+            "Error: There are not enough nodes for this test case"
+        src_host_indices = range(src_num_host)
+        dst_host_indices = range(src_num_host, src_num_host + dst_num_host)
+        src_device_indices = [range(src_mesh_shape[1])] * src_num_host
+        dst_device_indices = [range(dst_mesh_shape[1])] * dst_num_host
+    src_mesh = virtual_mesh.slice_2d(src_host_indices, src_device_indices).get_physical_mesh()
+    dst_mesh = virtual_mesh.slice_2d(dst_host_indices, dst_device_indices).get_physical_mesh()
     return src_mesh, dst_mesh
 
 
@@ -63,6 +73,7 @@ def benchmark_one_case_internal(
     resharding_mode="send_recv",
     use_local_allgather=True,
     resharding_loadbalance_mode="normal",
+    functional_test=False,
 ):
 
     global_config.resharding_mode = resharding_mode
@@ -71,7 +82,7 @@ def benchmark_one_case_internal(
 
     init(cluster="ray")
 
-    src_mesh, dst_mesh = get_device_meshes(src_mesh_shape, dst_mesh_shape)
+    src_mesh, dst_mesh = get_device_meshes(src_mesh_shape, dst_mesh_shape, functional_test)
 
     var = Var(0, "", ShapedArray(tensor_shape, jnp.int32))
 
@@ -274,6 +285,7 @@ if __name__ == "__main__":
                         ])
     parser.add_argument("--use-local-allgather", action="store_true")
     parser.add_argument("--disable-tqdm", action="store_true")
+    parser.add_argument("--functional-test", action="store_true")
     args = parser.parse_args()
 
     if args.suite == "1-to-m":
@@ -284,7 +296,8 @@ if __name__ == "__main__":
     result = benchmark_one_case_internal(
         case.src_mesh_shape, case.dst_mesh_shape, case.src_sharding_spec,
         case.dst_sharding_spec, case.tensor_shape, args.resharding_mode,
-        args.use_local_allgather, args.resharding_loadbalance_mode)
+        args.use_local_allgather, args.resharding_loadbalance_mode,
+        args.functional_test)
     print(result)
 
 # python benchmark_cross_mesh_resharding.py --case case1 --resharding-mode broadcast --resharding-loadbalance-mode normal

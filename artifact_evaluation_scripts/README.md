@@ -1,10 +1,11 @@
 # Benchmark
-This folder contains benchmarking code for cross mesh resharding, corresponding to the experiment section in [On Optimizing the Communication of Model Parallelism](https://arxiv.org/abs/2211.05322). 
+This folder contains benchmarking code corresponding to the experiment section in [On Optimizing the Communication of Model Parallelism](https://arxiv.org/abs/2211.05322). 
 
 To make the benchmark feasible in a short amount of time, this documentation provides: Instructions for benchmarking on an AWS p3.8xlarge cluster. You can use these to quickly run cross mesh resharding using Alpa and get the statistics of the performance. The statistics may be different from that in our papaer if your cluster is not an AWS p3.8xlarge cluster. 
 There are two types of experiments for benchmarking:
-- Single device to multiple devices microbenchmark: corronspond to section 5.1.1 in [On Optimizing the Communication of Model Parallelism](https://arxiv.org/abs/2211.05322). 
-- Multiple devices to multiple devices microbenchmark: corronspond to section 5.1.2 and 5.3.1 in [On Optimizing the Communication of Model Parallelism](https://arxiv.org/abs/2211.05322). 
+- Single device to multiple devices microbenchmark: corronspond to section 5.1.1. 
+- Multiple devices to multiple devices microbenchmark: corronspond to section 5.1.2 and 5.3.1. 
+- End-to-end tests: correspond to section 5.2.
 
 ## Benchmark Steps
 

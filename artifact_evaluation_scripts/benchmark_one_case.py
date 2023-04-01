@@ -33,6 +33,10 @@ def benchmark_one_case_internal(model,
         pipeline_schedule = "1f1b_overlap_friendly"
     else:
         pipeline_schedule = "1f1b"
+    if comm_overlap_level > 2:
+        global_config.pipeline_use_signal_send_recv = True
+        global_config.nccl_mode = "send_recv"
+        global_config.use_local_allgather = False
 
     global_config.pipeline_sync_for_timer = True
     if profile_stage_execution_time:

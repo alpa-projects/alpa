@@ -111,7 +111,7 @@ class MeshHostWorker:
 
     def __init__(self, server_address: str, num_hosts: int, host_id: int,
                  mesh_id: int, move_worker: DaemonMoveWorker,
-                 runtime_random_seed: int):
+                 runtime_random_seed: int, worker_global_config: dict):
         self.num_hosts = num_hosts
         self.host_id = host_id
         self.mesh_id = mesh_id
@@ -149,6 +149,7 @@ class MeshHostWorker:
         self.data_loader_iters = {}  # Dict[uuid -> iterator]
 
         self.set_runtime_random_seed(runtime_random_seed)
+        global_config.update_worker_config(worker_global_config)
 
         if global_config.pipeline_use_signal_send_recv:
             print("Use signal send recv for debugging.")
@@ -1115,7 +1116,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                                      "env_vars": env_vars
                                  }).remote(server_address, self.num_hosts, i,
                                            self.mesh_id, move_worker,
-                                           global_config.runtime_random_seed)
+                                           global_config.runtime_random_seed,
+                                           global_config)
             workers.append(worker)
         return service_server, workers
 

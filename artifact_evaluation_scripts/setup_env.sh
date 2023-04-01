@@ -1,5 +1,9 @@
+# use by bash setup_env.sh $ALPA_FOLDER_PATH
 ALPA_FOLDER_PATH="$1"
 
+# Install cupy and nccl, skip if installed.
+pip install -U cupy-cuda11x --no-cache-dir && \
+    python -m cupyx.tools.install_library --cuda 11.x --library nccl
 # Building the jaxlib
 cd $ALPA_FOLDER_PATH
 cd build_jaxlib

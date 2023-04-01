@@ -88,12 +88,13 @@ if __name__ == "__main__":
                         required=True)
     parser.add_argument(
         "--comm-overlap-level",
-        choices=[0, 1, 2],
+        choices=[0, 1, 2, 3],
         type=int,
         required=True,
         help="Level 0: no overlap between communication and computation; "
         "Level 1: overlap communication and computation; "
-        "Level 2: use overlap friendly pipeline schedule.")
+        "Level 2: use overlap friendly pipeline schedule; "
+        "Level 3: hypothetical upper bound with signal send/recv")
     parser.add_argument("--niter",
                         type=int,
                         default=3,

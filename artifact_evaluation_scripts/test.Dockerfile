@@ -29,11 +29,3 @@ RUN /bin/bash -c 'if [[ ! "$CUDA_VERSION" =~ ^$JAX_CUDA_VERSION.*$ ]]; then \
 
 # Install cupy
 RUN source python3.8-env/bin/activate && pip install cupy-cuda11x
-
-# WORKDIR /
-# COPY run_benchmark.sh /run_benchmark.sh
-# RUN chmod +x /run_benchmark.sh
-
-# WORKDIR /build
-# ENV TEST_TMPDIR /build
-# ENTRYPOINT ["/run_benchmark.sh"]

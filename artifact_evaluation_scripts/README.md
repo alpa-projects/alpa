@@ -38,7 +38,7 @@ All nodes should have alpa installed.
 ### Single device to multiple devices microbenchmark
 Run all benchmark tests with all GPUs in your cluster. 
 ```
-python3 benchmark.py --suite 1-to-m
+python3 microbenchmark.py --suite 1-to-m
 ```
 The result will be saved in `tmp/1_to_m_result.json`. In this set of experiment, the sender mesh has only 1 GPU. We vary the number of GPUs in the receiver mesh. In the first half of benchmark tests, the receiver mesh has 1 node and the number of GPUs in this node varies from 1 to 4. In the second half of benchmark tests, the number of GPUs per node is fixed at 2, but the number of nodes in receiver mesh grows from 1 to 4. For more details, please refer to `perf_1_to_m_suite` in `suite.py`.
 
@@ -53,7 +53,7 @@ to specify the configurations for cross mesh resharding.
 ### Multiple devices to multiple devices microbenchmark
 Similar to the previous subsection. 
 ```
-python3 benchmark.py --suite n-to-m
+python3 microbenchmark.py --suite n-to-m
 ```
 The result will be saved in `tmp/n_to_m_result.json`. In this set of experiment, we move to more complicated cases where both the sender mesh and receiver mesh have multiple nodes. For more details, please refer to `perf_n_to_m_suite` in `suite.py`.
 
@@ -63,6 +63,15 @@ python3 benchmark_cross_mesh_resharding.py --suite n-to-m --case case1 --reshard
 ```
 Here, I take case1 as example and you could choose other cases by referring to `suite.py`. Same as above, you could 
 specify the configurations for cross mesh resharding.
+
+### End-to-end benchmark
+The end-to-end benchmark is executed with:
+```
+python3 benchmark.py --suite ${model-to-run} --comm-overlap-level ${OVERLAP_LEVEL}
+```
+There are three overlapping level: 0 means no overlap between communication and computation; 1 overlaps communication and computation; 2 uses overlap friendly pipeline schedule on top of 1; 3 is signal send-recv, a hypothetical upper bound.
+
+The result will be stored into a tsv file.
 
 ## Result
 

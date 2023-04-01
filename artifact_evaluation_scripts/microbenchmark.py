@@ -6,7 +6,7 @@ import os
 import time
 
 from benchmark_cross_mesh_resharding import benchmark_one_case_internal
-import suite
+import suite_microbenchmark as suite
 
 
 def benchmark_and_write_to_namespace(result_namespace, *args, **kwargs):
@@ -31,9 +31,8 @@ def benchmark_one_case(*args, use_separate_process=False, **kwargs):
 
 
 def benchmark_n_to_m_suite(functional_test):
-    os.makedirs("result", exist_ok=True)
 
-    result_file = "result/n_to_m_result.json"
+    result_file = "n_to_m_result.json"
     result = []
 
     benchmark_cases = suite.perf_n_to_m_suite
@@ -60,9 +59,8 @@ def benchmark_n_to_m_suite(functional_test):
 
 
 def benchmark_1_to_m_suite(functional_test):
-    os.makedirs("result", exist_ok=True)
 
-    result_file = "result/1_to_m_result.json"
+    result_file = "1_to_m_result.json"
     result = []
 
     benchmark_cases = suite.perf_1_to_m_suite

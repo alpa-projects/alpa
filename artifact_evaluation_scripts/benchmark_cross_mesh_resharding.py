@@ -25,7 +25,7 @@ from alpa.pipeline_parallel.resharding_tensor import VirtualDistributedArray
 from alpa.util import get_shard_shape
 from alpa.timer import timers
 
-import suite
+import suite_microbenchmark as suite
 
 
 def get_device_meshes(src_mesh_shape, dst_mesh_shape, functional_test):

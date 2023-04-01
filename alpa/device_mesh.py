@@ -124,6 +124,7 @@ class MeshHostWorker:
         self.distributed_client.connect()
         logger.debug(
             f"{host_id}: Success to connect to xla runtime at {server_address}")
+        global_config.update_worker_config(worker_global_config)
         if global_config.backend == "gpu":
             self.backend = xla_client.make_gpu_client(self.distributed_client,
                                                       node_id=host_id)
@@ -149,7 +150,6 @@ class MeshHostWorker:
         self.data_loader_iters = {}  # Dict[uuid -> iterator]
 
         self.set_runtime_random_seed(runtime_random_seed)
-        global_config.update_worker_config(worker_global_config)
 
         if global_config.pipeline_use_signal_send_recv:
             print("Use signal send recv for debugging.")

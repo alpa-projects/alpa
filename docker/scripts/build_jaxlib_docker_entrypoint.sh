@@ -49,6 +49,10 @@ then
   git checkout -qf FETCH_HEAD
 fi
 
+# Add a patch to fix a bug not merged into alpa/main
+cd /build/alpa/third_party/tensorflow-alpa
+git reset --hard c079cc2805a0c3ba57be8eb5e4bf95840bd6e08b
+
 mkdir /build/tmp
 mkdir /build/root
 export TMPDIR=/build/tmp

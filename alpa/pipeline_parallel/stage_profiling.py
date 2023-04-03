@@ -12,7 +12,10 @@ from typing import Dict, Sequence, Tuple
 import jax.numpy as jnp
 from jax.core import (ClosedJaxpr, Var, gensym)
 from jax.interpreters import pxla
-from jax._src.lib import xla_bridge as xb, xla_extension as xe
+from jax.lib import (
+    xla_bridge as xb,
+    xla_extension as xe
+)
 import numpy as np
 import tqdm
 import ray

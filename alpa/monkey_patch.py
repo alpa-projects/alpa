@@ -7,16 +7,17 @@ import jax
 from jax import core, lax, numpy as jnp
 from jax._src import dtypes, random as jax_src_random
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_bridge as jax_src_lib_xla_bridge
 from jax._src.lib.mlir.dialects import mhlo
-from jax._src.lib.xla_bridge import get_backend as default_get_backend
 from jax.core import Primitive
 from jax.interpreters import pxla
 from jax.interpreters import xla, mlir
-from jax.interpreters.xla import xops
+from jax.lib import xla_bridge as jax_src_lib_xla_bridge
+from jax.lib.xla_bridge import get_backend as default_get_backend
 import flax
 
 from alpa.global_env import global_config, is_worker
+
+xops = xc._xla.ops
 
 ########################################
 ##### Monkey patch the Jax backend

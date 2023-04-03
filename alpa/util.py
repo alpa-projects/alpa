@@ -21,7 +21,11 @@ from jax._src.source_info_util import SourceInfo
 import jax.numpy as jnp
 from jax._src import dispatch, util
 from jax._src.api import FLAGS, ShapeDtypeStruct
-from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
+from jax.lib import (
+    xla_bridge as xb,
+    xla_client as xc,
+    xla_extension as xe
+)
 from jax.api_util import shaped_abstractify
 from jax import core
 from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,

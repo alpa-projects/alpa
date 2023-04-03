@@ -5,7 +5,10 @@ import logging
 from typing import Sequence, Any, Dict, Optional
 
 from jax import jit
-from jax._src.lib import xla_bridge as xb, xla_extension as xe
+from jax.lib import (
+    xla_bridge as xb,
+    xla_extension as xe,
+)
 from jax._src.util import partial, safe_map
 from jax._src import dispatch
 from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,

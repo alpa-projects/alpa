@@ -7,7 +7,7 @@ from typing import Callable, Iterable, Optional, Sequence, Union
 import numpy as np
 from jax import lax
 from jax.tree_util import tree_flatten, tree_unflatten
-from jax._src.api import _check_callable, make_jaxpr
+from jax._src.api import check_callable, make_jaxpr
 from jax._src.ad_checkpoint import remat_p
 from jax.core import (Var, Jaxpr, ClosedJaxpr, DropVar, Literal, jaxpr_as_fun,
                       gensym)
@@ -564,7 +564,7 @@ def manual_remat(fun: Callable = None, *, static_argnums: Sequence[int] = ()):
     if fun is None:
         return decorate_fun
     else:
-        _check_callable(fun)
+        check_callable(fun)
         return decorate_fun(fun)
 
 
@@ -610,7 +610,7 @@ def automatic_remat(fun: Callable = None,
     if fun is None:
         return decorate_fun
     else:
-        _check_callable(fun)
+        check_callable(fun)
         return decorate_fun(fun)
 
 
@@ -643,7 +643,7 @@ def manual_layer_construction(fun: Callable = None,
     if fun is None:
         return decorate_fun
     else:
-        _check_callable(fun)
+        check_callable(fun)
         return decorate_fun(fun)
 
 
@@ -688,14 +688,14 @@ def automatic_layer_construction(fun: Callable = None,
     if fun is None:
         return decorate_fun
     else:
-        _check_callable(fun)
+        check_callable(fun)
         return decorate_fun(fun)
 
 
 def follow_layer_construction(fun, static_argnums, input_placement_specs,
                               num_meshes):
     """Follow given input placement specs to construct layers."""
-    _check_callable(fun)
+    check_callable(fun)
 
     @wraps(fun)
     def wrapped(*args):

@@ -31,14 +31,18 @@ import time
 from typing import Any, List, Union, Sequence, Tuple, Optional
 
 from jax import core, xla, device_put
-from jax._src.api import ShapeDtypeStruct
-from jax._src.lib import xla_bridge as xb, xla_extension as xe
-from jax._src.tree_util import tree_leaves
+from jax import ShapeDtypeStruct
+from jax.lib import xla_bridge as xb, xla_extension as xe
+from jax.tree_util import tree_leaves
 from jax.abstract_arrays import array_types
 from jax.core import ShapedArray
 from jax.interpreters import pxla
-from jax.interpreters.pxla import (ShardingSpec, _hashable_index,
-                                   ShardedDeviceArray, Index)
+from jax.interpreters.pxla import (
+    ShardingSpec,
+    ShardedDeviceArray,
+    Index,
+)
+from jax._src.interpreters.pxla import _hashable_index
 from jax.lib import xla_client
 import jax.numpy as jnp
 import numpy as np

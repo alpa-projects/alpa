@@ -6,7 +6,11 @@ import pickle
 import time
 
 import numpy as np
-from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
+from jax.lib import (
+    xla_bridge as xb,
+    xla_client as xc,
+    xla_extension as xe,
+)
 import ray
 
 from alpa.util import (GB, print_used_time, XlaPassContext, to_str_round,

@@ -638,6 +638,7 @@ class PhysicalDeviceMesh(ABC):
     num_devices_per_host: int
     mesh_id: int
     operation_executables: dict
+    one_replica_ids: dict
 
     def get_signature(self) -> str:
         """Return a signature string that contains the mesh shape and GPU
@@ -647,6 +648,25 @@ class PhysicalDeviceMesh(ABC):
         ret = f"{self.num_hosts},{self.num_devices_per_host},{gpu_name}"
         ret = ret.replace(" ", "-")
         return ret
+
+    def _compute_one_replica_ids(self, indices, aval_shape, sharding_spec):
+        # Tuple (aval_shape, sharding_spec) is 1-1 mapped to indices
+        # used to compute one_replica_ids
+        if (aval_shape, sharding_spec) in self.one_replica_ids:
+            return self.one_replica_ids[(aval_shape, sharding_spec)]
+        
+        one_replica_indices = []
+        one_replica_host_local_ids = []
+        seen_index_hashes = set()
+        for i, index in enumerate(indices):
+            hashed_index = _hashable_index(index)
+            if hashed_index not in seen_index_hashes:
+                one_replica_indices.append(i)
+                one_replica_host_local_ids.append(
+                    divmod(i, self.num_devices_per_host))
+                seen_index_hashes.add(hashed_index)
+        self.one_replica_ids[(aval_shape, sharding_spec)] = one_replica_indices, one_replica_host_local_ids
+        return one_replica_indices, one_replica_host_local_ids
 
     @property
     def shape(self):
@@ -845,6 +865,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.mesh_id = -1
         self.device_strs = []
         self.operation_executables = {}
+        self.one_replica_ids = {}
 
         self.backend = xb.get_backend(global_config.backend)
 
@@ -974,6 +995,7 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
         self.workers = None
         self.service_server = None
         self.operation_executables = {}
+        self.one_replica_ids = {}
         self.namespace = namespace
 
         if devices is not None:
@@ -1616,34 +1638,16 @@ class DistributedArray:
         return DistributedArray(device_mesh, aval, sharding_spec, ary_ref,
                                 indices)
 
-    def _compute_one_replica_ids(self):
-        one_replica_indices = []
-        one_replica_host_local_ids = []
-        seen_index_hashes = set()
-        for i, index in enumerate(self.indices):
-            hashed_index = _hashable_index(index)
-            if hashed_index not in seen_index_hashes:
-                one_replica_indices.append(i)
-                one_replica_host_local_ids.append(
-                    divmod(i, self.device_mesh.num_devices_per_host))
-                seen_index_hashes.add(hashed_index)
-        self._one_replica_buffer_ids = one_replica_indices
-        self._one_replica_host_local_ids = one_replica_host_local_ids
-
     # TODO(yonghao): to make ._value faster(in reorder buffer), cache different
     # buffers with the same mesh shape and sharding spec.
     @property
     def one_replica_buffer_ids(self):
         """Indices of buffers containing one complete copy of the array data."""
-        if self._one_replica_buffer_ids is None:
-            self._compute_one_replica_ids()
-        return self._one_replica_buffer_ids
+        return self.device_mesh._compute_one_replica_ids(self.indices, self.aval.shape, self.sharding_spec)[0]
 
     @property
     def one_replica_host_local_ids(self):
-        if self._one_replica_host_local_ids is None:
-            self._compute_one_replica_ids()
-        return self._one_replica_host_local_ids
+        return self.device_mesh._compute_one_replica_ids(self.indices, self.aval.shape, self.sharding_spec)[1]
 
     @property
     def _value(self):

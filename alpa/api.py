@@ -23,6 +23,7 @@ is_initialized = False
 
 
 def init(cluster: str = "ray",
+         cluster_address: Optional[str] = None,
          num_nodes: Optional[int] = None,
          num_devices_per_node: Optional[int] = None,
          namespace: Optional[str] = "alpa_default_space"):
@@ -40,6 +41,11 @@ def init(cluster: str = "ray",
         Possible choices: {"local", "ray"}.
         "local" means using all local devices on a single node.
         "ray" means using all devices in a ray cluster.
+      cluster_address: Address of the distributed cluster.
+        If cluster is "ray", this parameter can be used to specify a different
+          address that will be used to initialize the ray cluster.
+          E.g., "ray://123.45.67.89:10001". If not specified, "auto" will be used.
+        Ignored if cluster is "local".
       num_nodes: The number of nodes.
       num_devices_per_node: The number of devices per node.
     """
@@ -49,7 +55,9 @@ def init(cluster: str = "ray",
         return
     is_initialized = True
 
-    init_global_cluster(cluster, num_nodes, num_devices_per_node, namespace)
+    init_global_cluster(
+        cluster, cluster_address, num_nodes, num_devices_per_node, namespace
+    )
 
 
 def shutdown():

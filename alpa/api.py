@@ -44,7 +44,8 @@ def init(cluster: str = "ray",
       cluster_address: Address of the distributed cluster.
         If cluster is "ray", this parameter can be used to specify a different
           address that will be used to initialize the ray cluster.
-          E.g., "ray://123.45.67.89:10001". If not specified, "auto" will be used.
+          E.g., "ray://123.45.67.89:10001". If not specified, "auto" will be
+          used instead.
         Ignored if cluster is "local".
       num_nodes: The number of nodes.
       num_devices_per_node: The number of devices per node.
@@ -55,9 +56,8 @@ def init(cluster: str = "ray",
         return
     is_initialized = True
 
-    init_global_cluster(
-        cluster, cluster_address, num_nodes, num_devices_per_node, namespace
-    )
+    init_global_cluster(cluster, cluster_address, num_nodes,
+                        num_devices_per_node, namespace)
 
 
 def shutdown():

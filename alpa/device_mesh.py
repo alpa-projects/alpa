@@ -654,7 +654,7 @@ class PhysicalDeviceMesh(ABC):
         # used to compute one_replica_ids
         if (aval_shape, sharding_spec) in self.one_replica_ids:
             return self.one_replica_ids[(aval_shape, sharding_spec)]
-        
+
         one_replica_indices = []
         one_replica_host_local_ids = []
         seen_index_hashes = set()
@@ -665,7 +665,9 @@ class PhysicalDeviceMesh(ABC):
                 one_replica_host_local_ids.append(
                     divmod(i, self.num_devices_per_host))
                 seen_index_hashes.add(hashed_index)
-        self.one_replica_ids[(aval_shape, sharding_spec)] = one_replica_indices, one_replica_host_local_ids
+        self.one_replica_ids[(
+            aval_shape,
+            sharding_spec)] = one_replica_indices, one_replica_host_local_ids
         return one_replica_indices, one_replica_host_local_ids
 
     @property
@@ -1530,8 +1532,6 @@ class DistributedArray:
         self.shape = self.aval.shape
         self.dtype = self.aval.dtype
         self._npy_value = None
-        self._one_replica_host_local_ids = None
-        self._one_replica_buffer_ids = None
         self._fetched_np_buffers = None
         self._fetched_np_buffers_ref = None
         self.skip_shard_args_check = False
@@ -1638,16 +1638,16 @@ class DistributedArray:
         return DistributedArray(device_mesh, aval, sharding_spec, ary_ref,
                                 indices)
 
-    # TODO(yonghao): to make ._value faster(in reorder buffer), cache different
-    # buffers with the same mesh shape and sharding spec.
     @property
     def one_replica_buffer_ids(self):
         """Indices of buffers containing one complete copy of the array data."""
-        return self.device_mesh._compute_one_replica_ids(self.indices, self.aval.shape, self.sharding_spec)[0]
+        return self.device_mesh._compute_one_replica_ids(
+            self.indices, self.aval.shape, self.sharding_spec)[0]
 
     @property
     def one_replica_host_local_ids(self):
-        return self.device_mesh._compute_one_replica_ids(self.indices, self.aval.shape, self.sharding_spec)[1]
+        return self.device_mesh._compute_one_replica_ids(
+            self.indices, self.aval.shape, self.sharding_spec)[1]
 
     @property
     def _value(self):

@@ -684,11 +684,8 @@ class ReshardingTaskSpec:
             VirtualDistributedArray.
     """
 
-    def __init__(self, 
-        src_array: VirtualDistributedArray,
-        dst_array: VirtualDistributedArray,
-        final_dst_spec
-    ):
+    def __init__(self, src_array: VirtualDistributedArray,
+                 dst_array: VirtualDistributedArray, final_dst_spec):
         self.src = src_array
         self.dst = dst_array
         self._dst_tile_to_src_tiles_map = None
@@ -955,11 +952,8 @@ class CrossMeshCommunicator:
         schedule (Any): the pipelining schedule for these stages.
     """
 
-    def __init__(
-        self, 
-        sharded_stages: Sequence[XlaShardedPipelineComputation], 
-        schedule: PipelineSchedule
-    ):
+    def __init__(self, sharded_stages: Sequence[XlaShardedPipelineComputation],
+                 schedule: PipelineSchedule):
         if not isinstance(sharded_stages, list):
             raise RuntimeError("Require a list of stages.")
         for s in sharded_stages:
@@ -1138,11 +1132,13 @@ class CrossMeshCommunicator:
                     last_seen[var] = dst_stage_index
 
                     last_seen_var_index = last_seen_stage.invars.index(var)
-                    last_seen_sharding_spec = last_seen_stage.input_sharding_specs[last_seen_var_index]
+                    last_seen_sharding_spec = last_seen_stage.input_sharding_specs[
+                        last_seen_var_index]
 
                     last_seen_stage = stages[last_seen_stage_index]
-                    last_seen_mesh_index = stage_placements[last_seen_stage_index]
-                    last_seen_mesh = meshes[last_seen_mesh_index] 
+                    last_seen_mesh_index = stage_placements[
+                        last_seen_stage_index]
+                    last_seen_mesh = meshes[last_seen_mesh_index]
                     final_src_array = VirtualDistributedArray(
                         device_mesh=last_seen_mesh,
                         aval=var.aval,
@@ -1156,7 +1152,7 @@ class CrossMeshCommunicator:
                         aval=var.aval,
                         sharding_spec=src_sharding_spec)
                     final_src_mesh_index = src_mesh_index
-                
+
                 dst_sharding_spec = in_sharding_specs[in_var_index]
                 final_dst_spec = dst_sharding_spec
                 if global_config.resharding_mode == "send_recv":
@@ -1455,10 +1451,8 @@ class CrossMeshCommunicator:
         return strategy
 
     @staticmethod
-    def _args_between(
-        src_stage: XlaShardedPipelineComputation,
-        dst_stage: XlaShardedPipelineComputation
-    ):
+    def _args_between(src_stage: XlaShardedPipelineComputation,
+                      dst_stage: XlaShardedPipelineComputation):
         """Find the variable exchanged between stages."""
         resharding_vars = []
         src_indices = []

@@ -2308,6 +2308,7 @@ global_virtual_physical_mesh: VirtualPhysicalMesh = None
 
 
 def init_global_cluster(cluster: str,
+                        cluster_address: Optional[str] = None,
                         num_nodes: Optional[int] = None,
                         num_devices_per_node: Optional[int] = None,
                         namespace: Optional[str] = None):
@@ -2317,7 +2318,8 @@ def init_global_cluster(cluster: str,
         global_physical_mesh = LocalPhysicalDeviceMesh()
     elif cluster == "ray":
         if not ray.is_initialized():
-            ray.init(address="auto",
+            ray_addr = cluster_address if cluster_address else "auto"
+            ray.init(address=ray_addr,
                      ignore_reinit_error=True,
                      namespace=namespace)
         update_jax_platform("cpu")

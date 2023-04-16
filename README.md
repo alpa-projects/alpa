@@ -77,7 +77,7 @@ for batch in data_loader:
 - [Google AI blog](https://ai.googleblog.com/2022/05/alpa-automated-model-parallel-deep.html)
 - [OSDI 2022 talk slides](https://docs.google.com/presentation/d/1CQ4S1ff8yURk9XmL5lpQOoMMlsjw4m0zPS6zYDcyp7Y/edit?usp=sharing)
 - [ICML 2022 big model tutorial](https://sites.google.com/view/icml-2022-big-model/home)
-- [Prof. Ion Stoica introduces the system](https://www.youtube.com/watch?v=qzYoMldlyoA)
+- [GTC 2023 talk video](https://www.nvidia.com/en-us/on-demand/session/gtcspring23-s51337/)
 
 ## Getting Involved
 - Connect to Alpa developers via the [Alpa slack](https://forms.gle/YEZTCrtZD6EAVNBQ7).

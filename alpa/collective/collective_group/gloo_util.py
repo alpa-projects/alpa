@@ -21,7 +21,6 @@ GLOO_REDUCE_OP_MAP = {
 
 NUMPY_GLOO_DTYPE_MAP = {
     # INT types
-    numpy.int: pygloo.glooDataType_t.glooInt64,
     numpy.uint8: pygloo.glooDataType_t.glooUint8,
     numpy.uint32: pygloo.glooDataType_t.glooUint32,
     numpy.uint64: pygloo.glooDataType_t.glooUint64,
@@ -30,7 +29,6 @@ NUMPY_GLOO_DTYPE_MAP = {
     numpy.int64: pygloo.glooDataType_t.glooInt64,
     # FLOAT types
     numpy.half: pygloo.glooDataType_t.glooFloat16,
-    numpy.float: pygloo.glooDataType_t.glooFloat64,
     numpy.float16: pygloo.glooDataType_t.glooFloat16,
     numpy.float32: pygloo.glooDataType_t.glooFloat32,
     numpy.float64: pygloo.glooDataType_t.glooFloat64,

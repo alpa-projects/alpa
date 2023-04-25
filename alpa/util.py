@@ -17,9 +17,10 @@ from warnings import warn
 from flax.training import train_state
 from flax.training.common_utils import stack_forest
 import jax
+from jax._src.util import wrap_name
 from jax._src.source_info_util import SourceInfo
 import jax.numpy as jnp
-from jax._src import dispatch, util
+from jax._src import dispatch, source_info_util
 from jax._src.api import FLAGS, ShapeDtypeStruct
 from jax.lib import (
     xla_bridge as xb,
@@ -313,6 +314,10 @@ def cached_property(fn, *args, **kwargs):
 ########################################
 
 
+def xla_computation_to_mlir_text(xla_computation: xc.XlaComputation):
+    return xc._xla.mlir.xla_computation_to_mlir_module(xla_computation)
+
+
 def get_compile_options(num_replicas: int,
                         num_partitions: int,
                         device_assignment: np.ndarray,
@@ -332,7 +337,7 @@ def get_compile_options(num_replicas: int,
     build_options = compile_options.executable_build_options
     build_options.seed = build_random_seed
     build_options.allow_spmd_sharding_propagation_to_output =\
-        spmd_propagation_to_outputs
+        [spmd_propagation_to_outputs]
     return compile_options
 
 
@@ -351,7 +356,7 @@ def jaxpr_to_hlo(name: str,
     # Convert jaxpr to XLA HLO
     tuple_args = False
     axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())
-    name_stack = util.new_name_stack(xla.wrap_name(name, "parallelize"))
+    name_stack = source_info_util.new_name_stack(wrap_name(name, "parallelize"))
     closed_jaxpr = ClosedJaxpr(closed_jaxpr.jaxpr, consts)
     unordered_effects = [
         eff for eff in closed_jaxpr.effects if eff not in core.ordered_effects
@@ -465,7 +470,8 @@ def compile_allocate_zero_buffers(backend, num_devices: int,
     with XlaPassContext({
             "done-event::enable": global_config.enable_overlapping,
     }):
-        compiled = backend.compile(c, compile_options)
+        compiled = backend.compile(xla_computation_to_mlir_text(c),
+                                   compile_options)
     return compiled
 
 

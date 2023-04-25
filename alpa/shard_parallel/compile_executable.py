@@ -139,9 +139,10 @@ def shard_parallel_internal(
     hlo, stage_plan = run_auto_sharding_pass(hlo, logical_mesh_choices[0],
                                              "single", 1, as_option)
     # This is a walkaround because XLA GpuCompiler has some issue
-    if global_config.backend == "gpu":
-        hlo = run_spmd_partitioner_pass(hlo,
-                                        np.prod(logical_mesh_choices[0].shape))
+    # FIXME: further test if this can be thoroughly removed.
+    # if global_config.backend == "gpu":
+    #     hlo = run_spmd_partitioner_pass(hlo,
+    #                                     np.prod(logical_mesh_choices[0].shape))
 
     # Compile a mesh executable
     return NormalMeshDriverExecutable(physical_mesh,

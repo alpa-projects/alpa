@@ -84,7 +84,7 @@ def parallelize(fun: Optional[Callable] = None,
     check_alpa_jaxlib_version()
 
     def decorate_fun(fun):
-        api._check_callable(fun)  # pylint: disable=protected-access
+        api.check_callable(fun)  # pylint: disable=protected-access
         nonlocal method
         method = method or ShardParallel()
         return ParallelizedFunc(fun, static_argnums, donate_argnums,

@@ -14,7 +14,7 @@ from jax.lib import (
 import ray
 
 from alpa.util import (GB, print_used_time, XlaPassContext, to_str_round,
-                       run_with_timeout)
+                       run_with_timeout, xla_computation_to_mlir_text)
 
 ops = xc.ops
 
@@ -333,7 +333,8 @@ def _compile_profiling_executable_while_loop(backend, shapes, op_func,
         use_spmd_partitioning=True,
     )
     shapes = [(1, np.int32)] + shapes
-    return shapes, backend.compile(loop_computation, compile_options)
+    return shapes, backend.compile(
+        xla_computation_to_mlir_text(loop_computation), compile_options)
 
 
 def _compile_profiling_executable_once(backend, shapes, op_func, num_devices):
@@ -366,7 +367,8 @@ def _compile_profiling_executable_once(backend, shapes, op_func, num_devices):
         device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
     )
-    return shapes, backend.compile(body_computation, compile_options)
+    return shapes, backend.compile(
+        xla_computation_to_mlir_text(body_computation), compile_options)
 
 
 def bound(value, minimum, maximum):

@@ -4,7 +4,7 @@ and SPMD Partitioner or not.
 from enum import Enum, auto
 from typing import Union
 
-from jax._src.lib import xla_extension as xe
+from jax._src.lib import xla_extension as xe, xla_client as xc
 
 
 class HloStatus(Enum):
@@ -34,6 +34,10 @@ class WrappedHlo:
         self.name = self.module.name
         self.status = status
         self.is_manually_annotated = False
+
+    def get_mlir_text(self):
+        return xc._xla.mlir.xla_computation_to_mlir_module(
+            self.get_computation())
 
     def get_computation(self) -> xe.XlaComputation:
         return xe.XlaComputation(self.module.as_serialized_hlo_module_proto())

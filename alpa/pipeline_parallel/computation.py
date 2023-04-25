@@ -12,7 +12,7 @@ from jax.lib import (
 from jax._src.util import partial, safe_map
 from jax._src import dispatch
 from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
-                      jaxpr_as_fun, gensym, named_call_p, ShapedArray)
+                      jaxpr_as_fun, gensym, closed_call_p, ShapedArray)
 from jax.interpreters import pxla
 import numpy as np
 
@@ -31,7 +31,8 @@ from alpa.util import (OrderedSet, clone_jaxpr, clone_jaxpr_eqn,
                        get_compile_options, jaxpr_to_hlo,
                        setup_computation_alias, compile_dummy_zero_constant,
                        get_var_mapping, undefined_sharding_spec_proto,
-                       new_jaxpr_eqn, replicated_sharding_spec_proto)
+                       new_jaxpr_eqn, replicated_sharding_spec_proto,
+                       xla_computation_to_mlir_text)
 from alpa.wrapped_hlo import HloStatus, WrappedHlo
 
 # pylint: disable=redefined-builtin
@@ -195,7 +196,9 @@ class XlaPipelineComputation(PipelineComputation):
         )
 
         xla_computation = self.hlo.get_computation()
-        compiled = backend.compile(xla_computation, compile_options=options)
+        compiled = backend.compile(
+            xla_computation_to_mlir_text(xla_computation),
+            compile_options=options)
         self.hlo.module = compiled.hlo_modules()[0]
         self.hlo.status = HloStatus.FULLY_OPTIMIZED
         # pylint: disable=protected-access
@@ -839,7 +842,7 @@ def _wrap_with_call(closed_jaxpr: ClosedJaxpr, invars, outvars, name):
     jaxpr = clone_jaxpr(closed_jaxpr, new_invars, constvars=[], consts=[]).jaxpr
     params = dict(name=name, call_jaxpr=jaxpr)
     return new_jaxpr_eqn(invars + closed_jaxpr.jaxpr.constvars, outvars,
-                         named_call_p, params)
+                         closed_call_p, params)
 
 
 def _rearrange_in_out_for_donation(invars, outvars, donation_map):
@@ -905,7 +908,7 @@ def _wrap_by_marker(jaxpr: Jaxpr, name, gensym_fn):
                   call_jaxpr=Jaxpr([], new_invars + jaxpr.constvars,
                                    new_outvars, jaxpr.eqns))
     eqns.append(
-        new_jaxpr_eqn(sym_invars + jaxpr.constvars, sym_outvars, named_call_p,
+        new_jaxpr_eqn(sym_invars + jaxpr.constvars, sym_outvars, closed_call_p,
                       params))
     eqns.append(mark_pipeline_jaxpreqn(sym_outvars, new_outvars, name, "end"))
     return Jaxpr(list(jaxpr.constvars), list(jaxpr.invars), new_outvars, eqns)

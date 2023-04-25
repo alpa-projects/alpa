@@ -21,7 +21,7 @@ from jax.interpreters import pxla
 from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves, PyTreeDef
 import numpy as np
 import ray
-from alpa.util import XlaPassContext
+from alpa.util import XlaPassContext, xla_computation_to_mlir_text
 
 from alpa.device_mesh import (LocalPhysicalDeviceMesh,
                               DistributedPhysicalDeviceMesh, RemoteArrayRef,
@@ -1134,7 +1134,8 @@ class UtilMeshWorkerExecutable(MeshWorkerExecutable):
         with XlaPassContext({
                 "done-event::enable": global_config.enable_overlapping,
         }):
-            self.exec = worker.backend.compile(xla_computation, compile_options)
+            self.exec = worker.backend.compile(
+                xla_computation_to_mlir_text(xla_computation), compile_options)
 
         self.worker = worker
         self.timer_name = get_execution_timer_name(uuid)

@@ -35,7 +35,8 @@ from jax.interpreters import pxla
 from alpa.global_env import global_config
 from alpa.parallel_plan import StagePlan
 from alpa.timer import timers
-from alpa.util import check_arithmetic_sequence, get_compile_options, XlaPassContext
+from alpa.util import (check_arithmetic_sequence, get_compile_options,
+                       XlaPassContext, xla_computation_to_mlir_text)
 from alpa.wrapped_hlo import HloStatus, WrappedHlo
 
 logger = logging.getLogger(__name__)
@@ -442,7 +443,9 @@ def run_backend_compilation(backend: xe.Client,
             "done-event::enable":
                 global_config.enable_overlapping,
     }):
-        compiled = backend.compile(hlo.get_computation(), compile_options)
+        compiled = backend.compile(
+            xla_computation_to_mlir_text(hlo.get_computation()),
+            compile_options)
 
     return compiled
 

@@ -3,11 +3,11 @@ import dataclasses
 from typing import Any, Optional, OrderedDict, Tuple, Union
 
 from jax._src.lib import xla_client as xc
+from jax._src.pjit import (_is_unspecified, is_auto, _is_from_gda,
+                           _prepare_axis_resources, get_array_mapping,
+                           _UNSPECIFIED, ParsedPartitionSpec)
 from jax._src.tree_util import _replace_nones
 from jax._src.util import safe_zip
-from jax.experimental.pjit import (_is_unspecified, _is_auto, _is_from_gda,
-                                   _prepare_axis_resources, get_array_mapping,
-                                   _UNSPECIFIED, ParsedPartitionSpec)
 from jax.interpreters import mlir, pxla
 from jax.tree_util import tree_unflatten, tree_flatten, tree_map
 
@@ -54,7 +54,7 @@ def _parsed_pspec_to_hlo_sharding(
         return undefined_sharding_spec_proto()
     if _is_from_gda(parsed_pspec):
         raise NotImplementedError("alpa does not support global device array.")
-    if _is_auto(parsed_pspec):
+    if is_auto(parsed_pspec):
         raise NotImplementedError("")
 
     array_mapping = get_array_mapping(parsed_pspec)

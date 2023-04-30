@@ -9,8 +9,8 @@ python3 run_easylm_flax.py \
     --per_device_train_batch_size="32" \
     --per_device_eval_batch_size="32" \
     --num_micro_batches 64 \
-    --operator_parallel 1 \
-    --pipeline_parallel 4 \
+    --operator_parallel 2 \
+    --pipeline_parallel 2 \
     --dtype="float16" \
     --learning_rate="5e-4" --warmup_steps="2000" \
     --adam_beta1="0.9" --adam_beta2="0.98" --weight_decay="0.0" \

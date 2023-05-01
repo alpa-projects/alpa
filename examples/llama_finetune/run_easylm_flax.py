@@ -443,7 +443,7 @@ def main():
         dtype = jnp.bfloat16
     else:
         raise ValueError(f"{model_args.dtype} unsupported")
-    config.gradient_checkpointing = training_args.use_remat
+    # TODO: set the correct remat policy.
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,

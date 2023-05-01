@@ -76,6 +76,7 @@ from EasyLM.models.llama.llama_model import (
 
 from hf_datasets import make_supervised_data_module
 from hf_jax_conversion import hf_to_jax_weight
+from monkey_patch import do_monkey_patch
 
 logger = logging.getLogger(__name__)
 
@@ -442,6 +443,7 @@ def main():
         dtype = jnp.bfloat16
     else:
         raise ValueError(f"{model_args.dtype} unsupported")
+    config.gradient_checkpointing = training_args.use_remat
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
@@ -454,11 +456,12 @@ def main():
     # TODO(yonghao): don't init weight when loaded somewhere
     dummy_input_shape = (4, config.max_sequence_length)
     # Monkey patch the model's init to init_dummy
+    do_monkey_patch()
     model = FlaxLLaMAForCausalLM(config, dummy_input_shape, dtype=dtype)
     hf_model = transformers.AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,
     )
-    params = hf_to_jax_weight(hf_model)
+    loaded_params = hf_to_jax_weight(hf_model)
     del hf_model
 
     #  Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
@@ -521,7 +524,7 @@ def main():
     eval_num_micro_batches = training_args.num_micro_batches
     eval_min_batch_size = (num_devices // training_args.operator_parallel //
                            training_args.pipeline_parallel * eval_num_micro_batches)
-    while len(eval_dataset) < eval_min_batch_size:
+    while training_args.do_eval and (len(eval_dataset) < eval_min_batch_size):
         eval_num_micro_batches //= 2
         eval_min_batch_size = (num_devices // training_args.operator_parallel //
                                training_args.pipeline_parallel * eval_num_micro_batches)
@@ -611,7 +614,7 @@ def main():
         alpa.global_config.flax_always_use_fp16_embedding = True
     else:
         use_master_copy = dynamic_scale = None
-    state = TrainState.create(apply_fn=model.__call__, params=model.params, tx=optimizer,
+    state = TrainState.create(apply_fn=model.__call__, params=loaded_params, tx=optimizer,
                               dynamic_scale=dynamic_scale, use_master_copy=use_master_copy)
 
     # Manual partition spec
@@ -632,7 +635,9 @@ def main():
 
         def compute_loss(params):
             labels = batch.pop("labels")
-            logits = state.apply_fn(**batch, params=params, deterministic=True)[0]
+            # Currently we don't support non-deterministic training with remat,
+            # so train=False. This arg has no other impact.
+            logits = state.apply_fn(**batch, params=params, train=False)[0]
             loss = loss_fn(logits, labels)
             return loss
 
@@ -771,7 +776,7 @@ def main():
                 train_metrics = []
                 last_time = time.time()
 
-            if cur_step % training_args.eval_steps == 0 and cur_step > 0:
+            if training_args.do_eval and cur_step % training_args.eval_steps == 0 and cur_step > 0:
                 # ======================== Evaluating ==============================
                 eval_metrics = []
                 eval_loader = data_loader(input_rng, eval_dataset, eval_batch_size,

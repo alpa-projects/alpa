@@ -1,4 +1,4 @@
-export PYTHONPATH=$HOME/alpa/EasyLM:$PYTHONPATH
+export PYTHONPATH=$HOME/EasyLM:$PYTHONPATH
 python3 run_easylm_flax.py \
     --output_dir="./output" \
     --model_name_or_path="/data/llama-7b" \

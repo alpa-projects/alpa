@@ -1663,20 +1663,22 @@ def compute_gpt_tflops(batch_size,
                        num_gpus,
                        latency,
                        backward=True,
-                       checkpoint_activations=False):
+                       checkpoint_activations=False,
+                       intermediate_size=None):
     """
     Compute the Tera Flop Operations (TFLOP) per second per GPU
     for GPT-like models.
     """
-    factor = 24
+    factor = 2
     if backward:
-        factor += 48
+        factor += 4
     if checkpoint_activations:
-        factor += 24
+        factor += 2
+    if intermediate_size is None:
+        intermediate_size = hidden_size * 4
 
-    total_flop = (factor * batch_size * seq_len *
-                  (hidden_size**2) * num_layers * (1 + seq_len /
-                                                   (6 * hidden_size)) +
+    total_flop = ((factor * num_layers * batch_size * seq_len * hidden_size *
+                   (4 * hidden_size + 2 * intermediate_size + 2 * seq_len)) +
                   6 * batch_size * seq_len * hidden_size * vocab_size)
     # Note: The above formula does not count the first embedding table lookup
     # because it is a sparse operation.

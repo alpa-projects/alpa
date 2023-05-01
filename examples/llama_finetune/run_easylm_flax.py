@@ -75,6 +75,7 @@ from EasyLM.models.llama.llama_model import (
 )
 
 from hf_datasets import make_supervised_data_module
+from hf_jax_conversion import hf_to_jax_weight
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,7 @@ class TrainingArguments:
     adam_epsilon: float = field(default=1e-8, metadata={"help": "Epsilon for AdamW optimizer."})
     adafactor: bool = field(default=False, metadata={"help": "Whether or not to replace AdamW by Adafactor."})
     num_train_epochs: float = field(default=3.0, metadata={"help": "Total number of training epochs to perform."})
-    warmup_steps: int = field(default=0, metadata={"help": "Linear warmup over warmup_steps."})
+    warmup_ratio: float = field(default=0.0, metadata={"help": "Linear warmup over a ratio of overall steps."})
     logging_steps: int = field(default=500, metadata={"help": "Log every X updates steps."})
     save_steps: int = field(default=500, metadata={"help": "Save checkpoint every X updates steps."})
     eval_steps: int = field(default=None, metadata={"help": "Run an evaluation every X steps."})
@@ -315,69 +316,18 @@ def write_eval_metric(summary_writer, eval_metrics, step):
 
 
 def create_learning_rate_fn(
-    train_ds_size: int, train_batch_size: int, num_train_epochs: int, num_warmup_steps: int, learning_rate: float
+    train_ds_size: int, train_batch_size: int, num_train_epochs: int, warmup_ratio: float, learning_rate: float
 ) -> Callable[[int], jnp.array]:
     """Returns a linear warmup, linear_decay learning rate function."""
     steps_per_epoch = train_ds_size // train_batch_size
     num_train_steps = steps_per_epoch * num_train_epochs
+    num_warmup_steps = int(num_train_steps * warmup_ratio)
     warmup_fn = optax.linear_schedule(init_value=0.0, end_value=learning_rate, transition_steps=num_warmup_steps)
-    decay_fn = optax.linear_schedule(
-        init_value=learning_rate, end_value=0, transition_steps=num_train_steps - num_warmup_steps
+    decay_fn = optax.cosine_decay_schedule(
+        init_value=learning_rate, decay_steps=num_train_steps - num_warmup_steps
     )
     schedule_fn = optax.join_schedules(schedules=[warmup_fn, decay_fn], boundaries=[num_warmup_steps])
     return schedule_fn
-
-
-def monkey_patch_remat():
-    # Use monkey patch to add remat for all transformer layers.
-    from transformers.models.opt.modeling_flax_opt import FlaxOPTDecoderLayer, FlaxOPTDecoderLayerCollection
-    from flax.linen.partitioning import remat
-    from flax.linen.module import wrap_method_once
-    import flax.linen as nn
-
-    @wrap_method_once
-    def setup(self):
-        self.layers = [
-            remat(FlaxOPTDecoderLayer, static_argnums=(2, 3, 4))(
-                self.config, name=str(i), dtype=self.dtype)
-            for i in range(self.config.num_hidden_layers)
-        ]
-        self.layerdrop = self.config.layerdrop
-
-    def call(
-        self,
-        hidden_states,
-        attention_mask,
-        deterministic: bool = True,
-        init_cache: bool = False,
-        output_attentions: bool = False,
-        output_hidden_states: bool = False,
-    ):
-        # decoder layers
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attns = () if output_attentions else None
-
-        for decoder_layer in self.layers:
-            if output_hidden_states:
-                all_hidden_states += (hidden_states,)
-
-            layer_outputs = decoder_layer(
-                hidden_states,
-                attention_mask,
-                init_cache,
-                output_attentions,
-                deterministic,
-            )
-
-            hidden_states = layer_outputs[0]
-            if output_attentions:
-                all_self_attns += (layer_outputs[1],)
-
-        outputs = [hidden_states, all_hidden_states, all_self_attns]
-        return outputs
-
-    setattr(FlaxOPTDecoderLayerCollection, "setup", setup)
-    setattr(FlaxOPTDecoderLayerCollection, "__call__", call)
 
 
 def llama_manual_sharding(num_layers, state: TrainState):
@@ -483,10 +433,15 @@ def main():
     # Distributed training:
     # The .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
-    config = LLaMAConfig.load_config('test')
-
-    if training_args.use_remat:
-        monkey_patch_remat()
+    config = LLaMAConfig.load_config('7b')
+    if model_args.dtype == "float16":
+        dtype = jnp.float16
+    elif model_args.dtype == "float32":
+        dtype = jnp.float32
+    elif model_args.dtype == "bfloat16":
+        dtype = jnp.bfloat16
+    else:
+        raise ValueError(f"{model_args.dtype} unsupported")
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
@@ -498,7 +453,13 @@ def main():
 
     # TODO(yonghao): don't init weight when loaded somewhere
     dummy_input_shape = (4, config.max_sequence_length)
-    model = FlaxLLaMAForCausalLM(config, dummy_input_shape)
+    # Monkey patch the model's init to init_dummy
+    model = FlaxLLaMAForCausalLM(config, dummy_input_shape, dtype=dtype)
+    hf_model = transformers.AutoModelForCausalLM.from_pretrained(
+        model_args.model_name_or_path,
+    )
+    params = hf_to_jax_weight(hf_model)
+    del hf_model
 
     #  Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
     # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
@@ -595,11 +556,11 @@ def main():
     total_train_steps = steps_per_epoch * num_epochs
 
     # Create learning rate schedule
-    linear_decay_lr_schedule_fn = create_learning_rate_fn(
+    cosine_decay_lr_schedule_fn = create_learning_rate_fn(
         len(train_dataset),
         train_batch_size,
         training_args.num_train_epochs,
-        training_args.warmup_steps,
+        training_args.warmup_ratio,
         training_args.learning_rate,
     )
 
@@ -623,7 +584,7 @@ def main():
         # We use the default parameters here to initialize adafactor,
         # For more details about the parameters please check https://github.com/deepmind/optax/blob/ed02befef9bf81cbbf236be3d2b0e032e9ed4a40/optax/_src/alias.py#L74
         optimizer = optax.adafactor(
-            learning_rate=linear_decay_lr_schedule_fn,
+            learning_rate=cosine_decay_lr_schedule_fn,
         )
     else:
         # A tmp hack for llama finetune. Remove it either:
@@ -634,7 +595,7 @@ def main():
         optimizer = optax.chain(
             optax.clip_by_global_norm(1.0),
             optax.adamw(
-                learning_rate=linear_decay_lr_schedule_fn,
+                learning_rate=cosine_decay_lr_schedule_fn,
                 b1=training_args.adam_beta1,
                 b2=training_args.adam_beta2,
                 eps=training_args.adam_epsilon,
@@ -698,7 +659,7 @@ def main():
                     new_state.master_copy, state.master_copy),
                 dynamic_scale=dynamic_scale)
 
-        metrics = {"loss": loss, "learning_rate": linear_decay_lr_schedule_fn(state.step)}
+        metrics = {"loss": loss, "learning_rate": cosine_decay_lr_schedule_fn(state.step)}
 
         return new_state, metrics
 
@@ -718,6 +679,7 @@ def main():
             data_parallel=-1,
             operator_parallel=training_args.operator_parallel,
             pipeline_parallel=training_args.pipeline_parallel,
+            manual_layer_num=config.num_hidden_layers,
             manual_sharding_option=ms_option)
 
     p_train_step = alpa.parallelize(train_step,
@@ -786,7 +748,9 @@ def main():
                     hidden_size=config.hidden_size,
                     vocab_size=config.vocab_size,
                     num_gpus=alpa.get_global_num_devices(),
-                    latency=latency)
+                    latency=latency,
+                    checkpoint_activations=True,
+                    intermediate_size=config.intermediate_size)
                 step_ct = 0
 
                 # Save metrics

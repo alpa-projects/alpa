@@ -1,7 +1,4 @@
 import transformers
-import numpy as np
-import jax
-import jax.numpy as jnp
 
 def import_hf_model(model_name_or_path):
     model = transformers.AutoModelForCausalLM.from_pretrained(
@@ -9,7 +6,7 @@ def import_hf_model(model_name_or_path):
     )
     return model
 
-def hf_to_jax(hf_model):
+def hf_to_jax_weight(hf_model):
     state_dict = hf_model.state_dict()
     jax_weights = {
         'transformer': {

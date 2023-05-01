@@ -282,15 +282,16 @@ def get_3d_parallel_method(num_micro_batches: int,
 
     # If no pipeline parallel, degenerate into shard parallel
     if pp == 1 and allow_degenerate_into_shard_parallel:
-        return ShardParallel(num_micro_batches=num_micro_batches,
-                             auto_sharding_option=AutoShardingOption(
-                                 enable_auto_sharding=manual_sharding_option is None,
-                                 prefer_reduce_scatter=True,
-                                 force_batch_dim_to_mesh_dim=0),
-                             devices=get_global_physical_mesh(
-                                 create_if_not_exist=True).get_logical_mesh(
-                                     [data_parallel, operator_parallel]),
-                             manual_sharding_option=manual_sharding_option)
+        return ShardParallel(
+            num_micro_batches=num_micro_batches,
+            auto_sharding_option=AutoShardingOption(
+                enable_auto_sharding=manual_sharding_option is None,
+                prefer_reduce_scatter=True,
+                force_batch_dim_to_mesh_dim=0),
+            devices=get_global_physical_mesh(
+                create_if_not_exist=True).get_logical_mesh(
+                    [data_parallel, operator_parallel]),
+            manual_sharding_option=manual_sharding_option)
 
     # Return pipeshard parallel
     if manual_layer_num is not None:

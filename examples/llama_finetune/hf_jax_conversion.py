@@ -15,7 +15,6 @@ def hf_to_jax_weight(hf_model):
             'h': {
                 '%d' % (layer): {
                     'attention': {
-                        # TODO: check whether we need the transpose or not
                         'wq': {'kernel': state_dict['model.layers.%d.self_attn.q_proj.weight' % (layer)].numpy().transpose()},
                         'wk': {'kernel': state_dict['model.layers.%d.self_attn.k_proj.weight' % (layer)].numpy().transpose()},
                         'wv': {'kernel': state_dict['model.layers.%d.self_attn.v_proj.weight' % (layer)].numpy().transpose()},

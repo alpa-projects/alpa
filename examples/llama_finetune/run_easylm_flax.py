@@ -82,6 +82,7 @@ logger = logging.getLogger(__name__)
 
 MODEL_CONFIG_CLASSES = list(FLAX_MODEL_FOR_CAUSAL_LM_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
+IGNORE_TOKEN_ID = -100
 
 
 @dataclass
@@ -361,14 +362,37 @@ def llama_manual_sharding(num_layers, state: TrainState):
     replicate = lambda x : jax.tree_util.tree_map(lambda _: PartitionSpec(None), x)
     opt_state = tree_map_params(state.tx, lambda _, spec: spec, state.opt_state,
                                 param_partition, transform_non_params=lambda _: PartitionSpec(None))
-    manual_partition = TrainState(step=PartitionSpec(None),
-                                  params=param_partition,
-                                  master_copy=param_partition,
-                                  dynamic_scale=replicate(state.dynamic_scale),
-                                  tx=state.tx,
-                                  apply_fn=state.apply_fn,
-                                  opt_state=opt_state)
+    manual_partition = TrainState(
+        step=PartitionSpec(None),
+        params=param_partition,
+        master_copy=param_partition if state.master_copy else None,
+        dynamic_scale=replicate(state.dynamic_scale),
+        tx=state.tx,
+        apply_fn=state.apply_fn,
+        opt_state=opt_state)
     return manual_partition
+
+
+# TODO: smoothing factor
+def loss_fn(logits, labels, ignore_indices):
+    # Shift logits
+    shift_logits = logits[..., :-1, :]
+    shift_labels = labels[..., 1:]
+    # Handle the ignore index: compute the valid first
+    valid = jnp.full(shift_labels.shape, True)
+    for ignore_index in ignore_indices:
+        new_valid = jnp.not_equal(shift_labels, ignore_index)
+        valid = jnp.logical_and(valid, new_valid)
+    valid_len = jnp.maximum(jnp.sum(valid, axis=-1), 1e-10)
+    # OneHot and mask the ignore index. For ignore_index(-100), the whole line
+    # in the output would be 0.
+    one_hot_labels = jax.nn.one_hot(shift_labels, shift_logits.shape[-1])
+    # Compute the softmax loss
+    log_p = jax.nn.log_softmax(shift_logits, axis=-1)
+    # (bs, seq_len, vocab) -> (bs, seq_len)
+    cross_entropy = jnp.sum(one_hot_labels * log_p, axis=-1)
+    loss = -jnp.mean(jnp.sum(cross_entropy, axis=-1) / valid_len)
+    return loss
 
 
 def main():
@@ -452,6 +476,10 @@ def main():
         use_fast=False,
     )
     tokenizer.pad_token = tokenizer.unk_token
+    config.update(dict(
+        bos_token_id=tokenizer.bos_token_id,
+        eos_token_id=tokenizer.eos_token_id,
+    ))
 
     # TODO(yonghao): don't init weight when loaded somewhere
     dummy_input_shape = (4, config.max_sequence_length)
@@ -462,7 +490,6 @@ def main():
         model_args.model_name_or_path,
     )
     loaded_params = hf_to_jax_weight(hf_model)
-    del hf_model
 
     #  Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
     # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
@@ -473,7 +500,7 @@ def main():
     #
     # In distributed training, the load_dataset function guarantees that only one local process can concurrently
     # download the dataset.
-    data_module = make_supervised_data_module(tokenizer, data_args.dataset_name)
+    data_module = make_supervised_data_module(tokenizer, data_args.dataset_name, IGNORE_TOKEN_ID)
 
 
     if data_args.block_size is None:
@@ -621,14 +648,7 @@ def main():
     state_manual_sharding = llama_manual_sharding(config.num_hidden_layers, state)
     ms_option = ManualShardingOption(
         ("dp", "mp"), in_axis_resources=(state_manual_sharding, PartitionSpec("dp", None)))
-
-    def loss_fn(logits, labels):
-        shift_logits = logits[..., :-1, :]
-        shift_labels = labels[..., 1:]
-        loss = optax.softmax_cross_entropy(
-            shift_logits,
-            jax.nn.one_hot(shift_labels, logits.shape[-1]))
-        return loss.mean()
+    ignore_ids = (IGNORE_TOKEN_ID, tokenizer.pad_token_id)
 
     # Define gradient update step fn
     def train_step(state, batch):
@@ -638,7 +658,7 @@ def main():
             # Currently we don't support non-deterministic training with remat,
             # so train=False. This arg has no other impact.
             logits = state.apply_fn(**batch, params=params, train=False)[0]
-            loss = loss_fn(logits, labels)
+            loss = loss_fn(logits, labels, ignore_ids)
             return loss
 
         dynamic_scale = state.dynamic_scale
@@ -672,7 +692,7 @@ def main():
     def eval_step(params, batch):
         labels = batch.pop("labels")
         logits = model(**batch, params=params, deterministic=True)[0]
-        loss = loss_fn(logits, labels)
+        loss = loss_fn(logits, labels, IGNORE_TOKEN_ID)
 
         # summarize metrics
         metrics = {"loss": loss}
@@ -768,7 +788,7 @@ def main():
                 epochs.write(
                     f"Step... {cur_step} | "
                     f"Loss: {train_metric['loss'].mean():.4f}, "
-                    f"Learning Rate: {train_metric['learning_rate'].mean():.5f}, "
+                    f"Learning Rate: {train_metric['learning_rate'].mean()}, "
                     f"Throughput: {throughput_tokens:.2f} token/s, "
                     f"{throughput_tflops:.2f} TFLOP/s"
                 )

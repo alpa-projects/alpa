@@ -32,7 +32,8 @@ from typing import Any, List, Union, Sequence, Tuple, Optional
 
 from jax import core, xla, device_put
 from jax import ShapeDtypeStruct
-from jax.lib import xla_bridge as xb, xla_extension as xe
+from jax._src import xla_bridge as xb
+from jax.lib import xla_extension as xe
 from jax.tree_util import tree_leaves
 from jax.abstract_arrays import array_types
 from jax.core import ShapedArray
@@ -42,7 +43,7 @@ from jax.interpreters.pxla import (
     ShardedDeviceArray,
     Index,
 )
-from jax._src.interpreters.pxla import _hashable_index
+from jax._src.interpreters.pxla import _hashable_index, _get_pmap_sharding
 from jax.lib import xla_client
 import jax.numpy as jnp
 import numpy as np
@@ -866,7 +867,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
             if is_batch_var:
                 micro_batches = jnp.split(arg, num_micro_batches)
                 bufs.append([
-                    pxla._shard_arg(x, self.devices, indices, None)
+                    pxla.shard_arg(x, self.devices, indices, None)
                     for x in micro_batches
                 ])
             else:
@@ -875,7 +876,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
                     bufs.append(arg.device_buffers)
                 else:
                     bufs.append(
-                        pxla._shard_arg(arg, self.devices, indices, None))
+                        pxla.shard_arg(arg, self.devices, indices, None))
 
             if isinstance(arg, xe.DeviceArray) and donated:
                 arg.delete()
@@ -901,8 +902,8 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
 
     def get_outputs_handler(self, avals: Sequence[ShapedArray],
                             sharding_specs: Sequence[ShardingSpec]):
-        pmap_specs = pxla._get_pmap_sharding(np.arange(self.num_devices),
-                                             sharding_specs)
+        pmap_specs = _get_pmap_sharding(np.array(self.devices),
+                                        sharding_specs)
         outs_handler = pxla.local_avals_to_results_handler(avals, pmap_specs)
         return outs_handler
 
@@ -2498,3 +2499,4 @@ shard_arg_handlers[xla._DeviceArray] = _shard_device_array
 shard_arg_handlers[xla._CppDeviceArray] = _shard_device_array
 shard_arg_handlers[DistributedArray] = _shard_distributed_array
 shard_arg_handlers[ShardedDeviceArray] = _shard_distributed_array
+shard_arg_handlers[xe.ArrayImpl] = _shard_device_array

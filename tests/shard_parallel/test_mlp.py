@@ -16,6 +16,13 @@ from alpa import (parallelize, LocalPhysicalDeviceMesh, AutoShardingOption,
 from alpa.util import count_communication_primitives
 
 
+def _get_sharding(x):
+    sharding_spec = getattr(x, "sharding_spec", None)
+    # The new ArrayImpl class does not have sharding_spec attribute.
+    sharding_spec = sharding_spec or x._sharding.sharding_spec
+    return sharding_spec
+
+
 def assert_close(x, y, atol=0.01):
     assert abs((x + 1e-9) / (y + 1e-9) - 1) <= atol, f"{x} vs. {y}"
 
@@ -25,59 +32,59 @@ def assert_less_equal(x, y):
 
 
 def assert_column_partitioned(x, num_chunks, mesh_dim):
-    assert x.sharding_spec.sharding == (NoSharding(), Chunked([num_chunks]))
-    assert x.sharding_spec.mesh_mapping == (ShardedAxis(0),)
+    assert _get_sharding(x).sharding == (NoSharding(), Chunked([num_chunks]))
+    assert _get_sharding(x).mesh_mapping == (ShardedAxis(0),)
 
 
 def assert_row_partitioned(x, num_chunks, mesh_dim):
-    assert x.sharding_spec.sharding == (Chunked([num_chunks]), NoSharding())
-    assert x.sharding_spec.mesh_mapping == (ShardedAxis(0),)
+    assert _get_sharding(x).sharding == (Chunked([num_chunks]), NoSharding())
+    assert _get_sharding(x).mesh_mapping == (ShardedAxis(0),)
 
 
 def assert_expert_partitioned(x, num_chunks, mesh_dim):
-    assert x.sharding_spec.sharding == (Chunked([num_chunks]), NoSharding(),
+    assert _get_sharding(x).sharding == (Chunked([num_chunks]), NoSharding(),
                                         NoSharding())
-    assert x.sharding_spec.mesh_mapping == (ShardedAxis(0),)
+    assert _get_sharding(x).mesh_mapping == (ShardedAxis(0),)
 
 
 def assert_replicated_column_partitioned(x, mesh_shape):
-    assert x.sharding_spec.sharding == (NoSharding(), Chunked([mesh_shape[1]]))
-    assert x.sharding_spec.mesh_mapping[0] == Replicated(mesh_shape[0])
-    assert x.sharding_spec.mesh_mapping[1] == ShardedAxis(0)
+    assert _get_sharding(x).sharding == (NoSharding(), Chunked([mesh_shape[1]]))
+    assert _get_sharding(x).mesh_mapping[0] == Replicated(mesh_shape[0])
+    assert _get_sharding(x).mesh_mapping[1] == ShardedAxis(0)
 
 
 def assert_replicated_row_partitioned(x, mesh_shape):
-    assert x.sharding_spec.sharding == (Chunked([mesh_shape[1]]), NoSharding())
-    assert x.sharding_spec.mesh_mapping[0] == Replicated(mesh_shape[0])
-    assert x.sharding_spec.mesh_mapping[1] == ShardedAxis(0)
+    assert _get_sharding(x).sharding == (Chunked([mesh_shape[1]]), NoSharding())
+    assert _get_sharding(x).mesh_mapping[0] == Replicated(mesh_shape[0])
+    assert _get_sharding(x).mesh_mapping[1] == ShardedAxis(0)
 
 
 def assert_all_replicated(x, num_replicas):
-    for axis_shard in x.sharding_spec.sharding:
+    for axis_shard in _get_sharding(x).sharding:
         assert axis_shard == NoSharding()
-    assert x.sharding_spec.mesh_mapping[0] == Replicated(num_replicas)
+    assert _get_sharding(x).mesh_mapping[0] == Replicated(num_replicas)
 
 
 def is_sharded(x):
-    for axis in x.sharding_spec.mesh_mapping:
+    for axis in _get_sharding(x).mesh_mapping:
         if isinstance(axis, ShardedAxis):
             return True
     return False
 
 
 def assert_sharded(x):
-    assert is_sharded(x), f"Not sharded: {str(x.sharding_spec)}"
+    assert is_sharded(x), f"Not sharded: {str(_get_sharding(x))}"
 
 
 def is_fully_sharded(x):
-    for axis in x.sharding_spec.mesh_mapping:
+    for axis in _get_sharding(x).mesh_mapping:
         if not isinstance(axis, ShardedAxis):
             return False
     return True
 
 
 def assert_fully_sharded(x):
-    assert is_fully_sharded(x), f"Not fully sharded: {str(x.sharding_spec)}"
+    assert is_fully_sharded(x), f"Not fully sharded: {str(_get_sharding(x))}"
 
 
 def assert_sharding_zero_stage_3(state, allow_not_sharded_params=0):

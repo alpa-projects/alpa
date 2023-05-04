@@ -428,7 +428,8 @@ def run_backend_compilation(backend: xe.Client,
         device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=hlo.is_sharding_annotated(),
         parameter_is_tupled_arguments=False,
-        build_random_seed=stage_plan.build_random_seed)
+        build_random_seed=stage_plan.build_random_seed,
+        spmd_propagation_to_outputs=hlo.is_sharding_annotated())
 
     with XlaPassContext({
             # Build options

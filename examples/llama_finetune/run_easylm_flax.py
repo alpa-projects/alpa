@@ -383,6 +383,7 @@ def loss_fn(logits, labels, ignore_indices):
     for ignore_index in ignore_indices:
         new_valid = jnp.not_equal(shift_labels, ignore_index)
         valid = jnp.logical_and(valid, new_valid)
+    valid = jnp.asarray(valid, dtype=jnp.float32)
     valid_len = jnp.maximum(jnp.sum(valid, axis=-1), 1e-10)
     # OneHot and mask the ignore index. For ignore_index(-100), the whole line
     # in the output would be 0.
@@ -391,7 +392,7 @@ def loss_fn(logits, labels, ignore_indices):
     log_p = jax.nn.log_softmax(shift_logits, axis=-1)
     # (bs, seq_len, vocab) -> (bs, seq_len)
     cross_entropy = jnp.sum(one_hot_labels * log_p, axis=-1)
-    loss = -jnp.mean(jnp.sum(cross_entropy, axis=-1) / valid_len)
+    loss = -jnp.mean(jnp.sum(cross_entropy * valid, axis=-1) / valid_len)
     return loss
 
 
@@ -692,7 +693,7 @@ def main():
     def eval_step(params, batch):
         labels = batch.pop("labels")
         logits = model(**batch, params=params, deterministic=True)[0]
-        loss = loss_fn(logits, labels, IGNORE_TOKEN_ID)
+        loss = loss_fn(logits, labels, ignore_ids)
 
         # summarize metrics
         metrics = {"loss": loss}

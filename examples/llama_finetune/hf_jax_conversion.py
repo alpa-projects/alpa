@@ -8,6 +8,11 @@ def import_hf_model(model_name_or_path):
 
 def hf_to_jax_weight(hf_model):
     state_dict = hf_model.state_dict()
+    num_heads = hf_model.config.num_attention_heads
+    dim = hf_model.config.hidden_size
+    # inverse function of EasyLM's convert_easylm_to_hf.write_model.permute
+    def inv_permute(w):
+        return w.reshape(num_heads, 2, dim // num_heads // 2, dim).transpose(1, 2).reshape(dim, dim)
     jax_weights = {
         'transformer': {
             'wte': {'embedding': state_dict['model.embed_tokens.weight'].numpy()},
@@ -15,8 +20,8 @@ def hf_to_jax_weight(hf_model):
             'h': {
                 '%d' % (layer): {
                     'attention': {
-                        'wq': {'kernel': state_dict['model.layers.%d.self_attn.q_proj.weight' % (layer)].numpy().transpose()},
-                        'wk': {'kernel': state_dict['model.layers.%d.self_attn.k_proj.weight' % (layer)].numpy().transpose()},
+                        'wq': {'kernel': inv_permute(state_dict['model.layers.%d.self_attn.q_proj.weight' % (layer)]).numpy().transpose()},
+                        'wk': {'kernel': inv_permute(state_dict['model.layers.%d.self_attn.k_proj.weight' % (layer)]).numpy().transpose()},
                         'wv': {'kernel': state_dict['model.layers.%d.self_attn.v_proj.weight' % (layer)].numpy().transpose()},
                         'wo': {'kernel': state_dict['model.layers.%d.self_attn.o_proj.weight' % (layer)].numpy().transpose()},
                     },

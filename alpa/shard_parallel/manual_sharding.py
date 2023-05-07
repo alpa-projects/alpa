@@ -91,11 +91,8 @@ def _flatten_axes(treedef, axis_tree):
 
 
 def _prepare_axis_and_flatten(axis_resources, tree, name):
-    parsed_axis_resources, _, _, any_auto = _prepare_axis_resources(
+    parsed_axis_resources, _, _ = _prepare_axis_resources(
         axis_resources, name)
-    if any_auto:
-        raise NotImplementedError(
-            "auto mode in manual partition is unsupported.")
     axis_flat = tuple(_flatten_axes(tree, parsed_axis_resources))
     if any(_is_unspecified(in_axis) for in_axis in axis_flat):
         assert all(_is_unspecified(in_axis) for in_axis in axis_flat)

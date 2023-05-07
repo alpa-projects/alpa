@@ -540,14 +540,21 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         ] + grad_avals
         apply_grad_in_avals = \
             [avals[i] for i in apply_grad_invar_indices] + grad_avals
+
+        accumulate_grad_partitioned = run_spmd_partitioner_pass(
+            accumulate_grad.clone(),
+            physical_mesh.num_devices,
+            rewrite_for_grad_acc=True)
+        apply_grad_partitioned = run_spmd_partitioner_pass(
+            apply_grad.clone(), physical_mesh.num_devices)
+
         accumulate_grad_input_sharding_specs, grad_sharding_specs = (
-            get_input_output_sharding_specs(accumulate_grad.get_module(),
-                                            accumulate_grad_in_avals,
-                                            grad_avals,
-                                            physical_mesh.num_devices,
-                                            logical_mesh_shape))
+            get_input_output_sharding_specs(
+                accumulate_grad_partitioned.get_module(),
+                accumulate_grad_in_avals, grad_avals, physical_mesh.num_devices,
+                logical_mesh_shape))
         apply_grad_input_sharding_specs, output_sharding_specs = (
-            get_input_output_sharding_specs(apply_grad.get_module(),
+            get_input_output_sharding_specs(apply_grad_partitioned.get_module(),
                                             apply_grad_in_avals, out_avals,
                                             physical_mesh.num_devices,
                                             logical_mesh_shape))

@@ -467,6 +467,8 @@ def compile_allocate_zero_buffers(backend, num_devices: int,
         device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
     )
+    build_options = compile_options.executable_build_options
+    build_options.allow_spmd_sharding_propagation_to_output = [True]
     with XlaPassContext({
             "done-event::enable": global_config.enable_overlapping,
     }):

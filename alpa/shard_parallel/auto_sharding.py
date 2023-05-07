@@ -411,7 +411,9 @@ def run_backend_compilation(backend: xe.Client,
                             hlo: WrappedHlo,
                             stage_plan: StagePlan,
                             num_devices: int,
-                            bypass_device_assignment_check: bool = False):
+                            bypass_device_assignment_check: bool = False,
+                            rewrite_for_grad_acc: bool = False,
+                            rewrite_grad_acc_indices=None):
     """Compile a spmd partitioned Hlo Module to an XLA executable.
 
     Args:
@@ -430,8 +432,15 @@ def run_backend_compilation(backend: xe.Client,
         parameter_is_tupled_arguments=False,
         build_random_seed=stage_plan.build_random_seed,
         spmd_propagation_to_outputs=hlo.is_sharding_annotated())
+    
+    if rewrite_for_grad_acc and rewrite_grad_acc_indices is None:
+        rewrite_grad_acc_indices = tuple(
+            range(len(hlo.program_shape().result_shape().tuple_shapes())))
 
     with XlaPassContext({
+            # Gradient accumulation rewrite:
+            "auto_sharding::rewrite_for_grad_acc": rewrite_for_grad_acc,
+            "auto_sharding::rewrite_indices": rewrite_grad_acc_indices,
             # Build options
             "build_option::bypass_device_assignment_check":
                 bypass_device_assignment_check,

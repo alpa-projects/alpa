@@ -225,12 +225,6 @@ def shard_parallel_internal_gradient_accumulation(
         (False,) * num_grads)
     setup_computation_alias(apply_grad, tmp_donate_invars)
 
-    accumulate_grad = run_spmd_partitioner_pass(accumulate_grad,
-                                                physical_mesh.num_devices,
-                                                rewrite_for_grad_acc=True)
-    apply_grad = run_spmd_partitioner_pass(apply_grad,
-                                           physical_mesh.num_devices)
-
     # Compile them to a single mesh executable
     return GradAccMeshDriverExecutable(physical_mesh,
                                        accumulate_grad,

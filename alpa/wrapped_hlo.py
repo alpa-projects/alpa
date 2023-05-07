@@ -77,3 +77,8 @@ class WrappedHlo:
     def __setstate__(self, bytes_and_status):
         b, s = bytes_and_status
         self.__init__(b, s)
+
+    def clone(self):
+        ret = WrappedHlo(xe.hlo_module_from_text(self.to_string()), self.status)
+        ret.is_manually_annotated = self.is_manually_annotated
+        return ret

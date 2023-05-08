@@ -525,16 +525,7 @@ def compile_allgather(shape, dtype, src_spec, dst_spec, num_devices):
     c.set_sharding(dst_sharding)
     hlo_module = c.build(xc.ops.Tuple(c, [operand])).as_hlo_module()
 
-    build_random_seed = global_config.compile_random_seed
-    compile_options = get_compile_options(
-        num_replicas=1,
-        num_partitions=num_devices,
-        device_assignment=np.arange(num_devices).reshape((1, -1)),
-        use_spmd_partitioning=True,
-        parameter_is_tupled_arguments=False,
-        build_random_seed=build_random_seed)
-    xe.run_spmd_partitioner(hlo_module, compile_options)
-    return WrappedHlo(hlo_module, HloStatus.SPMD_PARTITIONED)
+    return WrappedHlo(hlo_module, HloStatus.SHARDING_ANNOTATED)
 
 
 def get_index_select_computation(sharding_specs, dim, avals, index_shape):

@@ -333,6 +333,8 @@ def _compile_profiling_executable_while_loop(backend, shapes, op_func,
         use_spmd_partitioning=True,
     )
     shapes = [(1, np.int32)] + shapes
+    build_options = compile_options.executable_build_options
+    build_options.allow_spmd_sharding_propagation_to_output = [True]
     return shapes, backend.compile(
         xla_computation_to_mlir_text(loop_computation), compile_options)
 
@@ -367,6 +369,8 @@ def _compile_profiling_executable_once(backend, shapes, op_func, num_devices):
         device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
     )
+    build_options = compile_options.executable_build_options
+    build_options.allow_spmd_sharding_propagation_to_output = [True]
     return shapes, backend.compile(
         xla_computation_to_mlir_text(body_computation), compile_options)
 

@@ -375,6 +375,8 @@ def run_spmd_partitioner_pass(
         rewrite_for_grad_acc: bool = False,
         rewrite_grad_acc_indices: Optional[Sequence[int]] = None):
     """Run SPMD partitioner pass on a sharding annotated HLO Module.
+    The output of this function should only be used for getting sharding spec,
+    but not running followup backend compilations.
 
     Args:
       hlo: The wrapped HLO module, whose status should be SHARDING_ANNOTATED.
@@ -407,13 +409,14 @@ def run_spmd_partitioner_pass(
     return hlo
 
 
-def run_backend_compilation(backend: xe.Client,
-                            hlo: WrappedHlo,
-                            stage_plan: StagePlan,
-                            num_devices: int,
-                            bypass_device_assignment_check: bool = False,
-                            rewrite_for_grad_acc: bool = False,
-                            rewrite_grad_acc_indices=None):
+def run_backend_compilation(
+        backend: xe.Client,
+        hlo: WrappedHlo,
+        stage_plan: StagePlan,
+        num_devices: int,
+        bypass_device_assignment_check: bool = False,
+        rewrite_for_grad_acc: bool = False,
+        rewrite_grad_acc_indices: Optional[Sequence[int]] = None):
     """Compile a spmd partitioned Hlo Module to an XLA executable.
 
     Args:
@@ -423,16 +426,16 @@ def run_backend_compilation(backend: xe.Client,
       num_devices: The total number of devices.
       bypass_device_assignment_check: Whether to compile without exact devices.
     """
-    assert hlo.is_spmd_partitioned() or hlo.is_sharding_annotated()
+    assert hlo.is_sharding_annotated()
     compile_options = get_compile_options(
         num_replicas=1,
         num_partitions=num_devices,
         device_assignment=np.arange(num_devices).reshape((1, -1)),
-        use_spmd_partitioning=hlo.is_sharding_annotated(),
+        use_spmd_partitioning=True,
         parameter_is_tupled_arguments=False,
         build_random_seed=stage_plan.build_random_seed,
-        spmd_propagation_to_outputs=hlo.is_sharding_annotated())
-    
+        spmd_propagation_to_outputs=True)
+
     if rewrite_for_grad_acc and rewrite_grad_acc_indices is None:
         rewrite_grad_acc_indices = tuple(
             range(len(hlo.program_shape().result_shape().tuple_shapes())))

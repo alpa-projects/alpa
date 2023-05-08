@@ -235,6 +235,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
     """
 
     hlo: WrappedHlo = None
+    partitioned_hlo: WrappedHlo = None
     donated_invars: Sequence[bool] = None
     stage_plan: StagePlan = None
     input_sharding_specs: Sequence[pxla.ShardingSpec] = None
@@ -341,20 +342,25 @@ class XlaShardedPipelineComputation(PipelineComputation):
         for invar in donated_invars:
             self.donated_invars[var_indices[invar]] = True
 
+    def get_hlo_for_backend_compilation(self):
+        setup_computation_alias(self.hlo, self.donated_invars)
+        return self.hlo
+
     def get_spmd_partitioned(self):
         """Run spmd partitioner to get the input/output sharding specs after
         partitioning."""
-        if self.hlo.is_spmd_partitioned():
-            return self.hlo
+        if self.partitioned_hlo is not None:
+            assert self.partitioned_hlo.is_spmd_partitioned()
+            return self.partitioned_hlo
 
-        stage_plan = self.stage_plan
-        logical_mesh_shape = stage_plan.logical_mesh_shape
-        setup_computation_alias(self.hlo, self.donated_invars)
+        logical_mesh_shape = self.stage_plan.logical_mesh_shape
+        hlo = self.hlo.clone()
+        setup_computation_alias(hlo, self.donated_invars)
 
         num_devices = np.prod(logical_mesh_shape)
         rewrite_for_grad_acc = len(self.output_acc_grad_indices) > 0
         hlo = run_spmd_partitioner_pass(
-            self.hlo,
+            hlo,
             num_devices,
             rewrite_for_grad_acc=rewrite_for_grad_acc,
             rewrite_grad_acc_indices=self.output_acc_grad_indices)
@@ -363,12 +369,10 @@ class XlaShardedPipelineComputation(PipelineComputation):
         out_avals = [var.aval for var in self.outvars]
         input_sharding_specs, output_sharding_specs = (
             get_input_output_sharding_specs(hlo.get_module(), avals, out_avals,
-                                            num_devices,
-                                            stage_plan.logical_mesh_shape))
+                                            num_devices, logical_mesh_shape))
         self.input_sharding_specs = input_sharding_specs
         self.output_sharding_specs = output_sharding_specs
-        # The run_spmd_partitioner_pass modifies hlo module in-place,
-        # so the old hlo module cannot be accessed anymore
+        self.partitioned_hlo = hlo
         return hlo
 
     def get_runnable(self, mesh=None):
@@ -376,12 +380,13 @@ class XlaShardedPipelineComputation(PipelineComputation):
         if not mesh:
             raise RuntimeError(
                 "`XlaShardedPipelineComputation` requires a mesh.")
-        hlo = self.get_spmd_partitioned()
+        hlo = self.hlo
 
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
         mesh_executable = PartialGradAccMeshDriverExecutable(
-            mesh, hlo, self.stage_plan, avals, out_avals, self.donated_invars)
+            mesh, hlo, self.stage_plan, avals, out_avals, self.donated_invars,
+            self.output_acc_grad_indices)
         return mesh_executable.get_driver_callable()
 
     def get_hlo_text(self):

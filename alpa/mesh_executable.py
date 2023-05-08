@@ -1160,15 +1160,13 @@ class UtilMeshWorkerExecutable(MeshWorkerExecutable):
             device_assignment=np.arange(num_devices).reshape((1, -1)),
             use_spmd_partitioning=True,
             parameter_is_tupled_arguments=False,
-            build_random_seed=global_config.compile_random_seed,
-            spmd_propagation_to_outputs=True)
-        xla_computation = hlo.get_computation()
+            build_random_seed=global_config.compile_random_seed)
 
         with XlaPassContext({
                 "done-event::enable": global_config.enable_overlapping,
         }):
-            self.exec = worker.backend.compile(
-                xla_computation_to_mlir_text(xla_computation), compile_options)
+            self.exec = worker.backend.compile(hlo.get_mlir_text(),
+                                               compile_options)
 
         self.worker = worker
         self.timer_name = get_execution_timer_name(uuid)

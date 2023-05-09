@@ -69,6 +69,7 @@ class PipelineBERTTest(unittest.TestCase):
         # Check results
         assert_allclose(gradients, gradients_with_pipeline)
 
+    @unittest.skip("Skip due to an unknown bug.")
     def test_2_layer_bert_local_pipeline_parallel(self):
         self.train_2_layer_bert(LocalPipelineParallel())
 

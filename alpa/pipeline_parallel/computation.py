@@ -195,10 +195,8 @@ class XlaPipelineComputation(PipelineComputation):
             build_random_seed=global_config.compile_random_seed,
         )
 
-        xla_computation = self.hlo.get_computation()
-        compiled = backend.compile(
-            xla_computation_to_mlir_text(xla_computation),
-            compile_options=options)
+        compiled = backend.compile(self.hlo.get_mlir_text(),
+                                   compile_options=options)
         self.hlo.module = compiled.hlo_modules()[0]
         self.hlo.status = HloStatus.FULLY_OPTIMIZED
         # pylint: disable=protected-access

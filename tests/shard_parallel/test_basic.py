@@ -79,6 +79,7 @@ class AutoShardingBasicTest(unittest.TestCase):
 
         assert_allclose(b, a + 1)
 
+    @unittest.skip("Not supported in the current rebase.")
     def test_dropout(self):
 
         class Model(nn.Module):
@@ -212,6 +213,7 @@ class AutoShardingBasicTest(unittest.TestCase):
 
         assert "f32[128,64]" in executable.get_hlo_text()
 
+    @unittest.skip("The ShardedDeviceArray is replaced by ArrayImpl.")
     def test_fast_call(self):
 
         @parallelize

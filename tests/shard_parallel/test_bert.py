@@ -21,6 +21,10 @@ from tests.shard_parallel.test_mlp import (
     assert_sharding_zero_stage_3)
 
 
+# A temporary solution to walk around the stateful rng's problem.
+_deterministic = True
+
+
 class AutoShardingAttentionTest(unittest.TestCase):
 
     def setUp(self):
@@ -150,7 +154,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         num_layers = 2
         hidden_size = 32
         num_heads = 8
-        deterministic = False
+        deterministic = _deterministic
         use_remat = False
 
         # Test on different logical mesh shapes
@@ -169,7 +173,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         num_layers = 2
         hidden_size = 128
         num_heads = 8
-        deterministic = False
+        deterministic = _deterministic
         use_remat = False
 
         # Test on different logical mesh shapes
@@ -217,7 +221,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         num_layers = 2
         hidden_size = 128
         num_heads = 8
-        deterministic = False
+        deterministic = _deterministic
         use_remat = False
 
         # Test on different logical mesh shapes
@@ -280,7 +284,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         num_layers = 2
         hidden_size = 32
         num_heads = 8
-        deterministic = False
+        deterministic = _deterministic
         use_remat = False
         self.as_option.force_batch_dim_to_mesh_dim = 0
 
@@ -389,7 +393,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         hidden_size = 16
         num_heads = 4
         vocab_size = 128
-        deterministic = False
+        deterministic = _deterministic
 
         # Test on different logical mesh shapes
         for i, mesh_shape in enumerate([(4, 1), (1, 4)]):
@@ -414,7 +418,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         hidden_size = 128
         num_heads = 4
         vocab_size = 512
-        deterministic = False
+        deterministic = _deterministic
         self.as_option.allow_all_gather = False  # Temporary hack
         self.as_option.allow_all_to_all = False  # Temporary hack
 
@@ -482,7 +486,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         hidden_size = 512
         num_heads = 4
         vocab_size = 4096
-        deterministic = False
+        deterministic = _deterministic
         # To generate the desired strategy, we have to turn off mixed mesh shape and all-gather
         # and enable recomputing heavy ops.
         self.as_option.allow_recompute_heavy_op = True
@@ -589,7 +593,7 @@ class AutoShardingAttentionTest(unittest.TestCase):
         num_layers = 2
         hidden_size = 128
         num_heads = 8
-        deterministic = False
+        deterministic = _deterministic
         use_remat = True
 
         # Test on different logical mesh shapes

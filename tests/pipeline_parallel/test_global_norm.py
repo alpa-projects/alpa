@@ -12,7 +12,6 @@ from alpa.testing import PipelineBasicTest
 # FIXME: recover this test suite.
 class GlobalNormTest(PipelineBasicTest):
 
-    @unittest.skip("This test is broken. Need to reimplement CrossMeshAllReduce because thunk is being deprecated.")
     def test_global_norm(self):
         hlos = self.run_n_layer_bert(num_layers=2,
                                      manual_pipeline_layer=False,
@@ -33,7 +32,6 @@ class GlobalNormTest(PipelineBasicTest):
                                      clip_by_global_norm=True,
                                      use_dynamic_scale=True)
 
-    @unittest.skip("This test is broken. Need to reimplement CrossMeshAllReduce because thunk is being deprecated.")
     def test_glob_norm_and_all_le(self):
 
         def train_step(state, batch):

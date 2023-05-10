@@ -381,8 +381,7 @@ def get_manual_input_output_sharding_specs(stages, mesh_shapes, ms_option,
                                                      mesh_shape,
                                                      mesh_axis_names)
         var_sharding_specs = [
-            hlo_sharding_to_sharding_spec(xc.HloSharding.from_proto(ops), aval,
-                                          mesh_shape)
+            hlo_sharding_to_sharding_spec(ops, aval, mesh_shape)
             for ops, aval in zip(var_op_shardings, avals)
         ]
         return dict(zip(variables, var_sharding_specs))

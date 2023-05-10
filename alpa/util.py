@@ -338,6 +338,9 @@ def get_compile_options(num_replicas: int,
     build_options.seed = build_random_seed
     build_options.allow_spmd_sharding_propagation_to_output =\
         [spmd_propagation_to_outputs]
+    # FIXME: re-enable the new runtime when everything is ready.
+    debug_options = build_options.debug_options
+    debug_options.xla_gpu_enable_xla_runtime_executable = False
     return compile_options
 
 

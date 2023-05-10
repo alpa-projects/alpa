@@ -79,7 +79,6 @@ class AutoShardingBasicTest(unittest.TestCase):
 
         assert_allclose(b, a + 1)
 
-    @unittest.skip("Not supported in the current rebase.")
     def test_dropout(self):
 
         class Model(nn.Module):

@@ -71,7 +71,7 @@ def recv_tile(worker, uuid: int, device_id: int,
                           n_elements=n_elements)
     else:
         tmp_buffer = device_put(jnp.ones(slice_shape, dtype=buffer.dtype),
-                                worker.local_devices[device_id])
+                                worker.local_devices[device_id])._arrays[0]
         to_recv = jax_tensor_to_xla_buffer(tmp_buffer)
         n_elements = np.prod(slice_shape)
         # let recv stream wait for d2d stream

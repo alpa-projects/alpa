@@ -35,7 +35,7 @@ from jax.experimental.maps import FrozenDict
 from jax import linear_util as lu
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla, pxla, mlir
-from jax.interpreters.xla import _DeviceArray
+from jax.interpreters.xla import make_device_array
 from jax.tree_util import tree_map, tree_flatten, PyTreeDef
 import numpy as np
 import ray
@@ -1183,7 +1183,7 @@ def xla_buffer_to_jax_tensor(xla_buf):
     So we can index over the data buffer.
     """
     aval = ShapedArray(xla_buf.shape, xla_buf.dtype)
-    return _DeviceArray(aval, xla_buf.device(), xla_buf)
+    return make_device_array(aval, xla_buf.device(), xla_buf)
 
 
 def jax_tensor_to_xla_buffer(jax_buf):

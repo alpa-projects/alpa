@@ -147,7 +147,7 @@ def broadcast(worker, uuid, comm_key, world_size, devices_ids,
                                        start_indices, slice_shape)
             else:
                 tmp = device_put(jnp.ones(slice_shape, dtype=buffer.dtype),
-                                 worker.local_devices[device_id])
+                                 worker.local_devices[device_id])._arrays[0]
             # let communicate stream wait for compute stream
             is_send = global_rank == 0
             col.comm_wait_compute(group_name, is_send, True, device_id)
@@ -176,9 +176,9 @@ def broadcast(worker, uuid, comm_key, world_size, devices_ids,
             # let compute stream wait for communicator stream
             is_send = global_rank == 0
             col.compute_wait_comm(group_name, is_send, True, device_id)
-            new_buffer = jax_tensor_set(xla_buffer_to_jax_tensor(buffer),
-                                        xla_buffer_to_jax_tensor(xla_buffer),
-                                        start_indices)
+            buf = xla_buffer_to_jax_tensor(buffer)
+            xla_buf = xla_buffer_to_jax_tensor(xla_buffer)
+            new_buffer = jax_tensor_set(buf, xla_buf, start_indices)
             new_buffer = jax_tensor_to_xla_buffer(new_buffer)
         worker.buffers[uuid][device_id] = new_buffer
 

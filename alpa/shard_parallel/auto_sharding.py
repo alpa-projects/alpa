@@ -482,12 +482,12 @@ def get_input_output_sharding_specs(
       output_sharding_specs: The sharding specs of output tensors.
     """
     if num_devices != 1:
-        input_shardings = hlo_module.spmd_parameters_shardings()
+        input_shardings = hlo_module.spmd_parameters_shardings
         input_sharding_specs = [
             hlo_sharding_to_sharding_spec(proto, aval, logical_mesh_shape)
             for (proto, aval) in zip(input_shardings, avals)
         ]
-        output_shardings = hlo_module.spmd_output_sharding()
+        output_shardings = hlo_module.spmd_output_sharding
         output_sharding_specs = hlo_sharding_to_sharding_spec(
             output_shardings, out_avals, logical_mesh_shape)
     else:
@@ -575,14 +575,13 @@ def _hlo_sharding_to_sharding_spec_no_tuple(
 
 
 def hlo_sharding_to_sharding_spec(
-        hlo_sharding: "xe.HloSharding", aval: Union[Sequence[ShapedArray],
+        proto: "xe.OpSharding", aval: Union[Sequence[ShapedArray],
                                                     ShapedArray],
         logical_mesh_shape: Sequence[int]) -> pxla.ShardingSpec:
     """Convert hlo sharding to sharding spec."""
     logical_mesh = LogicalDeviceMesh(
         None,
         np.arange(np.prod(logical_mesh_shape)).reshape(logical_mesh_shape))
-    proto = hlo_sharding.to_proto()
     sharding_type, tuple_shardings = proto.type, proto.tuple_shardings
     if sharding_type == xc.OpSharding.Type.TUPLE:
         avals = aval

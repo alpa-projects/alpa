@@ -255,7 +255,7 @@ def _op_all_reduce(operand, dtype, reduce_op, replica_groups, channel_id):
 def _op_all_to_all(operand, replica_groups, channel_id):
     replica_groups_protos = xc.make_replica_groups(replica_groups)
     ret = ops.AllToAll(operand, 0, 0, len(replica_groups[0]),
-                       replica_groups_protos, channel_id, None, True)
+                       replica_groups_protos, channel_id)
     return ret
 
 

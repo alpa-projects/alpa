@@ -308,7 +308,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
             hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh_shape)
             for (proto_tuple, aval) in zip(input_shardings, avals)
         ]
-        output_shardings = hlo_module.spmd_output_sharding()
+        output_shardings = hlo_module.spmd_output_sharding
         output_sharding_specs = hlo_sharding_to_sharding_spec(
             output_shardings, out_avals, logical_mesh_shape)
 

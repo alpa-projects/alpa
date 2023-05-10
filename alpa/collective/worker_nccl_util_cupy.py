@@ -6,7 +6,10 @@ import cupy
 import jax.numpy as jnp
 from jax import device_put
 from jax._src.dlpack import from_dlpack, to_dlpack
-from jax._src.lib import xla_bridge as xb, xla_client as xc
+from jax.lib import (
+    xla_bridge as xb,
+    xla_client as xc,
+)
 import numpy as np
 
 import alpa.collective as col

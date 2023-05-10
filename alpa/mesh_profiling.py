@@ -6,11 +6,15 @@ import pickle
 import time
 
 import numpy as np
-from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
+from jax.lib import (
+    xla_bridge as xb,
+    xla_client as xc,
+    xla_extension as xe,
+)
 import ray
 
 from alpa.util import (GB, print_used_time, XlaPassContext, to_str_round,
-                       run_with_timeout)
+                       run_with_timeout, xla_computation_to_mlir_text)
 
 ops = xc.ops
 
@@ -251,7 +255,7 @@ def _op_all_reduce(operand, dtype, reduce_op, replica_groups, channel_id):
 def _op_all_to_all(operand, replica_groups, channel_id):
     replica_groups_protos = xc.make_replica_groups(replica_groups)
     ret = ops.AllToAll(operand, 0, 0, len(replica_groups[0]),
-                       replica_groups_protos, channel_id, None, True)
+                       replica_groups_protos, channel_id)
     return ret
 
 
@@ -329,7 +333,10 @@ def _compile_profiling_executable_while_loop(backend, shapes, op_func,
         use_spmd_partitioning=True,
     )
     shapes = [(1, np.int32)] + shapes
-    return shapes, backend.compile(loop_computation, compile_options)
+    build_options = compile_options.executable_build_options
+    build_options.allow_spmd_sharding_propagation_to_output = [True]
+    return shapes, backend.compile(
+        xla_computation_to_mlir_text(loop_computation), compile_options)
 
 
 def _compile_profiling_executable_once(backend, shapes, op_func, num_devices):
@@ -362,7 +369,10 @@ def _compile_profiling_executable_once(backend, shapes, op_func, num_devices):
         device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
     )
-    return shapes, backend.compile(body_computation, compile_options)
+    build_options = compile_options.executable_build_options
+    build_options.allow_spmd_sharding_propagation_to_output = [True]
+    return shapes, backend.compile(
+        xla_computation_to_mlir_text(body_computation), compile_options)
 
 
 def bound(value, minimum, maximum):

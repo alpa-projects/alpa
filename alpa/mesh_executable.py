@@ -21,7 +21,7 @@ from jax.interpreters import pxla
 from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves, PyTreeDef
 import numpy as np
 import ray
-from alpa.util import XlaPassContext
+from alpa.util import XlaPassContext, xla_computation_to_mlir_text
 
 from alpa.device_mesh import (LocalPhysicalDeviceMesh,
                               DistributedPhysicalDeviceMesh, RemoteArrayRef,
@@ -213,13 +213,14 @@ class NormalMeshDriverExecutable(MeshDriverExecutable):
         # Send the executable to workers
         self.fully_optimized_hlo_text = None
         self.exec_uuid = next_mesh_executable_uuid()
+        hlo_partitioned = run_spmd_partitioner_pass(hlo.clone(),
+                                                    physical_mesh.num_devices)
         self._set_executable(physical_mesh, hlo, stage_plan)
 
-        if hlo.is_sharding_annotated():
-            hlo = run_spmd_partitioner_pass(hlo, physical_mesh.num_devices)
         # Read sharding specs
         self.input_sharding_specs, self.output_sharding_specs = (
-            get_input_output_sharding_specs(hlo.get_module(), avals, out_avals,
+            get_input_output_sharding_specs(hlo_partitioned.get_module(), avals,
+                                            out_avals,
                                             physical_mesh.num_devices,
                                             stage_plan.logical_mesh_shape))
 
@@ -434,14 +435,19 @@ class NormalMeshWorkerExecutable(MeshWorkerExecutable):
         num_devices = np.prod(stage_plan.logical_mesh_shape)
         assert num_devices == len(worker.backend.devices())
 
+        kwargs = self._get_compilation_args()
+
         self.compiled = run_backend_compilation(worker.backend, hlo, stage_plan,
-                                                num_devices)
+                                                num_devices, **kwargs)
         self.donated_invars = donated_invars
         self.worker = worker
 
         # Set up timers
         self.timer_name = get_execution_timer_name(uuid)
         self.sync_func = get_sync_func_worker(worker)
+
+    def _get_compilation_args(self):
+        return {}
 
     def execute_on_worker(self, input_uuids: Sequence[int],
                           output_uuids: Sequence[int], sync_before: bool,
@@ -540,14 +546,21 @@ class GradAccMeshDriverExecutable(MeshDriverExecutable):
         ] + grad_avals
         apply_grad_in_avals = \
             [avals[i] for i in apply_grad_invar_indices] + grad_avals
+
+        accumulate_grad_partitioned = run_spmd_partitioner_pass(
+            accumulate_grad.clone(),
+            physical_mesh.num_devices,
+            rewrite_for_grad_acc=True)
+        apply_grad_partitioned = run_spmd_partitioner_pass(
+            apply_grad.clone(), physical_mesh.num_devices)
+
         accumulate_grad_input_sharding_specs, grad_sharding_specs = (
-            get_input_output_sharding_specs(accumulate_grad.get_module(),
-                                            accumulate_grad_in_avals,
-                                            grad_avals,
-                                            physical_mesh.num_devices,
-                                            logical_mesh_shape))
+            get_input_output_sharding_specs(
+                accumulate_grad_partitioned.get_module(),
+                accumulate_grad_in_avals, grad_avals, physical_mesh.num_devices,
+                logical_mesh_shape))
         apply_grad_input_sharding_specs, output_sharding_specs = (
-            get_input_output_sharding_specs(apply_grad.get_module(),
+            get_input_output_sharding_specs(apply_grad_partitioned.get_module(),
                                             apply_grad_in_avals, out_avals,
                                             physical_mesh.num_devices,
                                             logical_mesh_shape))
@@ -945,7 +958,9 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
     def __init__(self, physical_mesh: "PhysicalDeviceMesh", hlo: WrappedHlo,
                  stage_plan: StagePlan, avals: Sequence[ShapedArray],
                  out_avals: Sequence[ShapedArray],
-                 donated_invars: Sequence[bool]):
+                 donated_invars: Sequence[bool],
+                 grad_acc_indices: Sequence[int]):
+        self.grad_acc_indices = grad_acc_indices
         super().__init__(physical_mesh, hlo, stage_plan, avals, out_avals,
                          donated_invars)
 
@@ -955,15 +970,22 @@ class PartialGradAccMeshDriverExecutable(NormalMeshDriverExecutable):
             for w in physical_mesh.workers:
                 w.put_executable.remote(self.exec_uuid,
                                         PartialGradAccMeshWorkerExecutable, hlo,
-                                        stage_plan, self.donated_invars)
+                                        stage_plan, self.donated_invars,
+                                        self.grad_acc_indices)
             self.hlo_text = None  # will be fetched from the workers later
             self.grad_sync_channel_ids = None
             self.skip_allreduce_env_name = None
         else:
             assert isinstance(physical_mesh, LocalPhysicalDeviceMesh)
-            self.compiled = run_backend_compilation(physical_mesh.backend, hlo,
-                                                    stage_plan,
-                                                    physical_mesh.num_devices)
+            rewrite_for_grad_acc = (self.grad_acc_indices is not None and
+                                    (len(self.grad_acc_indices) > 0))
+            self.compiled = run_backend_compilation(
+                physical_mesh.backend,
+                hlo,
+                stage_plan,
+                physical_mesh.num_devices,
+                rewrite_for_grad_acc=rewrite_for_grad_acc,
+                rewrite_grad_acc_indices=self.grad_acc_indices)
             self.hlo_text = self.compiled.hlo_modules()[0].to_string()
             self.grad_sync_channel_ids = get_grad_sync_channel_ids(
                 self.compiled.hlo_modules()[0])
@@ -991,12 +1013,22 @@ class PartialGradAccMeshWorkerExecutable(NormalMeshWorkerExecutable):
     """
 
     def __init__(self, worker: "MeshHostWorker", uuid: int, hlo: WrappedHlo,
-                 stage_plan: StagePlan, donated_invars: Sequence[bool]):
+                 stage_plan: StagePlan, donated_invars: Sequence[bool],
+                 grad_acc_indices: Sequence[int]):
+        self.grad_acc_indices = grad_acc_indices
         super().__init__(worker, uuid, hlo, stage_plan, donated_invars)
         self.grad_sync_channel_ids = get_grad_sync_channel_ids(
             self.compiled.hlo_modules()[0])
         self.skip_allreduce_env_name = (self.compiled.hlo_modules()[0].name +
                                         "XLA_SKIP_NCCL_COLLECTIVE_IDS")
+
+    def _get_compilation_args(self):
+        ret = super()._get_compilation_args()
+        rewrite_for_grad_acc = (self.grad_acc_indices is not None and
+                                (len(self.grad_acc_indices) > 0))
+        ret["rewrite_grad_acc_indices"] = self.grad_acc_indices
+        ret["rewrite_for_grad_acc"] = rewrite_for_grad_acc
+        return ret
 
     # pylint: disable=arguments-differ
     def execute_on_worker(self, input_uuids: Sequence[int],
@@ -1126,15 +1158,15 @@ class UtilMeshWorkerExecutable(MeshWorkerExecutable):
             num_replicas=1,
             num_partitions=num_devices,
             device_assignment=np.arange(num_devices).reshape((1, -1)),
-            use_spmd_partitioning=False,
+            use_spmd_partitioning=True,
             parameter_is_tupled_arguments=False,
             build_random_seed=global_config.compile_random_seed)
-        xla_computation = hlo.get_computation()
 
         with XlaPassContext({
                 "done-event::enable": global_config.enable_overlapping,
         }):
-            self.exec = worker.backend.compile(xla_computation, compile_options)
+            self.exec = worker.backend.compile(hlo.get_mlir_text(),
+                                               compile_options)
 
         self.worker = worker
         self.timer_name = get_execution_timer_name(uuid)
@@ -1177,7 +1209,6 @@ def get_index_select_mesh_executable(avals, sharding_specs, index, dim,
     index_aval = ShapedArray(index.shape, index.dtype)
     assert len(avals) == len(sharding_specs) == len(donate_avals)
     hlo = get_index_select_computation(sharding_specs, dim, avals, index_shape)
-    hlo = run_spmd_partitioner_pass(hlo, device_mesh.num_devices)
 
     as_option = AutoShardingOption()
     strategy_config = StagePlan(global_config.compile_random_seed,

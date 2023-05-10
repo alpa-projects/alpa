@@ -18,7 +18,6 @@ from alpa.mesh_executable import (NormalMeshDriverExecutable,
                                   GradAccMeshDriverExecutable)
 from alpa.pipeline_parallel.apply_grad import APPLY_GRAD_MARKER_SUFFIX
 from alpa.shard_parallel.auto_sharding import (run_auto_sharding_pass,
-                                               run_spmd_partitioner_pass,
                                                AutoShardingOption)
 from alpa.shard_parallel.manual_sharding import (ManualShardingOption,
                                                  get_manual_sharding_spec)
@@ -138,10 +137,6 @@ def shard_parallel_internal(
     # Compile a XLA executable
     hlo, stage_plan = run_auto_sharding_pass(hlo, logical_mesh_choices[0],
                                              "single", 1, as_option)
-    # This is a walkaround because XLA GpuCompiler has some issue
-    if global_config.backend == "gpu":
-        hlo = run_spmd_partitioner_pass(hlo,
-                                        np.prod(logical_mesh_choices[0].shape))
 
     # Compile a mesh executable
     return NormalMeshDriverExecutable(physical_mesh,
@@ -223,12 +218,6 @@ def shard_parallel_internal_gradient_accumulation(
         tuple(donated_invars[i] for i in apply_grad_invar_indices) +
         (False,) * num_grads)
     setup_computation_alias(apply_grad, tmp_donate_invars)
-
-    accumulate_grad = run_spmd_partitioner_pass(accumulate_grad,
-                                                physical_mesh.num_devices,
-                                                rewrite_for_grad_acc=True)
-    apply_grad = run_spmd_partitioner_pass(apply_grad,
-                                           physical_mesh.num_devices)
 
     # Compile them to a single mesh executable
     return GradAccMeshDriverExecutable(physical_mesh,

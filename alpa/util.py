@@ -17,11 +17,16 @@ from warnings import warn
 from flax.training import train_state
 from flax.training.common_utils import stack_forest
 import jax
+from jax._src.util import wrap_name
 from jax._src.source_info_util import SourceInfo
 import jax.numpy as jnp
-from jax._src import dispatch, util
+from jax._src import dispatch, source_info_util
 from jax._src.api import FLAGS, ShapeDtypeStruct
-from jax._src.lib import xla_bridge as xb, xla_client as xc, xla_extension as xe
+from jax.lib import (
+    xla_bridge as xb,
+    xla_client as xc,
+    xla_extension as xe
+)
 from jax.api_util import shaped_abstractify
 from jax import core
 from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
@@ -30,7 +35,7 @@ from jax.experimental.maps import FrozenDict
 from jax import linear_util as lu
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla, pxla, mlir
-from jax.interpreters.xla import _DeviceArray
+from jax.interpreters.xla import make_device_array
 from jax.tree_util import tree_map, tree_flatten, PyTreeDef
 import numpy as np
 import ray
@@ -309,6 +314,10 @@ def cached_property(fn, *args, **kwargs):
 ########################################
 
 
+def xla_computation_to_mlir_text(xla_computation: xc.XlaComputation):
+    return xc._xla.mlir.xla_computation_to_mlir_module(xla_computation)
+
+
 def get_compile_options(num_replicas: int,
                         num_partitions: int,
                         device_assignment: np.ndarray,
@@ -328,7 +337,10 @@ def get_compile_options(num_replicas: int,
     build_options = compile_options.executable_build_options
     build_options.seed = build_random_seed
     build_options.allow_spmd_sharding_propagation_to_output =\
-        spmd_propagation_to_outputs
+        [spmd_propagation_to_outputs]
+    # FIXME: re-enable the new runtime when everything is ready.
+    debug_options = build_options.debug_options
+    debug_options.xla_gpu_enable_xla_runtime_executable = False
     return compile_options
 
 
@@ -347,7 +359,7 @@ def jaxpr_to_hlo(name: str,
     # Convert jaxpr to XLA HLO
     tuple_args = False
     axis_env = xla.AxisEnv(nreps=1, names=(), sizes=())
-    name_stack = util.new_name_stack(xla.wrap_name(name, "parallelize"))
+    name_stack = source_info_util.new_name_stack(wrap_name(name, "parallelize"))
     closed_jaxpr = ClosedJaxpr(closed_jaxpr.jaxpr, consts)
     unordered_effects = [
         eff for eff in closed_jaxpr.effects if eff not in core.ordered_effects
@@ -458,10 +470,13 @@ def compile_allocate_zero_buffers(backend, num_devices: int,
         device_assignment=np.arange(num_devices).reshape((1, -1)),
         use_spmd_partitioning=True,
     )
+    build_options = compile_options.executable_build_options
+    build_options.allow_spmd_sharding_propagation_to_output = [True]
     with XlaPassContext({
             "done-event::enable": global_config.enable_overlapping,
     }):
-        compiled = backend.compile(c, compile_options)
+        compiled = backend.compile(xla_computation_to_mlir_text(c),
+                                   compile_options)
     return compiled
 
 
@@ -513,16 +528,7 @@ def compile_allgather(shape, dtype, src_spec, dst_spec, num_devices):
     c.set_sharding(dst_sharding)
     hlo_module = c.build(xc.ops.Tuple(c, [operand])).as_hlo_module()
 
-    build_random_seed = global_config.compile_random_seed
-    compile_options = get_compile_options(
-        num_replicas=1,
-        num_partitions=num_devices,
-        device_assignment=np.arange(num_devices).reshape((1, -1)),
-        use_spmd_partitioning=True,
-        parameter_is_tupled_arguments=False,
-        build_random_seed=build_random_seed)
-    xe.run_spmd_partitioner(hlo_module, compile_options)
-    return WrappedHlo(hlo_module, HloStatus.SPMD_PARTITIONED)
+    return WrappedHlo(hlo_module, HloStatus.SHARDING_ANNOTATED)
 
 
 def get_index_select_computation(sharding_specs, dim, avals, index_shape):
@@ -1180,7 +1186,7 @@ def xla_buffer_to_jax_tensor(xla_buf):
     So we can index over the data buffer.
     """
     aval = ShapedArray(xla_buf.shape, xla_buf.dtype)
-    return _DeviceArray(aval, xla_buf.device(), xla_buf)
+    return make_device_array(aval, xla_buf.device(), xla_buf)
 
 
 def jax_tensor_to_xla_buffer(jax_buf):

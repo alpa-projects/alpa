@@ -5,11 +5,14 @@ import logging
 from typing import Sequence, Any, Dict, Optional
 
 from jax import jit
-from jax._src.lib import xla_bridge as xb, xla_extension as xe
+from jax.lib import (
+    xla_bridge as xb,
+    xla_extension as xe,
+)
 from jax._src.util import partial, safe_map
 from jax._src import dispatch
 from jax.core import (Atom, Var, JaxprEqn, Jaxpr, ClosedJaxpr, DropVar, Literal,
-                      jaxpr_as_fun, gensym, named_call_p, ShapedArray)
+                      jaxpr_as_fun, gensym, closed_call_p, ShapedArray)
 from jax.interpreters import pxla
 import numpy as np
 
@@ -28,7 +31,8 @@ from alpa.util import (OrderedSet, clone_jaxpr, clone_jaxpr_eqn,
                        get_compile_options, jaxpr_to_hlo,
                        setup_computation_alias, compile_dummy_zero_constant,
                        get_var_mapping, undefined_sharding_spec_proto,
-                       new_jaxpr_eqn, replicated_sharding_spec_proto)
+                       new_jaxpr_eqn, replicated_sharding_spec_proto,
+                       xla_computation_to_mlir_text)
 from alpa.wrapped_hlo import HloStatus, WrappedHlo
 
 # pylint: disable=redefined-builtin
@@ -191,8 +195,8 @@ class XlaPipelineComputation(PipelineComputation):
             build_random_seed=global_config.compile_random_seed,
         )
 
-        xla_computation = self.hlo.get_computation()
-        compiled = backend.compile(xla_computation, compile_options=options)
+        compiled = backend.compile(self.hlo.get_mlir_text(),
+                                   compile_options=options)
         self.hlo.module = compiled.hlo_modules()[0]
         self.hlo.status = HloStatus.FULLY_OPTIMIZED
         # pylint: disable=protected-access
@@ -229,6 +233,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
     """
 
     hlo: WrappedHlo = None
+    partitioned_hlo: WrappedHlo = None
     donated_invars: Sequence[bool] = None
     stage_plan: StagePlan = None
     input_sharding_specs: Sequence[pxla.ShardingSpec] = None
@@ -303,7 +308,7 @@ class XlaShardedPipelineComputation(PipelineComputation):
             hlo_sharding_to_sharding_spec(proto_tuple, aval, logical_mesh_shape)
             for (proto_tuple, aval) in zip(input_shardings, avals)
         ]
-        output_shardings = hlo_module.spmd_output_sharding()
+        output_shardings = hlo_module.spmd_output_sharding
         output_sharding_specs = hlo_sharding_to_sharding_spec(
             output_shardings, out_avals, logical_mesh_shape)
 
@@ -335,20 +340,25 @@ class XlaShardedPipelineComputation(PipelineComputation):
         for invar in donated_invars:
             self.donated_invars[var_indices[invar]] = True
 
+    def get_hlo_for_backend_compilation(self):
+        setup_computation_alias(self.hlo, self.donated_invars)
+        return self.hlo
+
     def get_spmd_partitioned(self):
         """Run spmd partitioner to get the input/output sharding specs after
         partitioning."""
-        if self.hlo.is_spmd_partitioned():
-            return self.hlo
+        if self.partitioned_hlo is not None:
+            assert self.partitioned_hlo.is_spmd_partitioned()
+            return self.partitioned_hlo
 
-        stage_plan = self.stage_plan
-        logical_mesh_shape = stage_plan.logical_mesh_shape
-        setup_computation_alias(self.hlo, self.donated_invars)
+        logical_mesh_shape = self.stage_plan.logical_mesh_shape
+        hlo = self.hlo.clone()
+        setup_computation_alias(hlo, self.donated_invars)
 
         num_devices = np.prod(logical_mesh_shape)
         rewrite_for_grad_acc = len(self.output_acc_grad_indices) > 0
         hlo = run_spmd_partitioner_pass(
-            self.hlo,
+            hlo,
             num_devices,
             rewrite_for_grad_acc=rewrite_for_grad_acc,
             rewrite_grad_acc_indices=self.output_acc_grad_indices)
@@ -357,12 +367,10 @@ class XlaShardedPipelineComputation(PipelineComputation):
         out_avals = [var.aval for var in self.outvars]
         input_sharding_specs, output_sharding_specs = (
             get_input_output_sharding_specs(hlo.get_module(), avals, out_avals,
-                                            num_devices,
-                                            stage_plan.logical_mesh_shape))
+                                            num_devices, logical_mesh_shape))
         self.input_sharding_specs = input_sharding_specs
         self.output_sharding_specs = output_sharding_specs
-        # The run_spmd_partitioner_pass modifies hlo module in-place,
-        # so the old hlo module cannot be accessed anymore
+        self.partitioned_hlo = hlo
         return hlo
 
     def get_runnable(self, mesh=None):
@@ -370,12 +378,13 @@ class XlaShardedPipelineComputation(PipelineComputation):
         if not mesh:
             raise RuntimeError(
                 "`XlaShardedPipelineComputation` requires a mesh.")
-        hlo = self.get_spmd_partitioned()
+        hlo = self.hlo
 
         avals = [var.aval for var in self.invars]
         out_avals = [var.aval for var in self.outvars]
         mesh_executable = PartialGradAccMeshDriverExecutable(
-            mesh, hlo, self.stage_plan, avals, out_avals, self.donated_invars)
+            mesh, hlo, self.stage_plan, avals, out_avals, self.donated_invars,
+            self.output_acc_grad_indices)
         return mesh_executable.get_driver_callable()
 
     def get_hlo_text(self):
@@ -836,7 +845,7 @@ def _wrap_with_call(closed_jaxpr: ClosedJaxpr, invars, outvars, name):
     jaxpr = clone_jaxpr(closed_jaxpr, new_invars, constvars=[], consts=[]).jaxpr
     params = dict(name=name, call_jaxpr=jaxpr)
     return new_jaxpr_eqn(invars + closed_jaxpr.jaxpr.constvars, outvars,
-                         named_call_p, params)
+                         closed_call_p, params)
 
 
 def _rearrange_in_out_for_donation(invars, outvars, donation_map):
@@ -902,7 +911,7 @@ def _wrap_by_marker(jaxpr: Jaxpr, name, gensym_fn):
                   call_jaxpr=Jaxpr([], new_invars + jaxpr.constvars,
                                    new_outvars, jaxpr.eqns))
     eqns.append(
-        new_jaxpr_eqn(sym_invars + jaxpr.constvars, sym_outvars, named_call_p,
+        new_jaxpr_eqn(sym_invars + jaxpr.constvars, sym_outvars, closed_call_p,
                       params))
     eqns.append(mark_pipeline_jaxpreqn(sym_outvars, new_outvars, name, "end"))
     return Jaxpr(list(jaxpr.constvars), list(jaxpr.invars), new_outvars, eqns)

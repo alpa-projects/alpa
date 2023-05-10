@@ -9,6 +9,7 @@ from alpa import grad
 from alpa.testing import PipelineBasicTest
 
 
+# FIXME: recover this test suite.
 class GlobalNormTest(PipelineBasicTest):
 
     def test_global_norm(self):

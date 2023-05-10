@@ -36,9 +36,12 @@ class AutoShardingBasicTest(unittest.TestCase):
         b = add_one(a)
 
         # Assert b is sharded
-        assert (b.sharding_spec == pxla.ShardingSpec(
+        sharding_spec = getattr(b, "sharding_spec", None)
+        # The new ArrayImpl class does not have sharding_spec attribute.
+        sharding_spec = sharding_spec or b._sharding.sharding_spec
+        assert (sharding_spec == pxla.ShardingSpec(
             sharding=(NoSharding(), Chunked([4])),
-            mesh_mapping=(ShardedAxis(0),)) or b.sharding_spec
+            mesh_mapping=(ShardedAxis(0),)) or sharding_spec
                 == pxla.ShardingSpec(sharding=(Chunked([4]), NoSharding()),
                                      mesh_mapping=(ShardedAxis(0),)))
 
@@ -153,7 +156,9 @@ class AutoShardingBasicTest(unittest.TestCase):
 
         hlo_ir = executable.get_hlo_text()
         assert "gather(f32[64,32]" in hlo_ir or "gather(f32[32,64]" in hlo_ir
-        assert "scatter(f32[64,32]" in hlo_ir or "scatter(f32[32,64]" in hlo_ir
+        assert ("scatter(f32[64,32]" in hlo_ir or
+                "scatter(f32[32,64]" in hlo_ir or
+                "scatter(f32[8,256]" in hlo_ir)
         n_total, n_allreduce, _, _, _ = count_communication_primitives(hlo_ir)
         assert n_total == n_allreduce == 1
 
@@ -207,6 +212,7 @@ class AutoShardingBasicTest(unittest.TestCase):
 
         assert "f32[128,64]" in executable.get_hlo_text()
 
+    @unittest.skip("The ShardedDeviceArray is replaced by ArrayImpl.")
     def test_fast_call(self):
 
         @parallelize

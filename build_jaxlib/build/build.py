@@ -74,8 +74,8 @@ def get_python_version(python_bin_path):
   return major, minor
 
 def check_python_version(python_version):
-  if python_version < (3, 7):
-    print("ERROR: JAX requires Python 3.7 or newer, found ", python_version)
+  if python_version < (3, 8):
+    print("ERROR: JAX requires Python 3.8 or newer, found ", python_version)
     sys.exit(-1)
 
 
@@ -289,7 +289,6 @@ def write_bazelrc(*, python_bin_path, remote_build,
         nccl_version = str(nccl.get_version())
         nccl_version = f"{nccl_version[0]}.{int(nccl_version[1:-2])}.{int(nccl_version[-2:])}"
         f.write(f'build --action_env TF_NCCL_VERSION="{nccl_version}"\n')
-
     if enable_tpu:
       f.write("build --config=tpu\n")
     if enable_remote_tpu:
@@ -461,7 +460,6 @@ def main():
       "--dev_install",
       action="store_true",
       help="Do not build wheel. Use dev install")
-
   args = parser.parse_args()
 
   if is_windows() and args.enable_cuda:

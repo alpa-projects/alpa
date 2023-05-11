@@ -7,6 +7,7 @@ from typing import Union
 from jax._src.lib import xla_extension as xe
 from jax.interpreters import mlir
 
+
 class HloStatus(Enum):
     """
     The status of an HloModule.

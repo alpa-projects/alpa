@@ -248,7 +248,8 @@ fi
 if [[ ! -e WORKSPACE ]] || [[ ! -e build ]]; then
     echo "Linking JAX build scripts..."
     ln -sf ${SRC_PATH_JAX}/WORKSPACE .
-    ln -sf ${SRC_PATH_JAX}/.bazel* .
+    ln -sf ${SRC_PATH_JAX}/.bazelrc .
+    ln -sf ${SRC_PATH_JAX}/.bazelversion .
     ln -sf ${SRC_PATH_JAX}/build build
 fi
 

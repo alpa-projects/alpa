@@ -68,7 +68,7 @@ EDITABLE=0
 NCCL="local"
 BUILD_PARAM=""
 SRC_PATH_JAX="../third_party/jax"
-SRC_PATH_XLA="../third_party/tensorflow-alpa"
+SRC_PATH_XLA="../third_party/xla-alpa"
 
 args=$(getopt -o h --long build-param:,clean,clean-only,cpu-arch:,debug,dry,editable,help,nccl:,src-path-jax:,src-path-xla:,sm: -- "$@")
 if [[ $? -ne 0 ]]; then
@@ -278,7 +278,7 @@ time CC=clang CXX=clang++ python build/build.py \
     --cuda_compute_capabilities=$TF_CUDA_COMPUTE_CAPABILITIES \
     --enable_nccl=true \
     --bazel_options=--linkopt=-fuse-ld=lld \
-    --bazel_options=--override_repository=org_tensorflow=$SRC_PATH_XLA \
+    --bazel_options=--override_repository=xla=$SRC_PATH_XLA \
     $BUILD_PARAM
 
 ## Cleanup

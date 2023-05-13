@@ -13,5 +13,6 @@ def do_monkey_patch():
         avals = jax.eval_shape(partial(self._backup_init, **kwargs), *args)
         return jax.tree_util.tree_map(lambda x: jnp.full(x.shape, 1e-8, x.dtype),
                                     avals)
-    FlaxLLaMAForCausalLMModule._backup_init = FlaxLLaMAForCausalLMModule.init
+    if not hasattr(FlaxLLaMAForCausalLMModule, "_backup_init"):
+        FlaxLLaMAForCausalLMModule._backup_init = FlaxLLaMAForCausalLMModule.init
     FlaxLLaMAForCausalLMModule.init = init_dummy

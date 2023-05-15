@@ -10,6 +10,7 @@ from typing import Union
 
 from flax.serialization import to_state_dict, from_state_dict
 import jax
+from jax._src import array
 from jax._src.tree_util import tree_flatten, tree_leaves, tree_unflatten, PyTreeDef
 import msgpack
 import numpy as np
@@ -117,12 +118,12 @@ def save_checkpoint(ckpt_dir: Union[str, os.PathLike],
         else:
             arr_cache_path = os.path.join(local_cache_dir, arr_dir)
         if isinstance(x, (DistributedArray, ReplicatedDistributedArray,
-                          np.ndarray, jax.xla.DeviceArray)):
+                          np.ndarray, array.ArrayImpl)):
             if isinstance(x, DistributedArray):
                 x.save(arr_path, arr_cache_path)
             elif isinstance(x, ReplicatedDistributedArray):
                 x.replica.save(arr_path, arr_cache_path)
-            elif isinstance(x, (np.ndarray, jax.xla.DeviceArray)):
+            elif isinstance(x, (np.ndarray, array.ArrayImpl)):
                 _save_unsharded_array(arr_path, x)
             flat_metadata.append(arr_dir)
         else:

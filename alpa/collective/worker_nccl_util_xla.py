@@ -71,7 +71,7 @@ def recv_tile(worker, uuid: int, device_id: int,
                           n_elements=n_elements)
     else:
         tmp_buffer = device_put(jnp.ones(slice_shape, dtype=buffer.dtype),
-                                worker.local_devices[device_id])._arrays[0]
+                                worker.local_devices[device_id])
         to_recv = jax_tensor_to_xla_buffer(tmp_buffer)
         n_elements = np.prod(slice_shape)
         # let recv stream wait for d2d stream
@@ -147,7 +147,7 @@ def broadcast(worker, uuid, comm_key, world_size, devices_ids,
                                        start_indices, slice_shape)
             else:
                 tmp = device_put(jnp.ones(slice_shape, dtype=buffer.dtype),
-                                 worker.local_devices[device_id])._arrays[0]
+                                 worker.local_devices[device_id])
             # let communicate stream wait for compute stream
             is_send = global_rank == 0
             col.comm_wait_compute(group_name, is_send, True, device_id)

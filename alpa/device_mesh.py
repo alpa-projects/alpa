@@ -901,7 +901,7 @@ class LocalPhysicalDeviceMesh(PhysicalDeviceMesh):
                     bufs.append(
                         pxla.shard_arg(arg, self.devices, indices, None))
 
-            if isinstance(arg, xe.DeviceArray) and donated:
+            if isinstance(arg, (xe.ArrayImpl, xe.DeviceArray)) and donated:
                 arg.delete()
 
         return bufs

@@ -21,7 +21,7 @@ Array = Any
 
 def is_tensor(x):
     """
-    Tests if ``x`` is a :obj:`torch.Tensor`, :obj:`tf.Tensor`, obj:`jaxlib.xla_extension.DeviceArray` or
+    Tests if ``x`` is a :obj:`torch.Tensor`, :obj:`tf.Tensor`, obj:`jax.Tensor` or
     :obj:`np.ndarray`.
     """
     #if is_torch_fx_proxy(x):
@@ -42,7 +42,7 @@ def is_tensor(x):
         import jaxlib.xla_extension as jax_xla
         from jax.core import Tracer
 
-        if isinstance(x, (jax_xla.DeviceArray, Tracer)):
+        if isinstance(x, (jax.Array, Tracer)):
             return True
 
     return isinstance(x, np.ndarray)
@@ -161,22 +161,22 @@ class FlaxBaseModelOutput(ModelOutput):
     """
     Base class for model's outputs, with potential hidden states and attentions.
     Args:
-        last_hidden_state (:obj:`jax_xla.DeviceArray` of shape :obj:`(batch_size, sequence_length, hidden_size)`):
+        last_hidden_state (:obj:`jax.Array` of shape :obj:`(batch_size, sequence_length, hidden_size)`):
             Sequence of hidden-states at the output of the last layer of the model.
-        hidden_states (:obj:`tuple(jax_xla.DeviceArray)`, `optional`, returned when ``output_hidden_states=True`` is passed or when ``config.output_hidden_states=True``):
-            Tuple of :obj:`jax_xla.DeviceArray` (one for the output of the embeddings + one for the output of each
+        hidden_states (:obj:`tuple(jax.Array)`, `optional`, returned when ``output_hidden_states=True`` is passed or when ``config.output_hidden_states=True``):
+            Tuple of :obj:`jax.Array` (one for the output of the embeddings + one for the output of each
             layer) of shape :obj:`(batch_size, sequence_length, hidden_size)`.
             Hidden-states of the model at the output of each layer plus the initial embedding outputs.
-        attentions (:obj:`tuple(jax_xla.DeviceArray)`, `optional`, returned when ``output_attentions=True`` is passed or when ``config.output_attentions=True``):
-            Tuple of :obj:`jax_xla.DeviceArray` (one for each layer) of shape :obj:`(batch_size, num_heads,
+        attentions (:obj:`tuple(jax.Array)`, `optional`, returned when ``output_attentions=True`` is passed or when ``config.output_attentions=True``):
+            Tuple of :obj:`jax.Array` (one for each layer) of shape :obj:`(batch_size, num_heads,
             sequence_length, sequence_length)`.
             Attentions weights after the attention softmax, used to compute the weighted average in the self-attention
             heads.
     """
 
-    last_hidden_state: jax_xla.DeviceArray = None
-    hidden_states: Optional[Tuple[jax_xla.DeviceArray]] = None
-    attentions: Optional[Tuple[jax_xla.DeviceArray]] = None
+    last_hidden_state: jax.Array = None
+    hidden_states: Optional[Tuple[jax.Array]] = None
+    attentions: Optional[Tuple[jax.Array]] = None
 
 
 @flax.struct.dataclass
@@ -184,27 +184,27 @@ class FlaxBaseModelOutputWithPooling(ModelOutput):
     """
     Base class for model's outputs that also contains a pooling of the last hidden states.
     Args:
-        last_hidden_state (:obj:`jax_xla.DeviceArray` of shape :obj:`(batch_size, sequence_length, hidden_size)`):
+        last_hidden_state (:obj:`jax.Array` of shape :obj:`(batch_size, sequence_length, hidden_size)`):
             Sequence of hidden-states at the output of the last layer of the model.
-        pooler_output (:obj:`jax_xla.DeviceArray` of shape :obj:`(batch_size, hidden_size)`):
+        pooler_output (:obj:`jax.Array` of shape :obj:`(batch_size, hidden_size)`):
             Last layer hidden-state of the first token of the sequence (classification token) further processed by a
             Linear layer and a Tanh activation function. The Linear layer weights are trained from the next sentence
             prediction (classification) objective during pretraining.
-        hidden_states (:obj:`tuple(jax_xla.DeviceArray)`, `optional`, returned when ``output_hidden_states=True`` is passed or when ``config.output_hidden_states=True``):
-            Tuple of :obj:`jax_xla.DeviceArray` (one for the output of the embeddings + one for the output of each
+        hidden_states (:obj:`tuple(jax.Array)`, `optional`, returned when ``output_hidden_states=True`` is passed or when ``config.output_hidden_states=True``):
+            Tuple of :obj:`jax.Array` (one for the output of the embeddings + one for the output of each
             layer) of shape :obj:`(batch_size, sequence_length, hidden_size)`.
             Hidden-states of the model at the output of each layer plus the initial embedding outputs.
-        attentions (:obj:`tuple(jax_xla.DeviceArray)`, `optional`, returned when ``output_attentions=True`` is passed or when ``config.output_attentions=True``):
-            Tuple of :obj:`jax_xla.DeviceArray` (one for each layer) of shape :obj:`(batch_size, num_heads,
+        attentions (:obj:`tuple(jax.Array)`, `optional`, returned when ``output_attentions=True`` is passed or when ``config.output_attentions=True``):
+            Tuple of :obj:`jax.Array` (one for each layer) of shape :obj:`(batch_size, num_heads,
             sequence_length, sequence_length)`.
             Attentions weights after the attention softmax, used to compute the weighted average in the self-attention
             heads.
     """
 
-    last_hidden_state: jax_xla.DeviceArray = None
-    pooler_output: jax_xla.DeviceArray = None
-    hidden_states: Optional[Tuple[jax_xla.DeviceArray]] = None
-    attentions: Optional[Tuple[jax_xla.DeviceArray]] = None
+    last_hidden_state: jax.Array = None
+    pooler_output: jax.Array = None
+    hidden_states: Optional[Tuple[jax.Array]] = None
+    attentions: Optional[Tuple[jax.Array]] = None
 
 
 @flax.struct.dataclass
@@ -212,26 +212,26 @@ class FlaxBertForPreTrainingOutput(ModelOutput):
     """
     Output type of :class:`~transformers.BertForPreTraining`.
     Args:
-        prediction_logits (:obj:`jax_xla.DeviceArray` of shape :obj:`(batch_size, sequence_length, config.vocab_size)`):
+        prediction_logits (:obj:`jax.Array` of shape :obj:`(batch_size, sequence_length, config.vocab_size)`):
             Prediction scores of the language modeling head (scores for each vocabulary token before SoftMax).
-        seq_relationship_logits (:obj:`jax_xla.DeviceArray` of shape :obj:`(batch_size, 2)`):
+        seq_relationship_logits (:obj:`jax.Array` of shape :obj:`(batch_size, 2)`):
             Prediction scores of the next sequence prediction (classification) head (scores of True/False continuation
             before SoftMax).
-        hidden_states (:obj:`tuple(jax_xla.DeviceArray)`, `optional`, returned when ``output_hidden_states=True`` is passed or when ``config.output_hidden_states=True``):
-            Tuple of :obj:`jax_xla.DeviceArray` (one for the output of the embeddings + one for the output of each
+        hidden_states (:obj:`tuple(jax.Array)`, `optional`, returned when ``output_hidden_states=True`` is passed or when ``config.output_hidden_states=True``):
+            Tuple of :obj:`jax.Array` (one for the output of the embeddings + one for the output of each
             layer) of shape :obj:`(batch_size, sequence_length, hidden_size)`.
             Hidden-states of the model at the output of each layer plus the initial embedding outputs.
-        attentions (:obj:`tuple(jax_xla.DeviceArray)`, `optional`, returned when ``output_attentions=True`` is passed or when ``config.output_attentions=True``):
-            Tuple of :obj:`jax_xla.DeviceArray` (one for each layer) of shape :obj:`(batch_size, num_heads,
+        attentions (:obj:`tuple(jax.Array)`, `optional`, returned when ``output_attentions=True`` is passed or when ``config.output_attentions=True``):
+            Tuple of :obj:`jax.Array` (one for each layer) of shape :obj:`(batch_size, num_heads,
             sequence_length, sequence_length)`.
             Attentions weights after the attention softmax, used to compute the weighted average in the self-attention
             heads.
     """
 
-    prediction_logits: jax_xla.DeviceArray = None
-    seq_relationship_logits: jax_xla.DeviceArray = None
-    hidden_states: Optional[Tuple[jax_xla.DeviceArray]] = None
-    attentions: Optional[Tuple[jax_xla.DeviceArray]] = None
+    prediction_logits: jax.Array = None
+    seq_relationship_logits: jax.Array = None
+    hidden_states: Optional[Tuple[jax.Array]] = None
+    attentions: Optional[Tuple[jax.Array]] = None
 
 
 @flax.struct.dataclass
@@ -239,22 +239,22 @@ class FlaxMaskedLMOutput(ModelOutput):
     """
     Base class for masked language models outputs.
     Args:
-        logits (:obj:`jax_xla.DeviceArray` of shape :obj:`(batch_size, sequence_length, config.vocab_size)`):
+        logits (:obj:`jax.Array` of shape :obj:`(batch_size, sequence_length, config.vocab_size)`):
             Prediction scores of the language modeling head (scores for each vocabulary token before SoftMax).
-        hidden_states (:obj:`tuple(jax_xla.DeviceArray)`, `optional`, returned when ``output_hidden_states=True`` is passed or when ``config.output_hidden_states=True``):
-            Tuple of :obj:`jax_xla.DeviceArray` (one for the output of the embeddings + one for the output of each
+        hidden_states (:obj:`tuple(jax.Array)`, `optional`, returned when ``output_hidden_states=True`` is passed or when ``config.output_hidden_states=True``):
+            Tuple of :obj:`jax.Array` (one for the output of the embeddings + one for the output of each
             layer) of shape :obj:`(batch_size, sequence_length, hidden_size)`.
             Hidden-states of the model at the output of each layer plus the initial embedding outputs.
-        attentions (:obj:`tuple(jax_xla.DeviceArray)`, `optional`, returned when ``output_attentions=True`` is passed or when ``config.output_attentions=True``):
-            Tuple of :obj:`jax_xla.DeviceArray` (one for each layer) of shape :obj:`(batch_size, num_heads,
+        attentions (:obj:`tuple(jax.Array)`, `optional`, returned when ``output_attentions=True`` is passed or when ``config.output_attentions=True``):
+            Tuple of :obj:`jax.Array` (one for each layer) of shape :obj:`(batch_size, num_heads,
             sequence_length, sequence_length)`.
             Attentions weights after the attention softmax, used to compute the weighted average in the self-attention
             heads.
     """
 
-    logits: jax_xla.DeviceArray = None
-    hidden_states: Optional[Tuple[jax_xla.DeviceArray]] = None
-    attentions: Optional[Tuple[jax_xla.DeviceArray]] = None
+    logits: jax.Array = None
+    hidden_states: Optional[Tuple[jax.Array]] = None
+    attentions: Optional[Tuple[jax.Array]] = None
 
 
 @flax.struct.dataclass

@@ -1182,7 +1182,7 @@ def infer_offset_and_n_elements(tensor_slice):
 
 def xla_buffer_to_jax_tensor(xla_buf):
     """
-    Convert an xla buffer to a JAX DeviceArray.
+    Convert an xla buffer to a JAX Array.
 
     So we can index over the data buffer.
     """
@@ -1227,6 +1227,9 @@ def jax_tensor_index(src_tensor, indices, size):
 
 
 def make_jax_array(aval, buf, committed=False):
+    """
+    Wrap a buffer to a jax array. Modified from _single_device_array_from_buf.
+    """
     return array.ArrayImpl(aval, SingleDeviceSharding(buf.device()), [buf],
                            committed=committed, _skip_checks=True)
 

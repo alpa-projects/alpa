@@ -23,8 +23,7 @@ logger.setLevel(logging.INFO)
 
 
 # Note: in this device mesh code, we will use 3 types of tensors:
-# (1) JAX high-level _DeviceArray, which is index-able, has __cuda_array__
-#     interface
+# (1) JAX high-level Array, which is index-able
 # (2) XLA low-level PyLocalBuffer, which is not index-able
 # (3) cupy array, which is an intermediate format for ray collective
 def send_tile(worker, uuid: int, device_id: int, offset: Sequence[slice],
@@ -246,7 +245,7 @@ def cupy_to_xla_buffer(tensor):
 
 
 def jax_tensor_to_cupy(tensors, take_ownership=False):
-    """Convert a Jax DeviceArray to cupy tensor; zero copy."""
+    """Convert a Jax Array to cupy tensor; zero copy."""
     if isinstance(tensors, list):
         return list(map(jax_tensor_to_cupy, tensors))
     return cupy.fromDlpack(to_dlpack(tensors, take_ownership=take_ownership))

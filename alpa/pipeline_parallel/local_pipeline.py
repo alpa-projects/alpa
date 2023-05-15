@@ -5,7 +5,6 @@ import jax
 from jax import linear_util as lu
 from jax.core import Var, ClosedJaxpr, Literal, gensym
 from jax.interpreters import partial_eval as pe
-from jax.interpreters.xla import DeviceArray
 
 from alpa.pipeline_parallel.computation import (
     PipelineComputation, XlaPipelineComputation,
@@ -16,7 +15,7 @@ from alpa.pipeline_parallel.computation import (
 class LocalPipelineRunner:
     """Single-device local pipeline runner."""
 
-    def __init__(self, name: str, global_invals: Sequence[DeviceArray]):
+    def __init__(self, name: str, global_invals: Dict[Var, jax.Array]):
         self.name = name
         self.env = {}
         self.global_invals = global_invals

@@ -77,8 +77,9 @@ class GlobalConfig:
         self.resharding_mode = "broadcast"
         # Which nccl to use. Possible choices: {"cupy",
         # "xla_extension"}
-        # FIXME: cupy is broken. Test after ArrayImpl-DeviceArray-Buffer
-        # relationship is fixed.
+        # FIXME: cupy is broken for an unknown device mismatch. The error msg
+        # show that two tensors are on devices with the same id, but jax still
+        # treats them mismatched.
         self.nccl_mode = "xla_extension"
         self.enable_overlapping = False
         # Cross mesh resharding load balancing mode.

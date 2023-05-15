@@ -17,25 +17,25 @@ from warnings import warn
 from flax.training import train_state
 from flax.training.common_utils import stack_forest
 import jax
-from jax._src.util import wrap_name
-from jax._src.source_info_util import SourceInfo
-import jax.numpy as jnp
-from jax._src import dispatch, source_info_util
+from jax._src import array, dispatch, effects, source_info_util
 from jax._src.api import FLAGS, ShapeDtypeStruct
+from jax._src.effects import no_effects
+from jax._src.util import wrap_name
+from jax._src.sharding import SingleDeviceSharding
+from jax._src.source_info_util import SourceInfo
+from jax import core, linear_util as lu
+from jax.api_util import shaped_abstractify
+from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
+                      Primitive, ShapedArray, Var, AbstractValue, gensym)
+from jax.experimental.maps import FrozenDict
+from jax.interpreters import partial_eval as pe
+from jax.interpreters import xla, pxla, mlir
 from jax.lib import (
     xla_bridge as xb,
     xla_client as xc,
     xla_extension as xe
 )
-from jax.api_util import shaped_abstractify
-from jax import core
-from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
-                      Primitive, ShapedArray, Var, AbstractValue, gensym)
-from jax.experimental.maps import FrozenDict
-from jax import linear_util as lu
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla, pxla, mlir
-from jax.interpreters.xla import make_device_array
+import jax.numpy as jnp
 from jax.tree_util import tree_map, tree_flatten, PyTreeDef
 import numpy as np
 import ray
@@ -362,10 +362,11 @@ def jaxpr_to_hlo(name: str,
     name_stack = source_info_util.new_name_stack(wrap_name(name, "parallelize"))
     closed_jaxpr = ClosedJaxpr(closed_jaxpr.jaxpr, consts)
     unordered_effects = [
-        eff for eff in closed_jaxpr.effects if eff not in core.ordered_effects
+        eff for eff in closed_jaxpr.effects
+        if eff not in effects.ordered_effects
     ]
     ordered_effects = [
-        eff for eff in closed_jaxpr.effects if eff in core.ordered_effects
+        eff for eff in closed_jaxpr.effects if eff in effects.ordered_effects
     ]
     lowering_result = mlir.lower_jaxpr_to_module(
         name, closed_jaxpr, unordered_effects, ordered_effects, None, platform,
@@ -656,7 +657,7 @@ def new_jaxpr_eqn(invars,
                   effects=None,
                   source_info=None):
     """Create a new jaxpr equation."""
-    effects = effects or core.no_effects
+    effects = effects or no_effects
     return core.new_jaxpr_eqn(invars, outvars, primitive, params, effects,
                               source_info)
 
@@ -1186,12 +1187,13 @@ def xla_buffer_to_jax_tensor(xla_buf):
     So we can index over the data buffer.
     """
     aval = ShapedArray(xla_buf.shape, xla_buf.dtype)
-    return make_device_array(aval, xla_buf.device(), xla_buf)
+    return make_jax_array(aval, xla_buf, True)
 
 
-def jax_tensor_to_xla_buffer(jax_buf):
-    """Convert a JAX Device array back to XLA buffer."""
-    return jax_buf.device_buffer
+def jax_tensor_to_xla_buffer(jax_tensor):
+    """Convert a JAX Array back to XLA buffer."""
+    assert len(jax_tensor._arrays) == 1, "Only support single device array."
+    return jax_tensor._arrays[0]
 
 
 # Note: use Python jit instead of CPP jit,
@@ -1222,6 +1224,11 @@ def jax_tensor_set(src_buf, update, start_indices):
 def jax_tensor_index(src_tensor, indices, size):
     dst_tensor = jax.lax.dynamic_slice(src_tensor, indices, size)
     return dst_tensor
+
+
+def make_jax_array(aval, buf, committed=False):
+    return array.ArrayImpl(aval, SingleDeviceSharding(buf.device()), [buf],
+                           committed=committed, _skip_checks=True)
 
 
 ########################################

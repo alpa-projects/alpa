@@ -20,12 +20,11 @@ dist
 
 # Build files
 alpa/pipeline_parallel/xla_custom_call_marker/build
-build/lib
 build/bdist*
-build_jaxlib/build/bazel*
-build_jaxlib/bazel-*
-build_jaxlib/.jax_configure.bazelrc
 build_jaxlib/dist
+build_jaxlib/.bazel*
+build_jaxlib/WORKSPACE
+build_jaxlib/build
 
 # Examples build and tmp files
 examples/build/

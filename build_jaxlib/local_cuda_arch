@@ -1,0 +1,30 @@
+//usr/bin/env nvcc -odir `mktemp -d` -x cu --run "$0" ${1:+--run-args "${@:1}"} ; exit $?
+#include <cstdio>
+#include <cuda_runtime_api.h>
+#include <set>
+
+#define CHECK(call) { \
+    cudaError_t e = call;\
+    if (e != cudaSuccess) { \
+        fprintf(stderr, #call " failed: %s", cudaGetErrorString(e)); \
+        return e; \
+    } \
+}
+
+int main()
+{
+    int device_count;
+    CHECK(( cudaGetDeviceCount(&device_count) ));
+    std::set<int> cc;
+    for(int i = 0; i < device_count; ++i) {
+        cudaDeviceProp prop;
+        CHECK(( cudaGetDeviceProperties(&prop, i) ));
+        cc.insert(prop.major * 10 + prop.minor);
+    }
+    int i = 0;
+    for(auto c: cc) {
+        printf("%d.%d%s", c / 10, c % 10, (i < cc.size() - 1) ? "," : "");
+        ++i;
+    }
+    return 0;
+}

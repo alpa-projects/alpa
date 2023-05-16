@@ -357,6 +357,9 @@ def get_manual_input_output_sharding_specs(stages, mesh_shapes, ms_option,
     intermediate_to_pspec = {}
     if ms_option.pipeline_intermediate_axes is not None:
         for v in fwd_intermediates:
+            # TODO: This is a simple heuristic: we simply replicate 1d tensors.
+            if len(v.aval.shape) <= 1:
+                continue
             intermediate_to_pspec[v] = get_intermediate_parsed_spec(
                 ms_option.pipeline_intermediate_axes, len(v.aval.shape))
 
@@ -393,7 +396,7 @@ def get_manual_input_output_sharding_specs(stages, mesh_shapes, ms_option,
             invar_in_global = [var for var in stage.invars if var in invar_set]
             # add intermediate vars
             intermediate_var = [
-                var for var in stage.invars if var in fwd_intermediates
+                var for var in stage.invars if var in intermediate_to_pspec
             ]
             invars = invar_in_global + intermediate_var
             stage_invar_shardings = get_vars_to_sharding_specs(

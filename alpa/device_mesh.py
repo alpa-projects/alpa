@@ -111,7 +111,7 @@ class MeshHostWorker:
 
     def __init__(self, server_address: str, num_hosts: int, host_id: int,
                  mesh_id: int, move_worker: DaemonMoveWorker,
-                 runtime_random_seed: int):
+                 runtime_random_seed: int, worker_global_config: dict):
         self.num_hosts = num_hosts
         self.host_id = host_id
         self.mesh_id = mesh_id
@@ -124,6 +124,9 @@ class MeshHostWorker:
         self.distributed_client.connect()
         logger.debug(
             f"{host_id}: Success to connect to xla runtime at {server_address}")
+
+        # Set global config to follow the driver
+        global_config.update_worker_config(worker_global_config)
         if global_config.backend == "gpu":
             self.backend = xla_client.make_gpu_client(self.distributed_client,
                                                       node_id=host_id)
@@ -1139,7 +1142,8 @@ class DistributedPhysicalDeviceMesh(PhysicalDeviceMesh):
                                      "env_vars": env_vars
                                  }).remote(server_address, self.num_hosts, i,
                                            self.mesh_id, move_worker,
-                                           global_config.runtime_random_seed)
+                                           global_config.runtime_random_seed,
+                                           global_config)
             workers.append(worker)
         return service_server, workers
 

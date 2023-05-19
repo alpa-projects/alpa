@@ -37,7 +37,6 @@ if global_config.has_cuda:
         numpy.int64: nccl.NCCL_INT64,
         # FLOAT types
         numpy.half: nccl.NCCL_HALF,
-        # note that numpy.float is float64.
         numpy.float16: nccl.NCCL_FLOAT16,
         numpy.float32: nccl.NCCL_FLOAT32,
         numpy.float64: nccl.NCCL_FLOAT64,

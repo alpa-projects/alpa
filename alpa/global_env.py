@@ -105,6 +105,36 @@ class GlobalConfig:
         backend_to_ray = {"gpu": "GPU"}
         return backend_to_ray[self.backend]
 
+    def update_worker_config(self, cfg: "GlobalConfig"):
+        """Update the worker config based on the host one"""
+        self.backend = cfg.backend
+        # Random seed used for compilation
+        self.compile_random_seed = cfg.compile_random_seed
+        # Random seed used for runtime
+        self.runtime_random_seed = cfg.runtime_random_seed
+        # XLA server port range
+        self.xla_server_port_start = cfg.xla_server_port_start
+        self.xla_server_port_end = cfg.xla_server_port_end
+        # XLA gpu kernel auto-tuning level
+        self.xla_gpu_autotune_level = cfg.xla_gpu_autotune_level
+        # Whether to use AWS EFA network interface
+        self.use_aws_efa = cfg.use_aws_efa
+        ########## Options of pipeline runtime ##########
+        # Whether to sync before and after the executable for accurate internal
+        # timer
+        self.pipeline_sync_for_timer = cfg.pipeline_sync_for_timer
+        # Whether to use single-byte signal tensor for send/recv.
+        # This is a debug option.
+        self.pipeline_use_signal_send_recv = cfg.pipeline_use_signal_send_recv
+        # Whether to use the scatter-gater/local-all-gather optimization.
+        self.use_local_allgather = cfg.use_local_allgather
+        # Cross mesh resharding mode. Possible choices: {"send_recv",
+        # "broadcast"}
+        self.resharding_mode = cfg.resharding_mode
+        self.nccl_mode = cfg.nccl_mode
+        self.enable_overlapping = cfg.enable_overlapping
+        self.collect_trace = cfg.collect_trace
+
 
 global_config = GlobalConfig()
 

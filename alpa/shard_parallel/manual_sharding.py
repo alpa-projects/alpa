@@ -1,13 +1,14 @@
 """User specified manual sharding strategy following pjit's api."""
 import dataclasses
-from typing import Any, Optional, OrderedDict, Tuple, Union
+from typing import Any, Optional, OrderedDict, Sequence, Tuple, Union
 
 from jax._src.lib import xla_client as xc
 from jax._src.tree_util import _replace_nones
 from jax._src.util import safe_zip
 from jax.experimental.pjit import (_is_unspecified, _is_auto, _is_from_gda,
                                    _prepare_axis_resources, get_array_mapping,
-                                   _UNSPECIFIED, ParsedPartitionSpec)
+                                   _UNSPECIFIED, PartitionSpec,
+                                   ParsedPartitionSpec)
 from jax.interpreters import mlir, pxla
 from jax.tree_util import tree_unflatten, tree_flatten, tree_map
 
@@ -22,6 +23,12 @@ class ManualShardingOption:
     # According to pjit, None means replicated.
     in_axis_resources: Any = _UNSPECIFIED
     out_axis_resources: Any = _UNSPECIFIED
+    # To enable data parallel for multiple pipeline stages, where the input
+    # activation is not a global invar. Currently defined by (dim_name, dim_idx)
+    # TODO: a better design to allow only applying this rule to a subset of
+    # intermediate, because some pipeline communicated tensors do not have a
+    # batch dim. e.g. the time vector in diffusion generated at the first stage.
+    pipeline_intermediate_axes: Sequence[Tuple[str, int]] = None
 
 
 @dataclasses.dataclass
@@ -32,6 +39,7 @@ class ParsedManualShardingOption:
     # Parsed and flatten status
     in_parsed_pspec: Tuple[ParsedPartitionSpec, ...] = None
     out_parsed_pspec: Tuple[ParsedPartitionSpec, ...] = None
+    pipeline_intermediate_axes: Sequence[Tuple[str, int]] = None
 
 
 def _parsed_pspec_to_hlo_sharding(
@@ -121,9 +129,9 @@ def get_flatten_axis_resources(sharding_option: ManualShardingOption, in_tree,
     else:
         out_axis_flat = _prepare_axis_and_flatten(
             sharding_option.out_axis_resources, out_tree, "out_axis_resources")
-    return ParsedManualShardingOption(sharding_option.mesh_axis_names,
-                                      sharding_option.submesh_axis_names,
-                                      in_axis_flat, out_axis_flat)
+    return ParsedManualShardingOption(
+        sharding_option.mesh_axis_names, sharding_option.submesh_axis_names,
+        in_axis_flat, out_axis_flat, sharding_option.pipeline_intermediate_axes)
 
 
 def parsed_spec_to_opsharding(axes, avals, mesh_shape, mesh_axis_names):
@@ -156,3 +164,17 @@ def get_manual_sharding_spec(
         parsed_resources.out_parsed_pspec, out_avals, mesh_shape,
         mesh_axis_names)
     return in_op_shardings, out_op_shardings
+
+
+def get_intermediate_parsed_spec(intermediate_dims,
+                                 dim_len,
+                                 allow_unconstrained_dims=False):
+    axes = [None] * dim_len
+    for (name, dim) in intermediate_dims:
+        axes[dim] = name
+    pspec = PartitionSpec(*axes)
+    parsed_pspec = ParsedPartitionSpec.from_user_input(
+        pspec,
+        "intermediate specifications",
+        allow_unconstrained_dims=allow_unconstrained_dims)
+    return parsed_pspec

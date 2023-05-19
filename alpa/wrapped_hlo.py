@@ -5,6 +5,7 @@ from enum import Enum, auto
 from typing import Union
 
 from jax._src.lib import xla_extension as xe
+from jax.interpreters import mlir
 
 
 class HloStatus(Enum):
@@ -37,6 +38,13 @@ class WrappedHlo:
 
     def get_computation(self) -> xe.XlaComputation:
         return xe.XlaComputation(self.module.as_serialized_hlo_module_proto())
+
+    def get_mhlo(self):
+        xla_computation = self.get_computation()
+        module_str = xe.mlir.xla_computation_to_mlir_module(xla_computation)
+        with mlir.make_ir_context():
+            mhlo = mlir.ir.Module.parse(module_str)
+        return mhlo
 
     def get_module(self) -> xe.HloModule:
         return self.module

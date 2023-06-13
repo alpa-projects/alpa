@@ -118,7 +118,7 @@ def create_train_state(rng, config):
       apply_fn=cnn.apply, params=params, tx=tx)
 
 
-def get_train_data_laoder(train_ds, state, batch_size):
+def get_train_data_loader(train_ds, state, batch_size):
   images_np = train_ds['image']
   labels_np = train_ds['label']
   steps_per_epoch = len(images_np) // batch_size
@@ -163,7 +163,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict,
   rng = jax.random.PRNGKey(0)
   state = create_train_state(rng, config)
 
-  train_data_loader, steps_per_epoch = get_train_data_laoder(
+  train_data_loader, steps_per_epoch = get_train_data_loader(
       train_ds, state, config.batch_size)
 
   for epoch in range(1, config.num_epochs + 1):

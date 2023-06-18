@@ -14,4 +14,4 @@ This page includes references to publications describing the ideas behind Alpa.
 | 
 | `AlpaServe: Statistical Multiplexing with Model Parallelism for Deep Learning Serving <https://arxiv.org/abs/2302.11665>`_
 | Zhuohan Li*, Lianmin Zheng*, Yinmin Zhong*, Vincent Liu, Ying Sheng, Xin Jin, Yanping Huang, Zhifeng Chen, Hao Zhang, Joseph E. Gonzalez, Ion Stoica
-| *Preprint*
+| *OSDI 2023*

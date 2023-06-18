@@ -2305,6 +2305,78 @@ class DeviceCluster:
         return mesh_profiling.profile_all(self, *args, **kwargs)
 
 
+#TODO Github Task - CustomVirtualMesh for interfaces
+class VirtualWorker:
+    def __init__(self, index):
+        self.index = index
+        # Additional attributes or methods of virtual workers
+
+class CustomVirtualMesh(VirtualPhysicalMesh):
+    def __init__(self,
+                 host_ids: Sequence[int],
+                 host_info: Sequence[dict],
+                 num_devices_per_host,
+                 parent: "VirtualPhysicalMesh" = None,
+                 devices: Sequence[Sequence[int]] = None,
+                 mesh_id: int = None
+                 ):
+        super().__init__(host_ids, host_info, num_devices_per_host, parent, devices)
+        self.host_ips = []
+        self.workers = [] # Virtual workers
+        self.mesh_id = mesh_id
+
+        for host_id in host_ids:
+            self.host_ips.append(host_info[host_id]['NodeName'])
+            self.workers.append(VirtualWorker(mesh_id))
+
+
+#TODO Github Task - VirtualMeshGroup for interfaces
+class VirtualMeshGroup:
+    def __init__(self, sliced_virtual_meshes: List[VirtualPhysicalMesh]):
+        self.sliced_virtual_meshes = self.get_virtual_meshes(sliced_virtual_meshes)
+        self.collective_groups: List[List[Any]] = [
+            [None for _ in range(len(self))] for _ in range(len(self))
+        ]
+        self.launched_nccl = False
+
+    def __getitem__(self, index):
+        return self.sliced_virtual_meshes[index]
+
+    def __len__(self):
+        return len(self.sliced_virtual_meshes)
+
+    def index(self, *args, **kwargs):
+        return self.sliced_virtual_meshes.index(*args, **kwargs)
+
+    def get_virtual_meshes(self, sliced_virtual_meshes):
+        custom_sliced_virtual_meshes = []
+        for mesh_idx, mesh in enumerate(sliced_virtual_meshes):
+            custom_mesh = CustomVirtualMesh(mesh.host_ids, mesh.host_info, mesh.num_devices_per_host, mesh.parent, mesh.devices, mesh_idx)
+            custom_sliced_virtual_meshes.append(custom_mesh)
+        return custom_sliced_virtual_meshes
+
+    def establish_nccl_group(self,
+                             src_mesh_id: int,
+                             dst_mesh_id: int,
+                             instantiate=False
+                             ):
+        """Establish NCCL group between two meshes."""
+        # pylint: disable=import-outside-toplevel
+        from alpa.pipeline_parallel.cross_mesh_resharding import CollectiveGroup
+
+        assert src_mesh_id < dst_mesh_id
+        if self.collective_groups[src_mesh_id][dst_mesh_id] is not None:
+            # Already established
+            return
+        src_mesh = self.sliced_virtual_meshes[src_mesh_id]
+        dst_mesh = self.sliced_virtual_meshes[dst_mesh_id]
+        device_strs = OrderedSet(src_mesh.device_strs + dst_mesh.device_strs)
+        cg = CollectiveGroup(device_strs, src_mesh, dst_mesh)
+        self.collective_groups[src_mesh_id][dst_mesh_id] = cg
+        self.collective_groups[dst_mesh_id][src_mesh_id] = cg
+
+
+
 # Global runtime objects
 global_cluster: DeviceCluster = None
 global_physical_mesh: PhysicalDeviceMesh = None

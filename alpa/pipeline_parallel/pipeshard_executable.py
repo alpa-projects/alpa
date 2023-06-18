@@ -4,25 +4,27 @@ from functools import partial
 import json
 import os
 import time
-from typing import Optional, Sequence
+from typing import Optional, Sequence, List
 
 from jax._src import traceback_util
 from jax._src.lib import xla_extension as xe
 from jax.tree_util import tree_flatten, tree_unflatten, tree_leaves, PyTreeDef
+from jax.interpreters import pxla
 import numpy as np
 import ray.exceptions
 
+from collections import defaultdict
 from alpa.device_mesh import (
     MeshHostWorker, RemoteArrayRef,
-    create_and_record_cross_mesh_collective_communicators, next_array_uuids)
+    create_and_record_cross_mesh_collective_communicators, next_array_uuids, VirtualWorker, VirtualMeshGroup)
 from alpa.global_env import global_config
-from alpa.device_mesh import PhysicalDeviceMeshGroup
+from alpa.device_mesh import PhysicalDeviceMeshGroup, DistributedArray, ReplicatedDistributedArray
 from alpa.mesh_executable import (AllocZeroBufferWorkerExecutable,
                                   UtilMeshWorkerExecutable,
                                   PartialGradAccMeshWorkerExecutable,
                                   next_mesh_executable_uuid,
                                   get_execution_timer_name)
-from alpa.parallel_plan import ClusterInfo, PipelinePlan, ParallelPlan
+from alpa.parallel_plan import ClusterInfo, PipelinePlan, ParallelPlan, PlacementSpec
 from alpa.pipeline_parallel.layer_construction import LayerOption
 from alpa.pipeline_parallel.runtime_emitter import (
     AllocateZeroWorkerExecutableConfig, ConcatWorkerExecutableConfig,
@@ -30,27 +32,44 @@ from alpa.pipeline_parallel.runtime_emitter import (
     PipelineInstruction, PipeshardConfig)
 from alpa.shard_parallel.auto_sharding import HloStatus
 from alpa.timer import timers, tracer
-from alpa.util import OrderedSet, mesh_ids_hash
+from alpa.util import (OrderedSet, mesh_ids_hash, get_shard_shape, DisjointDict)
+from alpa.pipeline_parallel.cross_mesh_resharding import (SymbolicReshardingTask,
+                                                          SymbolicBroadcastReshardingTask,
+                                                          next_resharding_task_uuid, compile_allgather)
+
 
 traceback_util.register_exclusion(__file__)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+def flatten_uuid_set(container):
+    """Convert a nested array to an OrderedSet of elements in the array."""
+    output = OrderedSet()
+    for e in container:
+        if isinstance(e, (np.ndarray, list)):
+            output.update(flatten_uuid_set(e))
+        else:
+            output.add(e)
+    return output
 
 class PipeshardDriverExecutable:
     """The driver part of the executable for pipeshard parallel."""
-
+    _nccl_groups_instantiated = False
     def __init__(self,
                  mesh_group: PhysicalDeviceMeshGroup,
+                 virtual_mesh_group: VirtualMeshGroup,
                  pipeshard_config: PipeshardConfig,
                  num_batch: int,
                  layer_option: LayerOption,
                  in_tree: PyTreeDef,
                  out_tree: Optional[PyTreeDef] = None,
                  static_argnums: Optional[Sequence[int]] = None):
+
+
         ##### Input arguments #####
         self.mesh_group = mesh_group
+        self.v_meshes = virtual_mesh_group
         self.num_mesh = len(mesh_group)
         self.num_batch = num_batch
         self.in_tree = in_tree
@@ -63,7 +82,20 @@ class PipeshardDriverExecutable:
         self.flop_count = pipeshard_config.flop_count
         self.stage_input_shard_specs = pipeshard_config.stage_input_shard_specs
         self.input_placement_specs = pipeshard_config.input_placement_specs
+        #TODO Github Task - Adding these lines
+        # self.env = pipeshard_config.env
+        # self.instruction_lists = pipeshard_config.instruction_lists
+        # self.executable_uuids = pipeshard_config.executable_uuids
+        # self.executable_config_lists = pipeshard_config.executable_configs
+        # self.global_outvars = pipeshard_config.global_outvars
+        # self.concat_vars_mapping = pipeshard_config.concat_vars_mapping
+        # self.grad_uuids = pipeshard_config.grad_uuids
+        # self.uuid_counter = 0
+
+        #TODO Github Task - Commenting this line
         self.output_placement_specs = pipeshard_config.output_placement_specs
+
+
         # List[stage_idx -> str]
         self.fully_optimized_hlo_texts = []
         # List[stage_idx -> int]
@@ -90,12 +122,83 @@ class PipeshardDriverExecutable:
         self.batch_invars = input_config.batch_invars
 
         ##### For handling outputs of the executable #####
+        #TODO Github Task - commenting these lines
         self.output_local_uuid_list = pipeshard_config.output_local_uuid_list
         self.outs_handler = pipeshard_config.outs_handler
 
+
+        #TODO Github task -adding this line
+        virtual_to_pysical_map = {}
+        temp_worker_to_rank_map = {}
+        #if pipeshard_config.vworker:
+        self.mesh_group.collective_groups = pipeshard_config.collective_grp
+        #TODO Github task - replacing virtual workers with ray workers
+        temp_mesh_grp = []
+        for mesh in self.mesh_group.meshes:
+            for worker in mesh.workers:
+                temp_mesh_grp.append(worker)
+        temp_worker_to_rank_map = {
+            worker: r for r, worker in enumerate(temp_mesh_grp)
+        }
+        for cgp in self.mesh_group.collective_groups:
+            for cg in cgp:
+                if cg is not None:
+                    cg.mesh_workers = temp_mesh_grp
+                    cg.worker_to_rank_map = temp_worker_to_rank_map
+        for virtual_worker, _ in pipeshard_config.instruction_lists.items():
+            virtual_to_pysical_map[virtual_worker.index] = virtual_worker
+
+
         ##### For cross-mesh resharding #####
-        self._instantiate_nccl_groups(pipeshard_config.device_str_groups)
+        #self._instantiate_nccl_groups(pipeshard_config.device_str_groups)
+
         self.resharding_tasks = pipeshard_config.resharding_tasks
+
+        for resharding_task in self.resharding_tasks:
+            if global_config.resharding_mode == "send_recv":
+                task_dones = []
+                for v_worker, task in resharding_task.sender_tasks.items():
+                    uuid = resharding_task.send_worker_task_ids[v_worker]
+                    worker = resharding_task.collective_group.mesh_workers[v_worker.index]
+                    task_dones.append(
+                            worker.put_resharding_send_task.remote(
+                                uuid, task, resharding_task.collective_group.group_name))
+                for v_worker, task in resharding_task.receiver_tasks.items():
+                    uuid = resharding_task.recv_worker_task_ids[v_worker]
+                    worker = resharding_task.collective_group.mesh_workers[v_worker.index]
+                    task_dones.append(
+                            worker.put_resharding_recv_task.remote(
+                                uuid, task, resharding_task.collective_group.group_name))
+                ray.get(task_dones)
+
+                task_dones = []
+                if resharding_task.is_local_allgather_task:
+                    uuid = resharding_task.allgather_uuid
+                    task_spec = resharding_task.task_spec
+                    hlo = compile_allgather(task_spec.aval.shape, task_spec.aval.dtype,
+                                                task_spec.dst_sharding_spec,
+                                                task_spec.final_dst_spec,
+                                                np.prod(resharding_task.dst_mesh.shape))
+                    for v_worker in resharding_task.dst_mesh.workers:
+                        worker = resharding_task.collective_group.mesh_workers[v_worker.index]
+                        task_dones.append(
+                                    worker.put_executable.remote(uuid, UtilMeshWorkerExecutable,
+                                                                 hlo))
+                ray.get(task_dones)
+            else:
+                task_dones = []
+                for v_worker, task in resharding_task._broadcast_tasks.items():
+                    uuid = resharding_task.broadcast_worker_task_ids[v_worker]
+                    worker = resharding_task.collective_group.mesh_workers[v_worker.index]
+                    task_dones.append(
+                    worker.put_resharding_broadcast_task.remote(
+                            uuid, task, resharding_task.collective_group.group_name))
+                ray.get(task_dones)
+
+        ##### For cross-mesh resharding #####
+        if not self.v_meshes.launched_nccl:
+            self._instantiate_nccl_groups(pipeshard_config.device_str_groups)
+
         for mesh_ids in pipeshard_config.allreduce_groups:
             meshes = [self.mesh_group.meshes[idx] for idx in mesh_ids]
             key = mesh_ids_hash(mesh_ids)
@@ -109,13 +212,18 @@ class PipeshardDriverExecutable:
         for mesh_idx, physical_mesh in enumerate(self.mesh_group):
             mesh_grad_uuids = pipeshard_config.grad_uuids[mesh_idx]
             for worker in physical_mesh.workers:
+                virtual_worker_idx = temp_worker_to_rank_map[worker]
+                vw = virtual_to_pysical_map[virtual_worker_idx]
                 acc_grad_local_uuids = []
                 if len(mesh_grad_uuids) > 0:
                     acc_grad_local_uuids = mesh_grad_uuids
-                args = (pipeshard_config.instruction_lists[worker],
+                args = (
+                        #pipeshard_config.instruction_lists[worker],
+                        pipeshard_config.instruction_lists[vw],
                         input_config.input_local_uuid_lists[mesh_idx],
                         self.output_local_uuid_list[mesh_idx],
-                        pipeshard_config.executable_configs[worker],
+                        #pipeshard_config.executable_configs[worker],
+                        pipeshard_config.executable_configs[vw],
                         acc_grad_local_uuids,
                         pipeshard_config.reduced_var_uuid_lists[mesh_idx],
                         self.donate_invars[mesh_idx])
@@ -139,6 +247,7 @@ class PipeshardDriverExecutable:
             for j in range(i, self.num_mesh):
                 if device_str_groups[i][j]:
                     self.mesh_group.instantiate_nccl_group(i, j)
+        self.v_meshes.launched_nccl = True
         end_time = time.time()
         logger.debug(
             f"Initialize collective group takes {end_time - start_time:.2f}")

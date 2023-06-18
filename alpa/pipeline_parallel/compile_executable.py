@@ -10,7 +10,7 @@ from jax.core import gensym, AbstractValue, ClosedJaxpr
 from jax.interpreters import pxla
 from jax.tree_util import PyTreeDef
 
-from alpa.device_mesh import VirtualPhysicalMesh
+from alpa.device_mesh import VirtualPhysicalMesh, VirtualMeshGroup
 from alpa.global_env import global_config
 from alpa.pipeline_parallel.pipeshard_executable import PipeshardDriverExecutable
 from alpa.pipeline_parallel.runtime_emitter import (
@@ -108,14 +108,19 @@ def compile_pipeshard_executable(
                                                       in_tree, out_tree)
     else:
         parsed_ms_option = None
-    pipeshard_config = compile_pipeshard_executable_internal(
+    pipeshard_config, sliced_virtual_meshes, virtual_meshes = compile_pipeshard_executable_internal(
         closed_jaxpr, full_batch_closed_jaxpr, micro_batch_size, donated_invars,
         batch_invars, virtual_mesh, num_microbatch, pipeline_schedule,
         default_as_option, stage_option, name_base, global_input_shardings,
         None, stage_input_shardings, parsed_ms_option)
 
+    #ToDO Github Task - Adding two lines here
+    if virtual_mesh.launched_physical_mesh_group is None:
+        virtual_mesh.get_physical_mesh_group(sliced_virtual_meshes)
+
     executable = PipeshardDriverExecutable(
         mesh_group=virtual_mesh.launched_physical_mesh_group,
+        virtual_mesh_group=virtual_meshes,
         pipeshard_config=pipeshard_config,
         num_batch=num_microbatch,
         layer_option=layer_option,
@@ -147,6 +152,7 @@ def compile_pipeshard_executable_internal(
         stage_input_shardings: Forcibly set sharding specs of input vars of
           each stage.
     """
+    global virtual_meshes
     global_invars = closed_jaxpr.jaxpr.invars
     gensym_func = gensym([closed_jaxpr.jaxpr])
     inference_mode = (pipeline_schedule == "inference")
@@ -245,8 +251,16 @@ def compile_pipeshard_executable_internal(
     debug_compilation_time("shard stages")
 
     # Launch the physical mesh group
-    if virtual_mesh.launched_physical_mesh_group is None:
-        virtual_mesh.get_physical_mesh_group(sliced_virtual_meshes)
+    # if virtual_mesh.launched_physical_mesh_group is None:
+    #     virtual_mesh.get_physical_mesh_group(sliced_virtual_meshes)
+
+    nccl_instantiated = False
+    if 'virtual_meshes' in globals() and virtual_meshes is not None and virtual_mesh.launched_physical_mesh_group is not None:
+        nccl_instantiated = virtual_meshes.launched_nccl
+
+    virtual_meshes = VirtualMeshGroup(sliced_virtual_meshes)
+    virtual_meshes.launched_nccl = nccl_instantiated
+
     debug_compilation_time("launch meshes")
 
     # Wrap all things into a distributed runtime
@@ -256,7 +270,8 @@ def compile_pipeshard_executable_internal(
                           grad_dummy_invars=accumulator_mapping,
                           global_outvars=global_outvars,
                           concat_vars_mapping=concat_vars_mapping,
-                          mesh_group=virtual_mesh.launched_physical_mesh_group,
+                          # mesh_group=virtual_mesh.launched_physical_mesh_group,
+                          mesh_group=virtual_meshes,
                           schedule=schedule,
                           is_batch=batch_invars,
                           num_batch=num_microbatch,
@@ -274,7 +289,8 @@ def compile_pipeshard_executable_internal(
     pipeshard_config = emitter_cls(**emitter_kwargs).compile()
 
     debug_compilation_time("runtime emitter")
-    return pipeshard_config
+    return pipeshard_config, sliced_virtual_meshes, virtual_meshes
+
 
 
 def split_and_process_layers(closed_jaxpr, full_batch_closed_jaxpr,

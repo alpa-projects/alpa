@@ -2,7 +2,7 @@
 import itertools
 import logging
 from abc import abstractmethod, ABCMeta
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 
@@ -15,23 +15,29 @@ logger.setLevel(logging.INFO)
 
 def gen_dependency_with_stages(
     compute_stages: List[PipelineComputation],
+    num_mesh: int,
     apply_grad_stages: List[PipelineComputation] = ()):
     """Generate the dependency matrix for a list of pipeline stages."""
     n_stages = len(compute_stages) + len(apply_grad_stages)
     d = np.zeros([n_stages, n_stages], dtype=int)
     var_stage_id = {}
+    fwd_intermediate_vars = OrderedSet()
     for i, stage in enumerate(itertools.chain(compute_stages,
                                               apply_grad_stages)):
         for var in stage.invars:
             if var in var_stage_id:
                 d[i, var_stage_id[var]] = 1
+                if i < num_mesh and var_stage_id[var] != 2 * num_mesh - i - 1:
+                    # not the var from forward to backward. we don't care them.
+                    # not the var on the backward side
+                    fwd_intermediate_vars.add(var)
             else:
                 # Assume the var is from global_invars
                 pass
         for var in stage.outvars:
             var_stage_id[var] = i
 
-    return d
+    return d, fwd_intermediate_vars
 
 
 def gen_linear_pipeline_dependency(num_stage):
@@ -510,3 +516,18 @@ class OverlapFriendlyPipeDreamSchedule(PipeDreamFlush):
             scheds[mesh_idx] = (self.last_backward_batch_index, stage_idx)
         schedules.append(scheds)
         return schedules
+
+
+pipeline_schedule: Dict[str, PipelineSchedule] = {}
+pipeline_schedule["gpipe"] = GpipeSchedule
+pipeline_schedule["1f1b"] = PipeDreamFlush
+pipeline_schedule["inference"] = InferenceSchedule
+pipeline_schedule["1f1b_overlap_friendly"] = OverlapFriendlyPipeDreamSchedule
+
+
+def create_pipeline_schedule(name, dependency, meshes, apply_grad_placement,
+                             num_batch):
+    return pipeline_schedule[name](dependency=dependency,
+                                   meshes=meshes,
+                                   apply_grad_placement=apply_grad_placement,
+                                   num_batch=num_batch)

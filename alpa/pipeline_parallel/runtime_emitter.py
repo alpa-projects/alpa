@@ -10,7 +10,7 @@ from jax.interpreters import pxla
 import numpy as np
 
 from alpa.global_env import global_config
-from alpa.device_mesh import (DistributedArray, PhysicalDeviceMeshGroup, VirtualMeshGroup, CustomVirtualMesh,
+from alpa.device_mesh import (DistributedArray, PhysicalDeviceMeshGroup, VirtualMeshGroup, DummyVirtualMesh,
                               ReplicatedDistributedArray)
 from alpa.mesh_executable import next_mesh_executable_uuid
 from alpa.parallel_plan import PlacementSpec
@@ -253,7 +253,12 @@ class PipeshardConfig:
     manual_stage_option: ManualStageOption
     sharding_annotated_hlo_texts: Sequence[str]
     flop_count: int
-    collective_grp: CollectiveGroup
+    #collective_grp: CollectiveGroup
+    sliced_virtual_meshes: Any
+    virtual_meshes: VirtualMeshGroup
+    #virtual mappings
+    virtual_worker_to_rank_map: Dict
+    virtual_to_pysical_map: Dict
 
 class PipelineInstEmitter:
     """Pipeline Instruction Emitter."""
@@ -264,6 +269,7 @@ class PipelineInstEmitter:
                  global_outvars: Sequence[Var], concat_vars_mapping: Dict[Var,
                                                                           Var],
                  mesh_group: Union[PhysicalDeviceMeshGroup,VirtualMeshGroup],
+                 sliced_meshes: Any,
                  schedule: PipelineSchedule, is_batch: Sequence[bool],
                  num_batch: int,
                  default_auto_sharding_option: AutoShardingOption,
@@ -276,6 +282,7 @@ class PipelineInstEmitter:
         self.concat_vars_mapping = concat_vars_mapping
         self.global_outvars = global_outvars
         self.mesh_group = mesh_group
+        self.sliced_virtual_meshes = sliced_meshes
 
         if isinstance(mesh_group, VirtualMeshGroup):
             self.num_mesh = len(mesh_group.sliced_virtual_meshes)
@@ -482,7 +489,11 @@ class PipelineInstEmitter:
             self.manual_stage_option,
             self.sharding_annotated_hlo_texts,
             self.flop_count,
-            self.mesh_group.collective_groups,
+            #self.mesh_group.collective_groups,
+            self.sliced_virtual_meshes,
+            self.mesh_group,
+            virtual_worker_to_rank_map=None,
+            virtual_to_pysical_map=None
         )
 
     def _compile_get_vars_from_mesh(self, invars, dst_specs, mesh_idx,

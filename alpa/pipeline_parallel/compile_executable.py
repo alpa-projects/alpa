@@ -108,19 +108,18 @@ def compile_pipeshard_executable(
                                                       in_tree, out_tree)
     else:
         parsed_ms_option = None
-    pipeshard_config, sliced_virtual_meshes, virtual_meshes = compile_pipeshard_executable_internal(
+    pipeshard_config = compile_pipeshard_executable_internal(
         closed_jaxpr, full_batch_closed_jaxpr, micro_batch_size, donated_invars,
         batch_invars, virtual_mesh, num_microbatch, pipeline_schedule,
         default_as_option, stage_option, name_base, global_input_shardings,
         None, stage_input_shardings, parsed_ms_option)
 
-    #ToDO Github Task - Adding two lines here
+    #Task 801
     if virtual_mesh.launched_physical_mesh_group is None:
-        virtual_mesh.get_physical_mesh_group(sliced_virtual_meshes)
+        virtual_mesh.get_physical_mesh_group(pipeshard_config.sliced_virtual_meshes, pipeshard_config)
 
     executable = PipeshardDriverExecutable(
         mesh_group=virtual_mesh.launched_physical_mesh_group,
-        virtual_mesh_group=virtual_meshes,
         pipeshard_config=pipeshard_config,
         num_batch=num_microbatch,
         layer_option=layer_option,
@@ -152,7 +151,7 @@ def compile_pipeshard_executable_internal(
         stage_input_shardings: Forcibly set sharding specs of input vars of
           each stage.
     """
-    global virtual_meshes
+    #global virtual_meshes
     global_invars = closed_jaxpr.jaxpr.invars
     gensym_func = gensym([closed_jaxpr.jaxpr])
     inference_mode = (pipeline_schedule == "inference")
@@ -250,16 +249,12 @@ def compile_pipeshard_executable_internal(
     total_flops *= num_microbatch
     debug_compilation_time("shard stages")
 
-    # Launch the physical mesh group
-    # if virtual_mesh.launched_physical_mesh_group is None:
-    #     virtual_mesh.get_physical_mesh_group(sliced_virtual_meshes)
-
-    nccl_instantiated = False
-    if 'virtual_meshes' in globals() and virtual_meshes is not None and virtual_mesh.launched_physical_mesh_group is not None:
-        nccl_instantiated = virtual_meshes.launched_nccl
-
-    virtual_meshes = VirtualMeshGroup(sliced_virtual_meshes)
-    virtual_meshes.launched_nccl = nccl_instantiated
+    if virtual_mesh.launched_physical_mesh_group is None:
+        # Launch the virtual mesh group
+        meshes = VirtualMeshGroup(sliced_virtual_meshes)
+    else:
+        # get the already launched physical mesh group
+        meshes = virtual_mesh.launched_physical_mesh_group
 
     debug_compilation_time("launch meshes")
 
@@ -270,8 +265,8 @@ def compile_pipeshard_executable_internal(
                           grad_dummy_invars=accumulator_mapping,
                           global_outvars=global_outvars,
                           concat_vars_mapping=concat_vars_mapping,
-                          # mesh_group=virtual_mesh.launched_physical_mesh_group,
-                          mesh_group=virtual_meshes,
+                          mesh_group=meshes,
+                          sliced_meshes=sliced_virtual_meshes,
                           schedule=schedule,
                           is_batch=batch_invars,
                           num_batch=num_microbatch,
@@ -289,7 +284,7 @@ def compile_pipeshard_executable_internal(
     pipeshard_config = emitter_cls(**emitter_kwargs).compile()
 
     debug_compilation_time("runtime emitter")
-    return pipeshard_config, sliced_virtual_meshes, virtual_meshes
+    return pipeshard_config
 
 
 

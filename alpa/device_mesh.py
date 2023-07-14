@@ -56,7 +56,9 @@ from alpa.util import (benchmark_func, list_gpu_info, OrderedSet,
                        update_jax_platform, is_ray_node_resource,
                        try_import_ray_worker, create_placement_group,
                        get_bundle_idx, retrieve_placement_group, get_bundle2ip,
-                       check_server_port)
+                       check_server_port, compile_allgather)
+
+
 
 ray_worker = try_import_ray_worker()
 
@@ -1951,7 +1953,7 @@ class VirtualPhysicalMesh:
             mesh_id=mesh_id)
         return self.launched_physical_mesh
 
-    def get_physical_mesh_group(self, sliced_virtual_meshes):
+    def get_physical_mesh_group(self, sliced_virtual_meshes, pipeshard_config):
         """Launch a physical mesh group (which will request resources from
         Ray)."""
         assert self.launched_physical_mesh_group is None, \
@@ -1972,7 +1974,8 @@ class VirtualPhysicalMesh:
             threads[i].join()
 
         self.launched_physical_mesh_group = (PhysicalDeviceMeshGroup(
-            physical_meshes, self))
+            physical_meshes, self, pipeshard_config))
+
         return self.launched_physical_mesh_group
 
 
@@ -1980,12 +1983,14 @@ class PhysicalDeviceMeshGroup:
     """A list of physical devices that forms a pipeline."""
 
     def __init__(self, meshes: Sequence[DistributedPhysicalDeviceMesh],
-                 parent: VirtualPhysicalMesh):
+                 parent: VirtualPhysicalMesh, pipeshard_config):
         self.meshes = list(meshes)
         self.parent = parent
         self.collective_groups: List[List[Any]] = [
             [None for _ in range(len(self))] for _ in range(len(self))
         ]
+        #task 801
+        self.instantiate(pipeshard_config)
 
     def __getitem__(self, index):
         return self.meshes[index]
@@ -2123,6 +2128,77 @@ class PhysicalDeviceMeshGroup:
             cg.instantiate_now()
         else:
             cg.instantiate()
+
+    def instantiate(self, pipeshard_config):
+        from alpa.mesh_executable import UtilMeshWorkerExecutable
+
+        virtual_worker_to_rank_map = {}
+        virtual_to_pysical_map = {}
+        self.collective_groups = pipeshard_config.virtual_meshes.collective_groups
+        # task 801 - replacing virtual workers with ray workers
+        temp_mesh_grp = []
+        for mesh in self.meshes:
+            for worker in mesh.workers:
+                temp_mesh_grp.append(worker)
+        virtual_worker_to_rank_map = {
+            worker: r for r, worker in enumerate(temp_mesh_grp)
+        }
+        for cgp in self.collective_groups:
+            for cg in cgp:
+                if cg is not None:
+                    cg.mesh_workers = temp_mesh_grp
+                    cg.worker_to_rank_map = virtual_worker_to_rank_map
+                    for key, worker in cg.device_str_to_mesh_worker_map.items():
+                        if isinstance(worker, VirtualWorker):
+                            cg.device_str_to_mesh_worker_map[key] = cg.mesh_workers[worker.index]
+
+        for virtual_worker, _ in pipeshard_config.instruction_lists.items():
+            virtual_to_pysical_map[virtual_worker.index] = virtual_worker
+
+        pipeshard_config.virtual_worker_to_rank_map = virtual_worker_to_rank_map
+        pipeshard_config.virtual_to_pysical_map = virtual_to_pysical_map
+
+        for resharding_task in pipeshard_config.resharding_tasks:
+            if global_config.resharding_mode == "send_recv":
+                task_dones = []
+                for v_worker, task in resharding_task.sender_tasks.items():
+                    uuid = resharding_task.send_worker_task_ids[v_worker]
+                    worker = resharding_task.collective_group.mesh_workers[v_worker.index]
+                    task_dones.append(
+                            worker.put_resharding_send_task.remote(
+                                uuid, task, resharding_task.collective_group.group_name))
+                for v_worker, task in resharding_task.receiver_tasks.items():
+                    uuid = resharding_task.recv_worker_task_ids[v_worker]
+                    worker = resharding_task.collective_group.mesh_workers[v_worker.index]
+                    task_dones.append(
+                            worker.put_resharding_recv_task.remote(
+                                uuid, task, resharding_task.collective_group.group_name))
+                ray.get(task_dones)
+
+                task_dones = []
+                if resharding_task.is_local_allgather_task:
+                    uuid = resharding_task.allgather_uuid
+                    task_spec = resharding_task.task_spec
+                    hlo = compile_allgather(task_spec.aval.shape, task_spec.aval.dtype,
+                                                task_spec.dst_sharding_spec,
+                                                task_spec.final_dst_spec,
+                                                np.prod(resharding_task.dst_mesh.shape))
+                    for v_worker in resharding_task.dst_mesh.workers:
+                        worker = resharding_task.collective_group.mesh_workers[v_worker.index]
+                        task_dones.append(
+                                    worker.put_executable.remote(uuid, UtilMeshWorkerExecutable,
+                                                                 hlo))
+                ray.get(task_dones)
+            else:
+                task_dones = []
+                for v_worker, task in resharding_task._broadcast_tasks.items():
+                    uuid = resharding_task.broadcast_worker_task_ids[v_worker]
+                    worker = resharding_task.collective_group.mesh_workers[v_worker.index]
+                    task_dones.append(
+                    worker.put_resharding_broadcast_task.remote(
+                            uuid, task, resharding_task.collective_group.group_name))
+                ray.get(task_dones)
+
 
 
 ########################################
@@ -2305,18 +2381,18 @@ class DeviceCluster:
         return mesh_profiling.profile_all(self, *args, **kwargs)
 
 
-#TODO Github Task - CustomVirtualMesh for interfaces
+#Task 801 - DummyVirtualMesh for interfaces
 class VirtualWorker:
     def __init__(self, index):
         self.index = index
         # Additional attributes or methods of virtual workers
 
-class CustomVirtualMesh(VirtualPhysicalMesh):
+class DummyVirtualMesh(VirtualPhysicalMesh):
     def __init__(self,
                  host_ids: Sequence[int],
                  host_info: Sequence[dict],
                  num_devices_per_host,
-                 parent: "VirtualPhysicalMesh" = None,
+                 parent: VirtualPhysicalMesh = None,
                  devices: Sequence[Sequence[int]] = None,
                  mesh_id: int = None
                  ):
@@ -2351,7 +2427,7 @@ class VirtualMeshGroup:
     def get_virtual_meshes(self, sliced_virtual_meshes):
         custom_sliced_virtual_meshes = []
         for mesh_idx, mesh in enumerate(sliced_virtual_meshes):
-            custom_mesh = CustomVirtualMesh(mesh.host_ids, mesh.host_info, mesh.num_devices_per_host, mesh.parent, mesh.devices, mesh_idx)
+            custom_mesh = DummyVirtualMesh(mesh.host_ids, mesh.host_info, mesh.num_devices_per_host, mesh.parent, mesh.devices, mesh_idx)
             custom_sliced_virtual_meshes.append(custom_mesh)
         return custom_sliced_virtual_meshes
 

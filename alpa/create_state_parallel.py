@@ -30,14 +30,14 @@ class CreateStateExecutable(PipeshardDriverExecutable):
 
     def __init__(self,
                  mesh_group: PhysicalDeviceMeshGroup,
-                 virtual_mesh_group: VirtualMeshGroup,
+                 #virtual_mesh_group: VirtualMeshGroup,
                  pipeshard_config: PipeshardConfig,
                  target_placement_specs: Sequence[PlacementSpec],
                  in_tree: PyTreeDef,
                  out_tree: Optional[PyTreeDef] = None,
                  static_argnums: Optional[Sequence[int]] = None):
         super().__init__(mesh_group=mesh_group,
-                         virtual_mesh_group= virtual_mesh_group,
+                         #virtual_mesh_group= virtual_mesh_group,
                          pipeshard_config=pipeshard_config,
                          num_batch=1,
                          layer_option=None,
@@ -136,14 +136,16 @@ def compile_create_state_executable(fun, in_tree, out_tree_thunk,
                                                        sliced_eqns)
 
         # Compile a pipeshard executable with predefined output shardings
-        pipeshard_config, _ , virtual_mesh_group = compile_pipeshard_executable_internal(
+        #pipeshard_config, _ , virtual_mesh_group = compile_pipeshard_executable_internal(
+        pipeshard_config = compile_pipeshard_executable_internal(
             new_jaxpr, None, 1, [False] * len(avals), [False] * len(avals),
             executable.mesh_group.parent, 1, "inference",
             AutoShardingOption(enable_auto_sharding=False),
             UniformStageOption(), name, None, output_shardings, None, None)
 
         return CreateStateExecutable(mesh_group=executable.mesh_group,
-                                     virtual_mesh_group= virtual_mesh_group,
+                                     #virtual_mesh_group= pipeshard_config.virtual_meshes,
+                                     #virtual_mesh_group=virtual_mesh_group,
                                      pipeshard_config=pipeshard_config,
                                      target_placement_specs=placement_specs,
                                      in_tree=in_tree,

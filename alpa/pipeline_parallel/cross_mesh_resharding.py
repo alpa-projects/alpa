@@ -221,8 +221,6 @@ class SymbolicReshardingTask(ReshardingTask):
         (3) pre-generate NCCL communicators for those tasks.
         """
         self._compile_send_recv_tasks()
-
-        #TODO Github task - moving this to pipeshard_executable
         if not global_config.debug_with_pipeshard_runtime:
             self.put_all_tasks()
 

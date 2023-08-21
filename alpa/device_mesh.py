@@ -1513,9 +1513,9 @@ class DistributedArray:
     a normal numpy array.
 
     Internally, it stores a pointer to all remote buffers.
-    The buffers are stored distributedly on remote workers' device memeory.
+    The buffers are stored distributedly on remote workers' device memory.
     When users require the value of the array. These buffers will be gathered
-    to the dirver.
+    to the driver.
     """
 
     def __init__(self,

@@ -1,4 +1,4 @@
-"""The dirver part and worker part of a pipeshard executable."""
+"""The driver part and worker part of a pipeshard executable."""
 import logging
 from functools import partial
 import json

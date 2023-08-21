@@ -236,7 +236,7 @@ def benchmark_training_executable(niter,
         executable.sync()
         e2e_latency = (time.time() - tic) / niter
         latencies = [e2e_latency]
-        print(f"latency with dirver overhead: {e2e_latency:.3f}")
+        print(f"latency with driver overhead: {e2e_latency:.3f}")
     else:
         # Benchmark latency without driver overhead
         for i in range(niter):

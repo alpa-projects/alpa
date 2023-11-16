@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from typing import Sequence, Optional
 import os
 
-from jax import xla
+from jax._src.interpreters import xla
 import jax.numpy as jnp
 from jax._src.api import ShapeDtypeStruct
 from jax._src.lib import xla_client as xc, xla_extension as xe

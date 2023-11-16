@@ -21,7 +21,7 @@ from jax._src.util import wrap_name
 from jax._src.source_info_util import SourceInfo
 import jax.numpy as jnp
 from jax._src import dispatch, source_info_util
-from jax._src.api import FLAGS, ShapeDtypeStruct
+from jax._src.api import ShapeDtypeStruct
 from jax.lib import (
     xla_bridge as xb,
     xla_client as xc,
@@ -31,11 +31,12 @@ from jax.api_util import shaped_abstractify
 from jax import core
 from jax.core import (Atom, ClosedJaxpr, DropVar, Jaxpr, JaxprEqn, Literal,
                       Primitive, ShapedArray, Var, AbstractValue, gensym)
-from jax.experimental.maps import FrozenDict
+from jax._src.maps import FrozenDict
 from jax import linear_util as lu
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla, pxla, mlir
-from jax.interpreters.xla import make_device_array
+# from jax.interpreters.xla import make_device_array
+from jax._src.array import make_array_from_callback
 from jax.tree_util import tree_map, tree_flatten, PyTreeDef
 import numpy as np
 import ray
@@ -340,7 +341,7 @@ def get_compile_options(num_replicas: int,
         [spmd_propagation_to_outputs]
     # FIXME: re-enable the new runtime when everything is ready.
     debug_options = build_options.debug_options
-    debug_options.xla_gpu_enable_xla_runtime_executable = False
+    # debug_options.xla_gpu_enable_xla_runtime_executable = False
     return compile_options
 
 
@@ -353,8 +354,8 @@ def jaxpr_to_hlo(name: str,
     Reference code: jax/jax/_src/dispatch.py::lower_xla_callable
     """
     consts = closed_jaxpr.consts
-    map(dispatch.prefetch,
-        it.chain(consts, dispatch.jaxpr_literals(closed_jaxpr.jaxpr)))
+    # map(dispatch.prefetch,
+    #     it.chain(consts, dispatch.jaxpr_literals(closed_jaxpr.jaxpr)))
 
     # Convert jaxpr to XLA HLO
     tuple_args = False
@@ -368,8 +369,8 @@ def jaxpr_to_hlo(name: str,
         eff for eff in closed_jaxpr.effects if eff in core.ordered_effects
     ]
     lowering_result = mlir.lower_jaxpr_to_module(
-        name, closed_jaxpr, unordered_effects, ordered_effects, None, platform,
-        mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars)
+        name, closed_jaxpr, ordered_effects=ordered_effects, backend_or_name=None, platform=platform,
+        axis_context=mlir.ReplicaAxisContext(axis_env), name_stack=name_stack, donated_args=donated_invars)
     xla_computation = xe.mlir.mlir_module_to_xla_computation(
         mlir.module_to_string(lowering_result.module),
         use_tuple_args=tuple_args,
@@ -1186,7 +1187,7 @@ def xla_buffer_to_jax_tensor(xla_buf):
     So we can index over the data buffer.
     """
     aval = ShapedArray(xla_buf.shape, xla_buf.dtype)
-    return make_device_array(aval, xla_buf.device(), xla_buf)
+    return make_array_from_callback(aval, xla_buf.device(), xla_buf)
 
 
 def jax_tensor_to_xla_buffer(jax_buf):
@@ -1196,8 +1197,8 @@ def jax_tensor_to_xla_buffer(jax_buf):
 
 # Note: use Python jit instead of CPP jit,
 # because CPP jit has bugs on _DeviceArray.
-if is_worker:
-    FLAGS.experimental_cpp_jit = False
+# if is_worker:
+#     FLAGS.experimental_cpp_jit = False
 
 
 # Note(Hao): this function will be jit-ed into as many versions as the possible

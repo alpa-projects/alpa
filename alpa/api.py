@@ -7,7 +7,7 @@ from jax._src.util import HashableFunction
 from jax.api_util import (argnums_partial, donation_vector,
                           flatten_fun_nokwargs, rebase_donate_argnums)
 from jax.core import AbstractValue
-from jax.experimental.maps import FrozenDict
+from jax._src.maps import FrozenDict
 from jax.tree_util import tree_flatten, tree_unflatten, PyTreeDef
 
 from alpa.device_mesh import init_global_cluster, shutdown_global_cluster
@@ -23,7 +23,6 @@ is_initialized = False
 
 
 def init(cluster: str = "ray",
-         cluster_address: Optional[str] = None,
          num_nodes: Optional[int] = None,
          num_devices_per_node: Optional[int] = None,
          namespace: Optional[str] = "alpa_default_space"):
@@ -41,12 +40,6 @@ def init(cluster: str = "ray",
         Possible choices: {"local", "ray"}.
         "local" means using all local devices on a single node.
         "ray" means using all devices in a ray cluster.
-      cluster_address: Address of the distributed cluster.
-        If cluster is "ray", this parameter can be used to specify a different
-          address that will be used to initialize the ray cluster.
-          E.g., "ray://123.45.67.89:10001". If not specified, "auto" will be
-          used instead.
-        Ignored if cluster is "local".
       num_nodes: The number of nodes.
       num_devices_per_node: The number of devices per node.
     """
@@ -56,8 +49,7 @@ def init(cluster: str = "ray",
         return
     is_initialized = True
 
-    init_global_cluster(cluster, cluster_address, num_nodes,
-                        num_devices_per_node, namespace)
+    init_global_cluster(cluster, num_nodes, num_devices_per_node, namespace)
 
 
 def shutdown():
@@ -186,13 +178,13 @@ class ParallelizedFunc:
 
         donate_tuple = rebase_donate_argnums(donate_argnums, static_argnums)
         if donate_tuple:
-            donated_invars = donation_vector(donate_tuple, dyn_args, kwargs)
+            donated_invars = donation_vector(donate_tuple, None, dyn_args, kwargs)
         else:
             donated_invars = (False,) * len(args_flat)
 
         # Deal with batch argnums
         batch_tuple = rebase_donate_argnums(batch_argnums, static_argnums)
-        batch_invars = donation_vector(batch_tuple, dyn_args, kwargs)
+        batch_invars = donation_vector(batch_tuple, None, dyn_args, kwargs)
 
         # Compile
         abstract_args = map(abstractify_with_aval, args_flat)

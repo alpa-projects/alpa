@@ -7,7 +7,7 @@ from typing import Callable, Optional
 import jax
 import jax.numpy as jnp
 from jax.tree_util import tree_leaves
-from jax.experimental.maps import FrozenDict as FrozenDictJax
+from jax._src.maps import FrozenDict as FrozenDictJax
 import numpy as np
 import optax
 from flax import linen as nn

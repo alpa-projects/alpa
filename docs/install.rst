@@ -20,7 +20,10 @@ Regardless of installing from wheels or from source, there are a few prerequisit
     # Update pip
     pip3 install --upgrade pip
 
-    # Install cupy
+    # Install cupy for CUDA 11.1
+    pip3 install cupy-cuda111
+
+    # Install cupy for CUDA 11.2~11.x
     pip3 install cupy-cuda11x
 
   Then, check whether your system already has NCCL installed.

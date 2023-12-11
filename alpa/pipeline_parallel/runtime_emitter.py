@@ -10,14 +10,14 @@ from jax.interpreters import pxla
 import numpy as np
 
 from alpa.global_env import global_config
-from alpa.device_mesh import (DistributedArray, PhysicalDeviceMeshGroup,
+from alpa.device_mesh import (DistributedArray, PhysicalDeviceMeshGroup, VirtualMeshGroup, DummyVirtualMesh,
                               ReplicatedDistributedArray)
 from alpa.mesh_executable import next_mesh_executable_uuid
 from alpa.parallel_plan import PlacementSpec
 from alpa.pipeline_parallel.computation import XlaShardedPipelineComputation
 from alpa.pipeline_parallel.cross_mesh_resharding import (
     CrossMeshCommunicator, SymbolicBroadcastReshardingTask,
-    SymbolicReshardingTask, ReshardingTask)
+    SymbolicReshardingTask, ReshardingTask, CollectiveGroup)
 from alpa.pipeline_parallel.schedules import PipelineSchedule
 from alpa.pipeline_parallel.stage_construction import ManualStageOption
 from alpa.shard_parallel.auto_sharding import AutoShardingOption
@@ -253,7 +253,12 @@ class PipeshardConfig:
     manual_stage_option: ManualStageOption
     sharding_annotated_hlo_texts: Sequence[str]
     flop_count: int
-
+    #collective_grp: CollectiveGroup
+    sliced_virtual_meshes: Any
+    virtual_meshes: VirtualMeshGroup
+    #virtual mappings
+    virtual_worker_to_rank_map: Dict
+    virtual_to_pysical_map: Dict
 
 class PipelineInstEmitter:
     """Pipeline Instruction Emitter."""
@@ -263,7 +268,8 @@ class PipelineInstEmitter:
                                                                        Var],
                  global_outvars: Sequence[Var], concat_vars_mapping: Dict[Var,
                                                                           Var],
-                 mesh_group: PhysicalDeviceMeshGroup,
+                 mesh_group: Union[PhysicalDeviceMeshGroup,VirtualMeshGroup],
+                 sliced_meshes: Any,
                  schedule: PipelineSchedule, is_batch: Sequence[bool],
                  num_batch: int,
                  default_auto_sharding_option: AutoShardingOption,
@@ -276,7 +282,13 @@ class PipelineInstEmitter:
         self.concat_vars_mapping = concat_vars_mapping
         self.global_outvars = global_outvars
         self.mesh_group = mesh_group
-        self.num_mesh = len(mesh_group)
+        self.sliced_virtual_meshes = sliced_meshes
+
+        if isinstance(mesh_group, VirtualMeshGroup):
+            self.num_mesh = len(mesh_group.sliced_virtual_meshes)
+        else:
+            self.num_mesh = len(mesh_group)
+
         self.schedule = schedule
         self.is_batch = is_batch
         self.num_batch = num_batch
@@ -436,7 +448,6 @@ class PipelineInstEmitter:
         for worker in instruction_lists:
             mesh_idx, worker_idx = worker_to_idx[worker]
             used_outside = flatten_uuid_set(output_local_uuid_list[mesh_idx])
-
             donated = set(donation_mapping[mesh_idx].keys())
             used_outside.update(flatten_uuid_set(reduced_var_uuids))
             instruction_lists[worker] = self._compile_free(
@@ -477,7 +488,13 @@ class PipelineInstEmitter:
             self.default_auto_sharding_option,
             self.manual_stage_option,
             self.sharding_annotated_hlo_texts,
-            self.flop_count)
+            self.flop_count,
+            #self.mesh_group.collective_groups,
+            self.sliced_virtual_meshes,
+            self.mesh_group,
+            virtual_worker_to_rank_map=None,
+            virtual_to_pysical_map=None
+        )
 
     def _compile_get_vars_from_mesh(self, invars, dst_specs, mesh_idx,
                                     batch_idx, comm_lists, alloc_lists,
@@ -612,6 +629,7 @@ class PipelineInstEmitter:
                 executable_config_lists[worker].append(exec_config)
 
         return executable_uuids, executable_config_lists
+
 
     def _compile_grad_buffer_allocations(self, executable_config_lists):
         """Compile gradient buffer allocations."""

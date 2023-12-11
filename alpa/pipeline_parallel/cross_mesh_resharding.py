@@ -15,7 +15,7 @@ import alpa.collective as col
 from alpa.device_mesh import (DistributedArray, RemoteArrayRef,
                               ReshardingRecvSpec, ReshardingSendSpec,
                               ReshardingTileSpec, ReshardingBroadcastSpec,
-                              _device_mesh_put_dummy, device_id_to_str)
+                              _device_mesh_put_dummy, device_id_to_str, VirtualWorker)
 from alpa.global_env import global_config
 from alpa.mesh_executable import (UtilMeshWorkerExecutable,
                                   next_mesh_executable_uuid)
@@ -195,6 +195,8 @@ class SymbolicReshardingTask(ReshardingTask):
         self.send_worker_task_ids = {}
         self.recv_worker_task_ids = {}
 
+        self.task_dones = []
+
         # generate the above states
         self._compile()
         # print(self.__str__()+"\n")
@@ -219,7 +221,6 @@ class SymbolicReshardingTask(ReshardingTask):
         (3) pre-generate NCCL communicators for those tasks.
         """
         self._compile_send_recv_tasks()
-
         if not global_config.debug_with_pipeshard_runtime:
             self.put_all_tasks()
 
@@ -229,19 +230,34 @@ class SymbolicReshardingTask(ReshardingTask):
         """
         # put send and recv tasks
         task_dones = []
+        temp_worker = None
         for worker, task in self.sender_tasks.items():
             uuid = next_resharding_task_uuid()
+            if isinstance(worker, VirtualWorker):
+                for actor, idx in self.collective_group.worker_to_rank_map.items():
+                    if idx == worker.index:
+                        temp_worker = actor
+                worker = temp_worker
             self.send_worker_task_ids[worker] = uuid
-            task_dones.append(
-                worker.put_resharding_send_task.remote(
-                    uuid, task, self.collective_group.group_name))
+
+            if not isinstance(worker, VirtualWorker):
+                task_dones.append(
+                    worker.put_resharding_send_task.remote(
+                        uuid, task, self.collective_group.group_name))
         for worker, task in self.receiver_tasks.items():
             uuid = next_resharding_task_uuid()
+            if isinstance(worker, VirtualWorker):
+                for actor, idx in self.collective_group.worker_to_rank_map.items():
+                    if idx == worker.index:
+                        temp_worker = actor
+                worker = temp_worker
             self.recv_worker_task_ids[worker] = uuid
-            task_dones.append(
-                worker.put_resharding_recv_task.remote(
-                    uuid, task, self.collective_group.group_name))
-        ray.get(task_dones)
+            if not isinstance(worker, VirtualWorker):
+                task_dones.append(
+                    worker.put_resharding_recv_task.remote(
+                        uuid, task, self.collective_group.group_name))
+        if len(task_dones) > 0:
+            ray.get(task_dones)
 
         # put allgather tasks
         task_dones = []
@@ -252,17 +268,28 @@ class SymbolicReshardingTask(ReshardingTask):
                                     task_spec.dst_sharding_spec,
                                     task_spec.final_dst_spec,
                                     np.prod(self.dst_mesh.shape))
+
             for worker in self.dst_mesh.workers:
-                task_dones.append(
-                    worker.put_executable.remote(uuid, UtilMeshWorkerExecutable,
-                                                 hlo))
-        ray.get(task_dones)
+                if isinstance(worker, VirtualWorker):
+                    for actor, idx in self.collective_group.worker_to_rank_map.items():
+                        if idx == worker.index:
+                            temp_worker = actor
+                    worker = temp_worker
+                if not isinstance(worker, VirtualWorker):
+                    task_dones.append(
+                        worker.put_executable.remote(uuid, UtilMeshWorkerExecutable,
+                                                     hlo))
+        if len(task_dones) > 0:
+            ray.get(task_dones)
 
     def create_resharding_communicators(self):
         """Create the NCCL communicators in advance."""
         communicator_params = set()
         for worker, recv_tasks in self.receiver_tasks.items():
-            dst_rank = self.collective_group.worker_to_rank_map[worker]
+            if isinstance(worker, VirtualWorker):
+                dst_rank = worker.index
+            else:
+                dst_rank = self.collective_group.worker_to_rank_map[worker]
             for recv_task in recv_tasks:
                 dst_gpu_idx = recv_task.device_id
                 tile_specs = recv_task.tile_specs
@@ -456,11 +483,18 @@ class SymbolicBroadcastReshardingTask(ReshardingTask):
         task_dones = []
         for worker, task in self._broadcast_tasks.items():
             uuid = next_resharding_task_uuid()
+            if isinstance(worker, VirtualWorker):
+                for actor, idx in self.collective_group.worker_to_rank_map.items():
+                    if idx == worker.index:
+                        temp_worker = actor
+                worker = temp_worker
             self.broadcast_worker_task_ids[worker] = uuid
             # print(worker, uuid, task)
-            task_dones.append(
-                worker.put_resharding_broadcast_task.remote(
-                    uuid, task, self.collective_group.group_name))
+            if not isinstance(worker, VirtualWorker):
+                task_dones.append(
+                    worker.put_resharding_broadcast_task.remote(
+                        uuid, task, self.collective_group.group_name))
+
         ray.get(task_dones)
 
     def _compile_broadcast_tasks(self):
